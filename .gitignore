@@ -1,0 +1,4 @@
+# SOPS private key — never committed
+*.agekey
+*.age
+.keys/
