@@ -2,3 +2,8 @@
 *.agekey
 *.age
 .keys/
+
+# Plaintext env files — only .env.sops (encrypted) goes in repo
+**/.env
+!**/.env.example
+!**/.env.sops

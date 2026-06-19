@@ -19,7 +19,9 @@ GitOps-managed homelab cluster running on k3s + Flux.
 ├── infrastructure/         # Cluster-level infrastructure definitions
 │   ├── sources/            # HelmRepository definitions
 │   └── controllers/        # Operators (CNPG, cert-manager, cloudflared)
-└── apps/                   # Application workloads (Mattermost, etc.)
+├── apps/                   # Application workloads (Mattermost, etc.)
+└── omv/                    # OpenMediaVault services (Docker, outside k8s)
+    └── minio/              # MinIO S3 backend (docker-compose + encrypted creds)
 ```
 
 ## Secret Management
