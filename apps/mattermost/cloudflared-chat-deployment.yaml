@@ -1,0 +1,43 @@
+---
+# Dedicated Cloudflare Tunnel for chat.voitech.dev -> Mattermost
+# Token is SOPS-encrypted in chat-tunnel-token.sops.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-chat
+  namespace: mattermost
+  labels:
+    app.kubernetes.io/name: cloudflared-chat
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-chat
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-chat
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: chat-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

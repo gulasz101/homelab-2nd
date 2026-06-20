@@ -82,9 +82,9 @@ spec:
       - name: MM_FILESETTINGS_AMAZONS3SSL
         value: "false"
 
-      # Site URL (internal for now, will be updated with Cloudflare Tunnel)
+      # Site URL — public HTTPS endpoint via dedicated Cloudflare Tunnel
       - name: MM_SERVICESETTINGS_SITEURL
-        value: "http://192.168.1.179:8065"
+        value: "https://chat.voitech.dev"
 
       # Invite-only, no email/SMTP
       - name: MM_EMAILSETTINGS_ENABLESIGNUPWITHEMAIL
