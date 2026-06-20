@@ -1,0 +1,18 @@
+---
+# CoreDNS custom server for resolving .local mDNS names from inside the cluster.
+# The default k3s Corefile already imports /etc/coredns/custom/*.server
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom-homelab
+  namespace: kube-system
+data:
+  homelab.server: |
+    openmediavault.local:53 {
+      errors
+      cache 30
+      hosts {
+        192.168.1.180 openmediavault.local
+        fallthrough
+      }
+    }
