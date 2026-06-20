@@ -26,6 +26,12 @@ spec:
     # Disable built-in MySQL — we use CNPG Postgres
     mysql:
       enabled: false
+    
+    # Use external Postgres (CNPG)
+    externalDB:
+      enabled: true
+      externalDriverType: "postgres"
+      externalConnectionString: "postgres://mattermost:***@mattermost-db-rw.mattermost.svc.cluster.local:5432/mattermost?sslmode=disable&connect_timeout=10"
 
     # Service — internal ClusterIP only for now
     service:
