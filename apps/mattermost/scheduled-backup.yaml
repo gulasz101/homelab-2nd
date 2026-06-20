@@ -1,0 +1,13 @@
+---
+# Daily scheduled backup of the Mattermost Postgres cluster
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: mattermost-db-daily
+  namespace: mattermost
+spec:
+  schedule: "0 0 2 * * *"  # Daily at 02:00 (six-field cron with seconds)
+  backupOwnerReference: self
+  cluster:
+    name: mattermost-db
+  immediate: true  # Take a backup right away when first created

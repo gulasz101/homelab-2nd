@@ -1,0 +1,56 @@
+---
+# CNPG Cluster for Mattermost — single instance on local-path NVMe
+# Backups + WAL archiving to OMV MinIO S3 bucket 'cnpg-backups'
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: mattermost-db
+  namespace: mattermost
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie
+
+  # PostgreSQL configuration
+  postgresql:
+    parameters:
+      max_connections: "100"
+      shared_buffers: "256MB"
+      effective_cache_size: "512MB"
+
+  # Bootstrapping — create the mattermost database and user
+  bootstrap:
+    initdb:
+      database: mattermost
+      owner: mattermost
+      secret:
+        name: mattermost-db-credentials
+
+  # Storage — local-path on homelab-2nd NVMe (fast, NOT durable)
+  storage:
+    storageClass: local-path
+    size: 10Gi
+
+  # Backup + WAL archiving to OMV MinIO S3
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/mattermost/
+      endpointURL: http://openmediavault.local:9000
+      s3Credentials:
+        accessKeyId:
+          name: minio-backup-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: minio-backup-creds
+          key: ACCESS_SECRET_KEY
+      data:
+        compression: gzip
+    retentionPolicy: "30d"
+
+  # Resource limits — reasonable for a homelab
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"

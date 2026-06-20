@@ -1,0 +1,24 @@
+apiVersion: v1
+data:
+    ACCESS_KEY_ID: ENC[AES256_GCM,data:sM/yjyQ710imq7IOHu79SJRZSeMIvZcBggFX6g==,iv:oesETHBCwA3xboZwIP0o1AVOYIqlAXu3nJGQJUfgjVg=,tag:fV2BGDOINnkbqTw3KKLkpQ==,type:str]
+    ACCESS_SECRET_KEY: ENC[AES256_GCM,data:q5ZyIxyweN9cAuCt2iQApjuHvLL8JtXSVZdMOQ==,iv:FT6DnwkopK0lNDSiFXw2Xx+nMc7g13uuEqtZvrbjn0Q=,tag:lQJ0CL/KOUyUePPUs2331w==,type:str]
+kind: Secret
+metadata:
+    creationTimestamp: null
+    name: mattermost-minio-creds
+    namespace: mattermost
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBWSVVqNzVrNFdUdHIrVmNV
+            RE5LV2dyOENtdVJmYlpYL1BoaVJzT3lQclZZCisvcWdNNk0rNUgzakhGSE95VzN5
+            SXVMbUN2MGp3WW11cVhSbmRzb0E3ZFkKLS0tIGhVYTQ4STJQTzlUdEtLdWpQRnV5
+            T01odStuSE94cnlNcDRTZnErTHR6SFUKTYSj8GzG/S8Mmak2vhfqDrVotLofpDRB
+            1d3za4qVDNf+gsgv4AKodIOUifwUYBWNFfFv9ICS1aWkyKKxEqtC1g==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-06-20T10:39:02Z"
+    mac: ENC[AES256_GCM,data:INXoQQWF1iexX2MfQ/Sk3cPr6yfzDP0ZCkXsP+iU5UoMLFulCjlFDVeKiU71ZLUROHt6RxzTsfv625rbIWdD3a3fRyBW+nhpJjLsZPeNIT+F0/4fmqTryYbY14RcOVlAeqhHjiP2cUV127OF2TlOoSD9dlpK0nk1jPqAvcmz2RE=,iv:B10vXHCcjXJrPX7agFCn9Qfti08qXoJlqoC9XeDRV5c=,tag:KQuCdjY8icFGJHaL9idqgA==,type:str]
+    version: 3.13.1

@@ -1,0 +1,106 @@
+---
+# Mattermost Team Edition — connected to CNPG Postgres + OMV MinIO for files
+# Internal service only (ClusterIP) — Cloudflare Tunnel ingress comes later
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: mattermost
+  namespace: mattermost
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: mattermost-team-edition
+      version: ">=6.6.0"
+      sourceRef:
+        kind: HelmRepository
+        name: mattermost
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Disable built-in MySQL — we use CNPG Postgres
+    mysql:
+      enabled: false
+
+    # Service — internal ClusterIP only for now
+    service:
+      type: ClusterIP
+      externalPort: 8065
+      internalPort: 8065
+
+    # Ingress disabled — Cloudflare Tunnel comes later
+    ingress:
+      enabled: false
+
+    # Disable PVC persistence — we use MinIO for file storage
+    persistence:
+      data:
+        enabled: false
+      plugins:
+        enabled: false
+
+    # Mattermost application config via env vars
+    extraEnvVars:
+      # Database connection — CNPG RW service
+      - name: MM_SQLSETTINGS_DRIVERNAME
+        value: "postgres"
+      - name: MM_SQLSETTINGS_DATASOURCE
+        valueFrom:
+          secretKeyRef:
+            name: mattermost-db-credentials
+            key: MM_SQLSETTINGS_DATASOURCE
+
+      # File storage — OMV MinIO S3
+      - name: MM_FILESETTINGS_DRIVERNAME
+        value: "amazons3"
+      - name: MM_FILESETTINGS_AMAZONS3ACCESSKEYID
+        valueFrom:
+          secretKeyRef:
+            name: mattermost-minio-creds
+            key: ACCESS_KEY_ID
+      - name: MM_FILESETTINGS_AMAZONS3SECRETACCESSKEY
+        valueFrom:
+          secretKeyRef:
+            name: mattermost-minio-creds
+            key: ACCESS_SECRET_KEY
+      - name: MM_FILESETTINGS_AMAZONS3BUCKET
+        value: "mattermost-files"
+      - name: MM_FILESETTINGS_AMAZONS3REGION
+        value: "us-east-1"
+      - name: MM_FILESETTINGS_AMAZONS3ENDPOINT
+        value: "http://openmediavault.local:9000"
+      - name: MM_FILESETTINGS_AMAZONS3SSL
+        value: "false"
+
+      # Site URL (internal for now, will be updated with Cloudflare Tunnel)
+      - name: MM_SERVICESETTINGS_SITEURL
+        value: "http://192.168.1.179:8065"
+
+      # Invite-only, no email/SMTP
+      - name: MM_EMAILSETTINGS_ENABLESIGNUPWITHEMAIL
+        value: "false"
+      - name: MM_EMAILSETTINGS_ENABLESIGNINWITHEMAIL
+        value: "false"
+      - name: MM_EMAILSETTINGS_SMTPSERVER
+        value: ""
+      - name: MM_EMAILSETTINGS_SMTPPORT
+        value: ""
+
+      # Team configuration
+      - name: MM_TEAMSETTINGS_ENABLEOPENSERVER
+        value: "false"
+      - name: MM_TEAMSETTINGS_ENABLEUSERCREATION
+        value: "false"
+      - name: MM_TEAMSETTINGS_ENABLETEAMSCREATION
+        value: "false"
+
+      # Logging
+      - name: MM_LOGSETTINGS_CONSOLELEVEL
+        value: "INFO"
+      - name: MM_LOGSETTINGS_FILELEVEL
+        value: "INFO"

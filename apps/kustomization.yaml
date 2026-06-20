@@ -1,3 +1,15 @@
+---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+resources:
+  # Mattermost namespace
+  - mattermost/namespace.yaml
+  # SOPS-encrypted secrets
+  - mattermost/mattermost-db-credentials.sops.yaml
+  - mattermost/minio-backup-creds.sops.yaml
+  - mattermost/mattermost-minio-creds.sops.yaml
+  # CNPG Cluster for Mattermost Postgres
+  - mattermost/postgres-cluster.yaml
+  - mattermost/scheduled-backup.yaml
+  # Mattermost HelmRelease
+  - mattermost/mattermost-helm-release.yaml
