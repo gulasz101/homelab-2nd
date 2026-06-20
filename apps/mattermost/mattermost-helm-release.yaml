@@ -87,6 +87,7 @@ spec:
         value: "https://chat.voitech.dev"
 
       # Invite-only, no email/SMTP
+      # Email sign-up is disabled, but username/password sign-in is enabled.
       - name: MM_EMAILSETTINGS_ENABLESIGNUPWITHEMAIL
         value: "false"
       - name: MM_EMAILSETTINGS_ENABLESIGNINWITHEMAIL
@@ -95,6 +96,12 @@ spec:
         value: ""
       - name: MM_EMAILSETTINGS_SMTPPORT
         value: ""
+
+      # Authentication: username/password sign-in is enabled, but LDAP/SAML/SSO are off.
+      - name: MM_SERVICESETTINGS_ENABLESIGNINWITHUSERNAME
+        value: "true"
+      - name: MM_SERVICESETTINGS_ENABLESIGNINWITHEMAIL
+        value: "false"
 
       # Team configuration
       - name: MM_TEAMSETTINGS_ENABLEOPENSERVER
