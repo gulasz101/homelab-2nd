@@ -77,6 +77,8 @@ spec:
         value: "us-east-1"
       - name: MM_FILESETTINGS_AMAZONS3ENDPOINT
         value: "openmediavault.local:9000"
+      - name: MM_FILESETTINGS_AMAZONS3PATHSTYLE
+        value: "true"
       - name: MM_FILESETTINGS_AMAZONS3SSL
         value: "false"
 
