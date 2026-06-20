@@ -9,6 +9,7 @@ resources:
   - mattermost/minio-backup-creds.sops.yaml
   - mattermost/mattermost-minio-creds.sops.yaml
   - mattermost/chat-tunnel-token.sops.yaml
+  - mattermost/mattermost-initial-admin-password.sops.yaml
   # CNPG Cluster for Mattermost Postgres
   - mattermost/postgres-cluster.yaml
   - mattermost/scheduled-backup.yaml
