@@ -12,4 +12,11 @@ resources:
   # CoreDNS custom config for resolving OMV .local hostname from pods
   - coredns/coredns-custom-homelab.yaml
   # LGTM observability stack
-  - observability/kustomization.yaml
+  - observability/namespace.yaml
+  - observability/helm-repositories.yaml
+  - observability/grafana-admin-credentials.sops.yaml
+  - observability/prometheus-stack-helm-release.yaml
+  - observability/loki-helm-release.yaml
+  - observability/tempo-helm-release.yaml
+  - observability/grafana-helm-release.yaml
+  - observability/opentelemetry-collector-helm-release.yaml
