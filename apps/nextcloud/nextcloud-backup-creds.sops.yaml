@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: nextcloud-backup-creds
+    namespace: nextcloud
+type: Opaque
+stringData:
+    ACCESS_KEY_ID: ENC[AES256_GCM,data:xW7UcScNFDpaMhi865GVB55yCBujORtfkTDxh+k=,iv:nM7dma76waMSCo3gyFyu9XujgIWrZQdJh8WeORtRY/A=,tag:TmVkiuqQ6H/kjW4wFGvdtw==,type:str]
+    ACCESS_SECRET_KEY: ENC[AES256_GCM,data:X04wBI/5c/bjKJ2TyDY+AL21YIUDqp+O2qwOFeXDdYRw8HIj6L//AQ==,iv:gvKZfTjCHdLxFRIes/tf45/2LZg6Kjv6igWC2KGIzKo=,tag:9UOgp+LVoxqItZ1TKUUf9g==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBOV0VMeUJBYXByb1Q3NkR6
+            VlB2SnhiazBhMFVHcTZmSEhlY2ovN2NWNENJCnVGMmtMRmljRFFWYlNqQlB5MkJX
+            dWc1MlJvZHpCMjJjZ3lySG1xbGNXWE0KLS0tIFRYRGlwZmROb01PRVNDVVFMSHZ0
+            NzBjY0cxbU9UTHFabkZ5aG0xNndqMjAK696DTtrma3unt3DlZuoHmAAxlX9UonbI
+            gicsR1GNMOgKDp9bgKL5FmBABT8eWOIGg4qyhaqGK0VjXlTM7GW24w==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-06-21T19:15:29Z"
+    mac: ENC[AES256_GCM,data:qpXm1jbiCh/bd6CyGvGByvyzJOhJ670qwFQVOwtJFMGMCHTJYNI43WP3HHbXiA0v1b4ZofjoZux7sWd/B+cFwEc/3XxQo+qRSHA88CLYS31Ypa+BQy1D7cI7GPI+lnPZF1RssZ7E1qOqIqf28V3qCmtgjOxV1QyTRfFiPtf3R88=,iv:CXfQzxf3x/S8JaDmeqZuhaKO38PyaP7Il+phmDRgetA=,tag:TBFC2tb9ZO7HdMG+HZiR+g==,type:str]
+    version: 3.13.1

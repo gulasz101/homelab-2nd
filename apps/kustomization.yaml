@@ -17,3 +17,23 @@ resources:
   - mattermost/mattermost-helm-release.yaml
   # Cloudflare Tunnel for chat.voitech.dev
   - mattermost/cloudflared-chat-deployment.yaml
+  # Nextcloud namespace
+  - nextcloud/namespace.yaml
+  # SOPS-encrypted secrets
+  - nextcloud/nextcloud-admin-credentials.sops.yaml
+  - nextcloud/nextcloud-db-credentials.sops.yaml
+  - nextcloud/nextcloud-minio-creds.sops.yaml
+  - nextcloud/nextcloud-backup-creds.sops.yaml
+  - nextcloud/nextcloud-cloudflare-token.sops.yaml
+  # NFS PV/PVCs
+  - nextcloud/nextcloud-html-pv.yaml
+  - nextcloud/nextcloud-html-pvc.yaml
+  - nextcloud/nextcloud-data-pv.yaml
+  - nextcloud/nextcloud-data-pvc.yaml
+  # CNPG Cluster for Nextcloud
+  - nextcloud/postgres-cluster.yaml
+  - nextcloud/scheduled-backup.yaml
+  # Nextcloud HelmRelease
+  - nextcloud/nextcloud-helm-release.yaml
+  # Cloudflare Tunnel for photos.voitech.dev
+  - nextcloud/cloudflared-deployment.yaml

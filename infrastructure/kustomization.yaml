@@ -9,6 +9,8 @@ resources:
   - cnpg/helm-release.yaml
   # Mattermost HelmRepository (needed for HelmRelease in apps)
   - mattermost/helm-repository.yaml
+  # Nextcloud HelmRepository (needed for HelmRelease in apps)
+  - nextcloud/helm-repository.yaml
   # CoreDNS custom config for resolving OMV .local hostname from pods
   - coredns/coredns-custom-homelab.yaml
   # LGTM observability stack

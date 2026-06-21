@@ -1,0 +1,55 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextcloud-cloudflared
+  namespace: nextcloud
+  labels:
+    app: nextcloud-cloudflared
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nextcloud-cloudflared
+  template:
+    metadata:
+      labels:
+        app: nextcloud-cloudflared
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(CF_TOKEN)
+          env:
+            - name: CF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-cloudflare-token
+                  key: token
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud-cloudflared
+  namespace: nextcloud
+spec:
+  selector:
+    app: nextcloud-cloudflared
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+  type: ClusterIP

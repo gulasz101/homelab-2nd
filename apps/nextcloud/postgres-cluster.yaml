@@ -1,0 +1,56 @@
+---
+# CNPG Cluster for Nextcloud — single instance on local-path NVMe
+# Backups + WAL archiving to OMV MinIO S3 bucket 'cnpg-backups/nextcloud'
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: nextcloud-db
+  namespace: nextcloud
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie
+
+  # PostgreSQL configuration
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "512MB"
+      effective_cache_size: "1GB"
+
+  # Bootstrapping — create the nextcloud database and user
+  bootstrap:
+    initdb:
+      database: nextcloud
+      owner: nextcloud
+      secret:
+        name: nextcloud-db-credentials
+
+  # Storage — local-path on homelab-2nd NVMe (fast, NOT durable)
+  storage:
+    storageClass: local-path
+    size: 20Gi
+
+  # Backup + WAL archiving to OMV MinIO S3
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/nextcloud/
+      endpointURL: http://openmediavault.local:9000
+      s3Credentials:
+        accessKeyId:
+          name: nextcloud-backup-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: nextcloud-backup-creds
+          key: ACCESS_SECRET_KEY
+      data:
+        compression: gzip
+    retentionPolicy: "30d"
+
+  # Resource limits — reasonable for a homelab
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"

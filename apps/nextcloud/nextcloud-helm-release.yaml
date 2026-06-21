@@ -1,0 +1,176 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: nextcloud
+      version: "9.1.3"
+      sourceRef:
+        kind: HelmRepository
+        name: nextcloud
+        namespace: flux-system
+  dependsOn:
+    - name: nextcloud-db
+      namespace: nextcloud
+  values:
+    image:
+      flavor: apache
+
+    replicaCount: 1
+
+    nextcloud:
+      host: photos.voitech.dev
+      username: admin
+      password: changeme
+      existingSecret:
+        enabled: true
+        secretName: nextcloud-admin-credentials
+        usernameKey: nextcloud-username
+        passwordKey: nextcloud-password
+
+      trustedDomains:
+        - photos.voitech.dev
+        - nextcloud.nextcloud.svc.cluster.local
+
+      # PHP config overrides injected as config.php snippets
+      configs:
+        logging.config.php: |-
+          <?php
+          $CONFIG = array (
+            'log_type' => 'stderr',
+            'loglevel' => 2,
+            'logtimezone' => 'Europe/Berlin',
+          );
+        preview.config.php: |-
+          <?php
+          $CONFIG = array (
+            'enable_previews' => true,
+            'preview_max_x' => 2048,
+            'preview_max_y' => 2048,
+            'preview_max_scale_factor' => 3,
+            'enabledPreviewProviders' => array (
+              'OC\\Preview\\PNG',
+              'OC\\Preview\\JPEG',
+              'OC\\Preview\\GIF',
+              'OC\\Preview\\BMP',
+              'OC\\Preview\\XBitmap',
+              'OC\\Preview\\MP3',
+              'OC\\Preview\\MP4',
+              'OC\\Preview\\MKV',
+              'OC\\Preview\\TXT',
+              'OC\\Preview\\MarkDown',
+              'OC\\Preview\\PDF'
+            ),
+          );
+        public-url.config.php: |-
+          <?php
+          $CONFIG = array (
+            'overwriteprotocol' => 'https',
+            'overwritehost' => 'photos.voitech.dev',
+            'overwrite.cli.url' => 'https://photos.voitech.dev',
+            'trusted_proxies' => array('10.0.0.0/8'),
+          );
+
+      datadir: /var/www/html/data
+
+      # S3 primary storage on OMV MinIO
+      objectStore:
+        s3:
+          enabled: true
+          existingSecret: nextcloud-minio-creds
+          secretKeys:
+            accessKey: accessKeyId
+            secretKey: secretAccessKey
+          host: openmediavault.local
+          port: 9000
+          ssl: false
+          usePathStyle: true
+          region: us-east-1
+          bucket: nextcloud-photos
+          autoCreate: false
+          legacyAuth: false
+
+    # External Postgres via CNPG
+    internalDatabase:
+      enabled: false
+    mariadb:
+      enabled: false
+    postgresql:
+      enabled: false
+
+    externalDatabase:
+      enabled: true
+      type: postgresql
+      host: nextcloud-db-rw.nextcloud.svc.cluster.local:5432
+      database: nextcloud
+      user: nextcloud
+      existingSecret:
+        enabled: true
+        secretName: nextcloud-db-credentials
+        usernameKey: username
+        passwordKey: password
+        databaseKey: database
+
+    # Redis for file locking / caching (ephemeral, no persistence)
+    redis:
+      enabled: true
+      auth:
+        enabled: false
+      master:
+        persistence:
+          enabled: false
+      replica:
+        replicaCount: 0
+
+    externalRedis:
+      enabled: false
+
+    # Persistence — durable data lives on OMV NFS
+    persistence:
+      enabled: true
+      existingClaim: nextcloud-html
+      nextcloudData:
+        enabled: true
+        existingClaim: nextcloud-data
+
+    # Cronjob for background jobs
+    cronjob:
+      enabled: true
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+
+    # Resource sizing
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+
+    # PHP tuning for large photo/video uploads
+    phpConfigs:
+      uploads.ini: |-
+        upload_max_filesize=1G
+        post_max_size=1G
+        max_execution_time=300
+        memory_limit=1024M
+
+    # Metrics exporter
+    metrics:
+      enabled: true
+      https: false
+      service:
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "9205"

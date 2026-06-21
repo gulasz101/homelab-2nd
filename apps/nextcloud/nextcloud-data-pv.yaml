@@ -1,0 +1,20 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nextcloud-data
+  namespace: nextcloud
+spec:
+  capacity:
+    storage: 200Gi
+  accessModes:
+    - ReadWriteOnce
+  nfs:
+    server: openmediavault.local
+    path: /srv/dev-disk-by-uuid-cda9bf6e-0ed1-4e61-b063-1cbab7351886/nextcloud/data
+  storageClassName: ""
+  persistentVolumeReclaimPolicy: Retain
+  mountOptions:
+    - hard
+    - intr
+    - nconnect=8
