@@ -21,7 +21,7 @@ spec:
     replicaCount: 1
 
     nextcloud:
-      host: photos.voitech.dev
+      host: nextcloud-photos.voitech.dev
       username: admin
       password: changeme
       existingSecret:
@@ -31,7 +31,7 @@ spec:
         passwordKey: nextcloud-password
 
       trustedDomains:
-        - photos.voitech.dev
+        - nextcloud-photos.voitech.dev
         - nextcloud.nextcloud.svc.cluster.local
 
       # PHP config overrides injected as config.php snippets
@@ -68,8 +68,8 @@ spec:
           <?php
           $CONFIG = array (
             'overwriteprotocol' => 'https',
-            'overwritehost' => 'photos.voitech.dev',
-            'overwrite.cli.url' => 'https://photos.voitech.dev',
+            'overwritehost' => 'nextcloud-photos.voitech.dev',
+            'overwrite.cli.url' => 'https://nextcloud-photos.voitech.dev',
             'trusted_proxies' => array('10.0.0.0/8'),
           );
 
