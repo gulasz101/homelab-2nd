@@ -1,0 +1,141 @@
+---
+# OpenTelemetry Collector DaemonSet.
+# - Collects Kubernetes container logs via the filelog receiver and sends them
+#   to Loki using the Loki exporter.
+# - Receives OTLP metrics/traces/logs from applications and forwards them to
+#   Prometheus (remote_write), Tempo (OTLP) and Loki (OTLP/loki exporter).
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: opentelemetry-collector
+  namespace: observability
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: opentelemetry-collector
+      version: ">=0.104.0"
+      sourceRef:
+        kind: HelmRepository
+        name: open-telemetry
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    mode: daemonset
+
+    image:
+      repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib
+      tag: ""
+
+    command:
+      name: otelcol-contrib
+
+    presets:
+      logsCollection:
+        enabled: true
+        includeCollectorLogs: false
+      kubernetesAttributes:
+        enabled: true
+      kubeletMetrics:
+        enabled: false
+      hostMetrics:
+        enabled: false
+      clusterMetrics:
+        enabled: false
+      kubernetesEvents:
+        enabled: false
+
+    config:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: ${env:MY_POD_IP}:4317
+            http:
+              endpoint: ${env:MY_POD_IP}:4318
+
+      exporters:
+        loki:
+          endpoint: http://loki.observability.svc.cluster.local:3100/loki/api/v1/push
+          tls:
+            insecure: true
+
+        otlp/tempo:
+          endpoint: tempo.observability.svc.cluster.local:4317
+          tls:
+            insecure: true
+
+        prometheusremotewrite:
+          endpoint: http://prometheus-stack-prometheus.observability.svc.cluster.local:9090/api/v1/write
+          tls:
+            insecure: true
+
+        debug:
+          verbosity: basic
+
+      service:
+        pipelines:
+          logs:
+            receivers: [otlp, filelog]
+            processors: [batch, k8sattributes]
+            exporters: [loki, debug]
+          traces:
+            receivers: [otlp]
+            processors: [batch, k8sattributes]
+            exporters: [otlp/tempo, debug]
+          metrics:
+            receivers: [otlp]
+            processors: [batch, k8sattributes]
+            exporters: [prometheusremotewrite, debug]
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+
+    service:
+      # The DaemonSet still exposes OTLP via a headless service per node; apps
+      # inside the cluster can use the DNS A-record for the collector service.
+      enabled: true
+      type: ClusterIP
+
+    ports:
+      otlp-grpc:
+        enabled: true
+        containerPort: 4317
+        servicePort: 4317
+        protocol: TCP
+      otlp-http:
+        enabled: true
+        containerPort: 4318
+        servicePort: 4318
+        protocol: TCP
+
+    # Required to read container logs from host paths.
+    podSecurityContext:
+      runAsUser: 0
+    securityContext:
+      privileged: true
+
+    extraVolumes:
+      - name: varlogpods
+        hostPath:
+          path: /var/log/pods
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+
+    extraVolumeMounts:
+      - name: varlogpods
+        mountPath: /var/log/pods
+        readOnly: true
+      - name: varlibdockercontainers
+        mountPath: /var/lib/docker/containers
+        readOnly: true

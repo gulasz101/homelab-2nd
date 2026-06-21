@@ -1,0 +1,89 @@
+---
+# Standalone Grafana with datasources provisioned for Prometheus, Loki and Tempo.
+# Admin password is injected from a SOPS-encrypted secret.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: grafana
+      version: ">=8.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: grafana-community
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  valuesFrom:
+    - kind: Secret
+      name: grafana-admin-credentials
+      valuesKey: admin-password
+      targetPath: admin.password
+  values:
+    admin:
+      existingSecret: grafana-admin-credentials
+      userKey: admin-user
+      passwordKey: admin-password
+
+    persistence:
+      enabled: true
+      type: pvc
+      storageClassName: local-path
+      accessModes:
+        - ReadWriteOnce
+      size: 5Gi
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+
+    # Provision datasources via a sidecar that watches ConfigMaps labelled
+    # `grafana_datasource: "true"`.
+    sidecar:
+      datasources:
+        enabled: true
+        label: grafana_datasource
+        labelValue: "true"
+        reloadURL: "http://grafana.observability.svc.cluster.local:3000/api/admin/provisioning/datasources/reload"
+
+    # Datasource definitions provisioned directly in values.
+    datasources:
+      datasources.yaml:
+        apiVersion: 1
+        datasources:
+          - name: Prometheus
+            type: prometheus
+            url: http://prometheus-stack-prometheus.observability.svc.cluster.local:9090
+            access: proxy
+            isDefault: true
+            editable: false
+          - name: Loki
+            type: loki
+            url: http://loki.observability.svc.cluster.local:3100
+            access: proxy
+            editable: false
+          - name: Tempo
+            type: tempo
+            url: http://tempo.observability.svc.cluster.local:3200
+            access: proxy
+            editable: false
+
+    # Service stays internal; Cloudflare Tunnel ingress is added separately.
+    service:
+      type: ClusterIP
+      port: 3000
+
+    # Disable bundled test pods.
+    testFramework:
+      enabled: false

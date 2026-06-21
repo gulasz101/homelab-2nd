@@ -1,0 +1,12 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - helm-repositories.yaml
+  - grafana-admin-credentials.sops.yaml
+  - prometheus-stack-helm-release.yaml
+  - loki-helm-release.yaml
+  - tempo-helm-release.yaml
+  - grafana-helm-release.yaml
+  - opentelemetry-collector-helm-release.yaml

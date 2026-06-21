@@ -1,0 +1,98 @@
+---
+# Prometheus + Prometheus Operator + node-exporter + kube-state-metrics.
+# Grafana is disabled here because we deploy a standalone Grafana instance
+# with datasources provisioned for Prometheus, Loki and Tempo.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: prometheus-stack
+  namespace: observability
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: kube-prometheus-stack
+      version: ">=69.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # We run our own Grafana so we can provision LGTM datasources cleanly.
+    grafana:
+      enabled: false
+
+    # Minimal Alertmanager for now; can be expanded later.
+    alertmanager:
+      enabled: true
+      config:
+        global:
+          resolve_timeout: 5m
+        route:
+          group_by: ['job']
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 12h
+          receiver: 'null'
+        receivers:
+          - name: 'null'
+
+    prometheus:
+      prometheusSpec:
+        replicas: 1
+        retention: 10d
+        retentionSize: "8GB"
+        enableRemoteWriteReceiver: true
+        # Discover ServiceMonitors/PodMonitors in all namespaces, not just
+        # those labelled with the chart release name.
+        serviceMonitorSelectorNilUsesHelmValues: false
+        podMonitorSelectorNilUsesHelmValues: false
+        # Storage for time-series data on fast local-path.
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: local-path
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 10Gi
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            memory: 2Gi
+
+    prometheusOperator:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 512Mi
+
+    kube-state-metrics:
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          memory: 256Mi
+
+    prometheus-node-exporter:
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+
+    # Keep CRDs; Flux/Helm will manage them.
+    crds:
+      enabled: true
