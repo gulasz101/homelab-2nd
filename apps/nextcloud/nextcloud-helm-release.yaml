@@ -75,7 +75,11 @@ spec:
 
       datadir: /var/www/html/data
 
-      # S3 primary storage on OMV MinIO
+      # S3 primary storage on OMV MinIO. The chart translates this into
+      # OBJECTSTORE_S3_* environment variables, which the Nextcloud
+      # entrypoint writes into config.php as objectstore => S3 on first
+      # install. All user files are streamed to MinIO; the local data dir
+      # only holds thumbnails, cache, and minimal metadata.
       objectStore:
         s3:
           enabled: true
@@ -127,16 +131,14 @@ spec:
     externalRedis:
       enabled: false
 
-    # Persistence: mount the whole Nextcloud root and data dir from OMV NFS.
-    # The chart uses subpaths (root/, html/, config/, custom_apps/, tmp/, themes/)
-    # under the main PVC and data/ under the data PVC. This is the chart's
-    # intended design for durable storage.
+    # Persistence: keep the whole Nextcloud root on the existing K3s local-path
+    # PVC (nextcloud-nextcloud, 10Gi). This holds only code, config, apps, and
+    # local cache/thumbnails — all durable user data lives in MinIO. No NFS.
     persistence:
       enabled: true
-      existingClaim: nextcloud-html
+      existingClaim: nextcloud-nextcloud
       nextcloudData:
-        enabled: true
-        existingClaim: nextcloud-data
+        enabled: false
 
     # Cronjob for background jobs
     cronjob:
@@ -166,7 +168,7 @@ spec:
         max_execution_time=300
         memory_limit=1024M
 
-    # Liveness/readiness — give NFS + first-install plenty of time
+    # Liveness/readiness — give first-install plenty of time
     livenessProbe:
       enabled: true
       initialDelaySeconds: 300
