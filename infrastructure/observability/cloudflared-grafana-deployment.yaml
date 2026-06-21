@@ -1,0 +1,43 @@
+---
+# Dedicated Cloudflare Tunnel for grafana.voitech.dev -> Grafana
+# Token is SOPS-encrypted in grafana-tunnel-token.sops.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-grafana
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: cloudflared-grafana
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-grafana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-grafana
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
