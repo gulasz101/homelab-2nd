@@ -106,24 +106,13 @@ spec:
       enabled: true
       type: ClusterIP
 
+    # The logsCollection preset already mounts /var/log/pods and
+    # /var/lib/docker/containers, so we do not add them again as extra volumes.
+    extraVolumes: []
+    extraVolumeMounts: []
+
     # Required to read container logs from host paths.
     podSecurityContext:
       runAsUser: 0
     securityContext:
       privileged: true
-
-    extraVolumes:
-      - name: varlogpods
-        hostPath:
-          path: /var/log/pods
-      - name: varlibdockercontainers
-        hostPath:
-          path: /var/lib/docker/containers
-
-    extraVolumeMounts:
-      - name: varlogpods
-        mountPath: /var/log/pods
-        readOnly: true
-      - name: varlibdockercontainers
-        mountPath: /var/lib/docker/containers
-        readOnly: true
