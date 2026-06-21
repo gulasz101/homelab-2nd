@@ -21,9 +21,10 @@ resources:
   - nextcloud/namespace.yaml
   # SOPS-encrypted secrets
   - nextcloud/nextcloud-admin-credentials.sops.yaml
-  - nextcloud/nextcloud-db-credentials.sops.yaml
+  - nextcloud/nextcloud-db-creds.sops.yaml
   - nextcloud/nextcloud-minio-creds.sops.yaml
   - nextcloud/nextcloud-backup-creds.sops.yaml
+  - nextcloud/nextcloud-redis-creds.sops.yaml
   - nextcloud/nextcloud-cloudflare-token.sops.yaml
   # NFS PV/PVCs
   - nextcloud/nextcloud-html-pv.yaml
