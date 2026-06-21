@@ -1,0 +1,12 @@
+---
+# Public ingress for Grafana via Cloudflare Tunnel.
+# Add a public hostname rule in the Cloudflare Zero Trust dashboard:
+#   grafana.voitech.dev -> http://grafana.observability.svc.cluster.local:3000
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-tunnel-ingress
+  namespace: observability
+data:
+  note: |
+    grafana.voitech.dev -> http://grafana.observability.svc.cluster.local:3000

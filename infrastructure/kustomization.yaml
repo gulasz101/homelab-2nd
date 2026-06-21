@@ -22,3 +22,4 @@ resources:
   - observability/grafana-helm-release.yaml
   - observability/opentelemetry-collector-helm-release.yaml
   - observability/cloudflared-grafana-deployment.yaml
+  - observability/grafana-tunnel-ingress-configmap.yaml
