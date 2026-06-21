@@ -28,6 +28,9 @@ spec:
       valuesKey: admin-password
       targetPath: admin.password
   values:
+    initChownData:
+      enabled: false
+
     admin:
       existingSecret: grafana-admin-credentials
       userKey: admin-user
