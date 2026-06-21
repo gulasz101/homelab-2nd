@@ -60,8 +60,8 @@ spec:
               endpoint: ${env:MY_POD_IP}:4318
 
       exporters:
-        loki:
-          endpoint: http://loki.observability.svc.cluster.local:3100/loki/api/v1/push
+        otlphttp/loki:
+          endpoint: http://loki.observability.svc.cluster.local:3100/otlp
           tls:
             insecure: true
 
@@ -83,7 +83,7 @@ spec:
           logs:
             receivers: [otlp, filelog]
             processors: [batch, k8sattributes]
-            exporters: [loki, debug]
+            exporters: [otlphttp/loki, debug]
           traces:
             receivers: [otlp]
             processors: [batch, k8sattributes]
@@ -93,6 +93,9 @@ spec:
             processors: [batch, k8sattributes]
             exporters: [prometheusremotewrite, debug]
 
+    # Loki 3.x supports native OTLP log ingestion at /otlp on port 3100.
+    # The schemaConfig in the Loki HelmRelease already uses v13, which
+    # enables structured metadata required for OTLP logs.
     resources:
       requests:
         cpu: 100m
