@@ -106,18 +106,6 @@ spec:
       enabled: true
       type: ClusterIP
 
-    ports:
-      otlp-grpc:
-        enabled: true
-        containerPort: 4317
-        servicePort: 4317
-        protocol: TCP
-      otlp-http:
-        enabled: true
-        containerPort: 4318
-        servicePort: 4318
-        protocol: TCP
-
     # Required to read container logs from host paths.
     podSecurityContext:
       runAsUser: 0
