@@ -2,6 +2,7 @@
 # Grafana Loki in Monolithic (single-binary) mode.
 # Logs are stored on a local-path PVC for low latency.
 # Auth is disabled for the single-tenant homelab setup.
+# NOTE: Chart v7+ uses `singleBinary` not `monolithic` for the deployment key.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -30,6 +31,9 @@ spec:
       auth_enabled: false
       commonConfig:
         replication_factor: 1
+      limits_config:
+        allow_structured_metadata: true
+        volume_enabled: true
       storage:
         type: filesystem
       schemaConfig:
@@ -42,7 +46,8 @@ spec:
               prefix: index_
               period: 24h
 
-    monolithic:
+    singleBinary:
+      replicas: 1
       persistence:
         enabled: true
         storageClassName: local-path
@@ -82,4 +87,24 @@ spec:
     write:
       replicas: 0
     backend:
+      replicas: 0
+    ingester:
+      replicas: 0
+    querier:
+      replicas: 0
+    queryFrontend:
+      replicas: 0
+    queryScheduler:
+      replicas: 0
+    distributor:
+      replicas: 0
+    compactor:
+      replicas: 0
+    indexGateway:
+      replicas: 0
+    bloomPlanner:
+      replicas: 0
+    bloomBuilder:
+      replicas: 0
+    bloomGateway:
       replicas: 0
