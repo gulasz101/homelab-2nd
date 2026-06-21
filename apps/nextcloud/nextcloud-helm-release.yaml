@@ -127,35 +127,16 @@ spec:
     externalRedis:
       enabled: false
 
-    # Persistence: code lives on fast emptyDir (NVMe), only durable dirs on OMV NFS
+    # Persistence: mount the whole Nextcloud root and data dir from OMV NFS.
+    # The chart uses subpaths (root/, html/, config/, custom_apps/, tmp/, themes/)
+    # under the main PVC and data/ under the data PVC. This is the chart's
+    # intended design for durable storage.
     persistence:
-      enabled: false
-
-    extraVolumes:
-      - name: nextcloud-main
-        emptyDir: {}
-      - name: nextcloud-config-nfs
-        persistentVolumeClaim:
-          claimName: nextcloud-html
-      - name: nextcloud-data-nfs
-        persistentVolumeClaim:
-          claimName: nextcloud-data
-
-    extraVolumeMounts:
-      - name: nextcloud-main
-        mountPath: /var/www/html
-      - name: nextcloud-config-nfs
-        mountPath: /var/www/html/config
-        subPath: config
-      - name: nextcloud-config-nfs
-        mountPath: /var/www/html/custom_apps
-        subPath: custom_apps
-      - name: nextcloud-config-nfs
-        mountPath: /var/www/html/themes
-        subPath: themes
-      - name: nextcloud-data-nfs
-        mountPath: /var/www/html/data
-        subPath: data
+      enabled: true
+      existingClaim: nextcloud-html
+      nextcloudData:
+        enabled: true
+        existingClaim: nextcloud-data
 
     # Cronjob for background jobs
     cronjob:
