@@ -127,13 +127,39 @@ spec:
     externalRedis:
       enabled: false
 
-    # Persistence — durable data lives on OMV NFS
+    # Persistence: code lives on fast emptyDir (NVMe), only durable dirs on OMV NFS
     persistence:
       enabled: true
-      existingClaim: nextcloud-html
-      nextcloudData:
+      storageClass: ""
+      accessMode: ReadWriteOnce
+      size: 10Gi
+      # Keep Nextcloud code in emptyDir (local NVMe) for fast startup
+      emptyDir:
         enabled: true
-        existingClaim: nextcloud-data
+      nextcloudData:
+        enabled: false
+
+    extraVolumes:
+      - name: nextcloud-config-nfs
+        persistentVolumeClaim:
+          claimName: nextcloud-html
+      - name: nextcloud-data-nfs
+        persistentVolumeClaim:
+          claimName: nextcloud-data
+
+    extraVolumeMounts:
+      - name: nextcloud-config-nfs
+        mountPath: /var/www/html/config
+        subPath: config
+      - name: nextcloud-config-nfs
+        mountPath: /var/www/html/custom_apps
+        subPath: custom_apps
+      - name: nextcloud-config-nfs
+        mountPath: /var/www/html/themes
+        subPath: themes
+      - name: nextcloud-data-nfs
+        mountPath: /var/www/html/data
+        subPath: data
 
     # Cronjob for background jobs
     cronjob:
