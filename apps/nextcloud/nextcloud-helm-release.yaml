@@ -108,7 +108,7 @@ spec:
       user: nextcloud
       existingSecret:
         enabled: true
-        secretName: nextcloud-db-credentials
+        secretName: nextcloud-db-creds
         usernameKey: username
         passwordKey: password
         databaseKey: database
