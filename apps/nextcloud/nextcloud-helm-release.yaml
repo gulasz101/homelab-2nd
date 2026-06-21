@@ -14,9 +14,6 @@ spec:
         kind: HelmRepository
         name: nextcloud
         namespace: flux-system
-  dependsOn:
-    - name: nextcloud-db
-      namespace: nextcloud
   values:
     image:
       flavor: apache
