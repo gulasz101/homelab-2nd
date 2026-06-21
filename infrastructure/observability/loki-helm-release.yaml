@@ -1,8 +1,6 @@
 ---
-# Grafana Loki in Monolithic (single-binary) mode.
-# Logs are stored on a local-path PVC for low latency.
-# Auth is disabled for the single-tenant homelab setup.
-# NOTE: Chart v7+ uses `singleBinary` not `monolithic` for the deployment key.
+# HelmRelease: Grafana Loki in SingleBinary mode with filesystem storage.
+# Uses upstream grafana/loki chart v6.29.0 which reliably renders a single pod.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -13,98 +11,64 @@ spec:
   chart:
     spec:
       chart: loki
-      version: ">=6.0.0"
+      version: "6.29.0"
       sourceRef:
         kind: HelmRepository
-        name: grafana-community
+        name: grafana-loki
         namespace: flux-system
-  install:
-    remediation:
-      retries: 3
-  upgrade:
-    remediation:
-      retries: 3
+      interval: 1h
   values:
-    deploymentMode: Monolithic
-
+    deploymentMode: SingleBinary
     loki:
       auth_enabled: false
       commonConfig:
         replication_factor: 1
-      limits_config:
-        allow_structured_metadata: true
-        volume_enabled: true
       storage:
         type: filesystem
       schemaConfig:
         configs:
           - from: "2024-01-01"
-            store: tsdb
+            index:
+              period: 24h
+              prefix: index_
             object_store: filesystem
             schema: v13
-            index:
-              prefix: index_
-              period: 24h
-
+            store: tsdb
+      limits_config:
+        allow_structured_metadata: true
+        retention_period: 168h
     singleBinary:
       replicas: 1
       persistence:
         enabled: true
-        storageClassName: local-path
-        accessModes:
-          - ReadWriteOnce
         size: 20Gi
+        storageClassName: local-path
       resources:
+        limits:
+          memory: 1Gi
         requests:
           cpu: 100m
           memory: 256Mi
-        limits:
-          memory: 1Gi
-
-    # Disable the bundled MinIO — we already run MinIO on OMV and can switch
-    # Loki to object storage later if desired.
-    minio:
-      enabled: false
-
-    # Disable monitoring CRDs created by this chart to avoid duplicating
-    # Prometheus Operator resources already provided by kube-prometheus-stack.
-    monitoring:
-      serviceMonitor:
-        enabled: false
-      selfMonitoring:
-        enabled: false
-        grafanaAgent:
-          installOperator: false
-      lokiCanary:
-        enabled: false
-
-    gateway:
-      enabled: false
-
-    # Disable unnecessary HA/read replicas for the single-node homelab.
     read:
       replicas: 0
     write:
       replicas: 0
     backend:
       replicas: 0
-    ingester:
-      replicas: 0
-    querier:
-      replicas: 0
-    queryFrontend:
-      replicas: 0
-    queryScheduler:
-      replicas: 0
-    distributor:
-      replicas: 0
-    compactor:
-      replicas: 0
-    indexGateway:
-      replicas: 0
-    bloomPlanner:
-      replicas: 0
-    bloomBuilder:
-      replicas: 0
-    bloomGateway:
-      replicas: 0
+    minio:
+      enabled: false
+    gateway:
+      enabled: true
+    monitoring:
+      lokiCanary:
+        enabled: false
+      selfMonitoring:
+        enabled: false
+        grafanaAgent:
+          installOperator: false
+      serviceMonitor:
+        enabled: false
+    chunksCache:
+      enabled: false
+    resultsCache:
+      enabled: false

@@ -1,0 +1,13 @@
+---
+# HelmRepository for the upstream Grafana Loki chart.
+# The grafana-community chart v7.0.0 currently does not render a single-binary
+# StatefulSet in "Monolithic" mode, so we pin the upstream grafana/loki chart
+# to the well-tested 6.x line until the community chart stabilizes.
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: grafana-loki
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://grafana.github.io/helm-charts
