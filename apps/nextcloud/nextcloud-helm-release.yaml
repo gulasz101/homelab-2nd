@@ -129,17 +129,11 @@ spec:
 
     # Persistence: code lives on fast emptyDir (NVMe), only durable dirs on OMV NFS
     persistence:
-      enabled: true
-      storageClass: ""
-      accessMode: ReadWriteOnce
-      size: 10Gi
-      # Keep Nextcloud code in emptyDir (local NVMe) for fast startup
-      emptyDir:
-        enabled: true
-      nextcloudData:
-        enabled: false
+      enabled: false
 
     extraVolumes:
+      - name: nextcloud-main
+        emptyDir: {}
       - name: nextcloud-config-nfs
         persistentVolumeClaim:
           claimName: nextcloud-html
@@ -148,6 +142,8 @@ spec:
           claimName: nextcloud-data
 
     extraVolumeMounts:
+      - name: nextcloud-main
+        mountPath: /var/www/html
       - name: nextcloud-config-nfs
         mountPath: /var/www/html/config
         subPath: config
