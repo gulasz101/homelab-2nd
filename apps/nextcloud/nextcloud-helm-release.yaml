@@ -131,14 +131,17 @@ spec:
     externalRedis:
       enabled: false
 
-    # Persistence: keep the whole Nextcloud root on the existing K3s local-path
-    # PVC (nextcloud-nextcloud, 10Gi). This holds only code, config, apps, and
-    # local cache/thumbnails — all durable user data lives in MinIO. No NFS.
+    # Persistence: keep the whole Nextcloud root on the existing OMV NFS PVC
+    # (nextcloud-html, 20Gi). This holds code, config, apps, cache, and local
+    # thumbnails. The data directory (/var/www/html/data) is split out to the
+    # dedicated 200Gi NFS PVC nextcloud-data. All durable user files still live
+    # in MinIO S3 primary storage. Do not set storageClass or size here.
     persistence:
       enabled: true
-      existingClaim: nextcloud-nextcloud
+      existingClaim: nextcloud-html
       nextcloudData:
-        enabled: false
+        enabled: true
+        existingClaim: nextcloud-data
 
     # Cronjob for background jobs
     cronjob:
@@ -168,25 +171,26 @@ spec:
         max_execution_time=300
         memory_limit=1024M
 
-    # Liveness/readiness — give first-install plenty of time
+    # Liveness/readiness — give first-install plenty of time on NFS; the
+    # Nextcloud entrypoint rsyncs ~500MB of code to /var/www/html every start.
     livenessProbe:
       enabled: true
-      initialDelaySeconds: 300
+      initialDelaySeconds: 600
       periodSeconds: 30
-      failureThreshold: 10
-      timeoutSeconds: 5
+      failureThreshold: 20
+      timeoutSeconds: 10
     readinessProbe:
       enabled: true
-      initialDelaySeconds: 120
-      periodSeconds: 10
-      failureThreshold: 30
+      initialDelaySeconds: 300
+      periodSeconds: 15
+      failureThreshold: 60
       timeoutSeconds: 5
 
     startupProbe:
       enabled: true
-      initialDelaySeconds: 60
-      periodSeconds: 10
-      failureThreshold: 60
+      initialDelaySeconds: 120
+      periodSeconds: 15
+      failureThreshold: 120
       timeoutSeconds: 5
 
     # Metrics exporter
