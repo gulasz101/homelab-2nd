@@ -26,3 +26,5 @@ resources:
   - observability/opentelemetry-collector-helm-release.yaml
   - observability/cloudflared-grafana-deployment.yaml
   - observability/grafana-tunnel-ingress-configmap.yaml
+  # Grafana dashboards
+  - observability/dashboards/homelab-system-load-dashboard-configmap.yaml
