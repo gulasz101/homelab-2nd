@@ -59,6 +59,12 @@ spec:
         label: grafana_datasource
         labelValue: "true"
         reloadURL: "http://grafana.observability.svc.cluster.local:3000/api/admin/provisioning/datasources/reload"
+      dashboards:
+        enabled: true
+        label: grafana_dashboard
+        labelValue: "1"
+        folderAnnotation: grafana.folder
+        reloadURL: "http://grafana.observability.svc.cluster.local:3000/api/admin/provisioning/dashboards/reload"
 
     # Datasource definitions provisioned directly in values.
     datasources:
