@@ -76,6 +76,12 @@ spec:
                 labels:
                   instance: openmediavault
                   host: openmediavault
+          - job_name: omv-cadvisor
+            static_configs:
+              - targets: ["192.168.1.180:8080"]
+                labels:
+                  instance: openmediavault
+                  host: openmediavault
         resources:
           requests:
             cpu: 100m
