@@ -49,7 +49,11 @@ spec:
         retention: 10d
         retentionSize: "8GB"
         enableRemoteWriteReceiver: true
-        # Discover ServiceMonitors/PodMonitors in all namespaces, not just
+        # Attach a host label to all metrics scraped by this Prometheus instance
+        # so dashboard legends group cleanly alongside OMV's static-config host label.
+        externalLabels:
+          host: homelab-2nd
+        # Discover ServiceMonitors/PodMonitors in all namespaces.
         # those labelled with the chart release name.
         serviceMonitorSelectorNilUsesHelmValues: false
         podMonitorSelectorNilUsesHelmValues: false
