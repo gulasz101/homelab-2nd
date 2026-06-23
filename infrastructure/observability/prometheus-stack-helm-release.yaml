@@ -62,6 +62,20 @@ spec:
               resources:
                 requests:
                   storage: 10Gi
+        # Static scrape targets for the non-k8s openmediavault host.
+        additionalScrapeConfigs:
+          - job_name: omv-node
+            static_configs:
+              - targets: ["192.168.1.180:9100"]
+                labels:
+                  instance: openmediavault
+                  host: openmediavault
+          - job_name: omv-docker
+            static_configs:
+              - targets: ["192.168.1.180:9323"]
+                labels:
+                  instance: openmediavault
+                  host: openmediavault
         resources:
           requests:
             cpu: 100m
