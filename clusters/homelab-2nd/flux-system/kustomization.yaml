@@ -3,6 +3,3 @@ kind: Kustomization
 resources:
 - gotk-components.yaml
 - gotk-sync.yaml
-- ../cert-manager.yaml
-- ../infrastructure.yaml
-- ../apps.yaml
