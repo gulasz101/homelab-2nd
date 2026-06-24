@@ -68,6 +68,14 @@ spec:
           secretKeyRef:
             name: litellm-master-key
             key: salt-key
+      # LiteLLM's native Z.AI provider expects ZAI_API_KEY.
+      # The SOPS secret currently stores the same credential as GLM_API_KEY,
+      # so alias it without duplicating the secret.
+      - name: ZAI_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: litellm-provider-keys
+            key: GLM_API_KEY
 
     # proxy_config is rendered into a ConfigMap and mounted as /app/config/config.yaml
     proxy_config:
@@ -84,9 +92,8 @@ spec:
             api_key: "os.environ/OLLAMA_API_KEY"
         - model_name: glm.5.2
           litellm_params:
-            model: openai/glm.5.2
-            api_base: "https://api.z.ai/api/paas/v4"
-            api_key: "os.environ/GLM_API_KEY"
+            model: zai/glm-5.2
+            api_key: "os.environ/ZAI_API_KEY"
         - model_name: mistral-3.5-middle
           litellm_params:
             model: mistral/mistral-medium-latest
