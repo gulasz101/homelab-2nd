@@ -14,11 +14,12 @@ spec:
   chart:
     spec:
       chart: litellm-helm
-      version: "0.6.0"
+      version: "1.85.7"
       sourceRef:
         kind: HelmRepository
         name: litellm
         namespace: flux-system
+      interval: 1h
   install:
     remediation:
       retries: 3
