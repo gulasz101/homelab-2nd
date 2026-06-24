@@ -92,6 +92,11 @@ spec:
             model: mistral/mistral-medium-latest
             api_key: "os.environ/MISTRAL_API_KEY"
 
+      litellm_settings:
+        callbacks:
+          - "prometheus"
+        require_auth_for_metrics_endpoint: false
+
       general_settings:
         # master_key is also supplied via env var from the secret
         master_key: "os.environ/PROXY_MASTER_KEY"
