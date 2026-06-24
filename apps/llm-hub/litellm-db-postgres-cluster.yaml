@@ -30,7 +30,6 @@ spec:
         configMapRefs:
           - name: litellm-db-init-scripts
             key: init-app.sql
-            optional: false
 
   storage:
     storageClass: local-path

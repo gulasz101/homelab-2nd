@@ -39,7 +39,7 @@ spec:
       repository: ghcr.io/berriai/litellm-database
       pullPolicy: IfNotPresent
       # Chart default appVersion is fine; pin only if needed
-      tag: ""
+      tag: "v1.85.7"
 
     nameOverride: "litellm"
 
