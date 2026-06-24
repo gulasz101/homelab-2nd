@@ -1,11 +1,11 @@
 ---
 # HelmRepository for the LiteLLM Helm chart (OCI artifact in GitHub Container Registry)
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: litellm
   namespace: flux-system
 spec:
-  type: OCI
+  type: oci
   interval: 1h
   url: oci://ghcr.io/berriai/litellm-helm
