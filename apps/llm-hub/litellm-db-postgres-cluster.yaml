@@ -26,10 +26,10 @@ spec:
       owner: litellm
       secret:
         name: litellm-db-credentials
-      postInitApplicationSQLRefs:
+      postInitTemplateSQLRefs:
         configMapRefs:
           - name: litellm-db-init-scripts
-            key: init-app.sql
+            key: init-template.sql
 
   storage:
     storageClass: local-path

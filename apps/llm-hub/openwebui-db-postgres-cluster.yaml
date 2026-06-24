@@ -26,10 +26,10 @@ spec:
       owner: openwebui
       secret:
         name: openwebui-db-credentials
-      postInitApplicationSQLRefs:
+      postInitTemplateSQLRefs:
         configMapRefs:
           - name: openwebui-db-init-scripts
-            key: init-app.sql
+            key: init-template.sql
 
   storage:
     storageClass: local-path
