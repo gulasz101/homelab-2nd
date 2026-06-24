@@ -121,10 +121,10 @@ spec:
 
     resources:
       requests:
-        cpu: 100m
-        memory: 256Mi
+        cpu: 200m
+        memory: 512Mi
       limits:
-        memory: 1Gi
+        memory: 2Gi
 
     livenessProbe:
       path: /health/liveliness
