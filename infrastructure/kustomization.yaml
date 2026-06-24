@@ -7,6 +7,8 @@ resources:
   # CNPG Operator
   - cnpg/helm-repository.yaml
   - cnpg/helm-release.yaml
+  # Barman Cloud CNPG-I plugin (depends on cert-manager HelmRelease)
+  - cnpg/barman-cloud-plugin-manifest.yaml
   # Mattermost HelmRepository (needed for HelmRelease in apps)
   - mattermost/helm-repository.yaml
   # Nextcloud HelmRepository (needed for HelmRelease in apps)

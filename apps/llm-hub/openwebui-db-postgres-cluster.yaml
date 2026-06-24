@@ -1,6 +1,6 @@
 ---
 # Open WebUI Postgres cluster — single instance on local-path NVMe
-# Backups + WAL archiving to OMV MinIO S3 bucket 'cnpg-backups'
+# Backups + WAL archiving via the Barman Cloud CNPG-I plugin to OMV MinIO
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -34,20 +34,15 @@ spec:
   storage:
     storageClass: local-path
     size: 10Gi
-  # Backup + WAL archiving to OMV MinIO S3
+
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: openwebui-db-backups
+        serverName: openwebui-db
+
   backup:
-    barmanObjectStore:
-      destinationPath: s3://cnpg-backups/openwebui/
-      endpointURL: http://openmediavault.local:9000
-      s3Credentials:
-        accessKeyId:
-          name: llm-hub-backup-creds
-          key: ACCESS_KEY_ID
-        secretAccessKey:
-          name: llm-hub-backup-creds
-          key: ACCESS_SECRET_KEY
-      data:
-        compression: gzip
     retentionPolicy: "30d"
 
   resources:

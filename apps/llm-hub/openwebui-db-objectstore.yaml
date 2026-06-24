@@ -1,0 +1,22 @@
+---
+# ObjectStore for the Barman Cloud CNPG-I plugin — Open WebUI backups to OMV MinIO
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: openwebui-db-backups
+  namespace: llm-hub
+spec:
+  configuration:
+    destinationPath: s3://cnpg-backups/openwebui/
+    endpointURL: http://openmediavault.local:9000
+    s3Credentials:
+      accessKeyId:
+        name: llm-hub-backup-creds
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: llm-hub-backup-creds
+        key: ACCESS_SECRET_KEY
+    data:
+      compression: gzip
+    wal:
+      compression: gzip
