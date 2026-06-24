@@ -24,6 +24,7 @@ resources:
   - llm-hub/openwebui-db-credentials.sops.yaml
   - llm-hub/litellm-master-key.sops.yaml
   - llm-hub/litellm-provider-keys.sops.yaml
+  - llm-hub/litellm-user-keys.sops.yaml
   - llm-hub/openwebui-admin-credentials.sops.yaml
   - llm-hub/openwebui-secret-key.sops.yaml
   - llm-hub/llm-hub-backup-creds.sops.yaml
