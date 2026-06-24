@@ -1,0 +1,13 @@
+---
+# Hourly scheduled base backups for the Open WebUI CNPG cluster
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: openwebui-db-hourly
+  namespace: llm-hub
+spec:
+  schedule: "0 * * * *"
+  backupOwnerReference: self
+  cluster:
+    name: openwebui-db
+  immediate: true

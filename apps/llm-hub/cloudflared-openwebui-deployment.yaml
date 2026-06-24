@@ -1,0 +1,43 @@
+---
+# Dedicated Cloudflare Tunnel for ai-chat.voitech.dev -> Open WebUI
+# Token is SOPS-encrypted in openwebui-tunnel-token.sops.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-openwebui
+  namespace: llm-hub
+  labels:
+    app.kubernetes.io/name: cloudflared-openwebui
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-openwebui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-openwebui
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

@@ -1,0 +1,166 @@
+---
+# Open WebUI HelmRelease
+# - Chat frontend for the homelab LLM hub.
+# - Connects exclusively to LiteLLM proxy at its internal service URL.
+# - Uses external Postgres via CloudNativePG and S3 (OMV MinIO) for uploads.
+# - OTel metrics/traces/logs shipped to the OTel Collector DaemonSet.
+# - Public ingress via dedicated Cloudflare Tunnel.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: open-webui
+  namespace: llm-hub
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: open-webui
+      version: ">=0.5.0"
+      sourceRef:
+        kind: HelmRepository
+        name: open-webui
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  valuesFrom:
+    - kind: Secret
+      name: openwebui-db-credentials
+      valuesKey: databaseUrl
+      targetPath: databaseUrl
+  values:
+    # Single replica to keep migrations simple in the homelab.
+    # Open WebUI docs require scaling to 1 before upgrades anyway.
+    replicaCount: 1
+
+    image:
+      repository: ghcr.io/open-webui/open-webui
+      tag: ""
+      pullPolicy: IfNotPresent
+
+    # Use chart-native OpenAI backend settings so it doesn't default to Pipelines.
+    enableOpenaiApi: true
+    openaiBaseApiUrl: "http://litellm.llm-hub.svc.cluster.local:4000/v1"
+    openaiApiKeyExistingSecret: "litellm-master-key"
+    openaiApiKeyExistingSecretKey: "master-key"
+
+    pipelines:
+      enabled: false
+
+    # Disable bundled Ollama and Tika
+    ollama:
+      enabled: false
+    tika:
+      enabled: false
+
+    # Use our CNPG Postgres
+    # databaseUrl injected via valuesFrom above
+
+    # Redis for WebSocket / session coordination (chart deploys it inline)
+    websocket:
+      enabled: true
+      manager: redis
+      redis:
+        enabled: true
+
+    # MinIO on OMV for file uploads
+    persistence:
+      enabled: true
+      provider: s3
+      s3:
+        bucket: "openwebui-files"
+        region: "us-east-1"
+        endpointUrl: "http://openmediavault.local:9000"
+        accessKeyExistingSecret: "openwebui-minio-creds"
+        accessKeyExistingAccessKey: "ACCESS_KEY_ID"
+        secretKeyExistingSecret: "openwebui-minio-creds"
+        secretKeyExistingSecretKey: "ACCESS_SECRET_KEY"
+
+    # No Ingress; Cloudflare Tunnel handles public access
+    ingress:
+      enabled: false
+
+    # Headless admin account + secret key from SOPS secrets
+    extraEnvVars:
+      - name: WEBUI_SECRET_KEY
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-secret-key
+            key: secret-key
+      - name: WEBUI_ADMIN_EMAIL
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-admin-credentials
+            key: email
+      - name: WEBUI_ADMIN_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-admin-credentials
+            key: password
+      - name: ENABLE_SIGNUP
+        value: "false"
+      - name: ENABLE_LOGIN_FORM
+        value: "true"
+      - name: DEFAULT_USER_ROLE
+        value: "pending"
+      - name: DEFAULT_MODELS
+        value: "glm.5.2"
+      - name: DEFAULT_PINNED_MODELS
+        value: "glm.5.2,mistral-3.5-middle,kimi-k2.7-code"
+      # Use LiteLLM proxy for small background tasks too
+      - name: TASK_MODEL_EXTERNAL
+        value: "glm.5.2"
+      # Vector DB: use pgvector on the same CNPG cluster
+      - name: VECTOR_DB
+        value: "pgvector"
+      - name: PGVECTOR_DB_URL
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-db-credentials
+            key: databaseUrl
+      # Single worker per pod (let K8s handle scaling)
+      - name: UVICORN_WORKERS
+        value: "1"
+      # Embeddings via LiteLLM proxy (OpenAI-compatible)
+      - name: RAG_EMBEDDING_ENGINE
+        value: "openai"
+      - name: RAG_EMBEDDING_MODEL
+        value: "text-embedding-3-small"
+      # OpenTelemetry → OTel Collector
+      - name: ENABLE_OTEL
+        value: "true"
+      - name: ENABLE_OTEL_TRACES
+        value: "true"
+      - name: ENABLE_OTEL_METRICS
+        value: "true"
+      - name: ENABLE_OTEL_LOGS
+        value: "true"
+      - name: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: "http://opentelemetry-collector.observability.svc.cluster.local:4317"
+      - name: OTEL_METRICS_EXPORTER_OTLP_ENDPOINT
+        value: "http://opentelemetry-collector.observability.svc.cluster.local:4317"
+      - name: OTEL_LOGS_EXPORTER_OTLP_ENDPOINT
+        value: "http://opentelemetry-collector.observability.svc.cluster.local:4317"
+      - name: OTEL_EXPORTER_OTLP_INSECURE
+        value: "true"
+      - name: OTEL_SERVICE_NAME
+        value: "open-webui"
+      # Structured JSON logs for Loki
+      - name: GLOBAL_LOG_LEVEL
+        value: "INFO"
+      - name: LOG_LEVEL
+        value: "INFO"
+
+    service:
+      type: ClusterIP
+      port: 8080
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        memory: 1Gi

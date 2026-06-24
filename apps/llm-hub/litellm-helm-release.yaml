@@ -1,0 +1,153 @@
+---
+# LiteLLM Proxy HelmRelease
+# - Central AI gateway with virtual keys, spend tracking, model routing.
+# - Uses external Postgres via CloudNativePG (not chart-bundled Postgres).
+# - Prometheus metrics enabled via ServiceMonitor.
+# - Internal ClusterIP only; public ingress via dedicated Cloudflare Tunnel.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: litellm
+  namespace: llm-hub
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: litellm-helm
+      version: ">=1.1.0"
+      sourceRef:
+        kind: HelmRepository
+        name: litellm
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  valuesFrom:
+    # DB connection pieces come from SOPS-encrypted secret
+    - kind: Secret
+      name: litellm-db-credentials
+      valuesKey: externalConnectionString
+      targetPath: db.url
+  values:
+    replicaCount: 1
+
+    image:
+      repository: ghcr.io/berriai/litellm-database
+      pullPolicy: IfNotPresent
+      # Chart default appVersion is fine; pin only if needed
+      tag: ""
+
+    nameOverride: "litellm"
+
+    # Use our CNPG Postgres, not the bundled Bitnami one
+    db:
+      useExisting: true
+      endpoint: litellm-db-rw.llm-hub.svc.cluster.local
+      database: litellm
+      # db.url is injected via valuesFrom above; username/password from secret
+      secret:
+        name: litellm-db-credentials
+        usernameKey: username
+        passwordKey: password
+        endpointKey: host
+
+    # Master key from SOPS-encrypted secret
+    masterkeySecretName: "litellm-master-key"
+    masterkeySecretKey: "master-key"
+
+    # Provider API keys are injected via environmentSecrets below
+    # and referenced in proxy_config with os.environ/<VAR>
+    extraEnvVars:
+      - name: LITELLM_SALT_KEY
+        valueFrom:
+          secretKeyRef:
+            name: litellm-master-key
+            key: salt-key
+
+    # proxy_config is rendered into a ConfigMap and mounted as /app/config/config.yaml
+    proxy_config:
+      model_list:
+        - model_name: kimi-k2.7-code
+          litellm_params:
+            model: openai/kimi-k2.7-code
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: glm-5.2-ollama
+          litellm_params:
+            model: openai/glm-5.2
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: glm.5.2
+          litellm_params:
+            model: openai/glm.5.2
+            api_base: "https://api.z.ai/api/paas/v4"
+            api_key: "os.environ/GLM_API_KEY"
+        - model_name: mistral-3.5-middle
+          litellm_params:
+            model: mistral/mistral-medium-latest
+            api_key: "os.environ/MISTRAL_API_KEY"
+
+      general_settings:
+        # master_key is also supplied via env var from the secret
+        master_key: "os.environ/PROXY_MASTER_KEY"
+        database_url: "os.environ/DATABASE_URL"
+
+    # The chart creates a proxyConfigMap by default; leave it on
+    proxyConfigMap:
+      create: true
+
+    migrationJob:
+      enabled: false
+
+    service:
+      type: ClusterIP
+      port: 4000
+
+    ingress:
+      enabled: false
+
+    # Prometheus scraping via ServiceMonitor
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: prometheus-stack
+      interval: 15s
+      scrapeTimeout: 10s
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+
+    livenessProbe:
+      path: /health/liveliness
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 5
+
+    readinessProbe:
+      path: /health/readiness
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+
+    startupProbe:
+      path: /health/readiness
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 30
+
+    # Pass the provider-key secret into the pod as environment variables too
+    environmentSecrets:
+      - litellm-provider-keys

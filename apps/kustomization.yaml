@@ -15,8 +15,35 @@ resources:
   - mattermost/scheduled-backup.yaml
   # Mattermost HelmRelease
   - mattermost/mattermost-helm-release.yaml
-  # Cloudflare Tunnel for chat.voitech.dev
+  # Cloudflare Tunnel for chat.voitech.dev -> Mattermost
   - mattermost/cloudflared-chat-deployment.yaml
+  # LLM hub namespace
+  - llm-hub/namespace.yaml
+  # SOPS-encrypted secrets
+  - llm-hub/litellm-db-credentials.sops.yaml
+  - llm-hub/openwebui-db-credentials.sops.yaml
+  - llm-hub/litellm-master-key.sops.yaml
+  - llm-hub/litellm-provider-keys.sops.yaml
+  - llm-hub/openwebui-admin-credentials.sops.yaml
+  - llm-hub/openwebui-secret-key.sops.yaml
+  - llm-hub/llm-hub-backup-creds.sops.yaml
+  - llm-hub/openwebui-minio-creds.sops.yaml
+  - llm-hub/litellm-tunnel-token.sops.yaml
+  - llm-hub/openwebui-tunnel-token.sops.yaml
+  # CNPG clusters for LiteLLM and Open WebUI
+  - llm-hub/litellm-db-postgres-cluster.yaml
+  - llm-hub/openwebui-db-postgres-cluster.yaml
+  - llm-hub/litellm-scheduled-backup.yaml
+  - llm-hub/openwebui-scheduled-backup.yaml
+  # Helm repositories
+  - llm-hub/litellm-helm-repository.yaml
+  - llm-hub/openwebui-helm-repository.yaml
+  # Helm releases
+  - llm-hub/litellm-helm-release.yaml
+  - llm-hub/openwebui-helm-release.yaml
+  # Cloudflare Tunnels for llm.voitech.dev and ai-chat.voitech.dev
+  - llm-hub/cloudflared-litellm-deployment.yaml
+  - llm-hub/cloudflared-openwebui-deployment.yaml
   # Nextcloud namespace
   - nextcloud/namespace.yaml
   # SOPS-encrypted secrets

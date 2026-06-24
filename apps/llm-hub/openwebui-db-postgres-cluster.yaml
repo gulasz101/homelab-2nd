@@ -1,0 +1,51 @@
+---
+# Open WebUI Postgres cluster — single instance on local-path NVMe
+# Backups + WAL archiving to OMV MinIO S3 bucket 'cnpg-backups'
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: openwebui-db
+  namespace: llm-hub
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie
+
+  postgresql:
+    parameters:
+      max_connections: "100"
+      shared_buffers: "256MB"
+      effective_cache_size: "512MB"
+
+  bootstrap:
+    initdb:
+      database: openwebui
+      owner: openwebui
+      secret:
+        name: openwebui-db-credentials
+
+  storage:
+    storageClass: local-path
+    size: 10Gi
+  # Backup + WAL archiving to OMV MinIO S3
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/openwebui/
+      endpointURL: http://openmediavault.local:9000
+      s3Credentials:
+        accessKeyId:
+          name: llm-hub-backup-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: llm-hub-backup-creds
+          key: ACCESS_SECRET_KEY
+      data:
+        compression: gzip
+    retentionPolicy: "30d"
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"

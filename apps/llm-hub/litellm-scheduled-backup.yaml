@@ -1,0 +1,13 @@
+---
+# Hourly scheduled base backups for the LiteLLM CNPG cluster
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: litellm-db-hourly
+  namespace: llm-hub
+spec:
+  schedule: "0 * * * *"
+  backupOwnerReference: self
+  cluster:
+    name: litellm-db
+  immediate: true

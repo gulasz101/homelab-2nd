@@ -1,0 +1,43 @@
+---
+# Dedicated Cloudflare Tunnel for llm.voitech.dev -> LiteLLM proxy/API
+# Token is SOPS-encrypted in litellm-tunnel-token.sops.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-litellm
+  namespace: llm-hub
+  labels:
+    app.kubernetes.io/name: cloudflared-litellm
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-litellm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-litellm
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

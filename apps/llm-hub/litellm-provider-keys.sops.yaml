@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: litellm-provider-keys
+    namespace: llm-hub
+type: Opaque
+stringData:
+    OLLAMA_API_KEY: ENC[AES256_GCM,data:Y63WeDDvLe3GdIjgXlgLWuoA7kvmJIdMB1L+WyfwbMvv7TVOXdZX8PzqkIaqRj9u0pfmNso5Yy/b,iv:ho7vGH4lwuVQ1m5kKnW7fiHWKZXQjF6pk2heYiFhwMk=,tag:tZ+zhhREAUDwh4fKo0ZbVA==,type:str]
+    GLM_API_KEY: ENC[AES256_GCM,data:FWy0UexEVuUH9ynq4cyBIHt1BKvf3KH9vtoeQcs5xsC62kOaHGFUMVWZn1jfnwRU5Q==,iv:hKezKQthqjKlyOHv7ZRnHqdniwd8L1oRufP9ebKheNE=,tag:1mm25w1lNXzBoYEZjYH+NQ==,type:str]
+    MISTRAL_API_KEY: ENC[AES256_GCM,data:bYZfEtyUO+A6/oEcfaazcBm1nVab8jeVrXL2b0dOc60=,iv:5d3rL9KZ0hcPvN6h9ahBPii0bb0oWPfDAwXhlfX1uT4=,tag:cow1qoujeDgaYK0hShOcVw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAzZDNaaXZXTzB1cW1nTEl2
+            cXRXVHI2ZEJURzZGMmNOa3RCbzFIMmhkTDFZCmR1SU8yazVxdTFvOVE4S21BckVQ
+            ak81WkxzYjYvVW4vbXdERHU2c2t4a3cKLS0tICtFcjdFMEhvdkNvWjVXYlVZbTBT
+            YnQ4bzRJNll5aFlKYjM0NEtScmtydGcKeTrtf+nqfa9nzTK+BupWLodjeKLZqKO9
+            O6Wk6dbhElR0dbPRTrbxCz9q5ygrrlklKgCLzDcZjSzzIQmtWkEOyA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-06-24T08:45:27Z"
+    mac: ENC[AES256_GCM,data:huOC7++51HgaknYtZoQSZ83hHLuGCAEOt8whyB9alDcGP/cphTPWSXs0q7H4fvauZUv8yj1jujJW3z5PIXpwVU1JT/82DvMSGh9p0Wiz+cqv4/vQDj9buz9XvrGcZ++qVuABBbo5qmbjh1aXkGvURwFlN5txTqTEVAzhZKyk1TA=,iv:vlE3vJcMDG9jYERv92JKI1W2eE308L9E72jJCnPLbzE=,tag:o6QOFEy48ZfPRuWP4oCJrw==,type:str]
+    version: 3.13.1
