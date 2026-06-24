@@ -46,6 +46,7 @@ spec:
     # Use our CNPG Postgres, not the bundled Bitnami one
     db:
       useExisting: true
+      deployStandalone: false
       endpoint: litellm-db-rw.llm-hub.svc.cluster.local
       database: litellm
       # db.url is injected via valuesFrom above; username/password from secret
