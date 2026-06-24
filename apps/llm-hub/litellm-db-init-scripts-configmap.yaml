@@ -1,0 +1,11 @@
+---
+# ConfigMap with post-init SQL for the litellm application database.
+# Creates the pgvector extension required by some tooling patterns.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-db-init-scripts
+  namespace: llm-hub
+data:
+  init-app.sql: |
+    CREATE EXTENSION IF NOT EXISTS vector;

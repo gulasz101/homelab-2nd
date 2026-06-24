@@ -8,13 +8,17 @@ metadata:
   namespace: llm-hub
 spec:
   instances: 1
-  imageName: ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie
+  imageName: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
 
   postgresql:
     parameters:
       max_connections: "100"
       shared_buffers: "256MB"
       effective_cache_size: "512MB"
+    extensions:
+      - name: pgvector
+        image:
+          reference: ghcr.io/cloudnative-pg/pgvector:0.8.3-18-trixie
 
   bootstrap:
     initdb:
@@ -22,6 +26,11 @@ spec:
       owner: openwebui
       secret:
         name: openwebui-db-credentials
+      postInitApplicationSQLRefs:
+        configMapRefs:
+          - name: openwebui-db-init-scripts
+            key: init-app.sql
+            optional: false
 
   storage:
     storageClass: local-path

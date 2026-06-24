@@ -1,0 +1,11 @@
+---
+# ConfigMap with post-init SQL for the Open WebUI application database.
+# Creates the pgvector extension so Open WebUI can use vector embeddings.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openwebui-db-init-scripts
+  namespace: llm-hub
+data:
+  init-app.sql: |
+    CREATE EXTENSION IF NOT EXISTS vector;

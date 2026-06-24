@@ -33,6 +33,8 @@ resources:
   # CNPG clusters for LiteLLM and Open WebUI
   - llm-hub/litellm-db-postgres-cluster.yaml
   - llm-hub/openwebui-db-postgres-cluster.yaml
+  - llm-hub/litellm-db-init-scripts-configmap.yaml
+  - llm-hub/openwebui-db-init-scripts-configmap.yaml
   - llm-hub/litellm-scheduled-backup.yaml
   - llm-hub/openwebui-scheduled-backup.yaml
   # Helm repositories
