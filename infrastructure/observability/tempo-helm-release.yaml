@@ -1,6 +1,7 @@
 ---
-# Grafana Tempo in single-binary mode with filesystem storage.
+# Grafana Tempo in single-binary mode with local filesystem storage.
 # Receives OTLP traces on gRPC/HTTP and stores them on a local-path PVC.
+# Uses the community-maintained grafana-community/helm-charts Tempo chart (OSS).
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -11,7 +12,7 @@ spec:
   chart:
     spec:
       chart: tempo
-      version: ">=1.0.0"
+      version: "2.2.3"
       sourceRef:
         kind: HelmRepository
         name: grafana-community
@@ -54,6 +55,18 @@ spec:
       accessModes:
         - ReadWriteOnce
       size: 10Gi
+
+    # Service stays internal; Grafana accesses Tempo via the cluster service.
+    service:
+      type: ClusterIP
+
+    # Expose Tempo metrics to Prometheus.
+    serviceMonitor:
+      enabled: true
+      additionalLabels:
+        release: kube-prometheus-stack
+
+    # Security context inherited from chart defaults is acceptable.
 
     resources:
       requests:

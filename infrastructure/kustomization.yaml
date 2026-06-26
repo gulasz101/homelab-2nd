@@ -18,7 +18,6 @@ resources:
   # LGTM observability stack
   - observability/namespace.yaml
   - observability/helm-repositories.yaml
-  - observability/loki-helm-repository.yaml
   - observability/grafana-admin-credentials.sops.yaml
   - observability/grafana-tunnel-token.sops.yaml
   - observability/loki-minio-creds.sops.yaml

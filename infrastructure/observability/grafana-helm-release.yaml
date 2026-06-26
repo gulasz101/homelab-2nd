@@ -1,6 +1,7 @@
 ---
 # Standalone Grafana with datasources provisioned for Prometheus, Loki and Tempo.
 # Admin password is injected from a SOPS-encrypted secret.
+# Uses the community-maintained grafana-community/helm-charts Grafana chart (OSS).
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -11,7 +12,7 @@ spec:
   chart:
     spec:
       chart: grafana
-      version: ">=8.0.0"
+      version: "12.7.1"
       sourceRef:
         kind: HelmRepository
         name: grafana-community
@@ -92,6 +93,12 @@ spec:
     service:
       type: ClusterIP
       port: 3000
+
+    # Expose Grafana metrics to Prometheus.
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: kube-prometheus-stack
 
     # Disable bundled test pods.
     testFramework:
