@@ -52,6 +52,8 @@ spec:
                   key: openai-api-key
             - name: DOCS_MCP_TELEMETRY_ENABLED
               value: "false"
+            - name: DOCS_MCP_CONFIG
+              value: "/config/docs-mcp-server/config.yaml"
           args:
             - "--protocol"
             - "http"
@@ -59,11 +61,16 @@ spec:
             - "0.0.0.0"
             - "--port"
             - "6280"
+            - "--config"
+            - "/config/docs-mcp-server/config.yaml"
           volumeMounts:
             - name: data
               mountPath: /data
             - name: config
               mountPath: /config
+            - name: config-file
+              mountPath: /config/docs-mcp-server/config.yaml
+              subPath: config.yaml
           resources:
             requests:
               cpu: 200m
@@ -93,3 +100,6 @@ spec:
         - name: config
           persistentVolumeClaim:
             claimName: docs-mcp-config
+        - name: config-file
+          configMap:
+            name: docs-mcp-config

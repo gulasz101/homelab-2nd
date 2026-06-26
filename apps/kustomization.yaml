@@ -57,6 +57,7 @@ resources:
   # PVCs for docs-mcp-server SQLite store/config and Ollama model cache
   - docs-mcp/docs-mcp-data-pvc.yaml
   - docs-mcp/docs-mcp-config-pvc.yaml
+  - docs-mcp/docs-mcp-config-configmap.yaml
   - docs-mcp/ollama-models-pvc.yaml
   # Local Ollama embedding server
   - docs-mcp/ollama-deployment.yaml
