@@ -52,6 +52,13 @@ spec:
                   key: openai-api-key
             - name: DOCS_MCP_TELEMETRY_ENABLED
               value: "false"
+          args:
+            - "--protocol"
+            - "http"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "6280"
           volumeMounts:
             - name: data
               mountPath: /data
