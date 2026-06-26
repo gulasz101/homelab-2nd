@@ -97,8 +97,8 @@ spec:
     # Expose Grafana metrics to Prometheus.
     serviceMonitor:
       enabled: true
-      labels:
-        release: kube-prometheus-stack
+      # The chart already injects 'release: <Helm release name>'; do not add a
+      # second 'release' key here or Helm post-render fails with a duplicate key.
 
     # Disable bundled test pods.
     testFramework:

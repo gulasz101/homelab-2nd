@@ -66,11 +66,19 @@ spec:
       additionalLabels:
         release: kube-prometheus-stack
 
-    # Security context inherited from chart defaults is acceptable.
+    # Tempo single-binary with WAL replay and all default receivers needs more
+    # than 512Mi on startup. Keep request low but raise the limit.
+    tempo:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          memory: 1Gi
 
     resources:
       requests:
         cpu: 50m
-        memory: 128Mi
+        memory: 256Mi
       limits:
-        memory: 512Mi
+        memory: 1Gi
