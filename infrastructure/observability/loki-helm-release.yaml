@@ -99,7 +99,9 @@ spec:
         grafanaAgent:
           installOperator: false
       serviceMonitor:
-        enabled: false
+        enabled: true
+        labels:
+          release: kube-prometheus-stack
       dashboards:
         enabled: false
       rules:
