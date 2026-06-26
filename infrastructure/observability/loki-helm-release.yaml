@@ -74,6 +74,15 @@ spec:
       enabled: false
     resultsCache:
       enabled: false
+    read:
+      enabled: false
+      replicas: 0
+    write:
+      enabled: false
+      replicas: 0
+    backend:
+      enabled: false
+      replicas: 0
     minio:
       enabled: false
     gateway:
