@@ -1,23 +1,30 @@
 ---
 # Explicit read-only config for docs-mcp-server.
 # The server will NOT modify this file (DOCS_MCP_CONFIG is explicit).
-app:
-  storePath: "/data"
-  telemetryEnabled: false
-  readOnly: false
-  embeddingModel: "openai:nomic-embed-text"
-server:
-  protocol: http
-  host: "0.0.0.0"
-  ports:
-    default: 6280
-    worker: 8080
-    mcp: 6280
-    web: 6281
-auth:
-  enabled: false
-embeddings:
-  batchSize: 100
-  batchChars: 50000
-  requestTimeoutMs: 30000
-  initTimeoutMs: 30000
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: docs-mcp-config
+  namespace: docs-mcp
+data:
+  config.yaml: |
+    app:
+      storePath: "/data"
+      telemetryEnabled: false
+      readOnly: false
+      embeddingModel: "openai:nomic-embed-text"
+    server:
+      protocol: http
+      host: "0.0.0.0"
+      ports:
+        default: 6280
+        worker: 8080
+        mcp: 6280
+        web: 6281
+    auth:
+      enabled: false
+    embeddings:
+      batchSize: 100
+      batchChars: 50000
+      requestTimeoutMs: 30000
+      initTimeoutMs: 30000
