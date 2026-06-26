@@ -1,6 +1,6 @@
 ---
-# HelmRelease: Grafana Loki in SingleBinary mode with S3 object storage on OMV MinIO.
-# Uses upstream grafana/loki chart v6.29.0 which reliably renders a single pod.
+# HelmRelease: Grafana Loki in Monolithic/SingleBinary mode with S3 object storage on OMV MinIO.
+# Uses the community-maintained grafana-community/helm-charts Loki chart (OSS).
 # Credentials are injected from the SOPS-encrypted loki-minio-creds secret via env vars
 # and expanded in the Loki config at runtime via -config.expand-env=true.
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -13,7 +13,7 @@ spec:
   chart:
     spec:
       chart: loki
-      version: "6.29.0"
+      version: "18.1.1"
       sourceRef:
         kind: HelmRepository
         name: grafana-loki
@@ -24,7 +24,7 @@ spec:
       extraEnvFrom:
         - secretRef:
             name: loki-minio-creds
-    deploymentMode: SingleBinary
+    deploymentMode: Monolithic
     loki:
       auth_enabled: false
       commonConfig:
@@ -62,19 +62,18 @@ spec:
       persistence:
         enabled: true
         size: 1Gi
-        storageClassName: local-path
+        storageClass: local-path
       resources:
         limits:
           memory: 1Gi
         requests:
           cpu: 100m
           memory: 256Mi
-    read:
-      replicas: 0
-    write:
-      replicas: 0
-    backend:
-      replicas: 0
+    # Disable caches and extra components for a lightweight single-node deployment.
+    chunksCache:
+      enabled: false
+    resultsCache:
+      enabled: false
     minio:
       enabled: false
     gateway:
@@ -88,7 +87,9 @@ spec:
           installOperator: false
       serviceMonitor:
         enabled: false
-    chunksCache:
-      enabled: false
-    resultsCache:
-      enabled: false
+      dashboards:
+        enabled: false
+      rules:
+        enabled: false
+      alerts:
+        enabled: false
