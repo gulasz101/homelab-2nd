@@ -21,6 +21,7 @@ resources:
   - observability/loki-helm-repository.yaml
   - observability/grafana-admin-credentials.sops.yaml
   - observability/grafana-tunnel-token.sops.yaml
+  - observability/loki-minio-creds.sops.yaml
   - observability/prometheus-stack-helm-release.yaml
   - observability/loki-helm-release.yaml
   - observability/tempo-helm-release.yaml
