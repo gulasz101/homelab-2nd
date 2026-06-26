@@ -42,12 +42,14 @@ spec:
           wal:
             path: /var/tempo/wal
       retention: 168h  # 7 days
+      # Tempo single-binary with WAL replay and all default receivers needs more
+      # than 512Mi on startup. Keep request low but raise the limit.
       resources:
         requests:
           cpu: 50m
-          memory: 128Mi
+          memory: 256Mi
         limits:
-          memory: 512Mi
+          memory: 1Gi
 
     persistence:
       enabled: true
@@ -65,16 +67,6 @@ spec:
       enabled: true
       additionalLabels:
         release: kube-prometheus-stack
-
-    # Tempo single-binary with WAL replay and all default receivers needs more
-    # than 512Mi on startup. Keep request low but raise the limit.
-    tempo:
-      resources:
-        requests:
-          cpu: 50m
-          memory: 256Mi
-        limits:
-          memory: 1Gi
 
     resources:
       requests:
