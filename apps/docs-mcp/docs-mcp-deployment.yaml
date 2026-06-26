@@ -1,0 +1,88 @@
+---
+# Docs MCP Server deployment.
+# - Standalone mode: MCP + Web UI + embedded worker in one container.
+# - SQLite store on /data, config on /config (both local-path PVCs).
+# - Embeddings via in-cluster Ollama (nomic-embed-text).
+# - LAN access via hostPort 6280 on the node (no Cloudflare Tunnel).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docs-mcp-server
+  namespace: docs-mcp
+  labels:
+    app.kubernetes.io/name: docs-mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: docs-mcp-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: docs-mcp-server
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: server
+          image: ghcr.io/arabold/docs-mcp-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 6280
+              hostPort: 6280
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "6280"
+            - name: HOST
+              value: "0.0.0.0"
+            - name: DOCS_MCP_STORE_PATH
+              value: "/data"
+            - name: XDG_CONFIG_HOME
+              value: "/config"
+            - name: DOCS_MCP_EMBEDDING_MODEL
+              value: "openai:nomic-embed-text"
+            - name: OPENAI_API_BASE
+              value: "http://ollama-embeddings.docs-mcp.svc.cluster.local:11434/v1"
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: docs-mcp-embedding-key
+                  key: openai-api-key
+            - name: DOCS_MCP_TELEMETRY_ENABLED
+              value: "false"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: docs-mcp-data
+        - name: config
+          persistentVolumeClaim:
+            claimName: docs-mcp-config

@@ -1,0 +1,20 @@
+---
+# Expose docs-mcp-server inside the cluster on port 6280.
+# External LAN access uses hostPort 6280 on the pod's node (192.168.1.179).
+# No Cloudflare Tunnel — this service is intentionally internal-only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: docs-mcp-server
+  namespace: docs-mcp
+  labels:
+    app.kubernetes.io/name: docs-mcp-server
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: docs-mcp-server
+  ports:
+    - name: http
+      port: 6280
+      targetPort: 6280
+      protocol: TCP

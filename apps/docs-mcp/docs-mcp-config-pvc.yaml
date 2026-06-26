@@ -1,0 +1,15 @@
+---
+# Persistent storage for docs-mcp-server runtime config (/config).
+# Lives on homelab-2nd local-path NVMe. Rebuildable if lost.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: docs-mcp-config
+  namespace: docs-mcp
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

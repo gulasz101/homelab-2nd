@@ -1,0 +1,8 @@
+---
+# Namespace for the local docs MCP server and its local Ollama embedding sidecar.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: docs-mcp
+  labels:
+    app.kubernetes.io/name: docs-mcp

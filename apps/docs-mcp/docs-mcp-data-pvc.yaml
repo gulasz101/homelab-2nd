@@ -1,0 +1,16 @@
+---
+# Persistent storage for docs-mcp-server SQLite index and document cache.
+# Lives on homelab-2nd local-path NVMe. This is fast but NOT durable;
+# the index can be rebuilt by re-scraping the source documentation.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: docs-mcp-data
+  namespace: docs-mcp
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 50Gi
