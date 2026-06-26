@@ -89,6 +89,8 @@ spec:
       enabled: true
     lokiCanary:
       enabled: false
+    test:
+      enabled: false
     monitoring:
       lokiCanary:
         enabled: false
