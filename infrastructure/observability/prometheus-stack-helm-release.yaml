@@ -116,17 +116,13 @@ spec:
           memory: 64Mi
         limits:
           memory: 128Mi
-      # Intel RAPL power counters are exposed under /sys/class/powercap and
-      # are not readable by a non-privileged container. Run the node-exporter
-      # container privileged on this single-node k3s cluster so we get real
-      # CPU package watts in Grafana.
-      podSecurityContext:
-        runAsUser: 0
-        runAsGroup: 0
-        runAsNonRoot: false
-        fsGroup: 0
-      containerSecurityContext:
-        privileged: true
+      # Intel RAPL power counters under /sys/class/powercap are only readable by
+      # root by default. Enable the chart's permission-fix init container so the
+      # non-root node-exporter can read package/DRAM energy counters and expose
+      # real CPU watts to Prometheus/Grafana.
+      permissionInitContainer:
+        fixes:
+          rapl: true
       hostRootFsMount:
         enabled: true
 
