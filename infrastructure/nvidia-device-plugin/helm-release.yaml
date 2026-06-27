@@ -42,10 +42,15 @@ spec:
     config:
       name: nvidia-plugin-config
 
+    # Runtime class for NVIDIA containers.
+    runtimeClassName: nvidia
+
     # GPU feature discovery labels the node with GPU capabilities so the
     # device plugin DaemonSet can schedule on this single-GPU node.
     gfd:
       enabled: true
+      # GFD also needs the NVIDIA runtime to enumerate the GPU.
+      runtimeClassName: nvidia
 
     # Node Feature Discovery is required by GFD.
     nfd:
