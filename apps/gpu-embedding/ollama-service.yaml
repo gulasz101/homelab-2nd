@@ -1,17 +1,19 @@
 ---
 # Internal service for the GPU Ollama embedding server.
-# Consumers reach it at http://ollama-embeddings.gpu-embedding.svc.cluster.local:11434
+# In-cluster consumers reach it at http://ollama-embeddings.gpu-embedding.svc.cluster.local:11434
+# LAN consumers (e.g. Docker on the Hermes host) reach it at http://192.168.1.179:30114/v1.
 apiVersion: v1
 kind: Service
 metadata:
   name: ollama-embeddings
   namespace: gpu-embedding
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app.kubernetes.io/name: ollama-embeddings
   ports:
     - name: http
       port: 11434
       targetPort: http
+      nodePort: 30114
       protocol: TCP
