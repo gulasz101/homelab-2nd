@@ -1,0 +1,68 @@
+---
+# nvidia-gpu-exporter HelmRelease
+# Provides GPU metrics to Prometheus by wrapping nvidia-smi.
+# Runs as a DaemonSet on GPU nodes only, via a nodeSelector on the NFD label.
+# This is a simpler alternative to DCGM for old consumer GPUs (Maxwell/Pascal).
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nvidia-gpu-exporter
+  namespace: observability
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: nvidia-gpu-exporter
+      version: "0.3.0"
+      sourceRef:
+        kind: HelmRepository
+        name: utkuozdemir
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    runtimeClassName: nvidia
+
+    nodeSelector:
+      feature.node.kubernetes.io/pci-10de.present: "true"
+
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+
+    # Mount host /usr/bin so the exporter can find nvidia-smi.
+    # Also mount /usr/lib to resolve libnvidia-ml.so.
+    extraVolumeMounts:
+      - name: host-usr-bin
+        mountPath: /usr/bin/nvidia-smi
+        readOnly: true
+      - name: host-usr-lib
+        mountPath: /usr/lib/x86_64-linux-gnu
+        readOnly: true
+
+    extraVolumes:
+      - name: host-usr-bin
+        hostPath:
+          path: /usr/bin/nvidia-smi
+          type: File
+      - name: host-usr-lib
+        hostPath:
+          path: /usr/lib/x86_64-linux-gnu
+          type: Directory
+
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: prometheus-stack
+
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi

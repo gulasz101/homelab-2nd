@@ -35,5 +35,9 @@ resources:
   - observability/opentelemetry-collector-helm-release.yaml
   - observability/cloudflared-grafana-deployment.yaml
   - observability/grafana-tunnel-ingress-configmap.yaml
+  # NVIDIA GPU metrics exporter (for older/consumer GPUs)
+  - observability/nvidia-gpu-exporter-helm-repository.yaml
+  - observability/nvidia-gpu-exporter-helm-release.yaml
   # Grafana dashboards
   - observability/dashboards/homelab-system-load-dashboard-configmap.yaml
+  - observability/dashboards/homelab-gpu-power-dashboard-configmap.yaml

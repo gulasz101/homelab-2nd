@@ -1,0 +1,12 @@
+---
+# HelmRepository for utkuozdemir's nvidia-gpu-exporter chart.
+# This exporter shells out to nvidia-smi, so it works on older consumer GPUs
+# (e.g. Maxwell GTX 970M) where DCGM is not supported.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: utkuozdemir
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://utkuozdemir.org/helm-charts
