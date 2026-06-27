@@ -1,0 +1,58 @@
+---
+# NVIDIA Device Plugin HelmRelease
+# - Runs as a DaemonSet exposing the homelab-2nd GTX 970M GPU to Kubernetes.
+# - No MIG or time-slicing; single consumer gets the whole GPU.
+# - Uses the default config (envvar device list strategy) to keep things simple.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nvidia-device-plugin
+  namespace: nvidia-device-plugin
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: nvidia-device-plugin
+      version: "0.17.1"
+      sourceRef:
+        kind: HelmRepository
+        name: nvidia-device-plugin
+        namespace: flux-system
+      interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Run on control-plane/single-node clusters where taints aren't GPU-specific.
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+
+    # Default configuration: expose all GPUs as nvidia.com/gpu resources.
+    # config:
+    #   name: "" # no custom ConfigMap
+
+    # We do not need GPU feature discovery labels for a single-node homelab.
+    gfd:
+      enabled: false
+
+    # Node Feature Discovery is not required for a single-GPU node.
+    nfd:
+      enabled: false
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 256Mi

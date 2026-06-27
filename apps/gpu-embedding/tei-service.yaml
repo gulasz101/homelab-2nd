@@ -1,0 +1,18 @@
+---
+# Internal Service for the GPU embedding server.
+# Consumers reach it at http://tei-embedding-server.gpu-embedding.svc.cluster.local:3000
+# or http://gpu-embedding.gpu-embedding.svc.cluster.local:3000 via the short alias below.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tei-embedding-server
+  namespace: gpu-embedding
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: tei-embedding-server
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP

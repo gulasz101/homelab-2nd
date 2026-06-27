@@ -1,0 +1,16 @@
+---
+# Short alias service so callers can use gpu-embedding.gpu-embedding.svc.cluster.local.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gpu-embedding
+  namespace: gpu-embedding
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: tei-embedding-server
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP

@@ -65,6 +65,12 @@ resources:
   # Docs MCP Server (local-only)
   - docs-mcp/docs-mcp-deployment.yaml
   - docs-mcp/docs-mcp-service.yaml
+  # GPU-accelerated embedding platform service
+  - gpu-embedding/namespace.yaml
+  - gpu-embedding/tei-model-cache-pvc.yaml
+  - gpu-embedding/tei-deployment.yaml
+  - gpu-embedding/tei-service.yaml
+  - gpu-embedding/gpu-embedding-service.yaml
   # Nextcloud namespace
   - nextcloud/namespace.yaml
   # SOPS-encrypted secrets

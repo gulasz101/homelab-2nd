@@ -1,0 +1,8 @@
+---
+# Dedicated namespace for the GPU-accelerated embedding platform service.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gpu-embedding
+  labels:
+    app.kubernetes.io/name: gpu-embedding

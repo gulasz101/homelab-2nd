@@ -1,0 +1,11 @@
+---
+# NVIDIA Device Plugin HelmRepository
+# Provides the Helm chart for scheduling NVIDIA GPUs in Kubernetes.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: nvidia-device-plugin
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://nvidia.github.io/k8s-device-plugin

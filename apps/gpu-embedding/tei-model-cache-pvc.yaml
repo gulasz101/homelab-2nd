@@ -1,0 +1,15 @@
+---
+# PVC for text-embeddings-inference model cache.
+# Model weights are downloaded from HuggingFace on first start and cached here.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tei-model-cache
+  namespace: gpu-embedding
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi

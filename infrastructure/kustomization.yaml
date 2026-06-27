@@ -15,6 +15,10 @@ resources:
   - nextcloud/helm-repository.yaml
   # CoreDNS custom config for resolving OMV .local hostname from pods
   - coredns/coredns-custom-homelab.yaml
+  # NVIDIA Device Plugin for GPU scheduling
+  - nvidia-device-plugin/namespace.yaml
+  - nvidia-device-plugin/helm-repository.yaml
+  - nvidia-device-plugin/helm-release.yaml
   # LGTM observability stack
   - observability/namespace.yaml
   - observability/helm-repositories.yaml
