@@ -23,6 +23,8 @@ spec:
       # Only schedule on nodes with an NVIDIA GPU.
       nodeSelector:
         feature.node.kubernetes.io/pci-10de.present: "true"
+      # Run with the NVIDIA container runtime so CUDA and NVML are available.
+      runtimeClassName: nvidia
       tolerations:
         - key: nvidia.com/gpu
           operator: Exists
