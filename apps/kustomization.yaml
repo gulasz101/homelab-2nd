@@ -54,23 +54,18 @@ resources:
   - docs-mcp/namespace.yaml
   # SOPS-encrypted secrets
   - docs-mcp/docs-mcp-embedding-key.sops.yaml
-  # PVCs for docs-mcp-server SQLite store/config and Ollama model cache
+  # Local docs-mcp SQLite/config PVCs
   - docs-mcp/docs-mcp-data-pvc.yaml
   - docs-mcp/docs-mcp-config-pvc.yaml
   - docs-mcp/docs-mcp-config-configmap.yaml
-  - docs-mcp/ollama-models-pvc.yaml
-  # Local Ollama embedding server
-  - docs-mcp/ollama-deployment.yaml
-  - docs-mcp/ollama-service.yaml
   # Docs MCP Server (local-only)
   - docs-mcp/docs-mcp-deployment.yaml
   - docs-mcp/docs-mcp-service.yaml
-  # GPU-accelerated embedding platform service
+  # GPU-accelerated embedding platform service (Ollama)
   - gpu-embedding/namespace.yaml
-  - gpu-embedding/tei-model-cache-pvc.yaml
-  - gpu-embedding/tei-deployment.yaml
-  - gpu-embedding/tei-service.yaml
-  - gpu-embedding/gpu-embedding-service.yaml
+  - gpu-embedding/ollama-models-pvc.yaml
+  - gpu-embedding/ollama-deployment.yaml
+  - gpu-embedding/ollama-service.yaml
   # Nextcloud namespace
   - nextcloud/namespace.yaml
   # SOPS-encrypted secrets

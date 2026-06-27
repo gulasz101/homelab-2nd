@@ -44,7 +44,7 @@ spec:
             - name: DOCS_MCP_EMBEDDING_MODEL
               value: "openai:nomic-embed-text"
             - name: OPENAI_API_BASE
-              value: "http://ollama-embeddings.docs-mcp.svc.cluster.local:11434/v1"
+              value: "http://ollama-embeddings.gpu-embedding.svc.cluster.local:11434/v1"
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:

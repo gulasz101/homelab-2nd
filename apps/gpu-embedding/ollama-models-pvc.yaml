@@ -1,0 +1,15 @@
+---
+# Persistent storage for the shared GPU Ollama model cache.
+# Survives pod restarts so models don't re-download every time.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  namespace: gpu-embedding
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 20Gi

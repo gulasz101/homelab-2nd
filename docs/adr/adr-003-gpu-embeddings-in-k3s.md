@@ -15,9 +15,9 @@ The question was: should GPU embedding inference live as a standalone daemon on 
 
 ## Decision
 
-**Run the embedding model as a k3s Deployment in a dedicated `gpu-embedding` namespace, requesting `nvidia.com/gpu: 1`, using HuggingFace `text-embeddings-inference` (TEI).**
+**Run the embedding model as a k3s Deployment in a dedicated `gpu-embedding` namespace, requesting `nvidia.com/gpu: 1`, using Ollama with GPU support.**
 
-This makes GPU embeddings a platform service that any namespace can call internally at `http://gpu-embedding.gpu-embedding.svc.cluster.local:3000/v1/embeddings`.
+This makes GPU embeddings a platform service that any namespace can call internally at `http://ollama-embeddings.gpu-embedding.svc.cluster.local:11434/v1`.
 
 ### Rationale
 
@@ -25,11 +25,13 @@ This makes GPU embeddings a platform service that any namespace can call interna
 
 2. **GitOps discipline.** Keeping it inside k3s means the Deployment, Service, PVC, RuntimeClass and node/containerd configuration are all version-controlled and reconciled by Flux. A host-level daemon would be a snowflake.
 
-3. **Resource isolation.** Kubernetes GPU scheduling ensures only pods that request `nvidia.com/gpu` get the device. TEI does not leak the GPU into arbitrary containers on the node.
+3. **Resource isolation.** Kubernetes GPU scheduling ensures only pods that request `nvidia.com/gpu` get the device. Ollama does not leak the GPU into arbitrary containers on the node.
 
 4. **Observability.** Container stdout, metrics, and traces are collected by the existing LGTM/OpenTelemetry stack without extra plumbing.
 
-5. **Sufficient hardware.** 3GB VRAM comfortably fits a 137M-parameter Nomic embedding model with room for batching. Maxwell (sm_52) CUDA compute capability is supported by the generic `cuda` TEI image, even if not as fast as newer architectures.
+5. **Sufficient hardware.** 3GB VRAM comfortably fits small embedding models such as `nomic-embed-text` (137M params, ~550MB on GPU) or `sentence-transformers/all-MiniLM-L6-v2`.
+
+6. **Compatibility.** HuggingFace `text-embeddings-inference` (TEI) prebuilt images only support CUDA compute capability 7.5+ (Turing and newer). The GTX 970M is Maxwell (sm_52), so TEI cannot be used without building a custom image. Ollama supports Maxwell out of the box, making it the fastest reliable path to GPU embeddings today.
 
 ## Consequences
 
