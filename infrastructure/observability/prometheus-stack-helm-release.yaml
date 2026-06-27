@@ -120,6 +120,11 @@ spec:
       # are not readable by a non-privileged container. Run the node-exporter
       # container privileged on this single-node k3s cluster so we get real
       # CPU package watts in Grafana.
+      podSecurityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        runAsNonRoot: false
+        fsGroup: 0
       containerSecurityContext:
         privileged: true
       hostRootFsMount:
