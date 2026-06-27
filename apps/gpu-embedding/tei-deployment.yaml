@@ -22,7 +22,7 @@ spec:
     spec:
       # Only schedule on nodes with an NVIDIA GPU.
       nodeSelector:
-        nvidia.com/gpu.present: "true"
+        feature.node.kubernetes.io/pci-10de.present: "true"
       tolerations:
         - key: nvidia.com/gpu
           operator: Exists
