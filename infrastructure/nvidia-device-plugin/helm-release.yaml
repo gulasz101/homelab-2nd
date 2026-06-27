@@ -39,8 +39,8 @@ spec:
         effect: NoSchedule
 
     # Default configuration: expose all GPUs as nvidia.com/gpu resources.
-    # config:
-    #   name: "" # no custom ConfigMap
+    config:
+      name: nvidia-plugin-config
 
     # GPU feature discovery labels the node with GPU capabilities so the
     # device plugin DaemonSet can schedule on this single-GPU node.

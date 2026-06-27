@@ -1,0 +1,21 @@
+---
+# NVIDIA device plugin / GPU feature discovery configuration.
+# Explicit device discovery strategy avoids the unsupported 'auto' default
+# on the homelab-2nd single-Maxwell GPU node.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nvidia-plugin-config
+  namespace: nvidia-device-plugin
+data:
+  config.yaml: |
+    version: v1
+    flags:
+      migStrategy: "none"
+      failOnInitError: true
+      nvidiaDriverRoot: "/"
+      deviceDiscoveryStrategy: "single"
+      plugin:
+        passDeviceSpecs: false
+        deviceListStrategy: envvar
+        deviceIDStrategy: uuid
