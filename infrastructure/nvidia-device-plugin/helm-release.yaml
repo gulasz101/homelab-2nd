@@ -42,13 +42,14 @@ spec:
     # config:
     #   name: "" # no custom ConfigMap
 
-    # We do not need GPU feature discovery labels for a single-node homelab.
+    # GPU feature discovery labels the node with GPU capabilities so the
+    # device plugin DaemonSet can schedule on this single-GPU node.
     gfd:
-      enabled: false
+      enabled: true
 
-    # Node Feature Discovery is not required for a single-GPU node.
+    # Node Feature Discovery is required by GFD.
     nfd:
-      enabled: false
+      enabled: true
 
     resources:
       requests:
