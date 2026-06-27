@@ -29,7 +29,7 @@ spec:
           effect: NoSchedule
       initContainers:
         - name: pull-model
-          image: ollama/ollama:latest
+          image: ollama/ollama:0.28.0
           command:
             - /bin/sh
             - -c
@@ -63,7 +63,7 @@ spec:
               memory: 4Gi
       containers:
         - name: ollama
-          image: ollama/ollama:latest
+          image: ollama/ollama:0.28.0
           ports:
             - name: http
               containerPort: 11434
