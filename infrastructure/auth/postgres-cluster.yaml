@@ -1,6 +1,29 @@
 ---
+# ObjectStore for the Barman Cloud CNPG-I plugin — Authentik backups to OMV MinIO
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: authentik-db-backups
+  namespace: auth
+spec:
+  configuration:
+    destinationPath: s3://cnpg-backups/authentik/
+    endpointURL: http://openmediavault.local:9000
+    s3Credentials:
+      accessKeyId:
+        name: authentik-minio-backup-creds
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: authentik-minio-backup-creds
+        key: ACCESS_SECRET_KEY
+    data:
+      compression: gzip
+    wal:
+      compression: gzip
+
+---
 # CNPG Cluster for Authentik — single instance on local-path NVMe
-# Backups + WAL archiving to OMV MinIO S3 bucket 'cnpg-backups/authentik'
+# Backups + WAL archiving via the Barman Cloud CNPG-I plugin to OMV MinIO S3
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -33,20 +56,15 @@ spec:
     storageClass: local-path
     size: 10Gi
 
-  # Backup + WAL archiving to OMV MinIO S3
+  # Backup via Barman Cloud CNPG-I plugin to OMV MinIO S3
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: authentik-db-backups
+        serverName: authentik-db
+
   backup:
-    barmanObjectStore:
-      destinationPath: s3://cnpg-backups/authentik/
-      endpointURL: http://openmediavault.local:9000
-      s3Credentials:
-        accessKeyId:
-          name: authentik-minio-backup-creds
-          key: ACCESS_KEY_ID
-        secretAccessKey:
-          name: authentik-minio-backup-creds
-          key: ACCESS_SECRET_KEY
-      data:
-        compression: gzip
     retentionPolicy: "30d"
 
   # Resource limits — reasonable for a homelab
