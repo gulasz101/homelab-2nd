@@ -9,4 +9,6 @@ metadata:
   namespace: auth
 data:
   note: |
-    auth.voitech.dev -> http://authentik-server.auth.svc.cluster.local:9000
+    # This is a reminder only — the real rule lives in Cloudflare Zero Trust.
+    auth.voitech.dev -> http://authentik-server.auth.svc.cluster.local:80
+    # (The Authentik pod listens on 9000, but the Kubernetes Service exposes it as port 80.)
