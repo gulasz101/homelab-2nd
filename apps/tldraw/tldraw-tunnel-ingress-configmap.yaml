@@ -1,0 +1,10 @@
+---
+# Reminder of the public hostname rule (real rule lives in Cloudflare Zero Trust)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tldraw-tunnel-ingress
+  namespace: apps-tldraw
+data:
+  note: |
+    # white-board.voitech.dev -> http://tldraw-server.apps-tldraw.svc.cluster.local:80

@@ -61,6 +61,13 @@ resources:
   # Docs MCP Server (local-only)
   - docs-mcp/docs-mcp-deployment.yaml
   - docs-mcp/docs-mcp-service.yaml
+  # tldraw namespace
+  - tldraw/namespace.yaml
+  # SOPS-encrypted secrets
+  - tldraw/tldraw-tunnel-token.sops.yaml
+  # Cloudflare Tunnel for white-board.voitech.dev
+  - tldraw/cloudflared-tldraw-deployment.yaml
+  - tldraw/tldraw-tunnel-ingress-configmap.yaml
   # GPU-accelerated embedding platform service (Ollama)
   - gpu-embedding/namespace.yaml
   - gpu-embedding/ollama-models-pvc.yaml
