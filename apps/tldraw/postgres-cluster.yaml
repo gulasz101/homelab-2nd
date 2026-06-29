@@ -1,0 +1,40 @@
+---
+# tldraw Postgres cluster — single instance on local-path NVMe
+# Backups + WAL archiving via the Barman Cloud CNPG-I plugin to OMV MinIO
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: tldraw-db
+  namespace: apps-tldraw
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
+
+  bootstrap:
+    initdb:
+      database: tldraw
+      owner: tldraw
+      secret:
+        name: tldraw-db-credentials
+
+  storage:
+    storageClass: local-path
+    size: 10Gi
+
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: tldraw-db-backups
+        serverName: tldraw-db
+
+  backup:
+    retentionPolicy: "30d"
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"

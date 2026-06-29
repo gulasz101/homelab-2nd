@@ -64,7 +64,13 @@ resources:
   # tldraw namespace
   - tldraw/namespace.yaml
   # SOPS-encrypted secrets
+  - tldraw/tldraw-db-credentials.sops.yaml
+  - tldraw/tldraw-minio-backup-creds.sops.yaml
   - tldraw/tldraw-tunnel-token.sops.yaml
+  # CNPG cluster + backups for tldraw
+  - tldraw/objectstore.yaml
+  - tldraw/postgres-cluster.yaml
+  - tldraw/scheduled-backup.yaml
   # Cloudflare Tunnel for white-board.voitech.dev
   - tldraw/cloudflared-tldraw-deployment.yaml
   - tldraw/tldraw-tunnel-ingress-configmap.yaml

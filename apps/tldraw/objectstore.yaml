@@ -1,0 +1,22 @@
+---
+# ObjectStore for the Barman Cloud CNPG-I plugin — tldraw backups to OMV MinIO
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: tldraw-db-backups
+  namespace: apps-tldraw
+spec:
+  configuration:
+    destinationPath: s3://cnpg-backups/tldraw/
+    endpointURL: http://openmediavault.local:9000
+    s3Credentials:
+      accessKeyId:
+        name: tldraw-minio-backup-creds
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: tldraw-minio-backup-creds
+        key: ACCESS_SECRET_KEY
+    data:
+      compression: gzip
+    wal:
+      compression: gzip
