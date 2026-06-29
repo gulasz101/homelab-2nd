@@ -1,0 +1,12 @@
+---
+# Public hostname reminder for the auth.voitech.dev Cloudflare Tunnel.
+# The actual ingress rule must be configured in the Cloudflare Zero Trust dashboard
+# for the tunnel whose token lives in auth-tunnel-token.sops.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-tunnel-ingress
+  namespace: auth
+data:
+  note: |
+    auth.voitech.dev -> http://authentik-server.auth.svc.cluster.local:9000

@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - authentik-helm-repository.yaml
+  - authentik-db-credentials.sops.yaml
+  - authentik-secret-key.sops.yaml
+  - authentik-redis-credentials.sops.yaml
+  - authentik-admin-password.sops.yaml
+  - authentik-minio-backup-creds.sops.yaml
+  - auth-tunnel-token.sops.yaml
+  - postgres-cluster.yaml
+  - scheduled-backup.yaml
+  - redis-pvc.yaml
+  - redis-deployment.yaml
+  - redis-service.yaml
+  - authentik-helm-release.yaml
+  - cloudflared-auth-deployment.yaml
+  - auth-tunnel-ingress-configmap.yaml

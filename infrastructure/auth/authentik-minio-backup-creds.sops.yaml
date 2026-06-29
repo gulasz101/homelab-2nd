@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: authentik-minio-backup-creds
+    namespace: auth
+type: Opaque
+stringData:
+    ACCESS_KEY_ID: ENC[AES256_GCM,data:Gn1Suk4eRwsny9287vGiUp++eVDQhgmyNSzJ20kOqv6hQUAahLG2,iv:OYsAkZGldXadfLHbuFPi4BRTvUUNAOWRIUvVsCtPTwM=,tag:OyZFFXXbwHzTqKUjVggKfg==,type:str]
+    ACCESS_SECRET_KEY: ENC[AES256_GCM,data:8XTZ3H3OM1xsEj9BhpRyWPBEoA2Fvrzj8S0dhH3Mr1eyugKhe5/WazqJsQ==,iv:WeFOoTDKtQrT9iejnkMuwFxtYWIjaGhbI6R6IrKWMBQ=,tag:bGQRr2GE+kV7m4BbFePFnA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAvWXN6TjJDclphZWpXTWJT
+            MWNmd0dBTDJwekJOb1B4K0JWL0U1RWdiQUZVCmNXRklldHFWY2ZHOXlVMzBLQXg5
+            bkxQYjZ5TXphdlFpdnhCWUJ1QkJmUU0KLS0tIEZmamFmeVR0ZXlwSFNoQzVlUHFJ
+            MFlRSjhpQ2c5VS9pam9EYTB0SGhnNDAKA4Wts5O0dwmQQrv2yI9H5+/xFLAYL5KD
+            c9rLFLWYyCCWp3n2d94fOBOF6BgeR3kDLJ+SDmFAaYNG9GS20HDDUA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-06-29T09:48:50Z"
+    mac: ENC[AES256_GCM,data:Bk4gy3lrsY++lkzmmBJ4WINJs9iCWyxKR7VBHnf98FZVwKVU1gO2zcJwo7b0If3+jt8CNzPkN8aLs61/tc5tq3VenzmsCuSXGrDQTif9q+LLGGnXynNSndZFsqyBzpo+iii+5xjlBnnrcQErcRJY/7/nIqlqnOX+pLoagV9fZfw=,iv:/nQo7hrDs+G/VlTPKH1Y/FLCQ86IGEsikwWDj8NVJ5k=,tag:nokL0mCRd3T5a/3GFFs/kA==,type:str]
+    version: 3.13.1

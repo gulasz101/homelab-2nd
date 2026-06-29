@@ -1,0 +1,97 @@
+---
+# Authentik identity provider — external CNPG Postgres + Redis
+# Public ingress via Cloudflare Tunnel, no Ingress/LoadBalancer
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: authentik
+  namespace: auth
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: authentik
+      version: ">=2026.5.0"
+      sourceRef:
+        kind: HelmRepository
+        name: authentik
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Disable built-in Bitnami PostgreSQL — we use CNPG
+    postgresql:
+      enabled: false
+
+    authentik:
+      # Secret key is injected via SOPS-encrypted secret referenced below
+      secret_key:
+        valueFrom:
+          secretKeyRef:
+            name: authentik-secret-key
+            key: secret_key
+
+      # Telemetry off
+      error_reporting:
+        enabled: false
+
+      # External Postgres via CNPG
+      postgresql:
+        host: authentik-db-rw.auth.svc.cluster.local
+        name: authentik
+        user: authentik
+        password:
+          valueFrom:
+            secretKeyRef:
+              name: authentik-db-credentials
+              key: password
+
+      # External Redis
+      redis:
+        host: redis.auth.svc.cluster.local
+        password:
+          valueFrom:
+            secretKeyRef:
+              name: authentik-redis-credentials
+              key: password
+
+    # Server pod configuration
+    server:
+      replicas: 1
+      service:
+        type: ClusterIP
+      ingress:
+        enabled: false
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+      env:
+        # Trust Cloudflare-proxied requests
+        - name: AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS
+          value: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128"
+
+    # Worker pod configuration
+    worker:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+      env:
+        - name: AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS
+          value: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128"
+
+    # GeoIP disabled for now
+    geoip:
+      enabled: false

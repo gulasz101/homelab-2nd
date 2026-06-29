@@ -1,0 +1,59 @@
+---
+# CNPG Cluster for Authentik — single instance on local-path NVMe
+# Backups + WAL archiving to OMV MinIO S3 bucket 'cnpg-backups/authentik'
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: authentik-db
+  namespace: auth
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie
+
+  # Enable superuser access for break-glass operations
+  enableSuperuserAccess: true
+
+  # PostgreSQL configuration
+  postgresql:
+    parameters:
+      max_connections: "100"
+      shared_buffers: "256MB"
+      effective_cache_size: "512MB"
+
+  # Bootstrapping — create the authentik database and user
+  bootstrap:
+    initdb:
+      database: authentik
+      owner: authentik
+      secret:
+        name: authentik-db-credentials
+
+  # Storage — local-path on homelab-2nd NVMe (fast, NOT durable)
+  storage:
+    storageClass: local-path
+    size: 10Gi
+
+  # Backup + WAL archiving to OMV MinIO S3
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/authentik/
+      endpointURL: http://openmediavault.local:9000
+      s3Credentials:
+        accessKeyId:
+          name: authentik-minio-backup-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: authentik-minio-backup-creds
+          key: ACCESS_SECRET_KEY
+      data:
+        compression: gzip
+    retentionPolicy: "30d"
+
+  # Resource limits — reasonable for a homelab
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"

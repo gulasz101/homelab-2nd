@@ -43,3 +43,21 @@ resources:
   # Grafana dashboards
   - observability/dashboards/homelab-system-load-dashboard-configmap.yaml
   - observability/dashboards/homelab-gpu-power-dashboard-configmap.yaml
+
+  # Central identity: Authentik (Phase 0)
+  - auth/namespace.yaml
+  - auth/authentik-helm-repository.yaml
+  - auth/authentik-db-credentials.sops.yaml
+  - auth/authentik-secret-key.sops.yaml
+  - auth/authentik-redis-credentials.sops.yaml
+  - auth/authentik-admin-password.sops.yaml
+  - auth/authentik-minio-backup-creds.sops.yaml
+  - auth/auth-tunnel-token.sops.yaml
+  - auth/postgres-cluster.yaml
+  - auth/scheduled-backup.yaml
+  - auth/redis-pvc.yaml
+  - auth/redis-deployment.yaml
+  - auth/redis-service.yaml
+  - auth/authentik-helm-release.yaml
+  - auth/cloudflared-auth-deployment.yaml
+  - auth/auth-tunnel-ingress-configmap.yaml
