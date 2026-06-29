@@ -66,6 +66,7 @@ resources:
   # SOPS-encrypted secrets
   - tldraw/tldraw-db-credentials.sops.yaml
   - tldraw/tldraw-minio-backup-creds.sops.yaml
+  - tldraw/tldraw-oidc-client.sops.yaml
   - tldraw/tldraw-tunnel-token.sops.yaml
   # CNPG cluster + backups for tldraw
   - tldraw/objectstore.yaml
