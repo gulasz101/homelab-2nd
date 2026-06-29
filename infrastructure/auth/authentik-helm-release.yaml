@@ -38,15 +38,6 @@ spec:
       name: authentik-redis-credentials
       valuesKey: password
       targetPath: authentik.redis.password
-    - kind: Secret
-      name: authentik-admin-password
-      valuesKey: email
-      targetPath: authentik.bootstrap_email
-    - kind: Secret
-      name: authentik-admin-password
-      valuesKey: password_hash
-      targetPath: authentik.bootstrap_password_hash
-
   values:
     # Disable built-in Bitnami PostgreSQL — we use CNPG
     postgresql:
@@ -57,9 +48,11 @@ spec:
       error_reporting:
         enabled: false
 
-      # Bootstrap admin credentials for fresh installs (valuesFrom injects real values)
-      bootstrap_email: DUMMY_BOOTSTRAP_EMAIL
-      bootstrap_password_hash: DUMMY_BOOTSTRAP_PASSWORD_HASH
+      # NOTE: bootstrap_email/bootstrap_password_hash are intentionally NOT set.
+      # The built-in bootstrap blueprint crashes on this CNPG/Helm setup with:
+      #   KeyOf: failed to find entry with `id` of `admin-group` and a model instance
+      # After the first pod starts, the akadmin password is set via `ak shell`
+      # using the SOPS-encrypted authentik-admin-password Secret.
 
       # External Postgres via CNPG
       postgresql:
