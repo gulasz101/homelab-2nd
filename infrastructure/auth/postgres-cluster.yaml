@@ -31,7 +31,7 @@ metadata:
   namespace: auth
 spec:
   instances: 1
-  imageName: ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie
+  imageName: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
 
   # Enable superuser access for break-glass operations
   enableSuperuserAccess: true
