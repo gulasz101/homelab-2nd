@@ -38,6 +38,14 @@ spec:
       name: authentik-redis-credentials
       valuesKey: password
       targetPath: authentik.redis.password
+    - kind: Secret
+      name: authentik-admin-password
+      valuesKey: email
+      targetPath: authentik.bootstrap_email
+    - kind: Secret
+      name: authentik-admin-password
+      valuesKey: password_hash
+      targetPath: authentik.bootstrap_password_hash
 
   values:
     # Disable built-in Bitnami PostgreSQL — we use CNPG
@@ -48,6 +56,10 @@ spec:
       # Telemetry off
       error_reporting:
         enabled: false
+
+      # Bootstrap admin credentials for fresh installs (valuesFrom injects real values)
+      bootstrap_email: DUMMY_BOOTSTRAP_EMAIL
+      bootstrap_password_hash: DUMMY_BOOTSTRAP_PASSWORD_HASH
 
       # External Postgres via CNPG
       postgresql:
