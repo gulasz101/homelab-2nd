@@ -114,8 +114,22 @@ spec:
     extraVolumes: []
     extraVolumeMounts: []
 
-    # Required to read container logs from host paths.
+    # The logsCollection preset mounts /var/log/pods and /var/lib/docker/containers.
+    # We keep runAsUser: 0 because log files on the node are owned by root and the
+    # filelog receiver must traverse host paths. privileged: true is replaced with
+    # fine-grained capabilities: read-only root fs, no privilege escalation, drop
+    # all caps, add DAC_READ_SEARCH (enables reading files across UID boundaries).
     podSecurityContext:
       runAsUser: 0
+      runAsGroup: 0
+      fsGroup: 0
     securityContext:
-      privileged: true
+      privileged: false
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: false
+      capabilities:
+        drop:
+          - ALL
+        add:
+          - DAC_READ_SEARCH
