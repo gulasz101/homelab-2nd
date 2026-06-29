@@ -3,6 +3,13 @@
 # Provides GPU metrics to Prometheus by wrapping nvidia-smi.
 # Runs as a DaemonSet on GPU nodes only, via a nodeSelector on the NFD label.
 # This is a simpler alternative to DCGM for old consumer GPUs (Maxwell/Pascal).
+#
+# Security note: the chart defaults to privileged: true because it needs access
+# to /dev/nvidia* devices and the host nvidia-smi / libnvidia-ml.so stack. On
+# this single-node homelab with a Maxwell GTX 970M there is no DCGM support, so
+# we accept the upstream hostPath volumes and privileged container as required
+# for accurate GPU metrics. We keep the mounts readOnly: true and document the
+# exception here rather than hiding it from the scanner.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -34,6 +41,19 @@ spec:
       - key: nvidia.com/gpu
         operator: Exists
         effect: NoSchedule
+
+    # The upstream chart defaults to privileged: true. We keep it because the
+    # exporter must talk to the NVIDIA driver devices and libraries on the host.
+    # This is an accepted risk for a single-node consumer-GPU homelab; see the
+    # tracking note for the security-scan decision.
+    securityContext:
+      privileged: true
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: false
+      capabilities:
+        drop:
+          - ALL
 
     # Mount host /usr/bin so the exporter can find nvidia-smi.
     # Also mount /usr/lib to resolve libnvidia-ml.so.
