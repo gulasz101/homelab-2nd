@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: plugin-barman-cloud-m5m67kfh8f
+    namespace: cnpg-system
+type: Opaque
+stringData:
+    SIDECAR_IMAGE: ENC[AES256_GCM,data:1DxD+yLohWEjjNTaDryeUr9Ov67pxhcPj64hzE5KQ7lVUV9UCthSxtI9vQ5S6WMq60Y6nkGupSCIqg==,iv:OlU5a1wBIeMC8isGX80NlOOOus+X3lev2OfBXvx6FoE=,tag:2q+DCkWPJLd1AqT0MvFXsQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAxZnVoYTZLQWZySmoyOGFw
+            dHgwMEtlQ0ZqSnJkVUJJM3dYUGF4RFY4ZmtRCllKMDFGY05IZFpLUVlGdExmbGt6
+            MGZJSkR1WkFQUitJLzJWc0sxREdueVkKLS0tIDlhM1J3NEM2dTlIOGtVbWRFNFZL
+            SlI2SzJ2by83RmYvS3k0MDUrTGU3QU0KN4jtEiL+NctiCbbrHxKphrrfPI8/X8qH
+            IkfqrC481Oq3uDOFXgFqi8yBr0EruKoejqPakt7yEUUSgmr4UffDQw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-06-29T02:03:17Z"
+    mac: ENC[AES256_GCM,data:7sI8C00Pno9dFwxdTJqvEwyv9EU+IHEEY7gqU/HiCRGspy+xWhbIf7cqNtdSOKsKopeDnhmYpJrqKM3t4PCEK00MnlO70hwgIUP3iUsilLR9Z7I1EkNOkR5nUcXeqIZYsTGdIU4f6vBdGmAtsev83AbeTpDE7aCyH+3nnnn+9jo=,iv:5fvpp6vxjzcK6CGHXEm+MFOe1mCs2m9CwftnGmYKbu8=,tag:4tCSenl0FASUBTep4gykTA==,type:str]
+    version: 3.13.1

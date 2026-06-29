@@ -9,6 +9,8 @@ resources:
   - cnpg/helm-release.yaml
   # Barman Cloud CNPG-I plugin (depends on cert-manager HelmRelease)
   - cnpg/barman-cloud-plugin-manifest.yaml
+  # SOPS-encrypted Secret holding the plugin sidecar image reference
+  - cnpg/barman-cloud-sidecar-image.sops.yaml
   # Mattermost HelmRepository (needed for HelmRelease in apps)
   - mattermost/helm-repository.yaml
   # Nextcloud HelmRepository (needed for HelmRelease in apps)
