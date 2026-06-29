@@ -22,19 +22,29 @@ spec:
   upgrade:
     remediation:
       retries: 3
+  valuesFrom:
+    # Inject raw string secrets from SOPS-encrypted k8s Secrets.
+    # The Authentik chart creates a combined Secret named "authentik"; it
+    # expects plain string values here, not Kubernetes valueFrom maps.
+    - kind: Secret
+      name: authentik-secret-key
+      valuesKey: secret_key
+      targetPath: authentik.secret_key
+    - kind: Secret
+      name: authentik-db-credentials
+      valuesKey: password
+      targetPath: authentik.postgresql.password
+    - kind: Secret
+      name: authentik-redis-credentials
+      valuesKey: password
+      targetPath: authentik.redis.password
+
   values:
     # Disable built-in Bitnami PostgreSQL — we use CNPG
     postgresql:
       enabled: false
 
     authentik:
-      # Secret key is injected via SOPS-encrypted secret referenced below
-      secret_key:
-        valueFrom:
-          secretKeyRef:
-            name: authentik-secret-key
-            key: secret_key
-
       # Telemetry off
       error_reporting:
         enabled: false
@@ -44,20 +54,12 @@ spec:
         host: authentik-db-rw.auth.svc.cluster.local
         name: authentik
         user: authentik
-        password:
-          valueFrom:
-            secretKeyRef:
-              name: authentik-db-credentials
-              key: password
+        # password injected via valuesFrom above
 
       # External Redis
       redis:
         host: redis.auth.svc.cluster.local
-        password:
-          valueFrom:
-            secretKeyRef:
-              name: authentik-redis-credentials
-              key: password
+        # password injected via valuesFrom above
 
     # Server pod configuration
     server:
