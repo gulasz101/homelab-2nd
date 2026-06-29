@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: tldraw-license-key
+    namespace: auth
+type: Opaque
+stringData:
+    license_key: ENC[AES256_GCM,data:eqDwoEOD/XTOFduHhAomH2++v7U+4CJoH3mdwOjzA6p3c3VBui8wFyGZh1e78rZ4l69aShrc0l9KI1+je6DPkeR8gJDSDD2/6FsSHrUN8Xlyx8CsbghoKSl/tiXjkRbeGSdqPSyEgyKKloWrO4gKHtbIkoIL2WvyEJZJAt11H57nlj0o20evxuKle6GiYwNaiXyYu9IWWQ==,iv:oYTwGmkMXl2S0SBFEOBLYi2r0USNbklbyVdNoF3H/Oc=,tag:u7J88+dzp0mO5HmIFu3SxA==,type:str]
+    expires: ENC[AES256_GCM,data:wGSvKtFykNF3rw==,iv:eAeHf3ZsBYY9mmNIUzXpV5rkEehx0JSfyH2S+dhTfHU=,tag:xj2sRS72OnupE+uAH/vPIA==,type:str]
+    note: ENC[AES256_GCM,data:KJLZO09QcCKKomAXhzyYm5C2QgUx7xoIY3+0ysAJOqjMGQCqr7u3qDh5ExNUrPRq27biijNfqPhAuJyt6oAguBTXAACilwF9qx1u9WczIVKY/0spuQFej5Z1b2xCgQIk/cPbGGTKQB8Y,iv:m33WKLA9HKgZR4sF+lQIEQvEWP26jv1juIOB7ysITR4=,tag:E0RZ/2h2QU3SA5Hey6LRFw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBLdDBoWUluZHVrMytoalVT
+            ek1oVHBweEl4WlJDNHFKNm1nNXBtT0dxQnk0CkUzeGdweDBnNldyczRSdnJZcXdT
+            WDdlQVNzakdPcEJLd2lIUG9pWEZtTGsKLS0tIHFiajVxNk5nUkZHRVIyY3FLaSsz
+            Mm5BWTNvb2IrczhPMkR5SWVKaVd2Nm8Kfo5oGJs8cJGdqykoGe5TLxb4Q3JFalmT
+            UojYHNYtm0ccSQ1wWQvEmzSVyZtfWFYb4RzyI7eVCZTnWjXHdVmp3w==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-06-29T12:13:57Z"
+    mac: ENC[AES256_GCM,data:G0+BS8YN+y77FQI6lhoF+ZG8Mz+2OCW5XpsULg4DrwtJyCDnMZnrOQvi2c8n57vLi9oBb+l7zb0cETNQ4wyHPT6HZYryY8VN6tb8VP1VSiIaqyrupub3hoDLrWM3JIgKJT95KkeEWHVQFwZuMUF84pjmSdnw+KgZnXynTDK32Yo=,iv:qMymtFz8YuUt32Wr4qnBfBjDpCO2021FWlziXHLRLd4=,tag:zPnLg9gbwF7F3dJpBfyGGA==,type:str]
+    version: 3.13.1
