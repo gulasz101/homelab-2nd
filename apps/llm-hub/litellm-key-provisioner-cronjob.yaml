@@ -1,0 +1,60 @@
+---
+# CronJob that reconciles LiteLLM virtual-key model access every hour.
+# It uses the master key to update any user key whose model whitelist has
+# drifted away from the configured model_list in the LiteLLM proxy.
+# The script lives in the litellm-key-provisioner ConfigMap.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: litellm-key-provisioner
+  namespace: llm-hub
+  labels:
+    app.kubernetes.io/name: litellm-key-provisioner
+    app.kubernetes.io/part-of: llm-hub
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: provisioner
+              image: alpine:latest
+              command:
+                - /bin/sh
+                - /scripts/provision.sh
+              env:
+                - name: LITELLM_URL
+                  value: "http://litellm:4000"
+                - name: LITELLM_MASTER_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: litellm-master-key
+                      key: master-key
+                - name: WOJTEK_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: litellm-user-keys
+                      key: wojtek-key
+                - name: WIFE_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: litellm-user-keys
+                      key: wife-key
+                - name: HERMES_ANDRZEJ_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: litellm-user-keys
+                      key: hermes-andrzej-key
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+          volumes:
+            - name: scripts
+              configMap:
+                name: litellm-key-provisioner
+                defaultMode: 0755

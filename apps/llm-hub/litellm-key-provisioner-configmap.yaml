@@ -1,0 +1,47 @@
+---
+# ConfigMap for the LiteLLM virtual-key model-whitelist provisioner.
+# The script runs inside a CronJob and ensures every declared user key has
+# access to the same model list that is configured in the LiteLLM proxy.
+# This prevents key-level model drift (e.g. a key silently restricted to a
+# single model) from silently breaking Honcho or other clients.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-key-provisioner
+  namespace: llm-hub
+data:
+  provision.sh: |
+    #!/bin/sh
+    set -e
+
+    LITELLM_URL="${LITELLM_URL:-http://litellm:4000}"
+    DESIRED_MODELS='["kimi-k2.7-code","glm-5.2-ollama","glm.5.2","mistral-3.5-middle"]'
+    DESIRED_SORTED=$(echo "${DESIRED_MODELS}" | jq -c 'sort')
+
+    # Kubernetes maps secret keys to env vars by uppercasing and replacing
+    # dashes with underscores. Keep this list in sync with the keys in the
+    # litellm-user-keys Secret.
+    for env_name in WIFE_KEY WOJTEK_KEY HERMES_ANDRZEJ_KEY; do
+      token=$(eval "echo \"\$${env_name}\"")
+      [ -z "${token}" ] && continue
+
+      key_alias=$(echo "${env_name}" | tr '[:upper:]_' '[:lower:]-')
+      echo "Checking ${key_alias}..."
+
+      current=$(curl -fsS -H "Authorization: Bearer ${token}" "${LITELLM_URL}/key/info" | jq -c '.info.models // [] | sort' || echo 'null')
+      if [ "${current}" = "null" ] || [ -z "${current}" ]; then
+        echo "WARN: could not read current model list for ${key_alias}"
+        continue
+      fi
+
+      if [ "${current}" != "${DESIRED_SORTED}" ]; then
+        echo "Updating ${key_alias}: ${current} -> ${DESIRED_SORTED}"
+        curl -fsS -X POST "${LITELLM_URL}/key/update" \
+          -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \
+          -H "Content-Type: application/json" \
+          -d "{\"key\":\"${token}\",\"models\":${DESIRED_MODELS}}"
+        echo " done"
+      else
+        echo "${key_alias} already correct"
+      fi
+    done
