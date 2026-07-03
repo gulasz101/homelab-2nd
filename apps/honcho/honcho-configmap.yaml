@@ -7,8 +7,9 @@ metadata:
   name: honcho-config
   namespace: honcho
 data:
-  # LiteLLM proxy endpoint — all LLM traffic routes through here.
-  LLM_OPENAI_BASE_URL: "https://llm.voitech.dev"
+  # LiteLLM proxy endpoint. Inside k3s we use the in-cluster service to avoid
+  # Cloudflare WAF blocking the OpenAI SDK's fingerprint on llm.voitech.dev.
+  LLM_OPENAI_BASE_URL: "http://litellm.llm-hub.svc.cluster.local:4000"
   # Embedding model is served by Ollama Cloud via LiteLLM proxy.
   EMBEDDING_MODEL_CONFIG__MODEL: "nomic-embed-text"
   EMBEDDING_MODEL_CONFIG__TRANSPORT: "openai"
