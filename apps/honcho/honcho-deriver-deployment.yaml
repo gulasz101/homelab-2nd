@@ -60,7 +60,3 @@ spec:
             capabilities:
               drop:
                 - ALL
-            readOnlyRootFilesystem: true
-      volumes:
-        - name: tmp
-          emptyDir: {}
