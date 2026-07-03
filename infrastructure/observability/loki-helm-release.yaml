@@ -65,8 +65,6 @@ spec:
         ring:
           kvstore:
             store: inmemory
-        ruler_client:
-          remote_timeout: 10s
         external_labels:
           cluster: homelab-2nd
           namespace: honcho
