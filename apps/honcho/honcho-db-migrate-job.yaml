@@ -1,0 +1,46 @@
+---
+# One-off bootstrap Job to run Alembic migrations against the Honcho CNPG cluster.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: honcho-db-migrate
+  namespace: honcho
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: honcho-db-migrate
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: ghcr.io/gulasz101/honcho:latest
+          command: ["alembic", "upgrade", "head"]
+          workingDir: /app
+          env:
+            - name: DB_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-db-credentials
+                  key: connection-uri
+          envFrom:
+            - configMapRef:
+                name: honcho-config
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: tmp
+          emptyDir: {}

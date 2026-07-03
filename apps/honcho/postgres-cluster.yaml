@@ -29,7 +29,7 @@ spec:
 
   # Storage — local-path on homelab-2nd NVMe (fast, NOT durable)
   storage:
-    storageClassName: local-path
+    storageClass: local-path
     size: 10Gi
 
   # Backup + WAL archiving to OMV MinIO S3
