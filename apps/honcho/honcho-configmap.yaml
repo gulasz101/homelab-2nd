@@ -9,6 +9,12 @@ metadata:
 data:
   # LiteLLM proxy endpoint — all LLM traffic routes through here.
   LLM_OPENAI_BASE_URL: "https://llm.voitech.dev"
+  # Embedding model is served by Ollama Cloud via LiteLLM proxy.
+  EMBEDDING_MODEL_CONFIG__MODEL: "nomic-embed-text"
+  EMBEDDING_MODEL_CONFIG__TRANSPORT: "openai"
+  EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL: "http://192.168.1.179:30114/v1"
+  EMBEDDING_VECTOR_DIMENSIONS: "768"
+  VECTOR_STORE_TYPE: "pgvector"
   # Model names match the LiteLLM proxy model_list.
   DERIVER_MODEL_CONFIG__MODEL: "mistral-3.5-middle"
   DIALECTIC_MODEL_CONFIG__MODEL: "mistral-3.5-middle"
