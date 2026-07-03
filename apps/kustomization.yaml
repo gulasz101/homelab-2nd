@@ -110,6 +110,7 @@ resources:
   - honcho/honcho-db-credentials.sops.yaml
   - honcho/honcho-secrets.sops.yaml
   - honcho/honcho-minio-backup-creds.sops.yaml
+  - honcho/honcho-mattermost-webhook-url.sops.yaml
   # Non-secret config
   - honcho/honcho-configmap.yaml
   # CNPG Cluster + backups for Honcho
@@ -122,5 +123,7 @@ resources:
   # Honcho API + Deriver deployments
   - honcho/honcho-api-deployment.yaml
   - honcho/honcho-deriver-deployment.yaml
+  # AlertmanagerConfig to route Honcho alerts to Mattermost
+  - honcho/honcho-alertmanager-config.yaml
   # LAN-only NodePort service
   - honcho/honcho-service.yaml

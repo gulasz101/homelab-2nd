@@ -1,0 +1,33 @@
+---
+# PrometheusRule: fire an alert when Honcho API or deriver logs contain
+# unexpected errors (PermissionDeniedError / RetryError / An unexpected error).
+# Routes to the mattermost-webhook receiver defined in Alertmanager config.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: honcho-error-logs
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: honcho.errors
+      interval: 1m
+      rules:
+        - alert: HonchoUnexpectedErrors
+          expr: |
+            sum by (pod, namespace)(
+              count_over_time(
+                {namespace="honcho", pod=~"honcho-api.*|honcho-deriver.*"}
+                |~ "PermissionDeniedError|RetryError|An unexpected error occurred"
+                [5m]
+              )
+            ) > 0
+          for: 2m
+          labels:
+            severity: warning
+            namespace: honcho
+          annotations:
+            summary: "Honcho component logging unexpected errors"
+            description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} has logged unexpected errors in the last 5 minutes."
+            runbook_url: "https://grafana.voitech.dev/explore?orgId=1&left=%7B%22datasource%22:%22Loki%22,%22queries%22:%5B%7B%22refId%22:%22A%22,%22expr%22:%22%7Bnamespace%3D%5C%22honcho%5C%22,pod%3D%5C%22{{ $labels.pod }}%5C%22%7D%20%7C%3D%20%5C%22PermissionDeniedError%5C%22%20or%20%7C%3D%20%5C%22RetryError%5C%22%20or%20%7C%3D%20%5C%22An%20unexpected%20error%20occurred%5C%22%22%7D%5D,%22range%22:%7B%22from%22:%22now-1h%22,%22to%22:%22now%22%7D%7D"
