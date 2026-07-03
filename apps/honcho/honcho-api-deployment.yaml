@@ -26,7 +26,7 @@ spec:
       containers:
         - name: api
           image: ghcr.io/gulasz101/honcho:latest
-          command: ["uv", "run", "--frozen", "fastapi", "run", "src/main.py"]
+          command: ["uv", "run", "--frozen", "--no-group", "dev", "fastapi", "run", "src/main.py"]
           args: ["--host", "0.0.0.0", "--port", "8000"]
           ports:
             - containerPort: 8000
