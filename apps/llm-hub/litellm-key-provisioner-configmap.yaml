@@ -2,46 +2,88 @@
 # ConfigMap for the LiteLLM virtual-key model-whitelist provisioner.
 # The script runs inside a CronJob and ensures every declared user key has
 # access to the same model list that is configured in the LiteLLM proxy.
-# This prevents key-level model drift (e.g. a key silently restricted to a
-# single model) from silently breaking Honcho or other clients.
+# Uses only Python stdlib, so no runtime package installs are needed.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: litellm-key-provisioner
   namespace: llm-hub
 data:
-  provision.sh: |
-    #!/bin/sh
-    set -e
+  provision.py: |
+    import json
+    import os
+    import sys
+    import urllib.error
+    import urllib.request
 
-    LITELLM_URL="${LITELLM_URL:-http://litellm:4000}"
-    DESIRED_MODELS='["kimi-k2.7-code","glm-5.2-ollama","glm.5.2","mistral-3.5-middle"]'
-    DESIRED_SORTED=$(echo "${DESIRED_MODELS}" | jq -c 'sort')
+    LITELLM_URL = os.environ.get("LITELLM_URL", "http://litellm:4000")
+    MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
+    DESIRED_MODELS = [
+        "kimi-k2.7-code",
+        "glm-5.2-ollama",
+        "glm.5.2",
+        "mistral-3.5-middle",
+    ]
 
-    # Kubernetes maps secret keys to env vars by uppercasing and replacing
-    # dashes with underscores. Keep this list in sync with the keys in the
+    # Kubernetes maps secret keys like 'hermes-andrzej-key' to env vars
+    # HERMES_ANDRZEJ_KEY. This list must match the keys in the
     # litellm-user-keys Secret.
-    for env_name in WIFE_KEY WOJTEK_KEY HERMES_ANDRZEJ_KEY; do
-      token=$(eval "echo \"\$${env_name}\"")
-      [ -z "${token}" ] && continue
+    KEY_ENV_NAMES = ["WIFE_KEY", "WOJTEK_KEY", "HERMES_ANDRZEJ_KEY"]
 
-      key_alias=$(echo "${env_name}" | tr '[:upper:]_' '[:lower:]-')
-      echo "Checking ${key_alias}..."
 
-      current=$(curl -fsS -H "Authorization: Bearer ${token}" "${LITELLM_URL}/key/info" | jq -c '.info.models // [] | sort' || echo 'null')
-      if [ "${current}" = "null" ] || [ -z "${current}" ]; then
-        echo "WARN: could not read current model list for ${key_alias}"
-        continue
-      fi
+    def api_request(path, token=None, method="GET", data=None):
+        url = f"{LITELLM_URL}{path}"
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        body = None
+        if data is not None:
+            body = json.dumps(data).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            err = e.read().decode("utf-8")
+            print(f"ERROR {method} {path}: HTTP {e.code} {err}")
+            raise
 
-      if [ "${current}" != "${DESIRED_SORTED}" ]; then
-        echo "Updating ${key_alias}: ${current} -> ${DESIRED_SORTED}"
-        curl -fsS -X POST "${LITELLM_URL}/key/update" \
-          -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \
-          -H "Content-Type: application/json" \
-          -d "{\"key\":\"${token}\",\"models\":${DESIRED_MODELS}}"
-        echo " done"
-      else
-        echo "${key_alias} already correct"
-      fi
-    done
+
+    def main():
+        if not MASTER_KEY:
+            print("LITELLM_MASTER_KEY not set; aborting")
+            sys.exit(1)
+
+        desired_sorted = sorted(DESIRED_MODELS)
+
+        for env_name in KEY_ENV_NAMES:
+            token = os.environ.get(env_name)
+            if not token:
+                print(f"Skipping {env_name}: no token")
+                continue
+
+            key_alias = env_name.replace("_", "-").lower()
+            print(f"Checking {key_alias}...")
+
+            try:
+                info = api_request("/key/info", token=token)
+            except urllib.error.HTTPError:
+                print(f"WARN: could not read info for {key_alias}")
+                continue
+
+            current_models = sorted(info.get("info", {}).get("models", []))
+            if current_models != desired_sorted:
+                print(f"Updating {key_alias}: {current_models} -> {desired_sorted}")
+                api_request(
+                    "/key/update",
+                    token=MASTER_KEY,
+                    method="POST",
+                    data={"key": token, "models": DESIRED_MODELS},
+                )
+                print(f"{key_alias} updated")
+            else:
+                print(f"{key_alias} already correct")
+
+
+    if __name__ == "__main__":
+        main()
