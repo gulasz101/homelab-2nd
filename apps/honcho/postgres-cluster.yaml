@@ -1,7 +1,61 @@
 ---
 # CNPG Cluster for Honcho — single instance on local-path NVMe
 # Backups + WAL archiving to OMV MinIO S3 bucket 'cnpg-backups'
+# NOTE: use the default postgresql:16 image (not -standard/-minimal); it is the
+# only CNPG image that includes both pgvector and barman-cli-cloud, which is
+# required for WAL archiving and base backups to S3.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: hon...[truncated]
+  name: honcho-db
+  namespace: honcho
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16
+
+  # PostgreSQL configuration
+  postgresql:
+    parameters:
+      max_connections: "100"
+      shared_buffers: "256MB"
+      effective_cache_size: "512MB"
+
+  # Bootstrapping — create the honcho database and user
+  bootstrap:
+    initdb:
+      database: honcho
+      owner: honcho
+      secret:
+        name: honcho-db-credentials
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector;
+
+  # Storage — local-path on homelab-2nd NVMe (fast, NOT durable)
+  storage:
+    storageClass: local-path
+    size: 10Gi
+
+  # Backup + WAL archiving to OMV MinIO S3
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/honcho/
+      endpointURL: http://openmediavault.local:9000
+      s3Credentials:
+        accessKeyId:
+          name: honcho-minio-backup-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: honcho-minio-backup-creds
+          key: ACCESS_SECRET_KEY
+      data:
+        compression: gzip
+    retentionPolicy: "30d"
+
+  # Resource limits — reasonable for a homelab
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"
