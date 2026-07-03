@@ -91,6 +91,9 @@ spec:
       enabled: false
     resultsCache:
       enabled: false
+    sidecar:
+      rules:
+        folder: /rules/fake
     read:
       enabled: false
       replicas: 0
