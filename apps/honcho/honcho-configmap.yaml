@@ -15,9 +15,13 @@ data:
   EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL: "http://192.168.1.179:30114/v1"
   EMBEDDING_VECTOR_DIMENSIONS: "768"
   VECTOR_STORE_TYPE: "pgvector"
-  # Model names match the LiteLLM proxy model_list.
+  # Deriver model.
   DERIVER_MODEL_CONFIG__MODEL: "mistral-3.5-middle"
-  DIALECTIC_MODEL_CONFIG__MODEL: "mistral-3.5-middle"
+  # Dialectic levels. Env shape must match Pydantic nested dict keys:
+  # DIALECTIC.LEVELS["low"].MODEL_CONFIG.model
+  DIALECTIC_LEVELS__LOW__MODEL_CONFIG__MODEL: "mistral-3.5-middle"
+  DIALECTIC_LEVELS__MEDIUM__MODEL_CONFIG__MODEL: "mistral-3.5-middle"
+  DIALECTIC_LEVELS__HIGH__MODEL_CONFIG__MODEL: "mistral-3.5-middle"
   # Honcho auth is disabled for the local homelab deployment.
   HONCHO_AUTH_ENABLED: "false"
   # Logging
