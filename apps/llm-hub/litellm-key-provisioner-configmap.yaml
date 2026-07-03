@@ -25,11 +25,26 @@ data:
         "mistral-3.5-middle",
     ]
 
+    def expand_models(models):
+        # LiteLLM clients may pass either the bare model name or an
+        # openai/ prefixed name. Allow both forms so keys work regardless
+        # of how the caller names the model.
+        expanded = []
+        for m in models:
+            expanded.append(m)
+            if not m.startswith("openai/"):
+                expanded.append(f"openai/{m}")
+        return expanded
+
     # Kubernetes maps secret keys like 'hermes-andrzej-key' to env vars
     # HERMES_ANDRZEJ_KEY. This list must match the keys in the
     # litellm-user-keys Secret.
-    KEY_ENV_NAMES = ["WIFE_KEY", "WOJTEK_KEY", "HERMES_ANDRZEJ_KEY"]
-
+    KEY_ENV_NAMES = [
+        "WIFE_KEY",
+        "WOJTEK_KEY",
+        "HERMES_ANDRZEJ_KEY",
+        "MEMORY_HONCHO_KEY",
+    ]
 
     def api_request(path, token=None, method="GET", data=None):
         url = f"{LITELLM_URL}{path}"
@@ -54,7 +69,8 @@ data:
             print("LITELLM_MASTER_KEY not set; aborting")
             sys.exit(1)
 
-        desired_sorted = sorted(DESIRED_MODELS)
+        desired_models = expand_models(DESIRED_MODELS)
+        desired_sorted = sorted(desired_models)
 
         for env_name in KEY_ENV_NAMES:
             token = os.environ.get(env_name)
@@ -78,7 +94,7 @@ data:
                     "/key/update",
                     token=MASTER_KEY,
                     method="POST",
-                    data={"key": token, "models": DESIRED_MODELS},
+                    data={"key": token, "models": desired_models},
                 )
                 print(f"{key_alias} updated")
             else:

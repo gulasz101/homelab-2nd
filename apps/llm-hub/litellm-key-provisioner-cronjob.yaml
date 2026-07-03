@@ -50,6 +50,11 @@ spec:
                     secretKeyRef:
                       name: litellm-user-keys
                       key: hermes-andrzej-key
+                - name: MEMORY_HONCHO_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: litellm-user-keys
+                      key: memory-honcho-key
               volumeMounts:
                 - name: scripts
                   mountPath: /scripts
