@@ -55,17 +55,22 @@ spec:
       rulerConfig:
         alertmanager_url: http://prometheus-stack-kube-prom-alertmanager.observability.svc.cluster.local:9093
         enable_api: true
+        enable_alertmanager_v2: true
         storage:
-          type: s3
-          s3:
-            bucketnames: loki-ruler
-            endpoint: http://192.168.1.180:9000
-            s3forcepathstyle: true
-            insecure: true
-            access_key_id: ${S3_ACCESS_KEY_ID}
-            secret_access_key: ${S3_SECRET_ACCESS_KEY}
+          type: local
+          local:
+            directory: /rules
         wal:
           dir: /var/loki/ruler-wal
+        ring:
+          kvstore:
+            store: inmemory
+        ruler_client:
+          remote_timeout: 10s
+        external_labels:
+          cluster: homelab-2nd
+          namespace: honcho
+          alertname: HonchoUnexpectedErrors
     singleBinary:
       replicas: 1
       extraArgs:
