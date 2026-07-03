@@ -26,8 +26,8 @@ spec:
       containers:
         - name: api
           image: ghcr.io/gulasz101/honcho:latest
-          command: ["uv", "run", "--frozen", "--no-group", "dev", "fastapi", "run", "src/main.py"]
-          args: ["--host", "0.0.0.0", "--port", "8000"]
+          command: ["fastapi", "run", "--host", "0.0.0.0", "--port", "8000", "src/main.py"]
+          workingDir: /app
           ports:
             - containerPort: 8000
               name: http
@@ -47,12 +47,12 @@ spec:
                 secretKeyRef:
                   name: honcho-litellm-key
                   key: api-key
-          envFrom:
-            - configMapRef:
-                name: honcho-config
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+          envFrom:
+            - configMapRef:
+                name: honcho-config
           resources:
             requests:
               cpu: 250m
@@ -64,3 +64,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: tmp
+          emptyDir: {}

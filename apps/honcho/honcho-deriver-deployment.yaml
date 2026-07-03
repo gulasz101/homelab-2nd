@@ -26,7 +26,8 @@ spec:
       containers:
         - name: deriver
           image: ghcr.io/gulasz101/honcho:latest
-          command: ["uv", "run", "--frozen", "--no-group", "dev", "python", "-m", "src.deriver"]
+          command: ["python", "-m", "src.deriver"]
+          workingDir: /app
           env:
             - name: DB_CONNECTION_URI
               valueFrom:
@@ -46,9 +47,6 @@ spec:
           envFrom:
             - configMapRef:
                 name: honcho-config
-          volumeMounts:
-            - name: tmp
-              mountPath: /tmp
           resources:
             requests:
               cpu: 250m
