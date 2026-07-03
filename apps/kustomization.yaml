@@ -125,5 +125,7 @@ resources:
   - honcho/honcho-deriver-deployment.yaml
   # AlertmanagerConfig to route Honcho alerts to Mattermost
   - honcho/honcho-alertmanager-config.yaml
+  # Loki Ruler rule for Honcho error alerts
+  - honcho/honcho-error-loki-rule.yaml
   # LAN-only NodePort service
   - honcho/honcho-service.yaml

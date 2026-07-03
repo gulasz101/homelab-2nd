@@ -52,6 +52,20 @@ spec:
       limits_config:
         allow_structured_metadata: true
         retention_period: 168h
+      rulerConfig:
+        alertmanager_url: http://prometheus-stack-kube-prom-alertmanager.observability.svc.cluster.local:9093
+        enable_api: true
+        storage:
+          type: s3
+          s3:
+            bucketnames: loki-ruler
+            endpoint: http://192.168.1.180:9000
+            s3forcepathstyle: true
+            insecure: true
+            access_key_id: ${S3_ACCESS_KEY_ID}
+            secret_access_key: ${S3_SECRET_ACCESS_KEY}
+        wal:
+          dir: /var/loki/ruler-wal
     singleBinary:
       replicas: 1
       extraArgs:
