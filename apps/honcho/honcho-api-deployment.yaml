@@ -50,6 +50,9 @@ spec:
           envFrom:
             - configMapRef:
                 name: honcho-config
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
               cpu: 250m
@@ -62,3 +65,6 @@ spec:
               drop:
                 - ALL
             readOnlyRootFilesystem: true
+      volumes:
+        - name: tmp
+          emptyDir: {}

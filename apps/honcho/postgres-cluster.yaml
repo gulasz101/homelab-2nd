@@ -8,18 +8,16 @@ metadata:
   namespace: honcho
 spec:
   instances: 1
-  imageName: ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie
+  # 'standard' image includes pgvector and other common extensions,
+  # avoiding the need for a separate extension sidecar image.
+  imageName: ghcr.io/cloudnative-pg/postgresql:16-standard-trixie
 
-  # PostgreSQL configuration + pgvector extension for Honcho memory
+  # PostgreSQL configuration
   postgresql:
     parameters:
       max_connections: "100"
       shared_buffers: "256MB"
       effective_cache_size: "512MB"
-    extensions:
-      - name: pgvector
-        image:
-          reference: ghcr.io/cloudnative-pg/pgvector:0.8.3-16-trixie
 
   # Bootstrapping — create the honcho database and user
   bootstrap:
