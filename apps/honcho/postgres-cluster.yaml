@@ -8,8 +8,6 @@ metadata:
   namespace: honcho
 spec:
   instances: 1
-  # 'standard' image includes pgvector and other common extensions,
-  # avoiding the need for a separate extension sidecar image.
   imageName: ghcr.io/cloudnative-pg/postgresql:16-standard-trixie
 
   # PostgreSQL configuration
@@ -26,10 +24,12 @@ spec:
       owner: honcho
       secret:
         name: honcho-db-credentials
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector;
 
   # Storage — local-path on homelab-2nd NVMe (fast, NOT durable)
   storage:
-    storageClass: local-path
+    storageClassName: local-path
     size: 10Gi
 
   # Backup + WAL archiving to OMV MinIO S3
