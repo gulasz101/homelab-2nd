@@ -1,0 +1,19 @@
+---
+# Non-secret Honcho runtime configuration.
+# Secret values live in SOPS-encrypted Kubernetes Secrets and are mounted as env vars.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: honcho-config
+  namespace: honcho
+data:
+  # LiteLLM proxy endpoint — all LLM traffic routes through here.
+  LLM_OPENAI_BASE_URL: "https://llm.voitech.dev"
+  # Model names match the LiteLLM proxy model_list.
+  DERIVER_MODEL_CONFIG__MODEL: "mistral-3.5-middle"
+  DIALECTIC_MODEL_CONFIG__MODEL: "mistral-3.5-middle"
+  # Honcho auth is disabled for the local homelab deployment.
+  HONCHO_AUTH_ENABLED: "false"
+  # Logging
+  LOG_LEVEL: "INFO"
+  PYTHONUNBUFFERED: "1"

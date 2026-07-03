@@ -1,0 +1,64 @@
+---
+# Honcho API server Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: honcho-api
+  namespace: honcho
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: honcho-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: honcho-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/gulasz101/honcho:latest
+          command: ["uv", "run", "fastapi", "run", "src/main.py"]
+          args: ["--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: DB_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-db-credentials
+                  key: connection-uri
+            - name: CACHE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-redis-credentials
+                  key: cache-url
+            - name: LLM_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-litellm-key
+                  key: api-key
+          envFrom:
+            - configMapRef:
+                name: honcho-config
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true

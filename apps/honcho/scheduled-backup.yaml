@@ -1,0 +1,13 @@
+---
+# Daily scheduled backup for the Honcho CNPG cluster
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: honcho-db-backup
+  namespace: honcho
+spec:
+  schedule: "0 3 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: honcho-db
+  immediate: true

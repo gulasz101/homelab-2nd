@@ -1,0 +1,60 @@
+---
+# Redis cache/queue for Honcho — rebuildable state, local-path for performance.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: honcho-redis
+  namespace: honcho
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: honcho-redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: honcho-redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:8.2-alpine
+          command:
+            - redis-server
+            - --requirepass
+            - $(REDIS_PASSWORD)
+            - --appendonly
+            - "yes"
+          ports:
+            - containerPort: 6379
+              name: redis
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-redis-credentials
+                  key: password
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-data
