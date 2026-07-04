@@ -21,7 +21,7 @@ data:
     DESIRED_MODELS = [
         "kimi-k2.7-code",
         "glm-5.2-ollama",
-        "glm.5.2",
+        "glm-5.2",
         "glm-4.7",
         "mistral-3.5-middle",
     ]

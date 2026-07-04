@@ -90,7 +90,7 @@ spec:
             model: openai/glm-5.2
             api_base: "https://ollama.com/v1"
             api_key: "os.environ/OLLAMA_API_KEY"
-        - model_name: glm.5.2
+        - model_name: glm-5.2
           litellm_params:
             # z.ai markets this as glm-5.2, but LiteLLM's provider map only knows zai/glm-5.
             # Alias keeps the user-facing name while routing to the recognised slug.
