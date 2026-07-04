@@ -96,9 +96,10 @@ spec:
             # Alias keeps the user-facing name while routing to the recognised slug.
             model: zai/glm-5
             api_key: "os.environ/ZAI_API_KEY"
-        - model_name: glm.4.7
+        - model_name: glm-4.7
           litellm_params:
             # Z.AI's flagship GLM-4.7 model (200K context, reasoning)
+            # Note: model_name uses dash (glm-4.7) to match z.ai's native naming
             model: zai/glm-4.7
             api_key: "os.environ/ZAI_API_KEY"
         - model_name: mistral-3.5-middle
