@@ -96,16 +96,17 @@ spec:
             model: openai/glm-5.2
             api_base: "https://ollama.com/v1"
             api_key: "os.environ/OLLAMA_API_KEY"
-        - model_name: glm-5.2
+        - model_name: glm-5.2-zai
           litellm_params:
             # z.ai markets this as glm-5.2, but LiteLLM's provider map only knows zai/glm-5.
             # Alias keeps the user-facing name while routing to the recognised slug.
+            # Suffix -zai distinguishes from the Ollama-hosted glm-5.2-ollama variant.
             model: zai/glm-5
             api_key: "os.environ/ZAI_API_KEY"
-        - model_name: glm-4.7
+        - model_name: glm-4.7-zai
           litellm_params:
             # Z.AI's flagship GLM-4.7 model (200K context, reasoning)
-            # Note: model_name uses dash (glm-4.7) to match z.ai's native naming
+            # Suffix -zai distinguishes from any future Ollama-hosted variant.
             model: zai/glm-4.7
             api_key: "os.environ/ZAI_API_KEY"
         - model_name: mistral-3.5-middle
