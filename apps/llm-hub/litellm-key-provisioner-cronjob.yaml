@@ -55,6 +55,11 @@ spec:
                     secretKeyRef:
                       name: litellm-user-keys
                       key: memory-honcho-key
+                - name: HERMES_BILL_CIPHER_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: litellm-user-keys
+                      key: hermes-bill-cipher-key
               volumeMounts:
                 - name: scripts
                   mountPath: /scripts

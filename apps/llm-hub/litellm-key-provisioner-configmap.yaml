@@ -46,6 +46,7 @@ data:
         "WOJTEK_KEY",
         "HERMES_ANDRZEJ_KEY",
         "MEMORY_HONCHO_KEY",
+        "HERMES_BILL_CIPHER_KEY",
     ]
 
     def api_request(path, token=None, method="GET", data=None):
