@@ -76,6 +76,12 @@ spec:
           secretKeyRef:
             name: litellm-provider-keys
             key: GLM_API_KEY
+      # OpenRouter provider expects OPENROUTER_API_KEY.
+      - name: OPENROUTER_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: litellm-provider-keys
+            key: OPENROUTER_API_KEY
 
     # proxy_config is rendered into a ConfigMap and mounted as /app/config/config.yaml
     proxy_config:
@@ -106,6 +112,11 @@ spec:
           litellm_params:
             model: mistral/mistral-medium-latest
             api_key: "os.environ/MISTRAL_API_KEY"
+        - model_name: hy3-free
+          litellm_params:
+            # Tencent Hybrid 3 (MoE) via OpenRouter free tier
+            model: openrouter/tencent/hy3:free
+            api_key: "os.environ/OPENROUTER_API_KEY"
 
       litellm_settings:
         callbacks:

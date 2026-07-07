@@ -24,6 +24,7 @@ data:
         "glm-5.2",
         "glm-4.7",
         "mistral-3.5-middle",
+        "hy3-free",
     ]
 
     def expand_models(models):
