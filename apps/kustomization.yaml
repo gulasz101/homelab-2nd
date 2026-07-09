@@ -83,6 +83,11 @@ resources:
   - gpu-embedding/ollama-models-pvc.yaml
   - gpu-embedding/ollama-deployment.yaml
   - gpu-embedding/ollama-service.yaml
+  # GPU-accelerated embedding platform service (TEI - preferred GPU path)
+  - gpu-embedding/tei-model-cache-pvc.yaml
+  - gpu-embedding/tei-deployment.yaml
+  - gpu-embedding/tei-service.yaml
+  - gpu-embedding/gpu-embedding-service.yaml
   # Nextcloud namespace
   - nextcloud/namespace.yaml
   # SOPS-encrypted secrets
