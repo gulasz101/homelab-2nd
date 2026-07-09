@@ -21,18 +21,18 @@ spec:
         app.kubernetes.io/name: tei-embedding-server
     spec:
       # Only schedule on nodes with an NVIDIA GPU.
+      # NOTE: TEI CPU image is used because Maxwell sm_52 is not supported by
+      # upstream CUDA builds >=1.9. CPU inference is still far more stable than
+      # the Ollama GPU hang and keeps the GPU free for other CUDA workloads.
       nodeSelector:
         feature.node.kubernetes.io/pci-10de.present: "true"
-      # Run with the NVIDIA container runtime so CUDA and NVML are available.
-      runtimeClassName: nvidia
       tolerations:
         - key: nvidia.com/gpu
           operator: Exists
           effect: NoSchedule
       containers:
         - name: tei
-          # Generic CUDA image; Maxwell (sm_52) is supported.
-          image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
+          image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
           imagePullPolicy: IfNotPresent
           args:
             - --model-id
@@ -64,12 +64,11 @@ spec:
               mountPath: /data
           resources:
             requests:
-              cpu: 500m
+              cpu: "2"
               memory: 1Gi
-              nvidia.com/gpu: 1
             limits:
+              cpu: "4"
               memory: 2.5Gi
-              nvidia.com/gpu: 1
           livenessProbe:
             httpGet:
               path: /health
