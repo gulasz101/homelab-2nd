@@ -77,7 +77,7 @@ spec:
               mountPath: /root/.ollama
           resources:
             requests:
-              cpu: "2"
+              cpu: "1"
               memory: 1Gi
               nvidia.com/gpu: 1
             limits:
