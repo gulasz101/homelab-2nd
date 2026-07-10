@@ -10,7 +10,7 @@ metadata:
   labels:
     app.kubernetes.io/name: ollama-embeddings
 spec:
-  replicas: 0
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: ollama-embeddings
@@ -30,34 +30,27 @@ spec:
       initContainers:
         - name: pull-model
           image: ollama/ollama:0.3.14
-          # Skip re-pulling if the embedding model is already present in the shared
-          # PVC; pulling from registry again on every pod start just burns CPU and
-          # creates a scheduling window for clients to see 503s.
+          # Only pull if the model manifest is missing. Avoid starting 'ollama serve'
+          # in init because it can hang during Maxwell GPU detection and block startup.
           command:
             - /bin/sh
             - -c
             - |
               set -e
-              ollama serve &
-              SERVE_PID=$!
-              until ollama list >/dev/null 2>&1; do
-                echo "Waiting for Ollama API..."
-                sleep 1
-              done
-              if ollama list | grep -q nomic-embed-text; then
+              MODEL_DIR="/root/.ollama/models/manifests/registry.ollama.ai/library/nomic-embed-text"
+              if [ -f "${MODEL_DIR}/latest" ]; then
                 echo "nomic-embed-text already present; skipping pull."
               else
                 echo "Pulling nomic-embed-text..."
                 ollama pull nomic-embed-text
                 echo "Model pulled."
               fi
-              kill $SERVE_PID
-              wait $SERVE_PID 2>/dev/null || true
           env:
-            - name: OLLAMA_HOST
-              value: "127.0.0.1:11434"
             - name: HOME
               value: "/root"
+            # Force CPU-only for the pull operation so it never hangs on GPU detection.
+            - name: CUDA_VISIBLE_DEVICES
+              value: ""
           volumeMounts:
             - name: ollama-models
               mountPath: /root/.ollama
@@ -95,13 +88,13 @@ spec:
             httpGet:
               path: /
               port: 11434
-            initialDelaySeconds: 30
+            initialDelaySeconds: 60
             periodSeconds: 15
           readinessProbe:
             httpGet:
               path: /
               port: 11434
-            initialDelaySeconds: 10
+            initialDelaySeconds: 30
             periodSeconds: 10
       volumes:
         - name: ollama-models

@@ -78,15 +78,18 @@ resources:
   # Cloudflare Tunnel for white-board.voitech.dev
   - tldraw/cloudflared-tldraw-deployment.yaml
   - tldraw/tldraw-tunnel-ingress-configmap.yaml
-  # GPU-accelerated embedding platform service (Ollama)
+  # GPU-accelerated embedding platform service (TEI - preferred GPU path)
+  # Disabled: TEI prebuilt images do not support Maxwell sm_52 and the CPU image
+  # fails to parse the nomic model config. Keep files in repo for a future GPU upgrade.
+  # - gpu-embedding/tei-model-cache-pvc.yaml
+  # - gpu-embedding/tei-deployment.yaml
+  # - gpu-embedding/tei-service.yaml
+  # - gpu-embedding/gpu-embedding-service.yaml
+  # GPU-accelerated embedding platform service (Ollama - pragmatic path for Maxwell)
   - gpu-embedding/namespace.yaml
   - gpu-embedding/ollama-models-pvc.yaml
   - gpu-embedding/ollama-deployment.yaml
   - gpu-embedding/ollama-service.yaml
-  # GPU-accelerated embedding platform service (TEI - preferred GPU path)
-  - gpu-embedding/tei-model-cache-pvc.yaml
-  - gpu-embedding/tei-deployment.yaml
-  - gpu-embedding/tei-service.yaml
   - gpu-embedding/gpu-embedding-service.yaml
   # Nextcloud namespace
   - nextcloud/namespace.yaml

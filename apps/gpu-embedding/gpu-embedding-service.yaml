@@ -8,9 +8,9 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: tei-embedding-server
+    app.kubernetes.io/name: ollama-embeddings
   ports:
     - name: http
-      port: 3000
+      port: 11434
       targetPort: http
       protocol: TCP
