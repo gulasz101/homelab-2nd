@@ -1,0 +1,25 @@
+---
+# AlertmanagerConfig: route gpu-embedding namespace alerts to the Mattermost webhook.
+# The matching webhook secret lives in the same namespace and is referenced below.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: gpu-embedding-mattermost-alerts
+  namespace: gpu-embedding
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: gpu-embedding-mattermost
+    matchers:
+      - name: namespace
+        value: gpu-embedding
+        matchType: "="
+  receivers:
+    - name: gpu-embedding-mattermost
+      webhookConfigs:
+        - urlSecret:
+            name: gpu-embedding-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          maxAlerts: 10

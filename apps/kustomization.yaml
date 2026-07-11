@@ -91,6 +91,12 @@ resources:
   - gpu-embedding/ollama-deployment.yaml
   - gpu-embedding/ollama-service.yaml
   - gpu-embedding/gpu-embedding-service.yaml
+  # gpu-embedding observability: alerts + provisioned dashboard
+  - gpu-embedding/gpu-embedding-mattermost-webhook-url.sops.yaml
+  - gpu-embedding/gpu-embedding-alertmanager-config.yaml
+  - gpu-embedding/gpu-embedding-prometheus-rules.yaml
+  - gpu-embedding/gpu-embedding-loki-rule.yaml
+  - gpu-embedding/gpu-embedding-dashboard-configmap.yaml
   # Nextcloud namespace
   - nextcloud/namespace.yaml
   # SOPS-encrypted secrets

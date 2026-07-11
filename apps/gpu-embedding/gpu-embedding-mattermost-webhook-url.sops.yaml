@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: gpu-embedding-mattermost-webhook-url
+    namespace: gpu-embedding
+stringData:
+    #ENC[AES256_GCM,data:tB3U8M+KbNCuBKy3gnmJtKTJVhVwoMnnkkss9Ov9qvpuu6fiXDh0/mwfSphgvdiBRgUA,iv:D6PrOj+bTVb0fFvS3JUIJ4vWbfbmLhi7Yj1Ob3zPmCU=,tag:XQWrRwGqw6Fh/wrnvy71pQ==,type:comment]
+    url: ENC[AES256_GCM,data:hQ1mKfixgVRRGSIpMgpQfxce9jYyCpkSqVeaauBqGuroZXNgdcXKNGWVfk95bwPCBfQaSUjjsVHh,iv:VPZZkyCqAmdo7ZN+8wUAFcVNkdR4e628++Y3YlfiH90=,tag:sOc4+b43jjSaLtycPap/Mw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAzM2ltY1h6ZGdtcFY3TUZQ
+            c3pPbit3SGxkOTlLZXhlVkpDOVFzaEZwaW1ZCkVveU42aTJTL2dBRTI3TFdCeDlI
+            UXNrRnlqRzBkVUVDY284ekJZaklhRXMKLS0tIDBLM0pwYlZwdnEycUFacUZwTjF2
+            M2RiVHF0eVBBYmNQRkJvNUhoYlBXMlUKWuFvleKnFRxRrq80tr7h4LOpHaT09hqn
+            ktf5Wn20X05QXemrBexKxtdRei4nrT0O4KKurLInFGOsnVFnaJe7lw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-07-11T20:15:34Z"
+    mac: ENC[AES256_GCM,data:UFHqrWPEcPid7xNnEF9Rf4GoBLo9BcKuOj4w1UTaNDvxBqlu1wP9woNCHPKh96FmMFpb5LoEq4TGtwvWKhPrC5WITaUCNqe7DrUOKDNNT07iYuqnQZ2NQPxlHJIuQDNRo45mb9Y8n2aR6pnBzTGrjCU+2kI0RgQ1OsqF7u1tIdc=,iv:KUHGPmfj+o7MD2ho9Hecs1bUpSl+kcSY7KfcHhOX6l8=,tag:WlOuCFOHaNulawkQKqWk6w==,type:str]
+    version: 3.13.1

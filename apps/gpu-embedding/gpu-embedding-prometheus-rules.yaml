@@ -1,0 +1,108 @@
+---
+# PrometheusRule for gpu-embedding namespace resource alerts.
+# Scraped by kube-prometheus-stack because the namespace label on the alert
+# matches the AlertmanagerConfig route.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gpu-embedding-resource-alerts
+  namespace: gpu-embedding
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: gpu-embedding.resources
+      interval: 1m
+      rules:
+        # CPU usage has crossed the requested value for more than 5 minutes.
+        # Uses cAdvisor container_cpu_usage_seconds_total vs container_spec_cpu_quota/period.
+        - alert: EmbeddingCPUAboveRequest
+          expr: |
+            (
+              sum by (pod, container, namespace) (
+                rate(container_cpu_usage_seconds_total{namespace="gpu-embedding",container!=""}[5m])
+              )
+            )
+            >
+            (
+              sum by (pod, container, namespace) (
+                container_spec_cpu_quota{namespace="gpu-embedding",container!=""}
+                / container_spec_cpu_period{namespace="gpu-embedding",container!=""}
+              )
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: gpu-embedding
+          annotations:
+            summary: "Embedding container CPU above request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} in {{ $labels.namespace }} CPU usage is above its request for more than 5 minutes."
+
+        # Memory working-set has crossed the requested value for more than 5 minutes.
+        - alert: EmbeddingMemoryAboveRequest
+          expr: |
+            (
+              sum by (pod, container, namespace) (
+                container_memory_working_set_bytes{namespace="gpu-embedding",container!=""}
+              )
+            )
+            >
+            (
+              sum by (pod, container, namespace) (
+                kube_pod_container_resource_requests{namespace="gpu-embedding",resource="memory",container!=""}
+              )
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: gpu-embedding
+          annotations:
+            summary: "Embedding container memory above request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} in {{ $labels.namespace }} memory working-set is above its request for more than 5 minutes."
+
+        # CPU usage sits above 90% of its limit for more than 5 minutes.
+        - alert: EmbeddingCPUAbove90PercentLimit
+          expr: |
+            (
+              sum by (pod, container, namespace) (
+                rate(container_cpu_usage_seconds_total{namespace="gpu-embedding",container!=""}[5m])
+              )
+            )
+            >
+            0.9 *
+            (
+              sum by (pod, container, namespace) (
+                container_spec_cpu_quota{namespace="gpu-embedding",container!=""}
+                / container_spec_cpu_period{namespace="gpu-embedding",container!=""}
+              )
+            )
+          for: 5m
+          labels:
+            severity: critical
+            namespace: gpu-embedding
+          annotations:
+            summary: "Embedding container CPU above 90% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} in {{ $labels.namespace }} CPU usage is above 90% of its limit for more than 5 minutes."
+
+        # Memory working-set sits above 90% of its limit for more than 5 minutes.
+        - alert: EmbeddingMemoryAbove90PercentLimit
+          expr: |
+            (
+              sum by (pod, container, namespace) (
+                container_memory_working_set_bytes{namespace="gpu-embedding",container!=""}
+              )
+            )
+            >
+            0.9 *
+            (
+              sum by (pod, container, namespace) (
+                kube_pod_container_resource_limits{namespace="gpu-embedding",resource="memory",container!=""}
+              )
+            )
+          for: 5m
+          labels:
+            severity: critical
+            namespace: gpu-embedding
+          annotations:
+            summary: "Embedding container memory above 90% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} in {{ $labels.namespace }} memory working-set is above 90% of its limit for more than 5 minutes."

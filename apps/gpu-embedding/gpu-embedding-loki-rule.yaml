@@ -1,0 +1,35 @@
+---
+# Loki Ruler rule: fire an alert when Ollama embedding logs contain a non-2xx HTTP status.
+# The loki-sc-rules sidecar in the loki-0 pod watches ConfigMaps labelled loki_rule
+# and mounts them into /rules for the Loki Ruler to evaluate.
+# Alerts are sent to Alertmanager via loki.rulerConfig.alertmanager_url.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-embedding-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  gpu-embedding-http-errors.yaml: |
+    groups:
+      - name: gpu-embedding.http-errors
+        interval: 1m
+        rules:
+          - alert: EmbeddingNon2xxResponses
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {namespace="gpu-embedding", pod=~"ollama-embeddings.*"}
+                    |~ "\\[GIN\\].*\\|\\s+(?:[3-9]\\d{2}|[1-9]\\d{3})\\s+\\|"
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: gpu-embedding
+            annotations:
+              summary: "Embedding endpoint returned non-2xx status"
+              description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} logged non-2xx HTTP responses within the last 5 minutes."
+              runbook_url: "https://grafana.voitech.dev/explore?orgId=1&left=%7B%22datasource%22:%22Loki%22,%22queries%22:%5B%7B%22refId%22:%22A%22,%22expr%22:%22%7Bnamespace%3D%5C%22gpu-embedding%5C%22,pod%3D%5C%22{{%20$labels.pod%20}}%5C%22%7D%20%7C%3D%20%5C%22%5BGIN%5D%5C%22%20%7C%20pattern%20%5C%22%5BGIN%5D%20_%20%7C%20%3Cstatus%3E%20%7C%20_%20%7C%20_%20%7C%20%3Cmethod%3E%20%5C%22%20%7C%20status%20!%3D%20%5C%22200%5C%22%22%7D%5D,%22range%22:%7B%22from%22:%22now-1h%22,%22to%22:%22now%22%7D%7D"
