@@ -21,7 +21,7 @@ data:
             expr: |
               sum by (pod, namespace) (
                 count_over_time(
-                  {namespace="honcho", pod=~"honcho-api.*|honcho-deriver.*"}
+                  {k8s_namespace_name="honcho", k8s_pod_name=~"honcho-api.*|honcho-deriver.*"}
                     |~ "PermissionDeniedError|RetryError|maximum pending requests exceeded|InternalServerError"
                   [5m]
                 )
@@ -33,4 +33,4 @@ data:
             annotations:
               summary: "Honcho component logging unexpected errors"
               description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} has logged unexpected errors in the last 5 minutes."
-              runbook_url: "https://grafana.voitech.dev/explore?orgId=1&left=%7B%22datasource%22:%22Loki%22,%22queries%22:%5B%7B%22refId%22:%22A%22,%22expr%22:%22%7Bnamespace%3D%5C%22honcho%5C%22,pod%3D%5C%22{{ $labels.pod }}%5C%22%7D%20%7C%3D%20%5C%22PermissionDeniedError%5C%22%20or%20%7C%3D%20%5C%22RetryError%5C%22%20or%20%7C%3D%20%5C%22maximum%20pending%20requests%20exceeded%5C%22%20or%20%7C%3D%20%5C%22InternalServerError%5C%22%22%7D%5D,%22range%22:%7B%22from%22:%22now-1h%22,%22to%22:%22now%22%7D%7D"
+              runbook_url: "https://grafana.voitech.dev/explore?orgId=1&left=%7B%22datasource%22:%22Loki%22,%22queries%22:%5B%7B%22refId%22:%22A%22,%22expr%22:%22%7Bk8s_namespace_name%3D%5C%22honcho%5C%22%2Ck8s_pod_name%3D%5C%22{{ $labels.pod }}%5C%22%7D%20%7C%3D%20%5C%22PermissionDeniedError%5C%22%20or%20%7C%3D%20%5C%22RetryError%5C%22%20or%20%7C%3D%20%5C%22maximum%20pending%20requests%20exceeded%5C%22%20or%20%7C%3D%20%5C%22InternalServerError%5C%22%22%7D%5D%2C%22range%22:%7B%22from%22:%22now-1h%22%2C%22to%22:%22now%22%7D%7D"

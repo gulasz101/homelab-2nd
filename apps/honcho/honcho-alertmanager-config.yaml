@@ -1,10 +1,8 @@
 ---
 # AlertmanagerConfig: route Honcho namespace alerts to the Mattermost webhook.
-# Mounted as a secret by the prometheus-stack HelmRelease via alertmanager.secrets.
-# Loki Ruler evaluation is disabled in singleBinary mode, so we use a PrometheusRule
-# that counts log lines matching Honcho error patterns via the LokiLogQL datasource.
-# The matching Loki datasource is provisioned in Grafana; Prometheus only needs this
-# Alertmanager route to forward the alert to Mattermost.
+# The receiver is global (prometheus-stack HelmRelease mounts the secret in the
+# alertmanager container), but this CRD lets namespace-scoped PrometheusRules
+# match the route via the namespace=honcho label.
 apiVersion: monitoring.coreos.com/v1alpha1
 kind: AlertmanagerConfig
 metadata:

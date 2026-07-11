@@ -1,0 +1,73 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: honcho-resource-alerts
+  namespace: honcho
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: honcho.resources
+      interval: 1m
+      rules:
+        - alert: HonchoCPUAboveRequest
+          expr: |
+            sum by (pod, container) (
+              rate(container_cpu_usage_seconds_total{namespace="honcho", container!=""}[5m])
+            ) >
+            sum by (pod, container) (
+              kube_pod_container_resource_requests{namespace="honcho", resource="cpu", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: honcho
+          annotations:
+            summary: "Honcho container CPU usage is above its request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU usage exceeds the requested CPU for more than 5 minutes."
+
+        - alert: HonchoMemoryAboveRequest
+          expr: |
+            sum by (pod, container) (
+              container_memory_working_set_bytes{namespace="honcho", container!=""}
+            ) >
+            sum by (pod, container) (
+              kube_pod_container_resource_requests{namespace="honcho", resource="memory", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: honcho
+          annotations:
+            summary: "Honcho container memory usage is above its request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory usage exceeds the requested memory for more than 5 minutes."
+
+        - alert: HonchoCPUAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container) (
+              rate(container_cpu_usage_seconds_total{namespace="honcho", container!=""}[5m])
+            ) / sum by (pod, container) (
+              container_spec_cpu_quota{namespace="honcho", container!=""} / container_spec_cpu_period{namespace="honcho", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: honcho
+          annotations:
+            summary: "Honcho container CPU is above 90% of its limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU is above 90% of its limit for more than 5 minutes."
+
+        - alert: HonchoMemoryAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container) (
+              container_memory_working_set_bytes{namespace="honcho", container!=""}
+            ) / sum by (pod, container) (
+              kube_pod_container_resource_limits{namespace="honcho", resource="memory", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: honcho
+          annotations:
+            summary: "Honcho container memory is above 90% of its limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 90% of its limit for more than 5 minutes."

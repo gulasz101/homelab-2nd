@@ -139,7 +139,11 @@ resources:
   - honcho/honcho-deriver-deployment.yaml
   # AlertmanagerConfig to route Honcho alerts to Mattermost
   - honcho/honcho-alertmanager-config.yaml
+  # PrometheusRule for Honcho CPU/memory resource alerts
+  - honcho/honcho-prometheus-rules.yaml
   # Loki Ruler rule for Honcho error alerts
   - honcho/honcho-error-loki-rule.yaml
+  # Provisioned Grafana dashboard for Honcho
+  - honcho/honcho-dashboard-configmap.yaml
   # LAN-only NodePort service
   - honcho/honcho-service.yaml
