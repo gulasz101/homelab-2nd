@@ -1,7 +1,9 @@
 ---
 # AlertmanagerConfig: route Honcho namespace alerts to the Mattermost webhook.
-# The webhook secret lives in the observability namespace because Alertmanager
-# only mounts secrets from its own namespace.
+# The webhook secret is mounted by the kube-prometheus-stack Alertmanager pod
+# (alertmanagerSpec.secrets) into /etc/alertmanager/secrets/<secret-name>/<key>.
+# We reference that mounted file with url_file so the namespace-scoped
+# AlertmanagerConfig does not need cross-namespace secret access.
 apiVersion: monitoring.coreos.com/v1alpha1
 kind: AlertmanagerConfig
 metadata:
@@ -19,8 +21,6 @@ spec:
   receivers:
     - name: honcho-mattermost
       webhookConfigs:
-        - urlSecret:
-            name: honcho-mattermost-webhook-url
-            key: url
+        - url_file: /etc/alertmanager/secrets/honcho-mattermost-webhook-url/url
           sendResolved: true
           maxAlerts: 10
