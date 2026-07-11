@@ -1,8 +1,7 @@
 ---
 # AlertmanagerConfig: route Honcho namespace alerts to the Mattermost webhook.
-# The receiver is global (prometheus-stack HelmRelease mounts the secret in the
-# alertmanager container), but this CRD lets namespace-scoped PrometheusRules
-# match the route via the namespace=honcho label.
+# The webhook secret lives in the observability namespace because Alertmanager
+# only mounts secrets from its own namespace.
 apiVersion: monitoring.coreos.com/v1alpha1
 kind: AlertmanagerConfig
 metadata:
@@ -16,7 +15,7 @@ spec:
     matchers:
       - name: namespace
         value: honcho
-        matchType: "="
+        matchType: '='
   receivers:
     - name: honcho-mattermost
       webhookConfigs:
