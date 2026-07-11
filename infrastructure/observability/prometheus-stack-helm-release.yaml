@@ -41,8 +41,6 @@ spec:
           repeat_interval: 12h
           receiver: 'null'
       alertmanagerSpec:
-        secrets:
-          - honcho-mattermost-webhook-url
         alertmanagerConfigSelector:
           matchLabels:
             release: kube-prometheus-stack

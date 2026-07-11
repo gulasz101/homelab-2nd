@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: Secret
 metadata:
-    name: honcho-mattermost-webhook-url
-    namespace: observability
+  name: honcho-mattermost-webhook-url
+  namespace: honcho
 stringData:
     #ENC[AES256_GCM,data:QrVv+CI4F7IkMSv4RcWvamrf4wtqek8udzL4V/Ftg8Y9Dp06BVD24iSFkGGpZnA11mI+,iv:Veh7AmfYNnKlzv+T7X1Kv0TzukVwyO2dce2901ZYeQY=,tag:0bSyKnzOMiugx4o85kPDXA==,type:comment]
     url: ENC[AES256_GCM,data:xYPgxccTzoPbB1IyBjSAFkqy/G8tZ+p9noI/RCv4ETuKg8sDYcBsbq0Pi2fBqbcoR4oIm+8kFFlW,iv:7J6otLGr0NWp26AHI2MOsc+upiyxd4tPR8uP1xh6BsA=,tag:34Aw3P3RXcdmRS80x6Tl+w==,type:str]
