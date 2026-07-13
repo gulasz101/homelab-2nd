@@ -5,20 +5,33 @@ Generate a provisioned Grafana dashboard ConfigMap for a homelab service namespa
 Output is a Kubernetes ConfigMap JSON with the dashboard under .data.<name>.json,
 suitable for Flux + the Grafana sidecar (label grafana_dashboard: "1").
 
-Example:
+Examples:
+
+    # gpu-embedding (single GPU service)
     python3 scripts/render_namespace_dashboard.py \
         --namespace gpu-embedding \
         --title "gpu-embedding — Ollama Embedding Service" \
         --uid gpu-embedding-ollama \
         --with-gpu \
+        --services ollama-embeddings \
+        --pvcs "ollama-embeddings:ollama-models" \
         > apps/gpu-embedding/gpu-embedding-dashboard-configmap.yaml
+
+    # honcho (multi-service, no GPU)
+    python3 scripts/render_namespace_dashboard.py \
+        --namespace honcho \
+        --title "honcho — Memory & Dialectic" \
+        --uid honcho-overview \
+        --services honcho-api,honcho-deriver,honcho-db,honcho-redis \
+        --pvcs "honcho-db:honcho-db-1,honcho-redis:redis-data" \
+        > apps/honcho/honcho-dashboard-configmap.yaml
 """
 
 import argparse
 import json
 import sys
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 PROM_UID = "PBFA97CFB590B2093"
 LOKI_UID = "P8E80F9AEF21F6940"
@@ -108,6 +121,24 @@ def timeseries_defaults(
     return defaults
 
 
+def stat_panel_defaults(unit: str) -> dict:
+    """Defaults for a stat panel showing current value."""
+    return {
+        "unit": unit,
+        "custom": {},
+        "min": None,
+        "max": None,
+        "thresholds": {
+            "mode": "absolute",
+            "steps": [
+                {"color": "green", "value": None},
+                {"color": "yellow", "value": 80},
+                {"color": "red", "value": 90},
+            ],
+        },
+    }
+
+
 def timeseries_options() -> dict:
     return {
         "legend": {
@@ -116,6 +147,16 @@ def timeseries_options() -> dict:
             "calcs": ["lastNotNull", "max"],
         },
         "tooltip": {"mode": "multi", "sort": "none"},
+    }
+
+
+def stat_options() -> dict:
+    return {
+        "graphMode": "area",
+        "colorMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
     }
 
 
@@ -140,12 +181,150 @@ def text_panel(panel_id: int, title: str, content: str, y: int, h: int = 2) -> P
     )
 
 
-def cpu_panels(namespace: str, start_y: int) -> List[Panel]:
+def friendly_name(pod_prefix: str) -> str:
+    """Return a human-friendly service label from a pod prefix.
+
+    e.g. 'honcho-api' -> 'api', 'ollama-embeddings' -> 'ollama-embeddings'
+    """
+    if "-" in pod_prefix:
+        return pod_prefix.rsplit("-", 1)[-1]
+    return pod_prefix
+
+
+def service_cpu_stat(namespace: str, pod_prefix: str, panel_id: int, x: int, y: int) -> Panel:
+    """CPU usage / request / limit stat panel for a single service."""
+    label = friendly_name(pod_prefix)
+    return Panel(
+        panel_id=panel_id,
+        title=f"{label} CPU",
+        panel_type="stat",
+        datasource=prom_ds(),
+        targets=[
+            {
+                "refId": "A",
+                "expr": f'sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}}[5m]))',
+                "legendFormat": "usage",
+                "instant": True,
+            },
+            {
+                "refId": "B",
+                "expr": f'sum(kube_pod_container_resource_requests{{namespace="{namespace}",pod=~"{pod_prefix}.*",resource="cpu",container!=""}})',
+                "legendFormat": "request",
+                "instant": True,
+            },
+            {
+                "refId": "C",
+                "expr": f'sum(kube_pod_container_resource_limits{{namespace="{namespace}",pod=~"{pod_prefix}.*",resource="cpu",container!=""}})',
+                "legendFormat": "limit",
+                "instant": True,
+            },
+        ],
+        field_config={"defaults": stat_panel_defaults("cores"), "overrides": []},
+        options=stat_options(),
+        grid_pos={"h": 4, "w": 8, "x": x, "y": y},
+    )
+
+
+def service_memory_stat(namespace: str, pod_prefix: str, panel_id: int, x: int, y: int) -> Panel:
+    """Memory usage / request / limit stat panel for a single service."""
+    label = friendly_name(pod_prefix)
+    return Panel(
+        panel_id=panel_id,
+        title=f"{label} memory",
+        panel_type="stat",
+        datasource=prom_ds(),
+        targets=[
+            {
+                "refId": "A",
+                "expr": f'sum(container_memory_working_set_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})',
+                "legendFormat": "usage",
+                "instant": True,
+            },
+            {
+                "refId": "B",
+                "expr": f'sum(kube_pod_container_resource_requests{{namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory",container!=""}})',
+                "legendFormat": "request",
+                "instant": True,
+            },
+            {
+                "refId": "C",
+                "expr": f'sum(kube_pod_container_resource_limits{{namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory",container!=""}})',
+                "legendFormat": "limit",
+                "instant": True,
+            },
+        ],
+        field_config={"defaults": stat_panel_defaults("bytes"), "overrides": []},
+        options=stat_options(),
+        grid_pos={"h": 4, "w": 8, "x": x, "y": y},
+    )
+
+
+def service_pvc_stat(namespace: str, pod_prefix: str, pvc_name: str, panel_id: int, x: int, y: int) -> Panel:
+    """PVC used / capacity stat panel for a single service."""
+    label = friendly_name(pod_prefix)
+    return Panel(
+        panel_id=panel_id,
+        title=f"{label} PVC",
+        panel_type="stat",
+        datasource=prom_ds(),
+        targets=[
+            {
+                "refId": "A",
+                "expr": f'kubelet_volume_stats_used_bytes{{namespace="{namespace}",persistentvolumeclaim="{pvc_name}"}}',
+                "legendFormat": "used",
+                "instant": True,
+            },
+            {
+                "refId": "B",
+                "expr": f'kubelet_volume_stats_capacity_bytes{{namespace="{namespace}",persistentvolumeclaim="{pvc_name}"}}',
+                "legendFormat": "capacity",
+                "instant": True,
+            },
+        ],
+        field_config={"defaults": stat_panel_defaults("bytes"), "overrides": []},
+        options=stat_options(),
+        grid_pos={"h": 4, "w": 8, "x": x, "y": y},
+    )
+
+
+def per_service_row(
+    namespace: str,
+    services: List[str],
+    pvcs: Dict[str, str],
+    start_y: int,
+    start_id: int,
+) -> Tuple[List[Panel], int]:
+    """Return panels and the next free panel id. Layout: one row per service."""
+    panels: List[Panel] = []
     y = start_y
-    return [
-        row_panel(1, "CPU", y),
+    next_id = start_id
+
+    panels.append(row_panel(next_id, "Per-service resources", y, datasource=prom_ds()))
+    next_id += 1
+    y += 1
+
+    for pod_prefix in services:
+        has_pvc = pod_prefix in pvcs
+        # If the service has a PVC we use three 8-wide stat panels in one row.
+        # Otherwise CPU + memory share the row (two 8-wide panels, 8 unused).
+        panels.append(service_cpu_stat(namespace, pod_prefix, next_id, 0, y))
+        next_id += 1
+        panels.append(service_memory_stat(namespace, pod_prefix, next_id, 8, y))
+        next_id += 1
+        if has_pvc:
+            panels.append(service_pvc_stat(namespace, pod_prefix, pvcs[pod_prefix], next_id, 16, y))
+            next_id += 1
+        y += 4
+
+    return panels, next_id
+
+
+def cpu_panels(namespace: str, start_y: int, first_id: int = 1) -> Tuple[List[Panel], int]:
+    y = start_y
+    panels = [
+        row_panel(first_id, "CPU", y),
         Panel(
-            panel_id=2,
+            panel_id=first_id + 1,
             title="CPU usage vs request vs limit per pod",
             datasource=prom_ds(),
             targets=[
@@ -170,7 +349,7 @@ def cpu_panels(namespace: str, start_y: int) -> List[Panel]:
             grid_pos={"h": 8, "w": 24, "x": 0, "y": y + 1},
         ),
         Panel(
-            panel_id=3,
+            panel_id=first_id + 2,
             title="CPU utilisation % of limit per container",
             datasource=prom_ds(),
             targets=[
@@ -196,14 +375,15 @@ def cpu_panels(namespace: str, start_y: int) -> List[Panel]:
             grid_pos={"h": 7, "w": 12, "x": 0, "y": y + 9},
         ),
     ]
+    return panels, first_id + 3
 
 
-def memory_panels(namespace: str, start_y: int) -> List[Panel]:
+def memory_panels(namespace: str, start_y: int, first_id: int = 4) -> Tuple[List[Panel], int]:
     y = start_y
-    return [
-        row_panel(4, "Memory", y),
+    panels = [
+        row_panel(first_id, "Memory", y),
         Panel(
-            panel_id=5,
+            panel_id=first_id + 1,
             title="Memory usage vs request vs limit per pod",
             datasource=prom_ds(),
             targets=[
@@ -228,7 +408,7 @@ def memory_panels(namespace: str, start_y: int) -> List[Panel]:
             grid_pos={"h": 8, "w": 24, "x": 0, "y": y + 1},
         ),
         Panel(
-            panel_id=6,
+            panel_id=first_id + 2,
             title="Memory utilisation % of limit per container",
             datasource=prom_ds(),
             targets=[
@@ -254,19 +434,20 @@ def memory_panels(namespace: str, start_y: int) -> List[Panel]:
             grid_pos={"h": 7, "w": 12, "x": 0, "y": y + 9},
         ),
     ]
+    return panels, first_id + 3
 
 
-def disk_panels(namespace: str, start_y: int) -> List[Panel]:
+def disk_panels(namespace: str, start_y: int, first_id: int = 7) -> Tuple[List[Panel], int]:
     y = start_y
     threshold_steps = [
         (None, "green"),
         (75, "yellow"),
         (90, "red"),
     ]
-    return [
-        row_panel(7, "Disk / PVC", y),
+    panels = [
+        row_panel(first_id, "Disk / PVC", y),
         Panel(
-            panel_id=8,
+            panel_id=first_id + 1,
             title=f"PVC utilisation ({namespace})",
             datasource=prom_ds(),
             targets=[
@@ -284,7 +465,7 @@ def disk_panels(namespace: str, start_y: int) -> List[Panel]:
             grid_pos={"h": 7, "w": 12, "x": 0, "y": y + 1},
         ),
         Panel(
-            panel_id=9,
+            panel_id=first_id + 2,
             title="Node disk utilisation (homelab-2nd)",
             datasource=prom_ds(),
             targets=[
@@ -302,19 +483,20 @@ def disk_panels(namespace: str, start_y: int) -> List[Panel]:
             grid_pos={"h": 7, "w": 12, "x": 12, "y": y + 1},
         ),
     ]
+    return panels, first_id + 3
 
 
-def gpu_panels(start_y: int) -> List[Panel]:
+def gpu_panels(start_y: int, first_id: int = 10) -> Tuple[List[Panel], int]:
     y = start_y
     threshold_steps = [
         (None, "green"),
         (75, "yellow"),
         (90, "red"),
     ]
-    return [
-        row_panel(10, "GPU (single-GPU node)", y),
+    panels = [
+        row_panel(first_id, "GPU (single-GPU node)", y),
         Panel(
-            panel_id=11,
+            panel_id=first_id + 1,
             title="GPU utilization %",
             datasource=prom_ds(),
             targets=[
@@ -332,7 +514,7 @@ def gpu_panels(start_y: int) -> List[Panel]:
             grid_pos={"h": 7, "w": 8, "x": 0, "y": y + 1},
         ),
         Panel(
-            panel_id=12,
+            panel_id=first_id + 2,
             title="GPU memory used",
             datasource=prom_ds(),
             targets=[
@@ -352,7 +534,7 @@ def gpu_panels(start_y: int) -> List[Panel]:
             grid_pos={"h": 7, "w": 8, "x": 8, "y": y + 1},
         ),
         Panel(
-            panel_id=13,
+            panel_id=first_id + 3,
             title="GPU temperature & power draw",
             datasource=prom_ds(),
             targets=[
@@ -389,15 +571,16 @@ def gpu_panels(start_y: int) -> List[Panel]:
             grid_pos={"h": 7, "w": 8, "x": 16, "y": y + 1},
         ),
     ]
+    return panels, first_id + 4
 
 
-def logs_panel(namespace: str, start_y: int) -> List[Panel]:
+def logs_panel(namespace: str, start_y: int, first_id: int = 14) -> Tuple[List[Panel], int]:
     y = start_y
     base_expr = f'{{k8s_namespace_name="{namespace}"}}'
-    return [
-        row_panel(14, "Logs", y, datasource=loki_ds()),
+    panels = [
+        row_panel(first_id, "Logs", y, datasource=loki_ds()),
         Panel(
-            panel_id=15,
+            panel_id=first_id + 1,
             title=f"{namespace} logs",
             panel_type="logs",
             datasource=loki_ds(),
@@ -444,13 +627,22 @@ def logs_panel(namespace: str, start_y: int) -> List[Panel]:
             ],
             options={
                 "showTime": True,
+                "showLabels": True,
+                "showCommonLabels": True,
+                "showLogContextToggle": True,
                 "wrapLogMessage": True,
+                "prettifyLogMessage": True,
                 "sortOrder": "Descending",
                 "enableLogDetails": True,
+                "dedupStrategy": "none",
+                "showControls": True,
+                "showFieldSelector": True,
+                "syntaxHighlighting": True,
             },
             grid_pos={"h": 12, "w": 24, "x": 0, "y": y + 1},
         ),
     ]
+    return panels, first_id + 2
 
 
 def build_dashboard(
@@ -458,13 +650,16 @@ def build_dashboard(
     title: str,
     uid: str,
     with_gpu: bool = False,
+    services: Optional[List[str]] = None,
+    pvcs: Optional[Dict[str, str]] = None,
 ) -> dict:
     panels: List[Panel] = []
     y = 0
+    next_id = 1000
 
     panels.append(
         text_panel(
-            0,
+            next_id,
             "Overview",
             f"""Per-namespace dashboard for **{namespace}**.
 
@@ -475,24 +670,37 @@ Logs panel ships multiple pre-built LogQL filters — toggle them on/off from th
             h=2,
         )
     )
+    next_id += 1
     y += 2
 
-    panels.extend(cpu_panels(namespace, y))
+    if services:
+        service_panels, next_id = per_service_row(
+            namespace, services, pvcs or {}, y, next_id
+        )
+        panels.extend(service_panels)
+        y += 1 + len(services) * 4  # row(1) + 4 per service
+
+    cpu_ps, next_id = cpu_panels(namespace, y, next_id)
+    panels.extend(cpu_ps)
     y += 16  # row(1) + cpu usage(8) + cpu util(7)
 
-    panels.extend(memory_panels(namespace, y))
+    mem_ps, next_id = memory_panels(namespace, y, next_id)
+    panels.extend(mem_ps)
     y += 16
 
-    panels.extend(disk_panels(namespace, y))
+    disk_ps, next_id = disk_panels(namespace, y, next_id)
+    panels.extend(disk_ps)
     y += 8
 
     if with_gpu:
-        panels.extend(gpu_panels(y))
+        gpu_ps, next_id = gpu_panels(y, next_id)
+        panels.extend(gpu_ps)
         y += 8
 
-    panels.extend(logs_panel(namespace, y))
+    log_ps, next_id = logs_panel(namespace, y, next_id)
+    panels.extend(log_ps)
 
-    dashboard = {
+    return {
         "annotations": {"list": []},
         "editable": True,
         "fiscalYearStartMonth": 0,
@@ -512,7 +720,6 @@ Logs panel ships multiple pre-built LogQL filters — toggle them on/off from th
         "uid": uid,
         "version": 1,
     }
-    return dashboard
 
 
 def build_configmap(
@@ -520,8 +727,10 @@ def build_configmap(
     title: str,
     uid: str,
     with_gpu: bool = False,
+    services: Optional[List[str]] = None,
+    pvcs: Optional[Dict[str, str]] = None,
 ) -> dict:
-    dashboard = build_dashboard(namespace, title, uid, with_gpu)
+    dashboard = build_dashboard(namespace, title, uid, with_gpu, services, pvcs)
     filename = f"{namespace}-dashboard.json"
     return {
         "apiVersion": "v1",
@@ -536,16 +745,40 @@ def build_configmap(
     }
 
 
+def parse_pvc_map(raw: Optional[str]) -> Dict[str, str]:
+    if not raw:
+        return {}
+    result: Dict[str, str] = {}
+    for pair in raw.split(","):
+        if ":" not in pair:
+            continue
+        service, pvc = pair.split(":", 1)
+        result[service.strip()] = pvc.strip()
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render a namespace observability dashboard ConfigMap")
     parser.add_argument("--namespace", required=True, help="Kubernetes namespace to monitor")
     parser.add_argument("--title", required=True, help="Dashboard title")
     parser.add_argument("--uid", required=True, help="Dashboard UID")
     parser.add_argument("--with-gpu", action="store_true", help="Include GPU metric panels")
+    parser.add_argument(
+        "--services",
+        type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
+        default=None,
+        help="Comma-separated pod prefixes to render per-service stat panels (e.g. honcho-api,honcho-deriver,honcho-db,honcho-redis)",
+    )
+    parser.add_argument(
+        "--pvcs",
+        type=parse_pvc_map,
+        default={},
+        help='Service:pvc mappings for per-service PVC stat panels, e.g. "honcho-db:honcho-db-1,honcho-redis:redis-data"',
+    )
     parser.add_argument("--indent", type=int, default=None, help="Pretty-print JSON with this indent (default compact)")
     args = parser.parse_args()
 
-    cm = build_configmap(args.namespace, args.title, args.uid, args.with_gpu)
+    cm = build_configmap(args.namespace, args.title, args.uid, args.with_gpu, args.services, args.pvcs)
     if args.indent is not None:
         print(json.dumps(cm, indent=args.indent))
     else:
