@@ -181,19 +181,39 @@ def text_panel(panel_id: int, title: str, content: str, y: int, h: int = 2) -> P
     )
 
 
-def friendly_name(pod_prefix: str) -> str:
+def friendly_name(pod_prefix: str, aliases: Optional[Dict[str, str]] = None) -> str:
     """Return a human-friendly service label from a pod prefix.
 
-    e.g. 'honcho-api' -> 'api', 'ollama-embeddings' -> 'ollama-embeddings'
+    Explicit aliases (service prefix -> display label) win. Otherwise strip a
+    leading namespace segment if present, else fall back to the last segment.
+
+    Examples:
+        'honcho-api' -> 'api'
+        'mattermost-mattermost-team-edition' -> 'mattermost' (last segment is confusing)
+        'cloudflared-chat' with alias -> 'tunnel'
     """
-    if "-" in pod_prefix:
-        return pod_prefix.rsplit("-", 1)[-1]
-    return pod_prefix
+    if aliases and pod_prefix in aliases:
+        return aliases[pod_prefix]
+    # Strip leading namespace if present (namespace-service-...)
+    # e.g. 'mattermost-mattermost-team-edition' has segments ['mattermost', 'mattermost', 'team', 'edition']
+    # We can't always auto-detect, so if the prefix contains the namespace twice, prefer
+    # the part after the first namespace segment.
+    segments = pod_prefix.split("-")
+    # Heuristic: if first segment looks like a namespace and the rest starts with a known service word,
+    # use the last meaningful segment minus trailing common noise.
+    label = segments[-1]
+    # Remove common trailing noise from deployment names.
+    for noise in ("team", "edition", "deployment", "service"):
+        if label.lower() == noise and len(segments) > 1:
+            label = segments[-2]
+    return label
 
 
-def service_cpu_stat(namespace: str, pod_prefix: str, panel_id: int, x: int, y: int) -> Panel:
+def service_cpu_stat(
+    namespace: str, pod_prefix: str, panel_id: int, x: int, y: int, aliases: Optional[Dict[str, str]] = None
+) -> Panel:
     """CPU usage / request / limit stat panel for a single service."""
-    label = friendly_name(pod_prefix)
+    label = friendly_name(pod_prefix, aliases)
     return Panel(
         panel_id=panel_id,
         title=f"{label} CPU",
@@ -225,9 +245,11 @@ def service_cpu_stat(namespace: str, pod_prefix: str, panel_id: int, x: int, y: 
     )
 
 
-def service_memory_stat(namespace: str, pod_prefix: str, panel_id: int, x: int, y: int) -> Panel:
+def service_memory_stat(
+    namespace: str, pod_prefix: str, panel_id: int, x: int, y: int, aliases: Optional[Dict[str, str]] = None
+) -> Panel:
     """Memory usage / request / limit stat panel for a single service."""
-    label = friendly_name(pod_prefix)
+    label = friendly_name(pod_prefix, aliases)
     return Panel(
         panel_id=panel_id,
         title=f"{label} memory",
@@ -259,9 +281,11 @@ def service_memory_stat(namespace: str, pod_prefix: str, panel_id: int, x: int, 
     )
 
 
-def service_pvc_stat(namespace: str, pod_prefix: str, pvc_name: str, panel_id: int, x: int, y: int) -> Panel:
+def service_pvc_stat(
+    namespace: str, pod_prefix: str, pvc_name: str, panel_id: int, x: int, y: int, aliases: Optional[Dict[str, str]] = None
+) -> Panel:
     """PVC used / capacity stat panel for a single service."""
-    label = friendly_name(pod_prefix)
+    label = friendly_name(pod_prefix, aliases)
     return Panel(
         panel_id=panel_id,
         title=f"{label} PVC",
@@ -293,6 +317,7 @@ def per_service_row(
     pvcs: Dict[str, str],
     start_y: int,
     start_id: int,
+    aliases: Optional[Dict[str, str]] = None,
 ) -> Tuple[List[Panel], int]:
     """Return panels and the next free panel id. Layout: one row per service."""
     panels: List[Panel] = []
@@ -307,12 +332,12 @@ def per_service_row(
         has_pvc = pod_prefix in pvcs
         # If the service has a PVC we use three 8-wide stat panels in one row.
         # Otherwise CPU + memory share the row (two 8-wide panels, 8 unused).
-        panels.append(service_cpu_stat(namespace, pod_prefix, next_id, 0, y))
+        panels.append(service_cpu_stat(namespace, pod_prefix, next_id, 0, y, aliases))
         next_id += 1
-        panels.append(service_memory_stat(namespace, pod_prefix, next_id, 8, y))
+        panels.append(service_memory_stat(namespace, pod_prefix, next_id, 8, y, aliases))
         next_id += 1
         if has_pvc:
-            panels.append(service_pvc_stat(namespace, pod_prefix, pvcs[pod_prefix], next_id, 16, y))
+            panels.append(service_pvc_stat(namespace, pod_prefix, pvcs[pod_prefix], next_id, 16, y, aliases))
             next_id += 1
         y += 4
 
@@ -652,6 +677,7 @@ def build_dashboard(
     with_gpu: bool = False,
     services: Optional[List[str]] = None,
     pvcs: Optional[Dict[str, str]] = None,
+    aliases: Optional[Dict[str, str]] = None,
 ) -> dict:
     panels: List[Panel] = []
     y = 0
@@ -675,7 +701,7 @@ Logs panel ships multiple pre-built LogQL filters — toggle them on/off from th
 
     if services:
         service_panels, next_id = per_service_row(
-            namespace, services, pvcs or {}, y, next_id
+            namespace, services, pvcs or {}, y, next_id, aliases
         )
         panels.extend(service_panels)
         y += 1 + len(services) * 4  # row(1) + 4 per service
@@ -729,8 +755,9 @@ def build_configmap(
     with_gpu: bool = False,
     services: Optional[List[str]] = None,
     pvcs: Optional[Dict[str, str]] = None,
+    aliases: Optional[Dict[str, str]] = None,
 ) -> dict:
-    dashboard = build_dashboard(namespace, title, uid, with_gpu, services, pvcs)
+    dashboard = build_dashboard(namespace, title, uid, with_gpu, services, pvcs, aliases)
     filename = f"{namespace}-dashboard.json"
     return {
         "apiVersion": "v1",
@@ -775,10 +802,16 @@ def main() -> int:
         default={},
         help='Service:pvc mappings for per-service PVC stat panels, e.g. "honcho-db:honcho-db-1,honcho-redis:redis-data"',
     )
+    parser.add_argument(
+        "--aliases",
+        type=lambda s: dict(part.split(":", 1) for part in s.split(",") if ":" in part),
+        default={},
+        help='Display aliases for service labels, e.g. "mattermost-mattermost-team-edition:mattermost,cloudflared-chat:tunnel"',
+    )
     parser.add_argument("--indent", type=int, default=None, help="Pretty-print JSON with this indent (default compact)")
     args = parser.parse_args()
 
-    cm = build_configmap(args.namespace, args.title, args.uid, args.with_gpu, args.services, args.pvcs)
+    cm = build_configmap(args.namespace, args.title, args.uid, args.with_gpu, args.services, args.pvcs, args.aliases)
     if args.indent is not None:
         print(json.dumps(cm, indent=args.indent))
     else:
