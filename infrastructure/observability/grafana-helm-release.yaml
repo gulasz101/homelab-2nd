@@ -66,6 +66,8 @@ spec:
         labelValue: "1"
         folderAnnotation: grafana.folder
         reloadURL: "http://grafana.observability.svc.cluster.local:3000/api/admin/provisioning/dashboards/reload"
+        provider:
+          foldersFromFilesStructure: true
 
     # Datasource definitions provisioned directly in values.
     datasources:
