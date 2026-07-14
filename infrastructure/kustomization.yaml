@@ -63,3 +63,4 @@ resources:
   - auth/authentik-helm-release.yaml
   - auth/cloudflared-auth-deployment.yaml
   - auth/auth-tunnel-ingress-configmap.yaml
+  - auth/auth-dashboard-configmap.yaml
