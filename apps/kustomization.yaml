@@ -52,6 +52,8 @@ resources:
   # Helm releases
   - llm-hub/litellm-helm-release.yaml
   - llm-hub/openwebui-helm-release.yaml
+  # Provisioned Grafana dashboard for llm-hub
+  - llm-hub/llm-hub-dashboard-configmap.yaml
   # Cloudflare Tunnels for llm.voitech.dev and ai-chat.voitech.dev
   - llm-hub/cloudflared-litellm-deployment.yaml
   - llm-hub/cloudflared-openwebui-deployment.yaml
@@ -66,6 +68,8 @@ resources:
   # Docs MCP Server (local-only)
   - docs-mcp/docs-mcp-deployment.yaml
   - docs-mcp/docs-mcp-service.yaml
+  # Provisioned Grafana dashboard for docs-mcp
+  - docs-mcp/docs-mcp-dashboard-configmap.yaml
   # tldraw namespace
   - tldraw/namespace.yaml
   # SOPS-encrypted secrets
@@ -118,6 +122,8 @@ resources:
   - nextcloud/scheduled-backup.yaml
   # Nextcloud HelmRelease
   - nextcloud/nextcloud-helm-release.yaml
+  # Provisioned Grafana dashboard for Nextcloud
+  - nextcloud/nextcloud-dashboard-configmap.yaml
   # Cloudflare Tunnel for photos.voitech.dev -> Nextcloud
   - nextcloud/cloudflared-deployment.yaml
   # Honcho namespace

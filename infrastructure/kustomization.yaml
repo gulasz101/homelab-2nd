@@ -43,6 +43,8 @@ resources:
   # Grafana dashboards
   - observability/dashboards/homelab-system-load-dashboard-configmap.yaml
   - observability/dashboards/homelab-gpu-power-dashboard-configmap.yaml
+  - observability/dashboards/observability-overview-dashboard-configmap.yaml
+  - observability/dashboards/kube-flux-overview-dashboard-configmap.yaml
 
   # Central identity: Authentik (Phase 0)
   - auth/namespace.yaml
