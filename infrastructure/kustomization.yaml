@@ -28,6 +28,7 @@ resources:
   - observability/namespace.yaml
   - observability/helm-repositories.yaml
   - observability/grafana-admin-credentials.sops.yaml
+  - observability/grafana-oidc-client.sops.yaml
   - observability/grafana-tunnel-token.sops.yaml
   - observability/loki-minio-creds.sops.yaml
   - observability/prometheus-stack-helm-release.yaml

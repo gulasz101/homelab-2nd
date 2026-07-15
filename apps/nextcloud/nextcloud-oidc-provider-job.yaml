@@ -1,0 +1,112 @@
+---
+# Post-install Job: register the Authentik OIDC provider in Nextcloud's user_oidc app.
+# Runs once after the HelmRelease deploys the Nextcloud pod. The command is idempotent:
+# creating a provider with the same identifier updates it in place.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nextcloud-oidc-provider-setup
+  namespace: nextcloud
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: enabled
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        fsGroup: 33
+      initContainers:
+        - name: wait-for-nextcloud
+          image: docker.io/library/busybox:1.37
+          command:
+            - sh
+            - -c
+            - |
+              until wget -qO- http://nextcloud.nextcloud.svc.cluster.local:8080/status.php | grep -q '"maintenance":false'; do
+                echo "Waiting for Nextcloud to leave maintenance mode..."
+                sleep 10
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+      containers:
+        - name: configure-oidc
+          image: docker.io/library/nextcloud:33.0.5-apache
+          securityContext:
+            runAsUser: 33
+            runAsGroup: 33
+          workingDir: /var/www/html
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              php /var/www/html/occ app:enable user_oidc
+              php /var/www/html/occ user_oidc:provider Authentik \
+                --clientid="$(OIDC_CLIENT_ID)" \
+                --clientsecret="$(OIDC_CLIENT_SECRET)" \
+                --discoveryuri="$(OIDC_DISCOVERY_URL)" \
+                --scope="openid profile email homelab-role" \
+                --unique-uid=1 \
+                --check-bearer=1 \
+                --mapping-uid=preferred_username \
+                --mapping-display-name=name \
+                --mapping-email=email \
+                --mapping-groups=groups \
+                --group-provisioning=1 \
+                --group-whitelist-regex="homelab-users"
+          env:
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-oidc-client
+                  key: client_id
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-oidc-client
+                  key: client_secret
+            - name: OIDC_DISCOVERY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-oidc-client
+                  key: discovery_url
+          volumeMounts:
+            - name: nextcloud-main
+              mountPath: /var/www
+              subPath: root
+            - name: nextcloud-main
+              mountPath: /var/www/html
+              subPath: html
+            - name: nextcloud-main
+              mountPath: /var/www/html/config
+              subPath: config
+            - name: nextcloud-main
+              mountPath: /var/www/html/custom_apps
+              subPath: custom_apps
+            - name: nextcloud-main
+              mountPath: /var/www/tmp
+              subPath: tmp
+            - name: nextcloud-main
+              mountPath: /var/www/html/themes
+              subPath: themes
+            - name: nextcloud-data
+              mountPath: /var/www/html/data
+              subPath: data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: nextcloud-main
+          persistentVolumeClaim:
+            claimName: nextcloud-html
+        - name: nextcloud-data
+          persistentVolumeClaim:
+            claimName: nextcloud-data

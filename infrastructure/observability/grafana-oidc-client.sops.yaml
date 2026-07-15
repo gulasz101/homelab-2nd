@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: grafana-oidc-client
+    namespace: observability
+type: Opaque
+stringData:
+    GF_AUTH_GENERIC_OAUTH_CLIENT_ID: ENC[AES256_GCM,data:hZV+qPB3jzt/WRmw6cgx8WhwVBe2u09EzeW1c+tSifg=,iv:Lx8lZmLatYOMa3TsJWnkv40ATjTjglNtyOwMivNr+2Q=,tag:9EN+zvnK8HqEhomf9ZIAnA==,type:str]
+    GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ENC[AES256_GCM,data:+XPnnHdSKZpX2h2Q7owhVBezJ4mSSGiw2yxgW9blo/J/LdkzwkD9rV8BUw==,iv:T6zpLrj5Lo/H13RdtBGhqNKES4/FSS6pRNYA2CSekNM=,tag:aluf2D2Hf2sK23dj0bW8yg==,type:str]
+    GF_AUTH_GENERIC_OAUTH_AUTH_URL: ENC[AES256_GCM,data:0oL4ybdValscp4d3TkNtmZ3IYEch0LnYpUvDL2xBZ2FVAvRBvrXgwQnB3+xjeHoskg==,iv:KG+alED4Vhxt+Nj1V9cVNm9oDFhfEX63faemzIuZjMU=,tag:IK3S/p1kkNhOE53VW/24aQ==,type:str]
+    GF_AUTH_GENERIC_OAUTH_TOKEN_URL: ENC[AES256_GCM,data:r/AQ+0BZbtB1VWX3DISkFNt767UGmSEx9GBpRSOkjnIBsLDlRUiKzA24yH6R,iv:ueqwr0O5dw0890A/oQGQsF5Cr4EJ8e9TTqW0hIVraB0=,tag:pmEFJKdZkNEwi9nWiGTqNQ==,type:str]
+    GF_AUTH_GENERIC_OAUTH_API_URL: ENC[AES256_GCM,data:L12oR4zO0Cnndoqfi7obDZ+GisxbghEgNEArTx4Fv7+ufKm0uK6+e3YrwsoK0zDM,iv:tadyFn4Qx+DEnOxQ579NleCHMnlEpD6FpuUx10ix/dA=,tag:/11nME2jTi6GlKMQS92RQg==,type:str]
+    GF_AUTH_GENERIC_OAUTH_SCOPES: ENC[AES256_GCM,data:WR3kr4NZeB8ohQ5ScR31LMe0tWFLxUeJAk5bGctdL/Wa,iv:jtQCs4D5SI7ByJravieEVoAF1VXzutfYOgL1/i3GEoE=,tag:znGV9nMl7uRWhEFUdKyIFw==,type:str]
+    GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: ENC[AES256_GCM,data:CCXa/yJPeOq/fuZ1L6wDto+RUhNyO5Rmx6mWNCBvtIenUqTL8g5iH8lrDLGggBvo,iv:dAYO63R/cBaOBeK7tZg+oShhdvobAVEB2ka/SRtHmCA=,tag:0lz5zcD3ks0TvTWqJvs/LQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBkdUpzTXFJTDdTdk4xMHBy
+            ckZ4aVhMK2tsdzJyOVRkbVVnR21XdGQrNmtVCjE4eVNHN1dzZTcxd1dwZVJvODJl
+            WGlrbWpUZ0poRS9Kdk4xQmxQZExBMXcKLS0tIDlWY1BUNzIzREFTYnorc1E1SHlH
+            VzN3WDdkcXlrWTM5WUdQbk9TSmlGTW8KD1cZfAtpUI03856NwmmE95C0P5qSoMdK
+            EN3qIcZe68T43kwm01webf8Jn+IkQTQks6r4vNGWm0p97uc7Awk0fw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-07-15T22:23:41Z"
+    mac: ENC[AES256_GCM,data:28XQmlI9oyUV8UCGpTsHWmtqOMggUbiJZubUBKtvtL6h2ffrwhl3gUDBqFpVRvXVmkDXJGPz3TaGuddvQmCJC51A2IzpDHbeM1Arf/wGMArSJpVzcmhI7Mas1XuP6bX8aaWZJgJywuJerDKAc+GTpNPqGPdInBtVkeE8L3wizAE=,iv:WilYYSZ4QPH07zegeyWrxx+RvnhM/OO9HvK7P2VK0NI=,tag:cDq57egX4ZSDL8yBN9BEBw==,type:str]
+    version: 3.13.1

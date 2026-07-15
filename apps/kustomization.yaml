@@ -30,6 +30,7 @@ resources:
   - llm-hub/openwebui-admin-credentials.sops.yaml
   - llm-hub/openwebui-wife-credentials.sops.yaml
   - llm-hub/openwebui-secret-key.sops.yaml
+  - llm-hub/openwebui-oidc-client.sops.yaml
   - llm-hub/llm-hub-backup-creds.sops.yaml
   - llm-hub/openwebui-minio-creds.sops.yaml
   - llm-hub/litellm-tunnel-token.sops.yaml
@@ -112,6 +113,9 @@ resources:
   - nextcloud/nextcloud-backup-creds.sops.yaml
   - nextcloud/nextcloud-redis-creds.sops.yaml
   - nextcloud/nextcloud-cloudflare-token.sops.yaml
+  - nextcloud/nextcloud-oidc-client.sops.yaml
+  # OIDC provider registration Job for user_oidc app
+  - nextcloud/nextcloud-oidc-provider-job.yaml
   # NFS PV/PVCs
   - nextcloud/nextcloud-html-pv.yaml
   - nextcloud/nextcloud-html-pvc.yaml

@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: openwebui-oidc-client
+    namespace: llm-hub
+type: Opaque
+stringData:
+    oauth_provider_name: ENC[AES256_GCM,data:0wyIizjTNNSN,iv:+nmvE+6/skrgWoxuPXZvYBjgQUJaVIjrfi3338SFHms=,tag:3b527I1PQ68W8HV+D/3zHw==,type:str]
+    oauth_client_id: ENC[AES256_GCM,data:Wrv1a6hQtow4KSeg+fyHarKPetozfJC3j6LjX6JUuSE=,iv:7N0/3L5EAoZExnDUo5gM96S211g7sLp2N6k5mujoTRA=,tag:2a61BSvfvaBzJ8ixH7VTkg==,type:str]
+    oauth_client_secret: ENC[AES256_GCM,data:/ERYLfEmQLVxCJp0mbLpFMolewpH4HHl9FwJ4pIJ1xMJLO6OlBwpNKwEdA==,iv:8DzIEZ+JJ5KKuPSzm2u4mLgRkl31zESl3PmeFnKsVgg=,tag:F+zQv4Z/hvVm3evKD/ylBw==,type:str]
+    openid_provider_url: ENC[AES256_GCM,data:PZTMD0dvsZSjg+AXa40xQ24qj+hb8Thgs4KENt0TU7vuZ+DHw3Mj4N77NYTxOr1SIxYk6LsU/S5CVbwa2Y09FkkNK8HM+5aSiAV2InYGAm6d,iv:ZXwi6I4Sy4yhVVfvXsWb63Qw/QJ81lujkSLpF6BvcMM=,tag:v7JBJ3gU6kEGVG5ZFNtDdg==,type:str]
+    oauth_scopes: ENC[AES256_GCM,data:eqJTIJbtQdJHPQHviN0leQJaTxilfD0KiuIh5DSScktL,iv:vkFGYONs7ezDpPf6LCu1w6dH+9qYGQWDhPbrT3ZD60M=,tag:ntv51hNHlNjic/pNdRozqw==,type:str]
+    oauth_merge_accounts_by_email: ENC[AES256_GCM,data:Kziq6A==,iv:RtYD10pMqj9Taxu1E+9iWD1/fDebLmjT3NVVwciEv1U=,tag:rgG20lyFQTaU5O4PZvu3qA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBMaDMrSU1MM3VjcWJWVDVJ
+            UjhBYW9GZnViU3MxMEdWendISGJ2a0g5M1M0CjhtWEM1MUxtUFBsRU5xWXFpZVJw
+            R2gzU1VBSXoyYkQyUElOdjNiN1AyOTQKLS0tIEszbHMzbklhaVhrUkFscit3Nmh5
+            eXNacFpSbHkra29HcnZLZGFid2NQelUK1HkWMosLD91EYCYB367nX99ROI5YhMto
+            Tl4AZ1a+dg0lpV+vWheOCmwdBxohOyNmRNyFi+723gnzdnmZsG3TLA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-07-15T22:22:04Z"
+    mac: ENC[AES256_GCM,data:eEdO2iWBPAy2csiQ0kAAA5ySDokFUs4nCtotkd6kv1nnEbi5QLs0j5+w245UCsGYQfSLEUCLrOvC71gne4EudJTeGSuLc+vmv63D81RMUm4X+J7DEzWB/U8mAFKyRzN3gGP5AgwTYVn9zA+YlIc6Hh2sIpvCJjTjXDgFLg1qVi8=,iv:UVgBypxCLUOqZwKaIXH1TpSueJ78dhuMKBtumbPeNvw=,tag:o4ahLgzdUyvi6qkqWjhi5A==,type:str]
+    version: 3.13.1
