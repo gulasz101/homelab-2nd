@@ -104,6 +104,10 @@ spec:
         value: "false"
       - name: ENABLE_LOGIN_FORM
         value: "false"
+      - name: ENABLE_PASSWORD_AUTH
+        value: "false"
+      - name: ENABLE_PERSISTENT_CONFIG
+        value: "false"
       - name: ENABLE_OAUTH_SIGNUP
         value: "true"
       - name: OAUTH_PROVIDER_NAME
