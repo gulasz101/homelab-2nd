@@ -23,11 +23,6 @@ spec:
   upgrade:
     remediation:
       retries: 3
-  valuesFrom:
-    - kind: Secret
-      name: grafana-admin-credentials
-      valuesKey: admin-password
-      targetPath: admin.password
   values:
     # Generic OAuth via Authentik (OIDC). All OIDC client secrets are
     # injected through a SOPS-encrypted secret mounted as envFrom.
@@ -45,14 +40,20 @@ spec:
       GF_AUTH_GENERIC_OAUTH_USE_REFRESH_TOKEN: "true"
       GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT: "false"
       GF_AUTH_GENERIC_OAUTH_SKIP_ORG_ROLE_SYNC: "false"
+      # Disable local/basic logins; only Authentik OIDC remains.
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_DISABLE_SIGNOUT_MENU: "false"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
 
     initChownData:
       enabled: false
 
+    # Local admin fallback removed; SSO via Authentik is the only login path.
     admin:
-      existingSecret: grafana-admin-credentials
       userKey: admin-user
       passwordKey: admin-password
+      password: "not-used"
 
     persistence:
       enabled: true
