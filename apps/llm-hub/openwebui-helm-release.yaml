@@ -153,7 +153,7 @@ spec:
       - name: WEBUI_URL
         value: "https://ai-chat.voitech.dev"
       - name: DEFAULT_USER_ROLE
-        value: "pending"
+        value: "user"
       - name: DEFAULT_MODELS
         value: "glm.5.2"
       - name: DEFAULT_PINNED_MODELS
