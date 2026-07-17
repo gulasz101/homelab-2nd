@@ -54,6 +54,7 @@ resources:
   - auth/authentik-secret-key.sops.yaml
   - auth/authentik-redis-credentials.sops.yaml
   - auth/authentik-admin-password.sops.yaml
+  - auth/sylwia-authentik-password.sops.yaml
   - auth/authentik-minio-backup-creds.sops.yaml
   - auth/authentik-blueprint-secret.sops.yaml
   - auth/auth-tunnel-token.sops.yaml
