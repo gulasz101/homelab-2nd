@@ -39,6 +39,12 @@ spec:
       valuesKey: password
       targetPath: authentik.redis.password
   values:
+    # Mount the GitOps-declared blueprint that creates the OAuth2 providers,
+    # applications, groups, scope mapping, and shared signing certificate.
+    blueprints:
+      secrets:
+        - authentik-blueprint-homelab-sso
+
     # Disable built-in Bitnami PostgreSQL — we use CNPG
     postgresql:
       enabled: false
