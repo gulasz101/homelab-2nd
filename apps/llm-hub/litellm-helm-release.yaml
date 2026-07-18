@@ -116,9 +116,12 @@ spec:
             key: userinfo_endpoint
       - name: PROXY_BASE_URL
         value: "https://llm.voitech.dev"
-      # Restrict SSO logins to voitech.dev emails
+      # Allowed email domains for SSO
       - name: ALLOWED_EMAIL_DOMAINS
         value: "voitech.dev"
+      # Auto-redirect the UI login page straight to SSO (hides classic form)
+      - name: AUTO_REDIRECT_UI_LOGIN_TO_SSO
+        value: "true"
 
     # proxy_config is rendered into a ConfigMap and mounted as /app/config/config.yaml
     proxy_config:
