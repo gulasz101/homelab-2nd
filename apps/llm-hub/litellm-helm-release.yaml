@@ -279,6 +279,9 @@ spec:
         # master_key is also supplied via env var from the secret
         master_key: "os.environ/PROXY_MASTER_KEY"
         database_url: "os.environ/DATABASE_URL"
+        # Restrict UI to admins only; combined with no UI_USERNAME/UI_PASSWORD
+        # this hides the local login form, leaving only the SSO button
+        ui_access_mode: "admin_only"
 
     # The chart creates a proxyConfigMap by default; leave it on
     proxyConfigMap:
