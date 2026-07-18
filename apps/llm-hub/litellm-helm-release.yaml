@@ -82,6 +82,12 @@ spec:
           secretKeyRef:
             name: litellm-provider-keys
             key: OPENROUTER_API_KEY
+      # OpenCode Go subscription provider
+      - name: OPENCODE_GO_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: litellm-provider-keys
+            key: OPENCODE_GO_API_KEY
 
     # proxy_config is rendered into a ConfigMap and mounted as /app/config/config.yaml
     proxy_config:
@@ -118,6 +124,120 @@ spec:
             # Tencent Hybrid 3 (MoE) via OpenRouter free tier
             model: openrouter/tencent/hy3:free
             api_key: "os.environ/OPENROUTER_API_KEY"
+
+        # ── OpenCode Go subscription models (all with -go suffix) ──────
+        # All models below route through https://opencode.ai/zen/go/v1
+        # using the OPENCODE_GO_API_KEY from litellm-provider-keys secret.
+        - model_name: kimi-k3-go
+          litellm_params:
+            model: openai/kimi-k3
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: kimi-k2.7-code-go
+          litellm_params:
+            model: openai/kimi-k2.7-code
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: kimi-k2.6-go
+          litellm_params:
+            model: openai/kimi-k2.6
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: kimi-k2.5-go
+          litellm_params:
+            model: openai/kimi-k2.5
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: glm-5.2-go
+          litellm_params:
+            model: openai/glm-5.2
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: glm-5.1-go
+          litellm_params:
+            model: openai/glm-5.1
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: glm-5-go
+          litellm_params:
+            model: openai/glm-5
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: minimax-m3-go
+          litellm_params:
+            model: openai/minimax-m3
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: minimax-m2.7-go
+          litellm_params:
+            model: openai/minimax-m2.7
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: minimax-m2.5-go
+          litellm_params:
+            model: openai/minimax-m2.5
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: deepseek-v4-pro-go
+          litellm_params:
+            model: openai/deepseek-v4-pro
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: deepseek-v4-flash-go
+          litellm_params:
+            model: openai/deepseek-v4-flash
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: qwen3.7-max-go
+          litellm_params:
+            model: openai/qwen3.7-max
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: qwen3.7-plus-go
+          litellm_params:
+            model: openai/qwen3.7-plus
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: qwen3.6-plus-go
+          litellm_params:
+            model: openai/qwen3.6-plus
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: qwen3.5-plus-go
+          litellm_params:
+            model: openai/qwen3.5-plus
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: mimo-v2-pro-go
+          litellm_params:
+            model: openai/mimo-v2-pro
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: mimo-v2-omni-go
+          litellm_params:
+            model: openai/mimo-v2-omni
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: mimo-v2.5-pro-go
+          litellm_params:
+            model: openai/mimo-v2.5-pro
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: mimo-v2.5-go
+          litellm_params:
+            model: openai/mimo-v2.5
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: hy3-preview-go
+          litellm_params:
+            model: openai/hy3-preview
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
+        - model_name: grok-4.5-go
+          litellm_params:
+            model: openai/grok-4.5
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_API_KEY"
 
       litellm_settings:
         callbacks:
