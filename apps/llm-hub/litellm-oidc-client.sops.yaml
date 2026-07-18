@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: litellm-oidc-client
+    namespace: llm-hub
+type: Opaque
+stringData:
+    client_id: ENC[AES256_GCM,data:xRLaqn8Gew4e7gXJhIj7wrgP3t/exEX0IXPsYNBb570FyIxqoBt8KG6Ohw==,iv:dhxaexFW+ACAJnwjplI0kWnKxi1tvWtsnEh4SwWL9aY=,tag:hKV96OOqpz/t2fOO3MkPCA==,type:str]
+    client_secret: ENC[AES256_GCM,data:9rZ5mACTdpwiQVTIRm+ANAYJ6CrcHvn8O0CA5omf6q4/V+xQU/jy4bYjdFZa2FXh/zRlQGhjGdOFmEol7ef+iQ==,iv:qeJ50pAk8hHp/sLw56SDrskoP0JJLXTcafSCK5B6OTU=,tag:2uNS942T+2jAaLcf/JVNvA==,type:str]
+    authorization_endpoint: ENC[AES256_GCM,data:GIUSH2492924t8XwR5DgXJOh7s60k70nl+5WKahhm3tTwbGKsIU3jeQzqvZfg7to3A==,iv:tf7gw2NrjDX6uPmr5F6/hjnTKWsanKAUROrkwzzVUPw=,tag:APS8nA3H/5HeMRYym87nww==,type:str]
+    token_endpoint: ENC[AES256_GCM,data:drVEaoWPPZb9EIxlFKS91tOxNvB6I7SAIlWUzv/eeDNukNjYtkINjRE0QccD,iv:WY0GeaQwvb4GiyEsmh0cmDsA4Y+2U3+EuTZBMuH08PE=,tag:qz9m+RVYe4ALxKDdJLxMxQ==,type:str]
+    userinfo_endpoint: ENC[AES256_GCM,data:qNORFCfM03/9Ft22ikVvmwXrDqwqUY6olAjPA52tOLIeDdiOlXITI/zB01qbNF2G,iv:b7PwCt4u7MS58k3gyE+trWtdR1UjO/upV0c8YxUCdzo=,tag:f+pzy8qRuf71fBZtdrvZgw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA5bHZmRlJ3VEc4NXFMZHZ2
+            YURIcm0rcUR4RS95NkJlM1lkRUFKRUYxd0RNCkY2WHE5UjFmZ3NnN3ZEZWFidFJK
+            dXdqOVR3Y0Y0NXlhblZqdEtzSThCNlUKLS0tIEJuRllsYzJLVldTK3hadzNNVlAv
+            cThZUUgxWlNsTHF6a0JxQlBpWDJSNVUK2hN/gNvwz1gfL8HiulTniiw6lS4iatnE
+            /Ssedy4EZzj6yAOr84EIk+mcgKAmkesT3+saq24IHTriutCPuS4jWQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-07-18T19:20:07Z"
+    mac: ENC[AES256_GCM,data:/b9aAMD+FDHs4smi9aLl0eC/weHcbf6wvKJwY5wQfC5rRe0KL2qiLafsIRYEiELhVe8JooWEmcoSC3xkEFPu/hvZ/MJ5r9xNFquZF/fi2XNr+MaLlInlKRrNrAbp9JEYJT86vOcW/Tw1RXIPS4U3abGO/xoU8Wwxmq5SPhtxp6k=,iv:fTOhj75QDXs4dRJMMY8Wv0ZElAJUxvnbSvEJYL/e4OI=,tag:RENqCGmYsKFCVt9et6n8fQ==,type:str]
+    version: 3.13.1

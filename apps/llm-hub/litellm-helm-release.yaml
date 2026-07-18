@@ -88,6 +88,37 @@ spec:
           secretKeyRef:
             name: litellm-provider-keys
             key: OPENCODE_GO_API_KEY
+      # SSO via Generic OIDC (Authentik) — Admin UI login only
+      - name: GENERIC_CLIENT_ID
+        valueFrom:
+          secretKeyRef:
+            name: litellm-oidc-client
+            key: client_id
+      - name: GENERIC_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: litellm-oidc-client
+            key: client_secret
+      - name: GENERIC_AUTHORIZATION_ENDPOINT
+        valueFrom:
+          secretKeyRef:
+            name: litellm-oidc-client
+            key: authorization_endpoint
+      - name: GENERIC_TOKEN_ENDPOINT
+        valueFrom:
+          secretKeyRef:
+            name: litellm-oidc-client
+            key: token_endpoint
+      - name: GENERIC_USERINFO_ENDPOINT
+        valueFrom:
+          secretKeyRef:
+            name: litellm-oidc-client
+            key: userinfo_endpoint
+      - name: PROXY_BASE_URL
+        value: "https://llm.voitech.dev"
+      # Restrict SSO logins to voitech.dev emails
+      - name: ALLOWED_EMAIL_DOMAINS
+        value: "voitech.dev"
 
     # proxy_config is rendered into a ConfigMap and mounted as /app/config/config.yaml
     proxy_config:

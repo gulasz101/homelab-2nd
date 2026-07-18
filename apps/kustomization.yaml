@@ -30,6 +30,7 @@ resources:
   - llm-hub/openwebui-admin-credentials.sops.yaml
   - llm-hub/openwebui-secret-key.sops.yaml
   - llm-hub/openwebui-oidc-client.sops.yaml
+  - llm-hub/litellm-oidc-client.sops.yaml
   - llm-hub/llm-hub-backup-creds.sops.yaml
   - llm-hub/openwebui-minio-creds.sops.yaml
   - llm-hub/litellm-tunnel-token.sops.yaml
