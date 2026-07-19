@@ -1,9 +1,11 @@
 # ADR-007: Central SSO with Authentik
 
 Date: 2026-07-15
-Status: Proposed
+Status: Accepted (amended 2026-07-18)
 Supersedes: nothing
 Superseded by: nothing
+
+> **Amendment 2026-07-18:** LiteLLM was originally excluded from SSO because its Admin UI SSO was believed to be Enterprise-only. That was outdated: since LiteLLM v1.76.0, SSO is **free for up to 5 users**. LiteLLM was migrated to Authentik OIDC on 2026-07-18 (tracking note: `homelab/tracking/2026-07-18-litellm-sso-migration-plan.md`). Only Mattermost remains on local auth. The original text below is preserved for history; every LiteLLM exclusion mentioned in it no longer applies.
 
 ## Context
 
