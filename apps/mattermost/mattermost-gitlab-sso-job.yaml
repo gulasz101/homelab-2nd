@@ -1,6 +1,7 @@
 ---
 # One-off Job to configure Mattermost Team Edition GitLab SSO pointing at Authentik.
-# Idempotent: re-running the Job applies the same config values.
+# Mattermost image is distroless, so we copy mmctl out via an init container and run
+# the actual mmctl commands from a small alpine shell container.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -12,9 +13,27 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
+      initContainers:
+        - name: copy-mmctl
+          image: mattermost/mattermost-team-edition:11.9.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/cp
+            - /mattermost/bin/mmctl
+            - /shared/mmctl
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
       containers:
         - name: mmctl
-          image: mattermost/mattermost-team-edition:11.9.0
+          image: alpine:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: MATTERMOST_URL
@@ -44,34 +63,38 @@ spec:
             - -c
             - |
               set -e
+              MMCTL="/shared/mmctl"
+
               echo "Logging into Mattermost via mmctl..."
-              /mattermost/bin/mmctl auth login "$MATTERMOST_URL" \
+              "$MMCTL" auth login "$MATTERMOST_URL" \
                 --username "$MATTERMOST_ADMIN_USERNAME" \
                 --password "$MATTERMOST_ADMIN_PASSWORD" \
-                --name local \
-                --insecure-sha1-intermediate || true
+                --name local || true
 
-              /mattermost/bin/mmctl context set local || true
+              "$MMCTL" context set local || true
 
               echo "Configuring GitLab SSO to point at Authentik..."
-              /mattermost/bin/mmctl config set GitLabSettings.Enable true
-              /mattermost/bin/mmctl config set GitLabSettings.Id "$MATTERMOST_OAUTH_CLIENT_ID"
-              /mattermost/bin/mmctl config set GitLabSettings.Secret "$MATTERMOST_OAUTH_CLIENT_SECRET"
-              /mattermost/bin/mmctl config set GitLabSettings.AuthEndpoint "https://auth.voitech.dev/application/o/mattermost/authorize/"
-              /mattermost/bin/mmctl config set GitLabSettings.TokenEndpoint "https://auth.voitech.dev/application/o/mattermost/token/"
-              /mattermost/bin/mmctl config set GitLabSettings.UserAPIEndpoint "https://auth.voitech.dev/application/o/mattermost/userinfo/"
-              /mattermost/bin/mmctl config set GitLabSettings.IdEndpoint "https://auth.voitech.dev/application/o/mattermost/"
+              "$MMCTL" config set GitLabSettings.Enable true
+              "$MMCTL" config set GitLabSettings.Id "$MATTERMOST_OAUTH_CLIENT_ID"
+              "$MMCTL" config set GitLabSettings.Secret "$MATTERMOST_OAUTH_CLIENT_SECRET"
+              "$MMCTL" config set GitLabSettings.AuthEndpoint "https://auth.voitech.dev/application/o/mattermost/authorize/"
+              "$MMCTL" config set GitLabSettings.TokenEndpoint "https://auth.voitech.dev/application/o/mattermost/token/"
+              "$MMCTL" config set GitLabSettings.UserAPIEndpoint "https://auth.voitech.dev/application/o/mattermost/userinfo/"
+              "$MMCTL" config set GitLabSettings.IdEndpoint "https://auth.voitech.dev/application/o/mattermost/"
 
               echo "Disabling email sign-up/sign-in so GitLab (Authentik) is the public path..."
-              /mattermost/bin/mmctl config set EmailSettings.EnableSignUpWithEmail false
-              /mattermost/bin/mmctl config set EmailSettings.EnableSignInWithEmail false
+              "$MMCTL" config set EmailSettings.EnableSignUpWithEmail false
+              "$MMCTL" config set EmailSettings.EnableSignInWithEmail false
 
               echo "Verifying GitLabSettings config..."
-              /mattermost/bin/mmctl config get GitLabSettings.Enable
-              /mattermost/bin/mmctl config get GitLabSettings.Id
-              /mattermost/bin/mmctl config get GitLabSettings.AuthEndpoint
+              "$MMCTL" config get GitLabSettings.Enable
+              "$MMCTL" config get GitLabSettings.Id
+              "$MMCTL" config get GitLabSettings.AuthEndpoint
 
               echo "Mattermost GitLab SSO config applied."
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
           resources:
             requests:
               cpu: 100m
@@ -79,3 +102,6 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
+      volumes:
+        - name: shared
+          emptyDir: {}
