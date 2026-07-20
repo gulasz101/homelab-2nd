@@ -4,7 +4,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: mattermost-gitlab-sso-setup
+  name: mattermost-gitlab-sso-setup-v3
   namespace: mattermost
 spec:
   ttlSecondsAfterFinished: 86400
