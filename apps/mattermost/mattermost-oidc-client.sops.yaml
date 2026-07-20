@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: mattermost-oidc-client
+    namespace: mattermost
+type: Opaque
+stringData:
+    client_id: ENC[AES256_GCM,data:y7ikhv3Ga/3ccF0Lwq/Ry6EO5eFCai8auZU4diGRZBCqZkyUq3/agnLoXw==,iv:96qnSl22ad9rl4yK5PIV9b1tFJr1vOEKLQm9M1qHdRM=,tag:1XM/iIsL1cdOM+8CH18Gag==,type:str]
+    client_secret: ENC[AES256_GCM,data:1etOLJzrkRqGEsnoboafhGz68T0191UjRkTW622WfwxPWr4911cDKvj4QysONMcMjaTgbmwiJNtms5Ta/rx7OQ==,iv:AX0DVrW6hz7rkFhziT5rX9bFOCNzJGgpqjv3FFE0ksg=,tag:E8B/WHfULCQHYhMQsuEBWQ==,type:str]
+    gitlab_site_url: ENC[AES256_GCM,data:QvIfzIM0ykwRam8XnidBgOoNevtgj+VqMb677Ao79ZovmMdN2WgaXMdff3OjEoQNQg==,iv:xbEZWr/sjTLUXCOZij1r8eA/rl4ykECII+HiSor0rMo=,tag:D+5Fm8fBxj1yAwy55Sd4BQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBSUFhNWTlmRXUxZVZzWVdj
+            dEdiZHpDR0N5ZnlkbUNtMjZIUFY1bVRFTDI0Cm1zYjhscVNyaDAyWkYxQnJldERK
+            SHJ6azBTaUdDc1J2bjArRlFNZEZHSlEKLS0tIGlOQ2V4YXowZ04rSjR1TkdSc0xn
+            b0x0dS9zZkpWS1pOQU4zVUI1YzI4bTAKexpoV4mCabfJYkQeb08RyVIa2ZEBPLKW
+            ntSwyWPNDglN+jPajvRsECHtQVs7lxFwsNC5i7vpc0MVbck5dtXLXQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-07-20T18:59:58Z"
+    mac: ENC[AES256_GCM,data:zOlLXOF1uqPcdp88pDt7rAK1Jof3lKMCmZM5uV6LkfM2/kiOCO/+92GRPrPZmmtVT9RFCtSw4C5KsyDkp/drcnCiqs8ByZZmN4u3jFbtgZpMParn3AIJSQi1BfyE3k/Im1CZEKdnGRnGOLg3nfAYpmoN8En5nFjJ4QW2CS5PD4w=,iv:+YR2sJULQ8pCGaZxR5hg9x/UpOtDxcCQmxgiOtTKn4c=,tag:kHxFRvnc4ohZ/fqrflEqQA==,type:str]
+    version: 3.13.1

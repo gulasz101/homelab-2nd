@@ -10,6 +10,7 @@ resources:
   - mattermost/mattermost-minio-creds.sops.yaml
   - mattermost/chat-tunnel-token.sops.yaml
   - mattermost/mattermost-initial-admin-password.sops.yaml
+  - mattermost/mattermost-oidc-client.sops.yaml
   # Provisioned Grafana dashboard for Mattermost
   - mattermost/mattermost-dashboard-configmap.yaml
   # CNPG Cluster for Mattermost
