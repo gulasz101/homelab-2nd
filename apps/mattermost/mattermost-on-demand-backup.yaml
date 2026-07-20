@@ -9,3 +9,6 @@ metadata:
 spec:
   cluster:
     name: mattermost-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
