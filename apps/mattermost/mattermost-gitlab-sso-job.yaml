@@ -1,20 +1,21 @@
 ---
 # One-off Job to configure Mattermost Team Edition GitLab SSO pointing at Authentik.
-# Downloads the official mmctl binary matching the server's exact version.
+# Uses debian:bookworm-slim because mmctl from the Mattermost tarball is a glibc binary.
+# downloads the matching Mattermost server tarball only to extract mmctl.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: mattermost-gitlab-sso-setup-v3
+  name: mattermost-gitlab-sso-setup-v4
   namespace: mattermost
 spec:
   ttlSecondsAfterFinished: 86400
-  backoffLimit: 3
+  backoffLimit: 6
   template:
     spec:
       restartPolicy: OnFailure
       containers:
         - name: mmctl
-          image: alpine:latest
+          image: debian:bookworm-slim
           imagePullPolicy: IfNotPresent
           env:
             - name: MATTERMOST_VERSION
@@ -42,23 +43,37 @@ spec:
                   name: mattermost-oidc-client
                   key: client_secret
           command:
-            - /bin/sh
+            - /bin/bash
             - -c
             - |
               set -e
               echo "Installing mmctl from full Mattermost server tarball..."
-              apk add --no-cache curl ca-certificates tar
-              curl -fsSL -o /tmp/mattermost.tar.gz "https://releases.mattermost.com/${MATTERMOST_VERSION}/mattermost-team-${MATTERMOST_VERSION}-linux-amd64.tar.gz"
-              tar -xzf /tmp/mattermost.tar.gz -C /tmp/ mattermost/bin/mmctl
-              mv /tmp/mattermost/bin/mmctl /usr/local/bin/mmctl
+              apt-get update >/dev/null
+              apt-get install -y --no-install-recommends curl ca-certificates tar >/dev/null
+
+              for attempt in 1 2 3; do
+                echo "Download attempt $attempt..."
+                if curl -fsSL \
+                    -A "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0" \
+                    -o /tmp/mattermost.tar.gz \
+                    "https://releases.mattermost.com/${MATTERMOST_VERSION}/mattermost-${MATTERMOST_VERSION}-linux-amd64.tar.gz"; then
+                  echo "Download succeeded"
+                  break
+                fi
+                sleep 15
+              done
+
+              mkdir -p /tmp/mattermost
+              tar -xzf /tmp/mattermost.tar.gz -C /tmp/mattermost mattermost/bin/mmctl
+              mv /tmp/mattermost/mattermost/bin/mmctl /usr/local/bin/mmctl
               chmod +x /usr/local/bin/mmctl
               MMCTL=/usr/local/bin/mmctl
               "$MMCTL" version
 
               echo "Logging into Mattermost via mmctl..."
-              "$MMCTL" auth login "$MATTERMOST_URL" \\
-                --username "$MATTERMOST_ADMIN_USERNAME" \\
-                --password "$MATTERMOST_ADMIN_PASSWORD" \\
+              "$MMCTL" auth login "$MATTERMOST_URL" \
+                --username "$MATTERMOST_ADMIN_USERNAME" \
+                --password "$MATTERMOST_ADMIN_PASSWORD" \
                 --name local || true
 
               "$MMCTL" context set local || true
