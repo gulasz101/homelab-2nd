@@ -23,6 +23,8 @@ resources:
   - mattermost/cloudflared-chat-deployment.yaml
   # Pre-SSO on-demand CNPG backup (audit trail)
   - mattermost/mattermost-on-demand-backup.yaml
+  # One-off Job to configure Mattermost GitLab SSO via Authentik
+  - mattermost/mattermost-gitlab-sso-job.yaml
   # LLM hub namespace
   - llm-hub/namespace.yaml
   # SOPS-encrypted secrets
