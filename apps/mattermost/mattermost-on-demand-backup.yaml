@@ -1,0 +1,11 @@
+---
+# Pre-SSO on-demand backup of the Mattermost Postgres cluster
+# Kept in the repo as audit trail of the backup taken before the Auth migration.
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: mattermost-pre-sso-backup
+  namespace: mattermost
+spec:
+  cluster:
+    name: mattermost-db

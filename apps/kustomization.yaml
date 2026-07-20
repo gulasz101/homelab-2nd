@@ -19,6 +19,8 @@ resources:
   - mattermost/mattermost-helm-release.yaml
   # Cloudflare Tunnel for chat.voitech.dev -> Mattermost
   - mattermost/cloudflared-chat-deployment.yaml
+  # Pre-SSO on-demand CNPG backup (audit trail)
+  - mattermost/mattermost-on-demand-backup.yaml
   # LLM hub namespace
   - llm-hub/namespace.yaml
   # SOPS-encrypted secrets
