@@ -46,18 +46,19 @@ spec:
             - -c
             - |
               set -e
-              echo "Installing mmctl..."
-              apk add --no-cache curl ca-certificates
-              curl -fsSL -o /tmp/mmctl.tar.gz "https://github.com/mattermost/mmctl/releases/download/v${MATTERMOST_VERSION}/linux_amd64.tar.gz"
-              tar -xzf /tmp/mmctl.tar.gz -C /usr/local/bin/ --wildcards "*/mmctl" --strip-components=1
+              echo "Installing mmctl from full Mattermost server tarball..."
+              apk add --no-cache curl ca-certificates tar
+              curl -fsSL -o /tmp/mattermost.tar.gz "https://releases.mattermost.com/${MATTERMOST_VERSION}/mattermost-team-${MATTERMOST_VERSION}-linux-amd64.tar.gz"
+              tar -xzf /tmp/mattermost.tar.gz -C /tmp/ mattermost/bin/mmctl
+              mv /tmp/mattermost/bin/mmctl /usr/local/bin/mmctl
               chmod +x /usr/local/bin/mmctl
               MMCTL=/usr/local/bin/mmctl
               "$MMCTL" version
 
               echo "Logging into Mattermost via mmctl..."
-              "$MMCTL" auth login "$MATTERMOST_URL" \
-                --username "$MATTERMOST_ADMIN_USERNAME" \
-                --password "$MATTERMOST_ADMIN_PASSWORD" \
+              "$MMCTL" auth login "$MATTERMOST_URL" \\
+                --username "$MATTERMOST_ADMIN_USERNAME" \\
+                --password "$MATTERMOST_ADMIN_PASSWORD" \\
                 --name local || true
 
               "$MMCTL" context set local || true
