@@ -5,7 +5,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: mattermost-gitlab-sso-setup-v5
+  name: mattermost-gitlab-sso-setup-v6
   namespace: mattermost
 spec:
   ttlSecondsAfterFinished: 86400
@@ -80,9 +80,9 @@ spec:
               "$MMCTL" config set GitLabSettings.Enable true
               "$MMCTL" config set GitLabSettings.Id "$MATTERMOST_OAUTH_CLIENT_ID"
               "$MMCTL" config set GitLabSettings.Secret "$MATTERMOST_OAUTH_CLIENT_SECRET"
-              "$MMCTL" config set GitLabSettings.AuthEndpoint "https://auth.voitech.dev/application/o/mattermost/authorize/"
-              "$MMCTL" config set GitLabSettings.TokenEndpoint "https://auth.voitech.dev/application/o/mattermost/token/"
-              "$MMCTL" config set GitLabSettings.UserAPIEndpoint "https://auth.voitech.dev/application/o/mattermost/userinfo/"
+              "$MMCTL" config set GitLabSettings.AuthEndpoint "https://auth.voitech.dev/application/o/authorize/"
+              "$MMCTL" config set GitLabSettings.TokenEndpoint "https://auth.voitech.dev/application/o/token/"
+              "$MMCTL" config set GitLabSettings.UserAPIEndpoint "https://auth.voitech.dev/application/o/userinfo/"
               "$MMCTL" config set GitLabSettings.IdEndpoint "https://auth.voitech.dev/application/o/mattermost/"
 
               echo "Disabling email sign-up/sign-in so GitLab (Authentik) is the public path..."
