@@ -1,0 +1,22 @@
+---
+# ObjectStore for the Barman Cloud CNPG-I plugin — Mattermost backups to OMV MinIO
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: mattermost-db-backups
+  namespace: mattermost
+spec:
+  configuration:
+    destinationPath: s3://cnpg-backups/mattermost/
+    endpointURL: http://openmediavault.local:9000
+    s3Credentials:
+      accessKeyId:
+        name: minio-backup-creds
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: minio-backup-creds
+        key: ACCESS_SECRET_KEY
+    data:
+      compression: gzip
+    wal:
+      compression: gzip

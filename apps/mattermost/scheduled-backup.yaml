@@ -1,5 +1,6 @@
 ---
 # Daily scheduled backup of the Mattermost Postgres cluster
+# Uses the Barman Cloud CNPG-I plugin.
 apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup
 metadata:
@@ -10,4 +11,7 @@ spec:
   backupOwnerReference: self
   cluster:
     name: mattermost-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
   immediate: true  # Take a backup right away when first created

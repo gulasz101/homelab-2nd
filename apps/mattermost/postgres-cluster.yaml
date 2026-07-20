@@ -1,6 +1,6 @@
 ---
 # CNPG Cluster for Mattermost — single instance on local-path NVMe
-# Backups + WAL archiving to OMV MinIO S3 bucket 'cnpg-backups'
+# Backups + WAL archiving via the Barman Cloud CNPG-I plugin to OMV MinIO
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -30,20 +30,17 @@ spec:
     storageClass: local-path
     size: 10Gi
 
-  # Backup + WAL archiving to OMV MinIO S3
+  # Barman Cloud CNPG-I plugin provides WAL archiving and base backups.
+  # We stay on PostgreSQL 16 to avoid a risky major-version migration.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: mattermost-db-backups
+        serverName: mattermost-db
+
+  # Retention only — backup destination is handled by the plugin ObjectStore.
   backup:
-    barmanObjectStore:
-      destinationPath: s3://cnpg-backups/mattermost/
-      endpointURL: http://openmediavault.local:9000
-      s3Credentials:
-        accessKeyId:
-          name: minio-backup-creds
-          key: ACCESS_KEY_ID
-        secretAccessKey:
-          name: minio-backup-creds
-          key: ACCESS_SECRET_KEY
-      data:
-        compression: gzip
     retentionPolicy: "30d"
 
   # Resource limits — reasonable for a homelab

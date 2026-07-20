@@ -12,8 +12,9 @@ resources:
   - mattermost/mattermost-initial-admin-password.sops.yaml
   # Provisioned Grafana dashboard for Mattermost
   - mattermost/mattermost-dashboard-configmap.yaml
-  # CNPG Cluster for Mattermost Postgres
+  # CNPG Cluster for Mattermost
   - mattermost/postgres-cluster.yaml
+  - mattermost/objectstore.yaml
   - mattermost/scheduled-backup.yaml
   # Mattermost HelmRelease
   - mattermost/mattermost-helm-release.yaml
