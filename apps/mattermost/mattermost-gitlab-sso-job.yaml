@@ -21,7 +21,7 @@ spec:
             - name: MATTERMOST_VERSION
               value: "11.9.0"
             - name: MATTERMOST_URL
-              value: "http://mattermost.mattermost.svc.cluster.local:8065"
+              value: "http://mattermost-team-edition.mattermost.svc.cluster.local:8065"
             - name: MATTERMOST_ADMIN_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -74,9 +74,7 @@ spec:
               "$MMCTL" auth login "$MATTERMOST_URL" \
                 --username "$MATTERMOST_ADMIN_USERNAME" \
                 --password "$MATTERMOST_ADMIN_PASSWORD" \
-                --name local || true
-
-              "$MMCTL" context set local || true
+                --name local
 
               echo "Configuring GitLab SSO to point at Authentik..."
               "$MMCTL" config set GitLabSettings.Enable true
