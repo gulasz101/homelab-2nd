@@ -1,11 +1,10 @@
 ---
 # One-off Job to configure Mattermost Team Edition GitLab SSO pointing at Authentik.
-# Mattermost image is distroless, so we copy mmctl out via an init container and run
-# the actual mmctl commands from a small alpine shell container.
+# Downloads the official mmctl binary matching the server's exact version.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: mattermost-gitlab-sso-setup-v2
+  name: mattermost-gitlab-sso-setup
   namespace: mattermost
 spec:
   ttlSecondsAfterFinished: 86400
@@ -13,29 +12,13 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
-      initContainers:
-        - name: copy-mmctl
-          image: mattermost/mattermost-team-edition:11.9.0
-          imagePullPolicy: IfNotPresent
-          command:
-            - /bin/cp
-            - /mattermost/bin/mmctl
-            - /shared/mmctl
-          volumeMounts:
-            - name: shared
-              mountPath: /shared
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 200m
-              memory: 128Mi
       containers:
         - name: mmctl
           image: alpine:latest
           imagePullPolicy: IfNotPresent
           env:
+            - name: MATTERMOST_VERSION
+              value: "11.9.0"
             - name: MATTERMOST_URL
               value: "http://mattermost.mattermost.svc.cluster.local:8065"
             - name: MATTERMOST_ADMIN_USERNAME
@@ -63,7 +46,13 @@ spec:
             - -c
             - |
               set -e
-              MMCTL="/shared/mmctl"
+              echo "Installing mmctl..."
+              apk add --no-cache curl ca-certificates
+              curl -fsSL -o /tmp/mmctl.tar.gz "https://github.com/mattermost/mmctl/releases/download/v${MATTERMOST_VERSION}/linux_amd64.tar.gz"
+              tar -xzf /tmp/mmctl.tar.gz -C /usr/local/bin/ --wildcards "*/mmctl" --strip-components=1
+              chmod +x /usr/local/bin/mmctl
+              MMCTL=/usr/local/bin/mmctl
+              "$MMCTL" version
 
               echo "Logging into Mattermost via mmctl..."
               "$MMCTL" auth login "$MATTERMOST_URL" \
@@ -92,9 +81,6 @@ spec:
               "$MMCTL" config get GitLabSettings.AuthEndpoint
 
               echo "Mattermost GitLab SSO config applied."
-          volumeMounts:
-            - name: shared
-              mountPath: /shared
           resources:
             requests:
               cpu: 100m
@@ -102,6 +88,3 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
-      volumes:
-        - name: shared
-          emptyDir: {}
