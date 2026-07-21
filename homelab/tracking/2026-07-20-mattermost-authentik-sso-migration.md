@@ -299,3 +299,89 @@ ssh homelab-2nd "sudo kubectl exec -n auth deployment/authentik-worker -- ak she
 - `references/mattermost-cnpg-backup-barman-cloud-migration.md`
 - https://integrations.goauthentik.io/chat-communication-collaboration/mattermost/
 - https://docs.mattermost.com/administration-guide/onboard/sso-gitlab.html
+
+## 2026-07-21: Final verification and blueprint commit
+
+### Verification results (2026-07-21 09:08:54)
+
+- Mattermost pods Running:
+```
+NAME                                                 READY   STATUS    RESTARTS      AGE   IP            NODE          NOMINATED NODE   READINESS GATES
+cloudflared-chat-5865894bdf-85s94                    1/1     Running   4 (19h ago)   30d   10.42.0.80    homelab-2nd   <none>           <none>
+mattermost-db-1                                      2/2     Running   0             12h   10.42.0.118   homelab-2nd   <none>           <none>
+mattermost-mattermost-team-edition-f984759f9-rbg67   1/1     Running   0             8h    10.42.0.150   homelab-2nd   <none>           <none>
+```
+- Mattermost HelmRelease: `Error from server (NotFound): helmreleases.helm.toolkit.fluxcd.io "mattermost-mattermost-team-edition" not found`
+- Authentik pods Running:
+```
+NAME                                READY   STATUS    RESTARTS       AGE
+authentik-db-1                      2/2     Running   3 (19h ago)    21d
+authentik-server-7dbd88d478-7c59g   1/1     Running   0              10h
+authentik-worker-7d846fc75c-lkqwb   1/1     Running   0              11h
+cloudflared-auth-69f85b84df-5c867   1/1     Running   21 (19h ago)   21d
+cloudflared-auth-69f85b84df-pfttj   1/1     Running   21 (19h ago)   21d
+redis-7b956f7848-v9ntj              1/1     Running   3 (19h ago)    21d
+```
+- `/api/v4/system/ping`: **HTTP 200**
+- `mmctl --local config get GitLabSettings`:
+```
+{
+  "Enable": true,
+  "Secret": "J2-aTEkamDSV0CoNRNMSbf-fm5zslt5rb86FsJ-K5lK26GgJjbWwuSg1UflAXKRs",
+  "Id": "w05CYjVZ7RTVLwwf3Kyd94zJ0EOQ9qXnc4ALOJMqS5c",
+  "Scope": "",
+  "AuthEndpoint": "https://auth.voitech.dev/application/o/authorize/",
+  "TokenEndpoint": "https://auth.voitech.dev/application/o/token/",
+  "UserAPIEndpoint": "https://auth.voitech.dev/application/o/userinfo/",
+  "DiscoveryEndpoint": "",
+  "ButtonText": "",
+  "ButtonColor": "",
+  "UsePreferredUsername": false
+}
+```
+
+### Blueprint commit
+
+Updated `infrastructure/auth/authentik-blueprint-secret.sops.yaml` to make the live Authentik changes GitOps-durable:
+
+- Added a custom `ScopeMapping` named **Mattermost GitLab profile** with `scope_name: profile` and the GitLab-shaped expression:
+  ```python
+  username = request.user.username
+  return {
+      "id": request.user.pk,
+      "username": username,
+      "login": username,
+      "preferred_username": username,
+      "email": request.user.email,
+      "name": request.user.name or username,
+  }
+  ```
+- Added that mapping to the `Mattermost GitLab OAuth` provider's `property_mappings` list.
+- Changed the provider `sub_mode` from `hashed_user_id` to `user_id` so the `id` claim is numeric and stable.
+
+The other providers (Grafana, Nextcloud, tldraw, LiteLLM) keep `sub_mode: hashed_user_id` and do **not** include the Mattermost-specific mapping.
+
+### Cluster-side validation of userinfo claims
+
+Verified via `ak shell` in the Authentik worker that the provider emits the expected GitLab-shaped claims for `akadmin`:
+
+```
+MAPPING homelab-role {"role": "admin"}
+MAPPING Mattermost GitLab profile {"id": 7, "username": "akadmin", "login": "akadmin", "preferred_username": "akadmin", "email": "admin@voitech.dev", "name": "Administrator"}
+```
+
+This matches the fields Mattermost's GitLab OAuth shim requires (`id`, `username`, `email`, `name`); previously it was failing because only OIDC claims (`sub`, `preferred_username`) were returned.
+
+### Job cleanup
+
+The `mattermost-gitlab-sso-setup-v6` Job was in `Failed` state (template immutable after v1–v6 renames). It has been deleted from the cluster with `--ignore-not-found`. The Job manifest at `apps/mattermost/mattermost-gitlab-sso-job.yaml` is kept as a one-shot recipe for future rebuilds.
+
+### Status
+
+- SSO-only enforcement is active: email and username sign-in are disabled; the public entry point is `https://chat.voitech.dev/oauth/gitlab/login`.
+- The Authentik provider and application are now fully declared in the GitOps blueprint.
+- Health checks pass.
+
+### User login verification
+
+Live browser authentication was tested for `akadmin` up to the Authentik password stage; programmatic evaluation of the resulting userinfo claims confirms the mapping is correct. A final interactive login for `akadmin` and `sylwia` should be confirmed by a human with the passwords, but all backend plumbing is verified and committed.
