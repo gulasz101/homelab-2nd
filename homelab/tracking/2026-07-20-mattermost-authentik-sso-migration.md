@@ -439,3 +439,69 @@ Log in to Authentik as `akadmin`.
 You should land in Mattermost as the existing `wojtek` account with all history and admin rights intact.
 
 If anything goes wrong, restore from the backup using the instructions saved alongside it.
+
+
+## 2026-07-21 (2026-07-21 11:23:35): Fix — clear local password after setting authdata
+
+### Problem
+
+After the merge, login failed with:
+
+```
+Invalid user, password and auth data cannot both be set.
+```
+
+Mattermost validates that a user cannot have both a local password hash and external OAuth authdata. The blog reference for this exact migration explicitly states to set `password=''` along with `authservice='gitlab'` and `authdata=UID`.
+
+### Fix
+
+```sql
+UPDATE users SET password='' WHERE username='wojtek';
+```
+
+### Row after fix
+
+```
+             id             | username |       email        | authservice | authdata | emailverified |          roles           | password 
+----------------------------+----------+--------------------+-------------+----------+---------------+--------------------------+----------
+ szj35wcy7fr7mbmfsfwy5txe9e | wojtek   | wojtek@voitech.dev | gitlab      | 7        | t             | system_user system_admin | 
+(1 row)
+
+
+```
+
+Now `password` is empty, `authservice='gitlab'`, `authdata='7'`, and roles/admin rights are preserved.
+
+### Try again
+
+`https://chat.voitech.dev/oauth/gitlab/login` as Authentik `akadmin` should now land on the existing `wojtek` account.
+
+
+## 2026-07-21 (2026-07-21 11:40:34): Login button on `/login` — not possible in Team Edition
+
+### Investigation
+
+After enabling GitLab OAuth via env vars in the HelmRelease and confirming the server config has `GitLabSettings.Enable: true`, the public `/login` page still showed:
+
+```
+This server doesn’t have any sign-in methods enabled
+```
+
+The client-side config from `GET /api/v4/config/client` did **not** include:
+
+- `EnableSignUpWithGitLab`
+- `GitLabButtonText`
+- `GitLabButtonColor`
+- `GitLabEndpoint`
+- `GitLabId`
+
+I checked the Mattermost source (`server/config/client.go`) and found these keys are only emitted when the server has the `OpenId` license feature enabled. Team Edition has no enterprise license, so the button is never rendered for anonymous users.
+
+### Conclusion
+
+Mattermost Team Edition **cannot show an OAuth/SSO button on the standard `/login` page**. The `/oauth/gitlab/login` endpoint works fine, but the only way to expose it as a landing-page button would require:
+
+1. A Cloudflare redirect rule sending `/login?desktop=no` → `/oauth/gitlab/login` (may interfere with desktop app flow), or
+2. Running an Enterprise-licensed Mattermost.
+
+For now, the working login URL remains `https://chat.voitech.dev/oauth/gitlab/login`.
