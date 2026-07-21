@@ -385,3 +385,57 @@ The `mattermost-gitlab-sso-setup-v6` Job was in `Failed` state (template immutab
 ### User login verification
 
 Live browser authentication was tested for `akadmin` up to the Authentik password stage; programmatic evaluation of the resulting userinfo claims confirms the mapping is correct. A final interactive login for `akadmin` and `sylwia` should be confirmed by a human with the passwords, but all backend plumbing is verified and committed.
+
+## 2026-07-21: Account merge — linking existing `wojtek` Mattermost user to Authentik `akadmin`
+
+### Why a merge was needed
+
+The initial SSO setup would have created a new Mattermost account (e.g. `akadmin`) because Mattermost matches OAuth users by `authservice` + `authdata`, not by email or username. The existing `wojtek` account had `authservice=''` and `authdata=''`, so it would not have matched the Authentik user.
+
+Renaming the Authentik `akadmin` user to `wojtek` was rejected because it would break other services:
+- **LiteLLM** uses `user_id` = `akadmin`; renaming would create a new account and lose `proxy_admin` role.
+- **Nextcloud** `user_oidc` maps uid from `preferred_username` with `uniqueUid=true`; renaming would generate a new internal user id.
+- **OpenWebUI** merges by email; changing `admin@voitech.dev` → `wojtek@voitech.dev` would create a new account.
+- **Grafana** also matches by email.
+
+Therefore, the safe path was to keep Authentik `akadmin` unchanged and only update the Mattermost `users` table to point the existing `wojtek` row at Authentik user PK `7`.
+
+### Backup taken
+
+- Local: `/Users/wojciechgula/mattermost-pre-sso-merge-20260721-110556.dump`
+- OMV durable copy: `/srv/dev-disk-by-uuid-cda9bf6e-0ed1-4e61-b063-1cbab7351886/backups/mattermost/mattermost-pre-sso-merge-20260721-110556.dump`
+- Restore instructions: `/srv/dev-disk-by-uuid-cda9bf6e-0ed1-4e61-b063-1cbab7351886/backups/mattermost/mattermost-pre-sso-merge-20260721-110556.md` (and local copy `/Users/wojciechgula/mattermost-db-restore-instructions.md`)
+
+### Change made (2026-07-21 11:14:21)
+
+```sql
+UPDATE users SET authservice='gitlab', authdata='7' WHERE username='wojtek';
+```
+
+Executed via `kubectl exec -i` into the `mattermost-db-1` CNPG primary pod.
+
+### Verification
+
+Current `wojtek` row:
+
+```
+             id             | username |       email        | authservice | authdata | emailverified |          roles           
+----------------------------+----------+--------------------+-------------+----------+---------------+--------------------------
+ szj35wcy7fr7mbmfsfwy5txe9e | wojtek   | wojtek@voitech.dev | gitlab      | 7        | t             | system_user system_admin
+(1 row)
+
+
+```
+
+- `authservice` changed from empty to `gitlab`.
+- `authdata` set to `7` (Authentik `akadmin` primary key).
+- `roles` still `system_user system_admin`.
+- `email` still `wojtek@voitech.dev`.
+
+### How to test
+
+Open an incognito window and go to `https://chat.voitech.dev/oauth/gitlab/login`.
+Log in to Authentik as `akadmin`.
+You should land in Mattermost as the existing `wojtek` account with all history and admin rights intact.
+
+If anything goes wrong, restore from the backup using the instructions saved alongside it.
