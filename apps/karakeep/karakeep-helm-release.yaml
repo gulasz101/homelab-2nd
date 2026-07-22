@@ -1,0 +1,172 @@
+---
+# Karakeep HelmRelease — single-pod SQLite bookmark manager on OMV NFS + MinIO S3
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: karakeep
+  namespace: karakeep
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: karakeep
+      version: "0.0.1"
+      sourceRef:
+        kind: HelmRepository
+        name: helmforge
+        namespace: flux-system
+      interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    image:
+      repository: ghcr.io/karakeep-app/karakeep
+      tag: "0.32.0"
+      pullPolicy: IfNotPresent
+
+    replicaCount: 1
+
+    strategy:
+      type: Recreate
+
+    karakeep:
+      nextAuthUrl: "https://keep.voitech.dev"
+      existingSecret: "karakeep-app-secrets"
+      existingSecretNextAuthKey: "nextauth-secret"
+      existingSecretMeiliMasterKey: "meili-master-key"
+      browserConnectOnDemand: true
+
+      extraEnv:
+        # ── SSO: Authentik OIDC only, no local password login ────────────
+        - name: DISABLE_PASSWORD_AUTH
+          value: "true"
+        - name: OAUTH_AUTO_REDIRECT
+          value: "true"
+        - name: OAUTH_PROVIDER_NAME
+          valueFrom:
+            secretKeyRef:
+              name: karakeep-oidc-client
+              key: provider_name
+        - name: OAUTH_WELLKNOWN_URL
+          value: "https://auth.voitech.dev/application/o/karakeep/.well-known/openid-configuration"
+        - name: OAUTH_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: karakeep-oidc-client
+              key: client_id
+        - name: OAUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: karakeep-oidc-client
+              key: client_secret
+        - name: OAUTH_ALLOW_DANGEROUS_EMAIL_ACCOUNT_LINKING
+          value: "true"
+        - name: OAUTH_SCOPE
+          value: "openid email profile"
+
+        # ── S3 asset store on OMV MinIO ───────────────────────────────────
+        - name: ASSET_STORE_S3_ENDPOINT
+          value: "http://openmediavault.local:9000"
+        - name: ASSET_STORE_S3_BUCKET
+          value: "karakeep-assets"
+        - name: ASSET_STORE_S3_REGION
+          value: "us-east-1"
+        - name: ASSET_STORE_S3_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: karakeep-minio-assets
+              key: ACCESS_KEY_ID
+        - name: ASSET_STORE_S3_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: karakeep-minio-assets
+              key: ACCESS_SECRET_KEY
+        - name: ASSET_STORE_S3_FORCE_PATH_STYLE
+          value: "true"
+
+        # ── AI tagging via LiteLLM proxy ──────────────────────────────────
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: karakeep-litellm-key
+              key: key
+        - name: OPENAI_BASE_URL
+          value: "https://llm.voitech.dev/v1"
+        - name: INFERENCE_TEXT_MODEL
+          value: "gemma-4-12b-uncensored"
+        - name: INFERENCE_IMAGE_MODEL
+          value: "gemma-4-12b-uncensored"
+        - name: INFERENCE_CONTEXT_LENGTH
+          value: "8192"
+        - name: INFERENCE_ENABLE_AUTO_TAGGING
+          value: "true"
+        - name: INFERENCE_ENABLE_AUTO_SUMMARIZATION
+          value: "true"
+        - name: INFERENCE_OUTPUT_SCHEMA
+          value: "plain"
+
+        # ── Observability: logs + Prometheus metrics ─────────────────────
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://opentelemetry-collector.monitoring.svc.cluster.local:4318"
+        - name: OTEL_LOGS_EXPORTER
+          value: "otlp"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.name=karakeep,service.namespace=karakeep"
+        - name: LOG_LEVEL
+          value: "info"
+        - name: WORKERS_PORT
+          value: "3001"
+        - name: WORKERS_HOST
+          value: "0.0.0.0"
+
+    meilisearch:
+      enabled: true
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+    chromium:
+      enabled: true
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+
+    persistence:
+      enabled: true
+      existingClaim: karakeep-data
+
+    service:
+      type: ClusterIP
+      port: 3000
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/api/metrics"
+
+    ingress:
+      enabled: false
+
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1500m
+        memory: 2Gi
+
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "3000"
+      prometheus.io/path: "/api/metrics"

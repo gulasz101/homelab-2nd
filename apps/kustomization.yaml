@@ -110,6 +110,25 @@ resources:
   - gpu-embedding/gpu-embedding-prometheus-rules.yaml
   - gpu-embedding/gpu-embedding-loki-rule.yaml
   - gpu-embedding/gpu-embedding-dashboard-configmap.yaml
+  # Karakeep namespace
+  - karakeep/namespace.yaml
+  # SOPS-encrypted secrets
+  - karakeep/karakeep-app-secrets.sops.yaml
+  - karakeep/karakeep-oidc-client.sops.yaml
+  - karakeep/karakeep-minio-assets.sops.yaml
+  - karakeep/karakeep-tunnel-token.sops.yaml
+  - karakeep/karakeep-litellm-key.sops.yaml
+  # OMV NFS PV/PVC for Karakeep working data
+  - karakeep/karakeep-data-pv.yaml
+  - karakeep/karakeep-data-pvc.yaml
+  # HelmForge repository + Karakeep HelmRelease
+  - karakeep/karakeep-helm-repository.yaml
+  - karakeep/karakeep-helm-release.yaml
+  # Cloudflare Tunnel for keep.voitech.dev
+  - karakeep/cloudflared-karakeep-deployment.yaml
+  - karakeep/karakeep-tunnel-ingress-configmap.yaml
+  # Prometheus scraping
+  - karakeep/service-monitor.yaml
   # Nextcloud namespace
   - nextcloud/namespace.yaml
   # SOPS-encrypted secrets

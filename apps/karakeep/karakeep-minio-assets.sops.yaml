@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: karakeep-minio-assets
+    namespace: karakeep
+type: Opaque
+stringData:
+    ACCESS_KEY_ID: ENC[AES256_GCM,data:7Eyjy1nrfBz1GXvn6MUJ6Ks7Qbo=,iv:sWCEq8qnqLVEyoQBeIK2PaBo2+6fI0/M25+paHgk6MI=,tag:cwJH+2spwhdNRDzTOHhVkA==,type:str]
+    ACCESS_SECRET_KEY: ENC[AES256_GCM,data:PkYGpqgRobgx1dGHRNc4EhsFFXWta5UH/uvp89Wqb4SnsRzNy7Y/7g==,iv:KOJOTe7+M9EDtvDxEULyRX28GzvnLMUBDCz3gnGJCjY=,tag:7nUXX+Oo8LiWS/SKqWMWHw==,type:str]
+    endpoint: ENC[AES256_GCM,data:tEveTtk2ASYzkO4ZBiBZjnrkDiMWxrTyFE5PTBp9GwQ=,iv:ObKPwRVE3BKdV3OmYFO0LYhUQ1suJCF1+WhMCff8Xj4=,tag:NhGu/diax9/ycvuQ46krMw==,type:str]
+    bucket: ENC[AES256_GCM,data:FJL7dMmEftLXicA3O+vg,iv:B72TaZQXbXmfZBZbkLGBGFULQHn8A7TDgyvdChtqFRo=,tag:lbrC0u0/TuuPHu6KzFF6Iw==,type:str]
+    region: ENC[AES256_GCM,data:fiZXhib7x5zN,iv:C1d8djAmgtXfOR3QgthuLFHKo/9XB//CXfOqPbqx/hw=,tag:jV30tGjd64+YKu6ftEZ2KQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSByT1F2UzQ2Q1FnRWpNV1JE
+            ZVBnZWpob25RUVVKQzJBdkFUTlBOR003SkFVClY5RGVPblFYUEFPYk1BcXl5UEky
+            SFdYNDdleGZZOFRLQ1JGZjlqQzRHLzQKLS0tIGZiTkVCSGtSYU5rbGZvV2wzQjRK
+            LzNrOUN0RTM5ZnZlbjFZMk0vUmNGZ1UKPdvFHkeCoH2V9ZqS3yYCsH6I2Al7o+TJ
+            QWxPwwKlsskP4SZa3vQLOhzbbrf9aTRYAn7V7GU8mNhFoo+ONAcOxA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-07-22T11:45:14Z"
+    mac: ENC[AES256_GCM,data:VVQYiuhqYBhZNZbinwfwSfYxLwu81LH3jeoT6/uPWYpe4vehynlAK4xbWptO5tWeQesswJQYTAP9Gyp/9e7qYggdIE+7M1+PJSOVSM/kh6YskTyQTQ6LA1S6FS6gmi3o2z5VGXfUQP6Dd16WhaaNLd+wguLsUNYDw1SG2csumPE=,iv:O4HCKuEHZHthS8aWuAaDXTOW8HUyyv4Bi+BXwoVAvFI=,tag:9Ut0ZC6WkuHxrTYvQOKt/w==,type:str]
+    version: 3.13.1

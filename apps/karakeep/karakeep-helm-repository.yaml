@@ -1,0 +1,10 @@
+---
+# HelmForge repository for Karakeep chart
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: helmforge
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://repo.helmforge.dev

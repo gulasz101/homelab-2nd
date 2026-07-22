@@ -1,0 +1,18 @@
+---
+# Prometheus ServiceMonitor for Karakeep web metrics on /api/metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: karakeep
+  namespace: karakeep
+  labels:
+    release: prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: karakeep
+  endpoints:
+    - port: http
+      path: /api/metrics
+      interval: 15s
+      scrapeTimeout: 10s

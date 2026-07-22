@@ -1,0 +1,42 @@
+---
+# Dedicated Cloudflare Tunnel for keep.voitech.dev -> Karakeep web UI
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-karakeep
+  namespace: karakeep
+  labels:
+    app.kubernetes.io/name: cloudflared-karakeep
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-karakeep
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-karakeep
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: karakeep-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

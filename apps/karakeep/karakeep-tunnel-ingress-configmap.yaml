@@ -1,0 +1,10 @@
+---
+# Reminder of the public hostname rule (real rule lives in Cloudflare Zero Trust)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: karakeep-tunnel-ingress
+  namespace: karakeep
+data:
+  note: |
+    # keep.voitech.dev -> http://karakeep.karakeep.svc.cluster.local:3000

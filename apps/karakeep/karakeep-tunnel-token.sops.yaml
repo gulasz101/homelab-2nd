@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: karakeep-tunnel-token
+    namespace: karakeep
+type: Opaque
+stringData:
+    token: ENC[AES256_GCM,data:GYlYeTX02nigFoOto4haTh7pDdFYzpqzoWSy4RxpZp1eouhad8aCImrWyPWXvBvNCbXu9EphtFnMlAoNubVI2r1Bsh3dSr9l6TInJVr9qRtqDJxXVepW2IBwtCOhBjLOUgr1t13P506Qv48pu2KVuHgdFz9ZQiVjMhmFe7u47i0S+umiDSzV0e3VJETAx1OWV6z2bBgq/FCh94o3/bKf2LTaDIX0siQBqRBqy2yCCjNulKYQXMWn6A==,iv:QW/tvi6vB+nTW26dolekbjH101MlmnxcOsipv1KK4Zo=,tag:RS5TCblY1eugWoqSbyA3vg==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSArUmgwSUdWK1FBQWoyRWxj
+            U1dFTGJNb3lCbGwwa1RFMTAybnFVcE9uQnhVCnhRbko2dit3WlBvWEo4U2JQcFJ4
+            ZDQ1SGtybFFUZVZsYm9lbE5IeG5YVFkKLS0tIERjNHZ0WjZuU2FOUmJWcm13WG0z
+            d0lNQ2taUWhkb3o2dGxiazhZUUNJcUkKvhFHb6iX2PAJC2uOrrCyb29qv/tuj9tU
+            t2xjEahT6WEf8QK3tOArioxhYsPCO3WzL5G18V+1jgvedT67rUvERw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-07-22T11:44:49Z"
+    mac: ENC[AES256_GCM,data:CfIBhrxGUQZ3fZ4osO9BmmIfEVL3tZqu2avP09vqRsuu7YqKYyLci+ouKyuCMDjweE7c7vKprwPZfZjXUOTY2sIZFkcz1KuB7scy22WjmIBdvAqfGzqt3IozvNIowxRQk7cI07h7Vq9LASR4ZlnrXkC/k4KAT7ofqsdmx8DeGOQ=,iv:NCqdZYlTqqtcAGMTGJ4I41gWboOEq8PAZGMvDaaKqx4=,tag:bndUi7BcOShrPoulqFTdvw==,type:str]
+    version: 3.13.1
