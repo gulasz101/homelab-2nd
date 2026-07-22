@@ -129,10 +129,7 @@ spec:
       chrome:
         enabled: false
 
-    persistence:
-      chrome-tmp:
-        enabled: false
-        advancedMounts: {}
+    persistence: {}
 
     service:
       karakeep:
@@ -164,7 +161,7 @@ spec:
       resources:
         requests:
           cpu: 10m
-          memory: 64Mi
+          memory: 256Mi
         limits:
           cpu: 500m
-          memory: 256Mi
+          memory: 1Gi
