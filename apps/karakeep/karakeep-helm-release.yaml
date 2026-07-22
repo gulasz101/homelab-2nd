@@ -124,6 +124,10 @@ spec:
               storageClass: ""
               volumeName: karakeep-data
 
+      # Chrome sidecar disabled to fit single-node CPU; plain-HTTP fallback crawls fine.
+      chrome:
+        enabled: false
+
     service:
       karakeep:
         controller: karakeep
@@ -135,9 +139,6 @@ spec:
     ingress:
       karakeep:
         enabled: false
-
-    chrome:
-      enabled: false
 
     meilisearch:
       auth:
