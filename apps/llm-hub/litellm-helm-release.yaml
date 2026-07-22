@@ -88,6 +88,10 @@ spec:
           secretKeyRef:
             name: litellm-provider-keys
             key: OPENCODE_GO_API_KEY
+      # Local LM Studio model does not need a real API key; LiteLLM still
+      # sends an Authorization header so give it a non-empty placeholder
+      - name: DUMMY_API_KEY
+        value: "lm-studio-local-dummy-key"
       # SSO via Generic OIDC (Authentik) — Admin UI login only
       - name: GENERIC_CLIENT_ID
         valueFrom:
@@ -158,6 +162,15 @@ spec:
             # Tencent Hybrid 3 (MoE) via OpenRouter free tier
             model: openrouter/tencent/hy3:free
             api_key: "os.environ/OPENROUTER_API_KEY"
+
+        # ── Local LM Studio model on Hermes host (macOS LAN IP) ────────
+        - model_name: gemma-4-12b-uncensored
+          litellm_params:
+            # LM Studio local API server on 192.168.1.101:1234
+            # Reachable from homelab-2nd; no real API key required
+            model: openai/gemma4-12b-qat-uncensored-hauhaucs-balanced
+            api_base: "http://192.168.1.101:1234/v1"
+            api_key: "os.environ/DUMMY_API_KEY"
 
         # ── OpenCode Go subscription models (all with -go suffix) ──────
         # All models below route through https://opencode.ai/zen/go/v1

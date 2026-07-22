@@ -25,6 +25,8 @@ data:
         "glm-4.7-zai",
         "mistral-3.5-middle",
         "hy3-free",
+        # Local LM Studio model on Hermes host
+        "gemma-4-12b-uncensored",
         # OpenCode Go subscription models
         "kimi-k3-go",
         "kimi-k2.7-code-go",
