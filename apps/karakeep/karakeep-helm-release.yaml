@@ -125,8 +125,14 @@ spec:
               volumeName: karakeep-data
 
       # Chrome sidecar disabled to fit single-node CPU; plain-HTTP fallback crawls fine.
+    controllers:
       chrome:
         enabled: false
+
+    persistence:
+      chrome-tmp:
+        enabled: false
+        advancedMounts: {}
 
     service:
       karakeep:
