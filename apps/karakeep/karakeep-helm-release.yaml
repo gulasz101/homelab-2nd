@@ -86,10 +86,10 @@ spec:
 
             resources:
               requests:
-                cpu: 250m
+                cpu: 100m
                 memory: 512Mi
               limits:
-                cpu: 1500m
+                cpu: 1000m
                 memory: 2Gi
 
             probes:
@@ -132,6 +132,15 @@ spec:
       karakeep:
         enabled: false
 
+    chrome:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
     meilisearch:
       auth:
         existingMasterKeySecret: karakeep-app-secrets
@@ -141,20 +150,11 @@ spec:
         size: 1Gi
       resources:
         requests:
-          cpu: 100m
-          memory: 256Mi
+          cpu: 50m
+          memory: 128Mi
         limits:
           cpu: 500m
-          memory: 512Mi
-
-    chrome:
-      resources:
-        requests:
-          cpu: 100m
-          memory: 512Mi
-        limits:
-          cpu: 1000m
-          memory: 1Gi
+          memory: 256Mi
 
     persistence:
       chrome-tmp:
