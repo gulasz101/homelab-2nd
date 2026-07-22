@@ -133,13 +133,7 @@ spec:
         enabled: false
 
     chrome:
-      resources:
-        requests:
-          cpu: 10m
-          memory: 128Mi
-        limits:
-          cpu: 500m
-          memory: 256Mi
+      enabled: false
 
     meilisearch:
       auth:
