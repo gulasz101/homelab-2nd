@@ -140,7 +140,15 @@ spec:
       karakeep:
         enabled: false
 
+    # Prometheus scraping annotations on the karakeep pod
+    defaultPodOptions:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/api/metrics"
+
     meilisearch:
+      enabled: true
       auth:
         existingMasterKeySecret: karakeep-app-secrets
         existingMasterKeySecretKey: meili-master-key
@@ -154,19 +162,3 @@ spec:
         limits:
           cpu: 500m
           memory: 256Mi
-
-    persistence:
-      chrome-tmp:
-        type: emptyDir
-        advancedMounts:
-          chrome:
-            chrome:
-              - path: /tmp
-                readOnly: false
-
-    # Prometheus scraping annotations on the karakeep service
-    defaultPodOptions:
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "3000"
-        prometheus.io/path: "/api/metrics"
