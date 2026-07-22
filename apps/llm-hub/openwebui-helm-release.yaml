@@ -108,6 +108,8 @@ spec:
         value: "false"
       - name: ENABLE_PERSISTENT_CONFIG
         value: "false"
+      - name: BYPASS_MODEL_ACCESS_CONTROL
+        value: "true"
       - name: ENABLE_OAUTH_SIGNUP
         value: "true"
       - name: OAUTH_PROVIDER_NAME
