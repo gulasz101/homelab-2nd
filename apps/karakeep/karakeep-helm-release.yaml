@@ -27,15 +27,16 @@ spec:
     applicationHost: keep.voitech.dev
     applicationProtocol: https
 
-    # -- Inject our pre-generated secrets instead of chart-generated ones
-    applicationSecretKey:
-      secretKeyRef:
-        name: karakeep-app-secrets
-        key: nextauth-secret
-    meilisearchMasterKey:
-      secretKeyRef:
-        name: karakeep-app-secrets
-        key: meili-master-key
+    # -- Disable chart-generated secrets; we inject our own via envFrom below.
+    #    The chart expects applicationSecretKey/meilisearchMasterKey to be raw
+    #    strings used as defaults for its own secrets, not secretKeyRefs.
+    applicationSecretKey: ~
+    meilisearchMasterKey: ~
+    secrets:
+      karakeep:
+        enabled: false
+      meilesearch:
+        enabled: false
 
     controllers:
       karakeep:
@@ -44,9 +45,20 @@ spec:
         strategy: RollingUpdate
         containers:
           karakeep:
+            envFrom:
+              - secretRef:
+                  name: karakeep-app-secrets
+              - secretRef:
+                  name: karakeep-oidc-client
+              - secretRef:
+                  name: karakeep-minio-assets
+              - secretRef:
+                  name: karakeep-litellm-key
+
             env:
               # ── SSO: Authentik OIDC only ─────────────────────────────────
               DISABLE_PASSWORD_AUTH: "true"
+              DISABLE_SIGNUPS: "true"
               OAUTH_AUTO_REDIRECT: "true"
               OAUTH_PROVIDER_NAME: "Authentik"
               OAUTH_SCOPE: "openid email profile"
@@ -75,14 +87,6 @@ spec:
               OTEL_EXPORTER_OTLP_ENDPOINT: "http://opentelemetry-collector.monitoring.svc.cluster.local:4318"
               OTEL_LOGS_EXPORTER: "otlp"
               OTEL_RESOURCE_ATTRIBUTES: "service.name=karakeep,service.namespace=karakeep"
-
-            envFrom:
-              - secretRef:
-                  name: karakeep-oidc-client
-              - secretRef:
-                  name: karakeep-minio-assets
-              - secretRef:
-                  name: karakeep-litellm-key
 
             resources:
               requests:
