@@ -135,11 +135,11 @@ spec:
     chrome:
       resources:
         requests:
-          cpu: 50m
-          memory: 256Mi
+          cpu: 10m
+          memory: 128Mi
         limits:
           cpu: 500m
-          memory: 512Mi
+          memory: 256Mi
 
     meilisearch:
       auth:
@@ -150,8 +150,8 @@ spec:
         size: 1Gi
       resources:
         requests:
-          cpu: 50m
-          memory: 128Mi
+          cpu: 10m
+          memory: 64Mi
         limits:
           cpu: 500m
           memory: 256Mi
