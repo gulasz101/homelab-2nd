@@ -155,12 +155,12 @@ spec:
       - name: DEFAULT_USER_ROLE
         value: "user"
       - name: DEFAULT_MODELS
-        value: "glm.5.2"
+        value: "glm-5.2-zai"
       - name: DEFAULT_PINNED_MODELS
-        value: "glm.5.2,mistral-3.5-middle,kimi-k2.7-code"
+        value: "glm-5.2-zai,mistral-3.5-middle,kimi-k2.7-code,gemma-4-12b-uncensored"
       # Use LiteLLM proxy for small background tasks too
       - name: TASK_MODEL_EXTERNAL
-        value: "glm.5.2"
+        value: "glm-5.2-zai"
       # Vector DB: use pgvector on the same CNPG cluster
       - name: VECTOR_DB
         value: "pgvector"
