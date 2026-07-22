@@ -125,10 +125,10 @@ Lesson: a single-node k3s cluster with tight CPU requests needs an eviction/manu
 4. Chat completion test:
 
    ```bash
-   ssh homelab-2nd "sudo kubectl -n llm-hub exec deploy/litellm -- python3 -c '...POST /v1/chat/completions with model gemma-4-12b-uncensored...'"
+   ssh homelab-2nd "sudo kubectl -n llm-hub exec deploy/litellm -- python3 -u -c '...POST /v1/chat/completions with model gemma-4-12b-uncensored...'"
    ```
 
-   Result: `HTTP 400` from LM Studio:
+   First attempt failed with `HTTP 400` from LM Studio:
 
    ```
    Failed to load model "gemma4-12b-qat-uncensored-hauhaucs-balanced".
@@ -136,21 +136,51 @@ Lesson: a single-node k3s cluster with tight CPU requests needs an eviction/manu
    Requires approximately 45.26 GB of memory.
    ```
 
-   This is expected: the Hermes host (M1 Max MacBook Pro) does not have 45 GB free for this model. The plumbing is correct; the model simply will not load on the available hardware.
+5. After the Supreme Leader removed LM Studio's memory guardrails, a second test succeeded:
+
+   ```bash
+   ssh homelab-2nd "sudo kubectl -n llm-hub exec deploy/litellm -- python3 -u -c '
+   import os, json, urllib.request
+   url = \"http://localhost:4000/v1/chat/completions\"
+   body = json.dumps({
+       \"model\": \"gemma-4-12b-uncensored\",
+       \"messages\": [{\"role\": \"user\", \"content\": \"Just say hello.\"}],
+       \"max_tokens\": 100,
+       \"temperature\": 0.7
+   }).encode()
+   req = urllib.request.Request(url, data=body, headers={
+       \"Content-Type\": \"application/json\",
+       \"Authorization\": \"Bearer \" + os.environ[\"PROXY_MASTER_KEY\"]
+   }, method=\"POST\")
+   resp = urllib.request.urlopen(req, timeout=180)
+   data = json.loads(resp.read())
+   print(repr(data[\"choices\"][0][\"message\"][\"content\"].strip()))
+   print(data[\"choices\"][0][\"finish_reason\"])
+   '
+   ```
+
+   Result:
+
+   ```
+   content: 'Hello!'
+   finish_reason: stop
+   ```
+
+   The model also responds directly from LM Studio at `http://192.168.1.101:1234/v1/chat/completions`.
 
 ## Current state
 
 - LiteLLM advertises `gemma-4-12b-uncensored` and routes requests to `http://192.168.1.101:1234/v1`.
 - All virtual keys have the model in their whitelist.
-- The model is not usable in practice because LM Studio cannot load a 45 GB model on the current Mac.
+- Chat completions through the LiteLLM proxy now return real output from the local LM Studio model.
+
+## Note on model behaviour
+
+This `gemma4-12b-qat-uncensored-hauhaucs-balanced` variant emits `reasoning_content` (visible in direct LM Studio calls) and sometimes returns empty `content` for short literal-repeat prompts because all generated tokens go into reasoning. Normal conversational prompts like `"Just say hello."` return content as expected.
 
 ## Next step
 
-To actually use the model, either:
-- Load a smaller/quantized variant in LM Studio, or
-- Allocate enough RAM/VRAM on a host that can run it.
-
-Once a loadable model is selected, only the `model:` field in `litellm-helm-release.yaml` needs to change; the alias and key provisioner stay the same.
+Model is live. Use alias `gemma-4-12b-uncensored` in Open WebUI, Hermes, or any other LiteLLM client.
 
 ## References
 
