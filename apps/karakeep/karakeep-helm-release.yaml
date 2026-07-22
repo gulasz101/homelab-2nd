@@ -38,6 +38,7 @@ spec:
       meilesearch:
         enabled: false
 
+    # Chrome sidecar disabled to fit single-node CPU; plain-HTTP fallback crawls fine.
     controllers:
       karakeep:
         type: statefulset
@@ -79,6 +80,9 @@ spec:
               INFERENCE_ENABLE_AUTO_TAGGING: "true"
               INFERENCE_ENABLE_AUTO_SUMMARIZATION: "true"
               INFERENCE_OUTPUT_SCHEMA: "plain"
+
+              # Chrome sidecar disabled; unset browser URL so crawler uses plain HTTP.
+              BROWSER_WEB_URL: ""
 
               # ── Observability / misc ─────────────────────────────────────
               LOG_LEVEL: "info"
@@ -124,12 +128,8 @@ spec:
               storageClass: ""
               volumeName: karakeep-data
 
-      # Chrome sidecar disabled to fit single-node CPU; plain-HTTP fallback crawls fine.
-    controllers:
       chrome:
         enabled: false
-
-    persistence: {}
 
     service:
       karakeep:
@@ -161,7 +161,7 @@ spec:
       resources:
         requests:
           cpu: 10m
-          memory: 256Mi
+          memory: 512Mi
         limits:
           cpu: 500m
-          memory: 1Gi
+          memory: 2Gi
