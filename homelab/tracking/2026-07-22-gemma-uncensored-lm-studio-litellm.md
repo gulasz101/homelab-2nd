@@ -174,9 +174,42 @@ Lesson: a single-node k3s cluster with tight CPU requests needs an eviction/manu
 - All virtual keys have the model in their whitelist.
 - Chat completions through the LiteLLM proxy now return real output from the local LM Studio model.
 
-## Note on model behaviour
+### Open WebUI model list was empty
 
-This `gemma4-12b-qat-uncensored-hauhaucs-balanced` variant emits `reasoning_content` (visible in direct LM Studio calls) and sometimes returns empty `content` for short literal-repeat prompts because all generated tokens go into reasoning. Normal conversational prompts like `"Just say hello."` return content as expected.
+After the LiteLLM work, the model dropdown in Open WebUI showed **no models at all**. Investigation found two issues:
+
+1. **Stale default/pinned model names used dot notation instead of dash notation.**
+   The env vars in `apps/llm-hub/openwebui-helm-release.yaml` were set to `glm.5.2`, which does not match any LiteLLM alias. Corrected to `glm-5.2-zai` and added `gemma-4-12b-uncensored`.
+
+2. **Open WebUI model access control hid all discovered models from regular users.**
+   The Supreme Leader's account has role `user` in Open WebUI. The `get_all_models` flow filters discovered models through `get_filtered_models`, which looks up the `model` table and `access_grant` table. Both were empty, so every model was filtered out and the dropdown was empty.
+
+   Added `BYPASS_MODEL_ACCESS_CONTROL=true` so all LiteLLM-discovered models are visible to all users, matching the hub model list.
+
+3. **Model list cache in Redis held the empty result.**
+   `get_all_models` is cached with `aiocache` using key `openai_all_models_<user.id>`. After clearing the Redis pod, the next request fetched a fresh list.
+
+### Final Open WebUI defaults
+
+```yaml
+DEFAULT_MODELS: gemma-4-12b-uncensored
+DEFAULT_PINNED_MODELS: gemma-4-12b-uncensored,glm-5.2-zai,mistral-3.5-middle,kimi-k2.7-code
+BYPASS_MODEL_ACCESS_CONTROL: true
+```
+
+Verification from outside the cluster (using a minted admin JWT):
+
+```bash
+curl -sS -A 'Mozilla/5.0 ...' https://ai-chat.voitech.dev/api/models \
+  -H 'Authorization: Bearer <minted-jwt>' | jq '.data | length'
+```
+
+Result: `30` models, including:
+- `gemma-4-12b-uncensored`
+- `glm-5.2-ollama`, `glm-5.2-zai`, `glm-4.7-zai`
+- `kimi-k2.7-code`, `kimi-k3-go`, `kimi-k2.7-code-go`, ...
+- `mistral-3.5-middle`
+- all OpenCode Go `-go` models
 
 ## Next step
 
@@ -187,4 +220,5 @@ Model is live. Use alias `gemma-4-12b-uncensored` in Open WebUI, Hermes, or any 
 - `apps/llm-hub/litellm-helm-release.yaml`
 - `apps/llm-hub/litellm-key-provisioner-configmap.yaml`
 - `apps/llm-hub/litellm-key-provisioner-cronjob.yaml`
+- `apps/llm-hub/openwebui-helm-release.yaml`
 - Skill reference: `homelab-gitops/references/lm-studio-litellm-local-provider.md`
