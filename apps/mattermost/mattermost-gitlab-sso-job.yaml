@@ -5,7 +5,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: mattermost-gitlab-sso-setup-v7
+  name: mattermost-gitlab-sso-setup-v6
   namespace: mattermost
 spec:
   ttlSecondsAfterFinished: 86400
@@ -85,10 +85,9 @@ spec:
               "$MMCTL" config set GitLabSettings.UserAPIEndpoint "https://auth.voitech.dev/application/o/userinfo/"
               "$MMCTL" config set GitLabSettings.IdEndpoint "https://auth.voitech.dev/application/o/mattermost/"
 
-              echo "Keeping email/username sign-in enabled for Team Edition clients..."
+              echo "Disabling email sign-up/sign-in so GitLab (Authentik) is the public path..."
               "$MMCTL" config set EmailSettings.EnableSignUpWithEmail false
-              "$MMCTL" config set EmailSettings.EnableSignInWithEmail true
-              "$MMCTL" config set EmailSettings.EnableSignInWithUsername true
+              "$MMCTL" config set EmailSettings.EnableSignInWithEmail false
 
               echo "Verifying GitLabSettings config..."
               "$MMCTL" config get GitLabSettings.Enable
