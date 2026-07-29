@@ -32,9 +32,9 @@ Conversation data is preserved because the existing `akadmin` user row in Matter
    - Kept `EmailSettings.EnableSignUpWithEmail: false` (invite-only).
    - Removed the no-op `MM_SERVICESETTINGS_ENABLESIGNINWITHEMAIL` / `ENABLESIGNINWITHUSERNAME` env vars (they pointed at a non-existent config section).
 
-2. **`apps/mattermost/mattermost-initial-admin-password.sops.yaml`**
-   - Username changed from `wojtek` to `akadmin` (the current local admin account after the SSO migration).
-   - Password rotated and kept in sync with Authentik `akadmin`.
+- **`infrastructure/auth/authentik-admin-password.sops.yaml`**
+  - Source of truth for the shared `akadmin` password.
+  - Updated to match the new Mattermost password and removed the stale `password_hash` field.
 
 3. **`infrastructure/auth/authentik-blueprint-secret.sops.yaml`**
    - Mattermost application `meta_launch_url` changed from `https://chat.voitech.dev` to `https://chat.voitech.dev/oauth/gitlab/login` so the Authentik tile initiates SSO directly, instead of landing on the empty `/login` page.
@@ -45,7 +45,9 @@ Conversation data is preserved because the existing `akadmin` user row in Matter
 ### Runtime / break-glass
 
 5. **Synced `akadmin` password across Authentik and Mattermost**
-   - Generated a new random password.
+   - Source of truth: `infrastructure/auth/authentik-admin-password.sops.yaml`.
+   - The same value is mirrored in `apps/mattermost/mattermost-initial-admin-password.sops.yaml` for the Mattermost namespace break-glass Job.
+   - Removed the stale `password_hash` field from `authentik-admin-password` — Authentik bootstraps the admin via `ak shell`, not Helm.
    - Set it on Authentik `akadmin` via `ak shell`:
      ```bash
      POD=$(sudo kubectl get pod -n auth -l app.kubernetes.io/component=worker -o jsonpath='{.items[0].metadata.name}')
@@ -113,11 +115,15 @@ kubectl -n mattermost get jobs
 
 ## How to retrieve the current password
 
+Source of truth:
+
 ```bash
 cd ~/Projects/homelab-2nd
 export SOPS_AGE_KEY_FILE=~/.keys/age-homelab-2nd.txt
-sops -d apps/mattermost/mattermost-initial-admin-password.sops.yaml
+sops -d infrastructure/auth/authentik-admin-password.sops.yaml
 ```
+
+The same value is also mirrored in `apps/mattermost/mattermost-initial-admin-password.sops.yaml` for the Mattermost namespace break-glass Job. Both must be kept in sync.
 
 Use username `akadmin` and the decrypted password for:
 - Authentik web login at `https://auth.voitech.dev`
