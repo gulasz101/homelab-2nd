@@ -1,0 +1,47 @@
+---
+# Provisioned Grafana dashboard for the opengist namespace
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opengist-dashboard
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana.folder: "opengist"
+data:
+  opengist-dashboard.json: |
+    {
+      "title": "OpenGist",
+      "uid": "opengist-overview",
+      "tags": ["opengist", "homelab"],
+      "timezone": "Europe/Berlin",
+      "schemaVersion": 36,
+      "refresh": "30s",
+      "panels": [
+        {
+          "id": 1,
+          "title": "Pod CPU",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"opengist\", container!=\"\"}[5m]))",
+              "legendFormat": "{{ pod }}"
+            }
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+        },
+        {
+          "id": 2,
+          "title": "Pod Memory",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"opengist\", container!=\"\"})",
+              "legendFormat": "{{ pod }}"
+            }
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+        }
+      ]
+    }

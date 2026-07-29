@@ -1,0 +1,23 @@
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: opengist-mattermost-alerts
+  namespace: opengist
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: opengist-mattermost
+    matchers:
+      - name: namespace
+        value: opengist
+        matchType: "="
+  receivers:
+    - name: opengist-mattermost
+      webhookConfigs:
+        - urlSecret:
+            name: opengist-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          maxAlerts: 10

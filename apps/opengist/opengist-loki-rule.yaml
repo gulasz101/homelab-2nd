@@ -1,0 +1,31 @@
+---
+# Loki Ruler rule for OpenGist non-2xx responses (lives in observability namespace)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opengist-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  opengist-http-errors.yaml: |
+    groups:
+      - name: opengist.http-errors
+        interval: 1m
+        rules:
+          - alert: OpenGistNon2xxResponses
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {namespace="opengist", pod=~"opengist-.*"}
+                    |~ "status\":\\s*[3-9]\\d{2}"
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: opengist
+            annotations:
+              summary: "OpenGist endpoint returned non-2xx status"
+              description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} logged non-2xx HTTP responses within the last 5 minutes."

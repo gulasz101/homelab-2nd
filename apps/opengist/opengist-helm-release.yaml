@@ -1,0 +1,82 @@
+---
+# OpenGist HelmRelease — official chart, single replica, OMV NFS data
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: opengist
+  namespace: opengist
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: opengist
+      version: "0.10.0"
+      sourceRef:
+        kind: HelmRepository
+        name: opengist
+        namespace: flux-system
+      interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Use our SOPS-encrypted config.yml Secret
+    configExistingSecret: opengist-config
+
+    # Run OpenGist 1.14.0 via the upstream 0.10.0 Helm chart
+    image:
+      tag: "1.14.0"
+
+    # Single replica; durable storage is OMV NFS, so RWO is fine
+    replicaCount: 1
+
+    # Use upstream service ports (HTTP 6157, SSH disabled)
+    service:
+      http:
+        port: 6157
+      ssh:
+        enabled: false
+      metrics:
+        serviceMonitor:
+          enabled: true
+          labels:
+            release: kube-prometheus-stack
+
+    # OIDC client id/secret + discovery URL injected from env
+    deployment:
+      envFromSecrets:
+        - name: OG_OIDC_SECRET
+          secretName: opengist-oidc-client
+          secretKey: client-secret
+        - name: OG_OIDC_CLIENT_KEY
+          secretName: opengist-oidc-client
+          secretKey: client-id
+        - name: OG_OIDC_DISCOVERY_URL
+          secretName: opengist-oidc-client
+          secretKey: discovery-url
+
+    # The Cloudflare Tunnel origin must match the Kubernetes Service name/port
+    # Cloudflare Tunnel handles public ingress
+    ingress:
+      enabled: false
+
+    # Mount the OMV NFS PVC at /opengist
+    persistence:
+      enabled: true
+      existingClaim: opengist-data
+
+    # All runtime configuration is in opengist-config (SOPS); this only toggles metrics
+    config:
+      metrics.enabled: true
+
+    # Resource sizing for a single-node homelab
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi

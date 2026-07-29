@@ -186,3 +186,31 @@ resources:
   - honcho/honcho-dashboard-configmap.yaml
   # LAN-only NodePort service
   - honcho/honcho-service.yaml
+  # OpenGist namespace
+  - opengist/namespace.yaml
+  # Helm repository
+  - opengist/opengist-helm-repository.yaml
+  # SOPS-encrypted secrets
+  - opengist/opengist-db-credentials.sops.yaml
+  - opengist/opengist-minio-backup-creds.sops.yaml
+  - opengist/opengist-oidc-client.sops.yaml
+  - opengist/opengist-config.sops.yaml
+  - opengist/opengist-tunnel-token.sops.yaml
+  - opengist/opengist-mattermost-webhook-url.sops.yaml
+  # CNPG cluster + backups
+  - opengist/postgres-cluster.yaml
+  - opengist/objectstore.yaml
+  - opengist/scheduled-backup.yaml
+  # OMV NFS storage for OpenGist data
+  - opengist/opengist-data-pv.yaml
+  - opengist/opengist-data-pvc.yaml
+  # OpenGist HelmRelease
+  - opengist/opengist-helm-release.yaml
+  # Cloudflare Tunnel for gist.voitech.dev
+  - opengist/cloudflared-opengist-deployment.yaml
+  - opengist/opengist-tunnel-ingress-configmap.yaml
+  # Observability
+  - opengist/opengist-prometheus-rules.yaml
+  - opengist/opengist-alertmanager-config.yaml
+  - opengist/opengist-loki-rule.yaml
+  - opengist/opengist-dashboard-configmap.yaml

@@ -1,0 +1,10 @@
+---
+# Reminder of the public hostname rule (real rule lives in Cloudflare Zero Trust)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opengist-tunnel-ingress
+  namespace: opengist
+data:
+  note: |
+    # gist.voitech.dev -> http://opengist.opengist.svc.cluster.local:80

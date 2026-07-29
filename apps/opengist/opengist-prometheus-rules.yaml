@@ -1,0 +1,67 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: opengist-resource-alerts
+  namespace: opengist
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: opengist.resources
+      interval: 30s
+      rules:
+        - alert: OpenGistCPUAboveRequest
+          expr: |
+            sum by (pod, container, namespace) (
+              rate(container_cpu_usage_seconds_total{namespace="opengist", container!=""}[5m])
+            ) >
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_requests{namespace="opengist", resource="cpu", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: opengist
+          annotations:
+            summary: "opengist/{{ $labels.pod }} CPU above request"
+        - alert: OpenGistMemoryAboveRequest
+          expr: |
+            sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="opengist", container!=""}
+            ) >
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_requests{namespace="opengist", resource="memory", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: opengist
+          annotations:
+            summary: "opengist/{{ $labels.pod }} memory above request"
+        - alert: OpenGistCPUAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              rate(container_cpu_usage_seconds_total{namespace="opengist", container!=""}[5m])
+            ) / sum by (pod, container, namespace) (
+              container_spec_cpu_quota{namespace="opengist", container!=""} / container_spec_cpu_period{namespace="opengist", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: opengist
+          annotations:
+            summary: "opengist/{{ $labels.pod }} CPU above 90% of limit"
+        - alert: OpenGistMemoryAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="opengist", container!=""}
+            ) / sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="opengist", resource="memory", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: opengist
+          annotations:
+            summary: "opengist/{{ $labels.pod }} memory above 90% of limit"
