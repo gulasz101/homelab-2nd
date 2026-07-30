@@ -1,0 +1,199 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homelab-node-alerts
+  namespace: observability
+  labels:
+    grafana_alert: "true"
+data:
+  homelab-node-alerts.yaml: |-
+    apiVersion: 1
+
+    templates:
+      - orgId: 1
+        name: mattermost-alert-template
+        template: |-
+          {{ define "mattermost.payload" -}}
+          {
+            "text": "{{ if eq .Status \"firing\" }}🔥{{ else }}✅{{ end }} **{{ .Status | title }}** | {{ .CommonAnnotations.summary }}\n\n{{ .CommonAnnotations.description }}"
+          }
+          {{- end }}
+
+    contactPoints:
+      - orgId: 1
+        name: homelab-node-mattermost-webhook
+        receivers:
+          - uid: homelab-node-mattermost-webhook-receiver
+            type: webhook
+            settings:
+              url: $MATTERMOST_ALERTS_WEBHOOK_URL
+              httpMethod: POST
+              maxAlerts: 1
+              payload: '{{ template "mattermost.payload" . }}'
+
+    policies:
+      - orgId: 1
+        receiver: homelab-node-mattermost-webhook
+        group_by: ['alertname']
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 1h
+        routes:
+          - receiver: homelab-node-mattermost-webhook
+            matchers:
+              - alertgroup = homelab-node
+
+    groups:
+      - orgId: 1
+        name: homelab-node-thermal
+        folder: homelab-node
+        interval: 60s
+        rules:
+          - uid: homelab-node-high-temp-v2
+            title: HomelabNodeHighTemperature
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: PBFA97CFB590B2093
+                model:
+                  expr: 'max(node_hwmon_temp_celsius{chip="platform_coretemp_0"})'
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  type: threshold
+                  expression: A
+                  refId: C
+                  conditions:
+                    - evaluator:
+                        params: [85]
+                        type: gt
+                      operator:
+                        type: and
+                      reducer:
+                        type: last
+            noDataState: NoData
+            execErrState: Alerting
+            for: 2m
+            labels:
+              severity: critical
+              alertgroup: homelab-node
+            annotations:
+              summary: "homelab-2nd CPU package temperature is high"
+              description: "CPU package temperature on homelab-2nd is {{ $values.C }}°C for more than 2 minutes."
+
+          - uid: homelab-node-thermal-throttle-v2
+            title: HomelabNodeThermalThrottling
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: PBFA97CFB590B2093
+                model:
+                  expr: 'max(node_thermal_zone_temp{zone="0"})'
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  type: threshold
+                  expression: A
+                  refId: C
+                  conditions:
+                    - evaluator:
+                        params: [90]
+                        type: gt
+                      operator:
+                        type: and
+                      reducer:
+                        type: last
+            noDataState: NoData
+            execErrState: Alerting
+            for: 1m
+            labels:
+              severity: critical
+              alertgroup: homelab-node
+            annotations:
+              summary: "homelab-2nd thermal zone is near critical"
+              description: "Thermal zone 0 on homelab-2nd is {{ $values.C }}°C."
+
+      - orgId: 1
+        name: homelab-node-load
+        folder: homelab-node
+        interval: 60s
+        rules:
+          - uid: homelab-node-high-load-v2
+            title: HomelabNodeHighLoad
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: PBFA97CFB590B2093
+                model:
+                  expr: 'node_load1{instance="192.168.1.179:9100"} / count without (mode) (node_cpu_seconds_total{instance="192.168.1.179:9100", mode="idle"})'
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  type: threshold
+                  expression: A
+                  refId: C
+                  conditions:
+                    - evaluator:
+                        params: [0.85]
+                        type: gt
+                      operator:
+                        type: and
+                      reducer:
+                        type: last
+            noDataState: NoData
+            execErrState: Alerting
+            for: 5m
+            labels:
+              severity: warning
+              alertgroup: homelab-node
+            annotations:
+              summary: "homelab-2nd load average is high"
+              description: "5-minute load average on homelab-2nd is {{ $values.C }} per CPU."
+
+          - uid: homelab-node-sustained-high-load-v2
+            title: HomelabNodeSustainedHighLoad
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 600
+                  to: 0
+                datasourceUid: PBFA97CFB590B2093
+                model:
+                  expr: 'node_load1{instance="192.168.1.179:9100"} / count without (mode) (node_cpu_seconds_total{instance="192.168.1.179:9100", mode="idle"})'
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  type: threshold
+                  expression: A
+                  refId: C
+                  conditions:
+                    - evaluator:
+                        params: [0.95]
+                        type: gt
+                      operator:
+                        type: and
+                      reducer:
+                        type: last
+            noDataState: NoData
+            execErrState: Alerting
+            for: 10m
+            labels:
+              severity: critical
+              alertgroup: homelab-node
+            annotations:
+              summary: "homelab-2nd is under sustained heavy load"
+              description: "10-minute sustained load on homelab-2nd is {{ $values.C }} per CPU — risk of thermal shutdown."
