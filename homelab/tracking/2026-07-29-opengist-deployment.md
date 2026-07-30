@@ -1000,3 +1000,34 @@ kubectl -n opengist logs opengist-db-1 --container barman-cloud-sidecar | tail
 4. Verify pods, public URL, SSO login, gist creation, metrics, backups.
 5. Write ADR-00X for storage/ingress/SSO decisions.
 6. Move this note to the Obsidian vault and the repo copy.
+
+
+## Final verification checklist (completed 2026-07-30)
+
+- [x] Namespace `opengist` created and labelled for observability.
+- [x] HelmRepository `opengist` reconciled in `flux-system`.
+- [x] HelmRelease `opengist` deployed; pod `1/1 Running`.
+- [x] CNPG cluster `opengist-db` healthy; hourly backups `completed` to `s3://cnpg-backups/opengist/`.
+- [x] OMV NFS PV/PVC `opengist-data` (50Gi) mounted at `/opengist`.
+- [x] Authentik OIDC provider + application `OpenGist` created; redirect URI `https://gist.voitech.dev/oauth/openid-connect/callback`.
+- [x] Public URL `https://gist.voitech.dev` resolves and loads the login page.
+- [x] SSO login via Authentik works for `akadmin`.
+- [x] Gist creation works.
+- [x] Local registration disabled via admin panel (`disable-signup = 1`).
+- [x] Local login form disabled (`disable-login-form = 1`); only "Connect with Authentik account" button remains.
+- [x] Prometheus metrics endpoint `http://:6158/metrics` responds; `ServiceMonitor` `opengist` present.
+- [x] Grafana dashboard `opengist` provisioned into folder `opengist`.
+- [x] Cloudflare Tunnel `gist.voitech.dev` → `http://opengist-http.opengist.svc.cluster.local:6157` configured.
+- [x] AlertmanagerConfig + Loki rule + PrometheusRules created.
+- [x] ADR-009 written.
+
+### Gotchas worth remembering
+
+1. The OpenGist Helm chart creates the HTTP service as `opengist-http` on port `6157`, not `opengist` on `6157`. The Cloudflare Tunnel hostname rule must point to `http://opengist-http.opengist.svc.cluster.local:6157`.
+2. OpenGist's admin-panel toggles (`disable-signup`, `disable-login-form`) live in the Postgres `admin_settings` table, not in `config.yml`. To disable them via SQL:
+   ```sql
+   UPDATE admin_settings SET value='1' WHERE key='disable-signup';
+   UPDATE admin_settings SET value='1' WHERE key='disable-login-form';
+   ```
+3. The Helm chart version is `0.10.0`, but the application image is pinned to `1.14.0`. Do not confuse the two.
+4. The node was briefly CPU-overcommitted; CNPG clusters needed `requests: 50m / limits: 500m` CPU to schedule alongside other workloads. LiteLLM and Mattermost CPU settings were left untouched as ordered.
