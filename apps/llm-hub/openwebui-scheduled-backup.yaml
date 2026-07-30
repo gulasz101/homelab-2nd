@@ -7,7 +7,7 @@ metadata:
   name: openwebui-db-hourly
   namespace: llm-hub
 spec:
-  schedule: "0 * * * *"
+  schedule: "0 */6 * * *"
   backupOwnerReference: self
   cluster:
     name: openwebui-db
