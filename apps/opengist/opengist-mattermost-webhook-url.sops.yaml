@@ -5,19 +5,19 @@ metadata:
     namespace: opengist
 type: Opaque
 stringData:
-    url: ENC[AES256_GCM,data:qkuguQc4BdHbcM9OCSLGNnv0cR386Jl5zAjGbcM5MOQBPo1N2OdmGT896MmO980=,iv:5EDIqCvvGjF3MNaUw/D+/rgL4nnq23+TyybXR6sCn5o=,tag:9gMPoQDMMpb2l31iiA+29A==,type:str]
+    url: ENC[AES256_GCM,data:wdyHO/rrKK8JCGWPcrMGqO3dv5ar8KZjE8lozn1Wd4mZGEStdd8HbEKBYRLXBNi3+NRoML9SsQKG,iv:QzeQiBDUusAZ/l9xE27Bu6UbgGkOkDMZFnLYGubgWeo=,tag:GQaDZuZBAFybkIZuv97Avg==,type:str]
 sops:
     age:
         - enc: |
             -----BEGIN AGE ENCRYPTED FILE-----
-            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBRdmZBMUJGSTFlUGxxdkEw
-            YmFSQjlDc0orWjBwRHcvV1ZHNlhWZmFSVGdrCi9kbkYxS0luRU1yL1VwdVRtRDlR
-            dGx5clVTOERQK1B1U3I5RCsxSzZFc1EKLS0tIFpBL1EyVU9LdStpSlY3dkhQTFRw
-            MU1IQ25kejNsMWwzWmswSmx5YjNaUjAK/Nz3UZHwQeY78QShQ91wdrckYN9zz+VP
-            hYif6LouoO/dU+fcY2/fS1qKUWb6t2UwGnmAnHymxmnbaRBXlDKlSg==
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB4OEJpVUFVRU4ra2N6RUp3
+            M3FNZjJ1VDZaYWkrampzNTBoV2tSdGtZMFVRCjJ1N2RJcEptd08wb1kwa0gzbmF3
+            SVlNdmxYV0ZnencxcEpZdnpyL0JMc3cKLS0tIGZJNithN3BsQitlVWFoUTl1Q1Y4
+            WTAxL1JRL0tFTHpSUVRDb1hDTHE5QXcKjOZqkYsjRgDMZJ2t53RaBiFGD8NmRw1L
+            eCEW1PeWITLOE+PPGOFpK2XwCSQ10rsFUOP/O8Nsiw2yBACrvjml/w==
             -----END AGE ENCRYPTED FILE-----
           recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-07-29T15:47:31Z"
-    mac: ENC[AES256_GCM,data:+j5qOet9L3ID8E2Khka1HuIKkGWNQUYEYvS5cSBvAFqW3W5JD+5H+xBmUibmb+fUkIo+O9uiLGUHAHU0fzsmprqli3HVVZV340/xYDnWRgKqRHBOBGG6t6jjYCrSs3BZ9E6e7Qk8OclQoyPxxmE4xnM+jHWo9V2KoG3W8+AwT6c=,iv:zkw1zfOkRHNdnhGvVkvXXIscBH5+DAZ/NQwYxT220hY=,tag:fH9PyLCZx/I+TDh5QYN0tA==,type:str]
+    lastmodified: "2026-07-30T12:25:10Z"
+    mac: ENC[AES256_GCM,data:Okn1xzXrRkyxuldxeTze6C7vyArMyLw6n8suU0zdNw9DVMLk+3diJOyjnH9ibdZ554Bnev3LvqA4Jdi6YmQExLULcyog2kirvPn5m4tCc0fDjBHTlsFbz8jO7sYzslfGW8cVvIFzpE9Th2hbg2lQUqrGGLn2vRjxJaPd/T/ZQ0Y=,iv:mOcAIgR2mNFtFHUt2mRg08J/uCL00VebMOIjYo+GC+o=,tag:ADNs4pP4zwOHMH0rsRJQIQ==,type:str]
     version: 3.13.1
