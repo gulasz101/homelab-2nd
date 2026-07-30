@@ -1031,3 +1031,10 @@ kubectl -n opengist logs opengist-db-1 --container barman-cloud-sidecar | tail
    ```
 3. The Helm chart version is `0.10.0`, but the application image is pinned to `1.14.0`. Do not confuse the two.
 4. The node was briefly CPU-overcommitted; CNPG clusters needed `requests: 50m / limits: 500m` CPU to schedule alongside other workloads. LiteLLM and Mattermost CPU settings were left untouched as ordered.
+
+
+### Post-deployment cleanup notes
+
+- The old cloudflared ReplicaSet `cloudflared-opengist-66c45967dc` (which included the `th8sl` pod) is scaled to 0 and no longer creates pods. It was from the initial revision that failed because the SOPS secret still contained a placeholder Cloudflare tunnel token. The deployment has since rolled forward to ReplicaSet `cloudflared-opengist-5cd6ccd68f`, whose pods are healthy with 0 restarts.
+- The temporary CPU-downsize on `openwebui-db`, `litellm-db`, and `opengist-db` was only a scheduling panic measure during the deployment. Live cluster now shows the CNPG clusters back at their intended requests/limits (openwebui-db: 250m/1000m, litellm-db: 500m/1500m, opengist-db: 250m/1000m). Any permanent cluster-wide CPU right-sizing will be handled in a separate session with its own ADR.
+- The leftover test pod `test-pod` in the `opengist` namespace was removed after verification.
