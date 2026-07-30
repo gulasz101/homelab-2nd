@@ -7,4 +7,7 @@ metadata:
   namespace: opengist
 data:
   note: |
-    # gist.voitech.dev -> http://opengist.opengist.svc.cluster.local:80
+    # gist.voitech.dev -> http://opengist-http.opengist.svc.cluster.local:6157
+    # The Cloudflare Tunnel hostname rule uses this internal service URL.
+    # The original 'http://opengist.opengist.svc.cluster.local:6157' does not exist;
+    # the chart creates a service named 'opengist-http' on port 6157.

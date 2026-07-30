@@ -27,6 +27,8 @@ spec:
             - run
             - --token
             - $(TUNNEL_TOKEN)
+            - --url
+            - http://opengist-http.opengist.svc.cluster.local:6157
           env:
             - name: TUNNEL_TOKEN
               valueFrom:
