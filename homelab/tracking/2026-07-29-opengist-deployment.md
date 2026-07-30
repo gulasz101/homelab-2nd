@@ -1038,3 +1038,24 @@ kubectl -n opengist logs opengist-db-1 --container barman-cloud-sidecar | tail
 - The old cloudflared ReplicaSet `cloudflared-opengist-66c45967dc` (which included the `th8sl` pod) is scaled to 0 and no longer creates pods. It was from the initial revision that failed because the SOPS secret still contained a placeholder Cloudflare tunnel token. The deployment has since rolled forward to ReplicaSet `cloudflared-opengist-5cd6ccd68f`, whose pods are healthy with 0 restarts.
 - The temporary CPU-downsize on `openwebui-db`, `litellm-db`, and `opengist-db` was only a scheduling panic measure during the deployment. Live cluster now shows the CNPG clusters back at their intended requests/limits (openwebui-db: 250m/1000m, litellm-db: 500m/1500m, opengist-db: 250m/1000m). Any permanent cluster-wide CPU right-sizing will be handled in a separate session with its own ADR.
 - The leftover test pod `test-pod` in the `opengist` namespace was removed after verification.
+
+
+## Post-reboot incident (2026-07-30)
+
+After a full reboot of `homelab-2nd`, the `opengist` pod entered `CrashLoopBackOff` with 24+ restarts. Logs showed repeated PostgreSQL authentication failures:
+
+```
+FATAL: password authentication failed for user "opengist" (SQLSTATE 28P01)
+```
+
+**Root cause:** the `db-uri` inside `apps/opengist/opengist-config.sops.yaml` had been replaced with a redacted placeholder (`postgres://opengist:***@...`) during an earlier manual edit, rather than the real password from `apps/opengist/opengist-db-credentials.sops.yaml`. On first deployment OpenGist happened to work because the CNPG bootstrap created the user with the real password and the app had apparently cached the working config, but after the reboot the pod re-read the broken Secret and could no longer authenticate.
+
+**Fix:**
+1. Decrypted both SOPS secrets locally.
+2. Rebuilt `opengist-config` with the real `secret-key` and `db-uri` using the password from `opengist-db-credentials`.
+3. Re-encrypted and committed `apps/opengist/opengist-config.sops.yaml`.
+4. Flux reconciled the fix.
+5. The pod still failed because the DB user password in CNPG had not changed, but the app was now sending a different wrong value — actually the same value. Wait, the pod failed because the config had the placeholder and the DB user password remained correct. After updating the config to the real password and deleting the pod, it came up healthy.
+6. Verified `https://gist.voitech.dev/login` loads, `/healthcheck` returns 200, registration is still disabled, and only the Authentik login button remains.
+
+**Lesson:** never edit SOPS-encrypted config files by hand or let redacted placeholders slip into Git. Always regenerate from the canonical credential secret and re-encrypt.
