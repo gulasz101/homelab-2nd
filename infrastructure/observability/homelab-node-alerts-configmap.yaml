@@ -4,42 +4,60 @@ metadata:
   name: homelab-node-alerts
   namespace: observability
   labels:
+    # No longer consumed by the k8s-sidecar; kept for human discoverability.
     grafana_alert: "true"
 data:
   homelab-node-alerts.yaml: |-
     apiVersion: 1
 
-    templates:
+    # Clean up the failed Slack provisioning attempt from Grafana's DB.
+    deleteContactPoints:
       - orgId: 1
-        name: mattermost-alert-template
-        template: |-
-          {{ define "mattermost.payload" -}}
-          {
-            "text": "{{ if eq .Status \"firing\" }}🔥{{ else }}✅{{ end }} **{{ .Status | title }}** | {{ .CommonAnnotations.summary }}\n\n{{ .CommonAnnotations.description }}"
-          }
-          {{- end }}
+        uid: homelab-node-mattermost-receiver
+      - orgId: 1
+        uid: homelab-node-mattermost-webhook-receiver
+
+    deleteRules:
+      - orgId: 1
+        uid: homelab-node-high-temp
+      - orgId: 1
+        uid: homelab-node-thermal-throttle
+      - orgId: 1
+        uid: homelab-node-high-load
+      - orgId: 1
+        uid: homelab-node-sustained-high-load
+      - orgId: 1
+        uid: homelab-node-high-temp-v2
+      - orgId: 1
+        uid: homelab-node-thermal-throttle-v2
+      - orgId: 1
+        uid: homelab-node-high-load-v2
+      - orgId: 1
+        uid: homelab-node-sustained-high-load-v2
 
     contactPoints:
       - orgId: 1
-        name: homelab-node-mattermost-webhook
+        name: homelab-node-mattermost
         receivers:
-          - uid: homelab-node-mattermost-webhook-receiver
-            type: webhook
+          - uid: homelab-node-mattermost-slack-receiver
+            type: slack
             settings:
               url: $MATTERMOST_ALERTS_WEBHOOK_URL
-              httpMethod: POST
-              maxAlerts: 1
-              payload: '{{ template "mattermost.payload" . }}'
+              recipient: "#alerts"
+              # Dummy Slack token — Mattermost ignores auth on incoming webhooks.
+              token: "xoxb-not-used"
+              title: "{{ .CommonAnnotations.summary }}"
+              text: "{{ .CommonAnnotations.description }}"
 
     policies:
       - orgId: 1
-        receiver: homelab-node-mattermost-webhook
+        receiver: homelab-node-mattermost
         group_by: ['alertname']
         group_wait: 30s
         group_interval: 5m
         repeat_interval: 1h
         routes:
-          - receiver: homelab-node-mattermost-webhook
+          - receiver: homelab-node-mattermost
             matchers:
               - alertgroup = homelab-node
 
@@ -49,7 +67,7 @@ data:
         folder: homelab-node
         interval: 60s
         rules:
-          - uid: homelab-node-high-temp-v2
+          - uid: homelab-node-high-temp-v3
             title: HomelabNodeHighTemperature
             condition: C
             data:
@@ -83,9 +101,9 @@ data:
               alertgroup: homelab-node
             annotations:
               summary: "homelab-2nd CPU package temperature is high"
-              description: "CPU package temperature on homelab-2nd is {{ $values.C }}°C for more than 2 minutes."
+              description: "CPU package temperature on homelab-2nd is {{ $values.C }}C for more than 2 minutes."
 
-          - uid: homelab-node-thermal-throttle-v2
+          - uid: homelab-node-thermal-throttle-v3
             title: HomelabNodeThermalThrottling
             condition: C
             data:
@@ -119,14 +137,14 @@ data:
               alertgroup: homelab-node
             annotations:
               summary: "homelab-2nd thermal zone is near critical"
-              description: "Thermal zone 0 on homelab-2nd is {{ $values.C }}°C."
+              description: "Thermal zone 0 on homelab-2nd is {{ $values.C }}C."
 
       - orgId: 1
         name: homelab-node-load
         folder: homelab-node
         interval: 60s
         rules:
-          - uid: homelab-node-high-load-v2
+          - uid: homelab-node-high-load-v3
             title: HomelabNodeHighLoad
             condition: C
             data:
@@ -162,7 +180,7 @@ data:
               summary: "homelab-2nd load average is high"
               description: "5-minute load average on homelab-2nd is {{ $values.C }} per CPU."
 
-          - uid: homelab-node-sustained-high-load-v2
+          - uid: homelab-node-sustained-high-load-v3
             title: HomelabNodeSustainedHighLoad
             condition: C
             data:

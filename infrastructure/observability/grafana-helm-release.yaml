@@ -24,6 +24,11 @@ spec:
     remediation:
       retries: 3
   values:
+    # Keep a single Grafana replica. Explicitly set because a one-off manual
+    # scale-to-0 during the alert debugging left the Deployment at 0 replicas;
+    # Helm's three-way merge preserved that drift until we pin the value here.
+    replicas: 1
+
     # Generic OAuth via Authentik (OIDC). OIDC client secrets are injected
     # through a SOPS-encrypted secret mounted as envFrom. The Mattermost
     # webhook URL for alerts is injected via envValueFrom so the variable name
@@ -78,9 +83,26 @@ spec:
       limits:
         memory: 512Mi
 
-    # Provision datasources via a sidecar that watches ConfigMaps labelled
-    # `grafana_datasource: "true"`.
+    # Mount the homelab-node alerting provisioning file directly into Grafana
+    # so it is loaded at startup without relying on the k8s-sidecar reload
+    # endpoint (basic auth is disabled, so the sidecar cannot trigger a live
+    # reload). The ConfigMap content is plain YAML and is not interpreted by
+    # Helm's tpl engine.
+    extraVolumes:
+      - name: homelab-node-alerts
+        configMap:
+          name: homelab-node-alerts
+          defaultMode: 0444
+
+    extraVolumeMounts:
+      - name: homelab-node-alerts
+        mountPath: /etc/grafana/provisioning/alerting
+        readOnly: true
+
+    # Disable the alert sidecar; we use the direct ConfigMap mount above.
     sidecar:
+      alerts:
+        enabled: false
       datasources:
         enabled: true
         label: grafana_datasource
@@ -94,11 +116,6 @@ spec:
         reloadURL: "http://grafana.observability.svc.cluster.local:3000/api/admin/provisioning/dashboards/reload"
         provider:
           foldersFromFilesStructure: true
-      alerts:
-        enabled: true
-        label: grafana_alert
-        labelValue: "true"
-        searchNamespace: observability
 
     # Datasource definitions provisioned directly in values.
     datasources:
