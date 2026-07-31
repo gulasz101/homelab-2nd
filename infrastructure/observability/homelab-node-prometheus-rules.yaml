@@ -19,6 +19,7 @@ spec:
           labels:
             severity: critical
             alertgroup: homelab-node
+            namespace: observability
           annotations:
             summary: "homelab-2nd CPU package temperature is high"
             description: "CPU package temperature on homelab-2nd is {{ $value }}°C for more than 2 minutes."
@@ -29,6 +30,7 @@ spec:
           labels:
             severity: critical
             alertgroup: homelab-node
+            namespace: observability
           annotations:
             summary: "homelab-2nd thermal zone is near critical"
             description: "Thermal zone 0 on homelab-2nd is {{ $value }}°C."
@@ -46,6 +48,7 @@ spec:
           labels:
             severity: warning
             alertgroup: homelab-node
+            namespace: observability
           annotations:
             summary: "homelab-2nd load average is high"
             description: "5-minute load average on homelab-2nd is {{ $value }} per CPU."
@@ -60,6 +63,7 @@ spec:
           labels:
             severity: critical
             alertgroup: homelab-node
+            namespace: observability
           annotations:
             summary: "homelab-2nd is under sustained heavy load"
             description: "10-minute sustained load on homelab-2nd is {{ $value }} per CPU — risk of thermal shutdown."
