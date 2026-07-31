@@ -1,0 +1,28 @@
+---
+# AlertmanagerConfig: route homelab-node alerts to the existing Mattermost
+# webhook via the kube-prometheus-stack Alertmanager, formatted as Slack
+# messages so Mattermost renders them nicely and includes the measured value.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: homelab-node-mattermost-alerts
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: homelab-node-mattermost
+    matchers:
+      - name: alertgroup
+        value: homelab-node
+        matchType: "="
+  receivers:
+    - name: homelab-node-mattermost
+      slackConfigs:
+        - apiURL:
+            name: homelab-node-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: "{{ .CommonAnnotations.summary }}"
+          text: "{{ .CommonAnnotations.description }}"
+          fallback: "homelab-2nd alert: {{ .CommonAnnotations.summary }}"

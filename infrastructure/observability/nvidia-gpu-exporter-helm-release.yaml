@@ -17,6 +17,7 @@ metadata:
   namespace: observability
 spec:
   interval: 1h
+  suspend: true
   chart:
     spec:
       chart: nvidia-gpu-exporter
@@ -48,7 +49,6 @@ spec:
     # tracking note for the security-scan decision.
     securityContext:
       privileged: true
-      allowPrivilegeEscalation: false
       readOnlyRootFilesystem: true
       runAsNonRoot: false
       capabilities:

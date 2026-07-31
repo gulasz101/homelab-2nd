@@ -34,8 +34,9 @@ resources:
   - observability/prometheus-stack-helm-release.yaml
   - observability/loki-helm-release.yaml
   - observability/tempo-helm-release.yaml
-  - observability/grafana-alerts-mattermost-webhook-url-secret.yaml
-  - observability/homelab-node-alerts-configmap.yaml
+  - observability/homelab-node-prometheus-rules.yaml
+  - observability/homelab-node-alertmanager-config.yaml
+  - observability/homelab-node-mattermost-webhook-url-secret.yaml
   - observability/grafana-helm-release.yaml
   - observability/opentelemetry-collector-helm-release.yaml
   - observability/cloudflared-grafana-deployment.yaml

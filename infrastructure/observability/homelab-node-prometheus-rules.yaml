@@ -1,0 +1,65 @@
+---
+# PrometheusRule: thermal and load alerts for the homelab-2nd node.
+# Routes to the homelab-node AlertmanagerConfig in the observability namespace.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: homelab-node-alerts
+  namespace: observability
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: homelab-node-thermal
+      interval: 60s
+      rules:
+        - alert: HomelabNodeHighTemperature
+          expr: max(node_hwmon_temp_celsius{chip="platform_coretemp_0"}) > 85
+          for: 2m
+          labels:
+            severity: critical
+            alertgroup: homelab-node
+          annotations:
+            summary: "homelab-2nd CPU package temperature is high"
+            description: "CPU package temperature on homelab-2nd is {{ $value }}°C for more than 2 minutes."
+
+        - alert: HomelabNodeThermalThrottling
+          expr: max(node_thermal_zone_temp{zone="0"}) > 90
+          for: 1m
+          labels:
+            severity: critical
+            alertgroup: homelab-node
+          annotations:
+            summary: "homelab-2nd thermal zone is near critical"
+            description: "Thermal zone 0 on homelab-2nd is {{ $value }}°C."
+
+    - name: homelab-node-load
+      interval: 60s
+      rules:
+        - alert: HomelabNodeHighLoad
+          expr: |
+            node_load1{instance="192.168.1.179:9100"}
+            /
+            count without (mode) (node_cpu_seconds_total{instance="192.168.1.179:9100", mode="idle"})
+            > 0.85
+          for: 5m
+          labels:
+            severity: warning
+            alertgroup: homelab-node
+          annotations:
+            summary: "homelab-2nd load average is high"
+            description: "5-minute load average on homelab-2nd is {{ $value }} per CPU."
+
+        - alert: HomelabNodeSustainedHighLoad
+          expr: |
+            node_load1{instance="192.168.1.179:9100"}
+            /
+            count without (mode) (node_cpu_seconds_total{instance="192.168.1.179:9100", mode="idle"})
+            > 0.95
+          for: 10m
+          labels:
+            severity: critical
+            alertgroup: homelab-node
+          annotations:
+            summary: "homelab-2nd is under sustained heavy load"
+            description: "10-minute sustained load on homelab-2nd is {{ $value }} per CPU — risk of thermal shutdown."
