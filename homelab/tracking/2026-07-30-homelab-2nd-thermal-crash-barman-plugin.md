@@ -137,20 +137,73 @@ The two `barman-cloud-backup-delete` processes were still running, but capped at
 - If the node still crashes with temps/load now under control, the problem is likely VRM/power-delivery or the external GPU enclosure, not CPU thermal.
 - OpenGist is in a separate CrashLoopBackOff due to a Postgres password mismatch. That is unrelated to the crash but adds noise and load; should be fixed next.
 
-## Lessons
+## Follow-up: thermal/load alerting end-to-end test (2026-07-31)
 
-- **Put `retentionPolicy` on the `ObjectStore`**, not the `Cluster`, when using the Barman Cloud CNPG-I plugin. The Cluster field is deprecated for this plugin and silently does nothing.
-- **Cap sidecar resources**. Backup sidecars should never be allowed to grab unlimited CPU on a small node.
-- **Hourly base backups + WAL archive is overkill** for small home-lab databases. Every 6 hours is plenty.
-- **Fans help, but they don't fix bad config.** A pair of 120 mm fans turned a 94 °C boot into a 52 °C idle, but the node still fell over because the workload was unsustainable.
+A PrometheusRule + AlertmanagerConfig stack was added to notify Mattermost when node temperature or load crosses thresholds. On 2026-07-31 the end-to-end delivery was verified.
 
-## Commands for future reference
+### What was deployed
 
-Check current barman sidecar resources:
+Files committed to `gulasz101/homelab-2nd`:
+
+- `infrastructure/observability/homelab-node-prometheus-rules.yaml`
+- `infrastructure/observability/homelab-node-alertmanager-config.yaml`
+- `infrastructure/observability/homelab-node-mattermost-webhook-url.sops.yaml`
+
+`HomelabNodeHighTemperature` monitors `max(node_hwmon_temp_celsius{chip="platform_coretemp_0"})` and fires when it exceeds `85` °C for 2 minutes. The alert annotation templates the actual value:
+
+```yaml
+description: "CPU package temperature on homelab-2nd is {{ $value }}°C for more than 2 minutes."
+```
+
+### Routing bug found during testing
+
+Initially the alert fired in Prometheus but Alertmanager routed it to the `null` receiver. The generated Alertmanager route included an implicit `namespace="observability"` matcher because the `AlertmanagerConfig` lives in the `observability` namespace, but the `PrometheusRule` alerts did not carry a `namespace` label.
+
+Fix: added `namespace: observability` to all alert labels in the PrometheusRule.
+
+### Test procedure and result
+
+1. Lowered the threshold to `45` °C in a temporary commit (`496b6a9`) so the alert would fire while the node was at ~52 °C idle.
+2. Reconciled Flux: `sudo flux reconcile kustomization infrastructure --with-source`.
+3. Waited for `ALERTS{alertname="HomelabNodeHighTemperature", alertstate="firing"}`.
+4. Verified Alertmanager matched receiver `observability/homelab-node-mattermost-alerts/homelab-node-mattermost` and that `alertmanager_notifications_total{integration="slack"}` incremented to `1` with zero failed notifications.
+5. Confirmed the Mattermost message arrived at 16:13 CEST:
+   > **homelab-2nd CPU package temperature is high**
+   > CPU package temperature on homelab-2nd is 47°C for more than 2 minutes.
+6. Reverted the threshold to `85` °C, committed as `Set thermal alert threshold to 85C` (`5a4a9a9`), pushed and reconciled.
+7. Confirmed the alert cleared once the temperature stayed below 85 °C.
+
+### Final state
+
+- `infrastructure` Kustomization is Ready at `main@5a4a9a9e`.
+- `HomelabNodeHighTemperature` threshold is `85` °C.
+- `HomelabNodeThermalThrottling`, `HomelabNodeHighLoad`, and `HomelabNodeSustainedHighLoad` all carry the `namespace: observability` label and route to the same Mattermost webhook.
+
+### Commands for future reference
+
+Query current package temperature:
 
 ```bash
-sudo kubectl get pod -n llm-hub litellm-db-1 \
-  -o jsonpath='{range .spec.initContainers[?(@.name=="plugin-barman-cloud")]}{.resources}{"\n"}{end}'
+sudo kubectl get --raw "/api/v1/namespaces/observability/services/prometheus-stack-kube-prom-prometheus:9090/proxy/api/v1/query?query=max(node_hwmon_temp_celsius%7Bchip=%22platform_coretemp_0%22%7D)"
+```
+
+Check whether the thermal alert is firing:
+
+```bash
+sudo kubectl get --raw "/api/v1/namespaces/observability/services/prometheus-stack-kube-prom-prometheus:9090/proxy/api/v1/query?query=ALERTS%7Balertname%3D%22HomelabNodeHighTemperature%22%7D"
+```
+
+Check Alertmanager routing for the active alert:
+
+```bash
+sudo kubectl get --raw "/api/v1/namespaces/observability/services/alertmanager-operated:9093/proxy/api/v2/alerts?silenced=false&inhibited=false&active=true&filter=alertname=HomelabNodeHighTemperature"
+```
+
+Check notification counters:
+
+```bash
+sudo kubectl get --raw "/api/v1/namespaces/observability/services/prometheus-stack-kube-prom-prometheus:9090/proxy/api/v1/query?query=alertmanager_notifications_total%7Bintegration%3D%22slack%22%7D"
+sudo kubectl get --raw "/api/v1/namespaces/observability/services/prometheus-stack-kube-prom-prometheus:9090/proxy/api/v1/query?query=alertmanager_notifications_failed_total%7Bintegration%3D%22slack%22%7D"
 ```
 
 Force a CNPG pod restart after ObjectStore changes:
@@ -164,3 +217,11 @@ Watch node load/temp:
 ```bash
 watch -n 2 'uptime; sensors | grep Core'
 ```
+
+## Lessons
+
+- **Put `retentionPolicy` on the `ObjectStore`**, not the `Cluster`, when using the Barman Cloud CNPG-I plugin. The Cluster field is deprecated for this plugin and silently does nothing.
+- **Cap sidecar resources**. Backup sidecars should never be allowed to grab unlimited CPU on a small node.
+- **Hourly base backups + WAL archive is overkill** for small home-lab databases. Every 6 hours is plenty.
+- **Fans help, but they don't fix bad config.** A pair of 120 mm fans turned a 94 °C boot into a 52 °C idle, but the node still fell over because the workload was unsustainable.
+- **`AlertmanagerConfig` routes get an implicit `namespace` matcher.** PrometheusRule alerts that should route through a namespace-scoped `AlertmanagerConfig` must include a matching `namespace` label, or the alert is silently dropped to the default receiver.
