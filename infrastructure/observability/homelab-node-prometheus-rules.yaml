@@ -14,7 +14,7 @@ spec:
       interval: 60s
       rules:
         - alert: HomelabNodeHighTemperature
-          expr: max(node_hwmon_temp_celsius{chip="platform_coretemp_0"}) > 85
+          expr: max(node_hwmon_temp_celsius{chip="platform_coretemp_0"}) > 45
           for: 2m
           labels:
             severity: critical
