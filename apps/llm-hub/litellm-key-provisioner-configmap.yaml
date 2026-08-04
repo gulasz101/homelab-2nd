@@ -20,7 +20,26 @@ data:
     MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
     DESIRED_MODELS = [
         "kimi-k2.7-code",
+        # Ollama Cloud models (all with -ollama suffix)
         "glm-5.2-ollama",
+        "glm-5.1-ollama",
+        "kimi-k2.7-code-ollama",
+        "kimi-k2.6-ollama",
+        "kimi-k3-ollama",
+        "minimax-m2.7-ollama",
+        "minimax-m3-ollama",
+        "deepseek-v4-pro-ollama",
+        "deepseek-v4-flash-ollama",
+        "deepseek-v4-flash-0731-ollama",
+        "qwen3.5-397b-ollama",
+        "gemma4-31b-ollama",
+        "mistral-large-3-675b-ollama",
+        "nemotron-3-super-ollama",
+        "nemotron-3-ultra-ollama",
+        "nemotron-3-nano-30b-ollama",
+        "gpt-oss-20b-ollama",
+        "gpt-oss-120b-ollama",
+        # z.ai models
         "glm-5.2-zai",
         "glm-4.7-zai",
         "mistral-3.5-middle",

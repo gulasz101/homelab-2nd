@@ -140,6 +140,91 @@ spec:
             model: openai/glm-5.2
             api_base: "https://ollama.com/v1"
             api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: glm-5.1-ollama
+          litellm_params:
+            model: openai/glm-5.1
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: kimi-k2.7-code-ollama
+          litellm_params:
+            model: openai/kimi-k2.7-code
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: kimi-k2.6-ollama
+          litellm_params:
+            model: openai/kimi-k2.6
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: kimi-k3-ollama
+          litellm_params:
+            model: openai/kimi-k3
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: minimax-m2.7-ollama
+          litellm_params:
+            model: openai/minimax-m2.7
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: minimax-m3-ollama
+          litellm_params:
+            model: openai/minimax-m3
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: deepseek-v4-pro-ollama
+          litellm_params:
+            model: openai/deepseek-v4-pro
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: deepseek-v4-flash-ollama
+          litellm_params:
+            model: openai/deepseek-v4-flash
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: deepseek-v4-flash-0731-ollama
+          litellm_params:
+            model: "openai/deepseek-v4-flash:0731"
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: qwen3.5-397b-ollama
+          litellm_params:
+            model: "openai/qwen3.5:397b"
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: gemma4-31b-ollama
+          litellm_params:
+            model: openai/gemma4:31b
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: mistral-large-3-675b-ollama
+          litellm_params:
+            model: openai/mistral-large-3:675b
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: nemotron-3-super-ollama
+          litellm_params:
+            model: openai/nemotron-3-super
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: nemotron-3-ultra-ollama
+          litellm_params:
+            model: openai/nemotron-3-ultra
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: nemotron-3-nano-30b-ollama
+          litellm_params:
+            model: openai/nemotron-3-nano:30b
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: gpt-oss-20b-ollama
+          litellm_params:
+            model: openai/gpt-oss:20b
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: gpt-oss-120b-ollama
+          litellm_params:
+            model: openai/gpt-oss:120b
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
         - model_name: glm-5.2-zai
           litellm_params:
             # z.ai markets this as glm-5.2, but LiteLLM's provider map only knows zai/glm-5.
