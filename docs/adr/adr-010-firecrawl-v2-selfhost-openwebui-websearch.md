@@ -22,14 +22,12 @@ This ADR records the decision to run Firecrawl inside k3s on `homelab-2nd` and c
    - `USE_DB_AUTHENTICATION=false` (no Supabase dependency).
    - A single SOPS-encrypted `FIRECRAWL_API_KEY` shared between Firecrawl and Open WebUI.
    - `BULL_AUTH_KEY` also SOPS-encrypted and strong, protecting the Bull queue admin UI.
-3. **Queue backend decision is conditional.**
-   - First, attempt to initialise Firecrawl's NUQ queue schema on a CloudNativePG cluster (consistent with the "CNPG for all Postgres" guardrail).
-   - If the schema/behaviour is incompatible, fall back to Firecrawl's upstream `ghcr.io/firecrawl/nuq-postgres` container running as a k3s StatefulSet with a `local-path` PVC. This is an explicit, documented exception because NUQ Postgres is a Firecrawl-internal queue store, not a general application database.
-4. **Wire Open WebUI to the internal Firecrawl service.**
+3. **Queue backend:** Use a dedicated CloudNativePG cluster in the `firecrawl` namespace. If Firecrawl's NUQ schema cannot be initialised cleanly on plain PostgreSQL, document the fallback to the upstream `ghcr.io/firecrawl/nuq-postgres` container as a queue-backend-only exception to the CNPG rule.
+4. **No public ingress.** Firecrawl is LAN-only at `api.firecrawl.svc.cluster.local:3002`. Open WebUI reaches it over the cluster network. A Cloudflare Tunnel may be added later if external tools need API access.
+5. **Search backend:** Google default (`SEARXNG_ENDPOINT` unset). SearXNG can be layered in later with a single env var.
+6. **Wire Open WebUI to the internal Firecrawl service.**
    - Add `ENABLE_WEB_SEARCH=true`, `WEB_SEARCH_ENGINE=firecrawl`, `FIRECRAWL_API_BASE_URL=http://api.firecrawl.svc.cluster.local:3002`, and `FIRECRAWL_API_KEY` to the existing `open-webui` HelmRelease.
-5. **No public ingress by default.**
-   - Open WebUI reaches Firecrawl over the cluster network. A Cloudflare Tunnel for `firecrawl.voitech.dev` may be added later if external tools need API access, but it is not part of the initial deployment.
-6. **Observability from day one.**
+7. **Observability from day one.**
    - Container logs → OTel Collector → Loki.
    - Prometheus scraping via `ServiceMonitor` if the image exposes metrics; otherwise via annotations.
    - Per-namespace Grafana dashboard in the `firecrawl` folder.

@@ -78,20 +78,18 @@ From the official `SELF_HOST.md` and `docker-compose.yaml` on GitHub (also index
 
 ---
 
-## 3. Architecture decisions to confirm
+## 3. Architecture decisions (locked in)
 
-Before execution, the Supreme Leader must confirm:
-
-| Decision | Recommended option | Alternatives |
+| Decision | Chosen approach | Alternatives rejected |
 |---|---|---|
-| **Where does Firecrawl run?** | New `firecrawl` namespace on `homelab-2nd` k3s. | Run Docker Compose on OMV (rejected: OMV is storage, not compute). |
-| **Postgres backend** | Spike first: try CNPG with NUQ schema init; fallback to Firecrawl's `nuq-postgres` StatefulSet. | SaaS Postgres (rejected: leaves the LAN). |
-| **Queue / Redis** | In-cluster Redis + RabbitMQ StatefulSets/Services. | External managed message queues (rejected: adds dependency). |
-| **Durable storage for NUQ Postgres** | `local-path` on homelab-2nd NVMe (live state, rebuildable). Backups via CNPG if we make CNPG work; otherwise rely on Firecrawl being rebuildable from config (it is queue state, not user data). | OMV NFS (rejected: NUQ queue is I/O-heavy and ephemeral by nature). |
-| **Public ingress** | LAN-only + Open WebUI reaches it at internal k8s service URL. No public Cloudflare Tunnel needed unless we want external API access. | Expose `firecrawl.voitech.dev` via Cloudflare Tunnel (optional future step). |
-| **Web search backend** | Firecrawl's native Google search (default). SearXNG can be added later. | SearXNG now (rejected: adds another component before we know the base works). |
-| **API authentication** | A single long secret set in `FIRECRAWL_API_KEY` via SOPS; Open WebUI uses the same key. | Supabase/DB auth (rejected: overkill for single-homer use). |
-| **Open WebUI integration** | Add Firecrawl env vars to the existing `open-webui` HelmRelease; disable DuckDuckGo by not configuring it. | Separate Open WebUI config patch. |
+| **Where does Firecrawl run?** | New `firecrawl` namespace on `homelab-2nd` k3s. | Docker Compose on OMV (OMV is storage, not compute). |
+| **Postgres backend** | Dedicated **CloudNativePG** cluster in `firecrawl` namespace. We will verify Firecrawl's NUQ queue schema can be initialised on a plain PostgreSQL 18 cluster via `postInitSQLRefs`; if that fails, document the fallback to Firecrawl's upstream `nuq-postgres` container as a queue-backend exception. | SaaS Postgres (leaves the LAN). |
+| **Queue / message broker** | In-cluster Redis + RabbitMQ StatefulSets/Services. | External managed message queues (adds dependency). |
+| **Durable storage for queue state** | `local-path` on `homelab-2nd` NVMe (live, rebuildable). CNPG backups if the schema init works; otherwise rebuildable queue state. | OMV NFS (queue is I/O-heavy and ephemeral). |
+| **Public ingress** | **LAN-only**. Reachable at `api.firecrawl.svc.cluster.local:3002` from inside the cluster. No Cloudflare Tunnel. | Public tunnel (not needed for Hermes/Open WebUI only). |
+| **Search backend** | **Google default**. `SEARXNG_ENDPOINT` left unset; SearXNG can be added later with one env var. | SearXNG now (adds another component before the base is proven). |
+| **API authentication** | Single long `FIRECRAWL_API_KEY` in SOPS; shared with Open WebUI. | Supabase/DB auth (overkill). |
+| **Open WebUI integration** | Add Firecrawl env vars to the existing `open-webui` HelmRelease. | Separate config patch. |
 
 ---
 
@@ -105,8 +103,8 @@ Before writing any YAML, confirm the following on the live cluster:
    - `playwright-service`: 2 CPU / 4 Gi.
    - `nuq-postgres`, `redis`, `rabbitmq`: small.
    - Total realistic minimum: ~1.5 CPU requests, ~3–4 Gi memory. We should verify current node utilisation.
-3. OMV MinIO bucket for Firecrawl backups is not needed unless we use CNPG. If we use CNPG, create `cnpg-backups/firecrawl/`.
-4. The existing Open WebUI `FIRECRAWL_API_KEY` secret placeholder does not exist yet; we need a new SOPS secret.
+3. **OMV MinIO bucket for Firecrawl backups** — create `cnpg-backups/firecrawl/` via MinIO console or `mc mb`, then reference it in `apps/firecrawl/firecrawl-db-objectstore.yaml`.
+4. **The existing Open WebUI `FIRECRAWL_API_KEY` secret placeholder** does not exist yet; we need a new SOPS secret in `apps/firecrawl/firecrawl-api-key.sops.yaml`.
 
 ---
 
@@ -292,12 +290,15 @@ The Supreme Leader must confirm this fits on the single `homelab-2nd` node along
 
 ---
 
-## 10. Open questions for the Supreme Leader
+## 10. Open questions (all answered)
 
-1. **CNPG or upstream `nuq-postgres`?** Do you want me to attempt the CNPG spike first, or go straight to the upstream `nuq-postgres` StatefulSet to minimise risk?
-2. **Public Firecrawl API?** Do you want a Cloudflare Tunnel for `firecrawl.voitech.dev`, or keep it LAN-only and reachable only by Open WebUI inside the cluster?
-3. **Search backend:** Use Firecrawl's default Google search, or do you want to deploy SearXNG as well? (SearXNG is another project; I recommend getting Firecrawl working first.)
-4. **Resource allocation:** Are you happy with the ~1.25 CPU / 2.6 Gi request budget, or should we start smaller and tune live?
+| Question | Decision |
+|---|---|
+| CNPG or upstream `nuq-postgres`? | **CNPG first**, with documented fallback if NUQ schema init fails. |
+| Public Firecrawl API? | **No** — LAN-only, internal cluster use only. |
+| Search backend? | **Google default**; SearXNG can be added later. |
+
+If any of these assumptions change during deployment, the ADR and tracking note will be updated.
 
 ---
 
