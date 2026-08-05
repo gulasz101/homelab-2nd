@@ -219,12 +219,10 @@ resources:
   # SOPS-encrypted secrets
   - firecrawl/firecrawl-api-key.sops.yaml
   - firecrawl/firecrawl-db-credentials.sops.yaml
-  - firecrawl/firecrawl-minio-backup-creds.sops.yaml
   - firecrawl/firecrawl-mattermost-webhook-url.sops.yaml
-  # CNPG cluster + backups for Firecrawl queue backend
-  - firecrawl/postgres-cluster.yaml
-  - firecrawl/objectstore.yaml
-  - firecrawl/scheduled-backup.yaml
+  # NUQ Postgres queue backend (upstream container; CNPG plain PG lacks pg_cron)
+  - firecrawl/nuq-postgres-statefulset.yaml
+  - firecrawl/nuq-postgres-service.yaml
   # Non-secret Firecrawl configuration
   - firecrawl/firecrawl-config-configmap.yaml
   # Internal dependencies

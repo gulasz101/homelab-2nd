@@ -4,19 +4,19 @@ metadata:
   name: firecrawl-config
   namespace: firecrawl
 data:
-  PORT: '3002'
-  HOST: 0.0.0.0
-  USE_DB_AUTHENTICATION: 'false'
-  REDIS_URL: redis://redis.firecrawl.svc.cluster.local:6379
-  REDIS_RATE_LIMIT_URL: redis://redis.firecrawl.svc.cluster.local:6379
-  PLAYWRIGHT_MICROSERVICE_URL: http://playwright-service.firecrawl.svc.cluster.local:3000/scrape
-  POSTGRES_HOST: firecrawl-db-rw.firecrawl.svc.cluster.local
-  POSTGRES_PORT: '5432'
-  POSTGRES_DB: firecrawl
-  NUM_WORKERS_PER_QUEUE: '2'
-  CRAWL_CONCURRENT_REQUESTS: '3'
-  MAX_CONCURRENT_JOBS: '2'
-  BROWSER_POOL_SIZE: '2'
-  HARNESS_STARTUP_TIMEOUT_MS: '60000'
-  ENV: local
-  LOGGING_LEVEL: INFO
+  PORT: "3002"
+  HOST: "0.0.0.0"
+  USE_DB_AUTHENTICATION: "false"
+  REDIS_URL: "redis://redis.firecrawl.svc.cluster.local:6379"
+  REDIS_RATE_LIMIT_URL: "redis://redis.firecrawl.svc.cluster.local:6379"
+  PLAYWRIGHT_MICROSERVICE_URL: "http://playwright-service.firecrawl.svc.cluster.local:3000/scrape"
+  POSTGRES_HOST: "nuq-postgres.firecrawl.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "firecrawl"
+  NUM_WORKERS_PER_QUEUE: "2"
+  CRAWL_CONCURRENT_REQUESTS: "3"
+  MAX_CONCURRENT_JOBS: "2"
+  BROWSER_POOL_SIZE: "2"
+  HARNESS_STARTUP_TIMEOUT_MS: "60000"
+  ENV: "local"
+  LOGGING_LEVEL: "INFO"
