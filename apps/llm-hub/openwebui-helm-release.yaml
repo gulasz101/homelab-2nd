@@ -198,6 +198,20 @@ spec:
         value: "true"
       - name: OTEL_SERVICE_NAME
         value: "open-webui"
+      # Self-hosted Firecrawl web search
+      - name: ENABLE_WEB_SEARCH
+        value: "true"
+      - name: WEB_SEARCH_ENGINE
+        value: "firecrawl"
+      - name: FIRECRAWL_API_BASE_URL
+        value: "http://api.firecrawl.svc.cluster.local:3002"
+      - name: FIRECRAWL_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: firecrawl-api-key
+            key: FIRECRAWL_API_KEY
+      - name: FIRECRAWL_TIMEOUT
+        value: "60000"
       # Structured JSON logs for Loki
       - name: GLOBAL_LOG_LEVEL
         value: "INFO"
