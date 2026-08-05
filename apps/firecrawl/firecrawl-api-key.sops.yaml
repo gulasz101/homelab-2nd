@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: firecrawl-api-key
+    namespace: firecrawl
+type: Opaque
+stringData:
+    FIRECRAWL_API_KEY: ENC[AES256_GCM,data:SgA3PvFRe4DjtXsld6+B1bbDOPC6aRRbNZqRwUiUu7xKy+SjSeNVEVOMN1D3yBPANJoG1VZ6ODTROsDXYZippw==,iv:AAmzfejRI7rnPZv2u4efGlSyS07IqMb4M1lIUdQI5Gs=,tag:2voWIBUq5FkycLG+UMAmaQ==,type:str]
+    BULL_AUTH_KEY: ENC[AES256_GCM,data:3sL5Jdif8Twj6mJZcW1vYVfwiJOz/gYyFEQtBWV/1gVhmjny4lPT5XalVNBYu7NbFybTlGEL0XbBaKpfLfVQvg==,iv:9EnN+FjmWD1D0CiRZs4JoCC2aOKiridzacANxSO8c1U=,tag:C7lU6lOdsfF7GMVfhkeT+w==,type:str]
+    RABBITMQ_PASSWORD: ENC[AES256_GCM,data:U65Qrx5XYn37D8DBmxRzjIRqf+jqpBKqtTVEOlrOHiro+fp+juL7FYTEKA==,iv:Gu1oQ/FSYsFqqJOnHgCaEZc7QsnA6rxo033hR5Fsaks=,tag:jAci0mJqR/bratZ0tqnuYg==,type:str]
+    NUQ_RABBITMQ_URL: ENC[AES256_GCM,data:jJp9B1r9/81rOQ5XnJnTNyGE13A7/SCfsvrecFCQL2mH8bw2iJeQlymt+cM0Uq8nHH570ZXnjkIHgJSJXXgA8WWycmy9hH+1HeSUYffRj0AmWD6AecExna868N1eKFXHI2evN1pW,iv:+8qTJeDpzaCIPM9NF1awzQAbB2mEfJ62Ea5wB8+zUVM=,tag:8t3noLcSVn0H6S3G25PBEg==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBFeWEyTm9rU3ZoUmNTR1hl
+            Y213c2ticVpCK05jYnBoR0lsREhpbTRNRHk0Ck1vYU5LZmdQMmxTeUszTWNkOGo0
+            Qlp4V3poUnNwNnlHZHlWbEhCVkhnUmcKLS0tIEIwUFdvYVpjZXNQSFpNenpvaTZ3
+            bDVJNy9yNVRBWFJIc0QvRlM5ZW5uQjgKToF8KBfNbygenCY7enxaHdxOymiV38jg
+            HDVtKHZBZvc/yRpwQsrW3a4TsR95eW67tdGAXdvr5F7BAcf6Bl0uiw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-05T10:15:38Z"
+    mac: ENC[AES256_GCM,data:MT+7DKA0utC1O6GhSsbaaZp+FaJkMX26vL+cDjtK0aWx3mJsmxqbjw4H79eeDqMNg18i1IAlpnDaJeAWi4GbRaIdRcXWbKAS6PmH35RY7NVpoL95IE0oYsFb+xA0PZp7+Oa6038Ufx5dXIdapdb0u8Sp1Fb+eJDTSgSsfFFmbR0=,iv:LFC08VJJp7Jw37dzHf+RppDejIGDmXBVDK4scmMqvdI=,tag:3zGsXOgWsYs1NP7mgQnlDg==,type:str]
+    version: 3.13.1

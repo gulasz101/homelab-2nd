@@ -214,3 +214,34 @@ resources:
   - opengist/opengist-alertmanager-config.yaml
   - opengist/opengist-loki-rule.yaml
   - opengist/opengist-dashboard-configmap.yaml
+  # Firecrawl namespace
+  - firecrawl/namespace.yaml
+  # SOPS-encrypted secrets
+  - firecrawl/firecrawl-api-key.sops.yaml
+  - firecrawl/firecrawl-db-credentials.sops.yaml
+  - firecrawl/firecrawl-minio-backup-creds.sops.yaml
+  - firecrawl/firecrawl-mattermost-webhook-url.sops.yaml
+  # CNPG cluster + backups for Firecrawl queue backend
+  - firecrawl/postgres-cluster.yaml
+  - firecrawl/objectstore.yaml
+  - firecrawl/scheduled-backup.yaml
+  # Non-secret Firecrawl configuration
+  - firecrawl/firecrawl-config-configmap.yaml
+  # Internal dependencies
+  - firecrawl/redis-pvc.yaml
+  - firecrawl/redis-deployment.yaml
+  - firecrawl/redis-service.yaml
+  - firecrawl/rabbitmq-pvc.yaml
+  - firecrawl/rabbitmq-deployment.yaml
+  - firecrawl/rabbitmq-service.yaml
+  # Firecrawl API/worker and Playwright
+  - firecrawl/api-deployment.yaml
+  - firecrawl/api-service.yaml
+  - firecrawl/playwright-deployment.yaml
+  - firecrawl/playwright-service.yaml
+  # Observability
+  - firecrawl/service-monitor.yaml
+  - firecrawl/firecrawl-prometheus-rules.yaml
+  - firecrawl/firecrawl-alertmanager-config.yaml
+  - firecrawl/firecrawl-loki-rule.yaml
+  - firecrawl/firecrawl-dashboard-configmap.yaml

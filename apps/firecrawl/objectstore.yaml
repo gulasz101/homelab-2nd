@@ -1,0 +1,22 @@
+---
+# ObjectStore for the Barman Cloud CNPG-I plugin — Firecrawl backups to OMV MinIO
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: firecrawl-db-backups
+  namespace: firecrawl
+spec:
+  configuration:
+    destinationPath: s3://cnpg-backups/firecrawl/
+    endpointURL: http://openmediavault.local:9000
+    s3Credentials:
+      accessKeyId:
+        name: firecrawl-minio-backup-creds
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: firecrawl-minio-backup-creds
+        key: ACCESS_SECRET_KEY
+    data:
+      compression: gzip
+    wal:
+      compression: gzip

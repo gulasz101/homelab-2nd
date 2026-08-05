@@ -1,0 +1,23 @@
+---
+# Prometheus scraping for Firecrawl.
+# The upstream image does not expose a stable /metrics endpoint, so we rely on
+# kubelet/cAdvisor container metrics plus this ServiceMonitor if the image
+# later adds an application metrics port.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: firecrawl-api
+  namespace: firecrawl
+  labels:
+    app.kubernetes.io/name: firecrawl-api
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: firecrawl-api
+      app.kubernetes.io/part-of: firecrawl
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

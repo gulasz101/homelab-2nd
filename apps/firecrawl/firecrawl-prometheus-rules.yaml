@@ -1,0 +1,99 @@
+---
+# PrometheusRule: resource and availability alerts for the firecrawl namespace.
+# Labels follow the existing per-namespace pattern. The live Prometheus CR
+# selector is release: prometheus-stack; if rules do not load, switch the label.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: firecrawl-resource-alerts
+  namespace: firecrawl
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: firecrawl.resources
+      interval: 1m
+      rules:
+        - alert: FirecrawlAPIPodDown
+          expr: |
+            absent(up{namespace="firecrawl", pod=~"firecrawl-api.*"}) == 1
+          for: 2m
+          labels:
+            severity: critical
+            namespace: firecrawl
+          annotations:
+            summary: "Firecrawl API pod is down"
+            description: "No firecrawl-api pod has been reported as up for more than 2 minutes."
+
+        - alert: FirecrawlPlaywrightPodDown
+          expr: |
+            absent(up{namespace="firecrawl", pod=~"playwright-service.*"}) == 1
+          for: 2m
+          labels:
+            severity: critical
+            namespace: firecrawl
+          annotations:
+            summary: "Firecrawl Playwright pod is down"
+            description: "No playwright-service pod has been reported as up for more than 2 minutes."
+
+        - alert: FirecrawlCPUAboveRequest
+          expr: |
+            sum by (pod, container) (
+              rate(container_cpu_usage_seconds_total{namespace="firecrawl", container!=""}[5m])
+            ) >
+            sum by (pod, container) (
+              kube_pod_container_resource_requests{namespace="firecrawl", resource="cpu", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: firecrawl
+          annotations:
+            summary: "Firecrawl container CPU is above its request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU usage exceeds its requested CPU for more than 5 minutes."
+
+        - alert: FirecrawlMemoryAboveRequest
+          expr: |
+            sum by (pod, container) (
+              container_memory_working_set_bytes{namespace="firecrawl", container!=""}
+            ) >
+            sum by (pod, container) (
+              kube_pod_container_resource_requests{namespace="firecrawl", resource="memory", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: firecrawl
+          annotations:
+            summary: "Firecrawl container memory is above its request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory usage exceeds its requested memory for more than 5 minutes."
+
+        - alert: FirecrawlCPUAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container) (
+              rate(container_cpu_usage_seconds_total{namespace="firecrawl", container!=""}[5m])
+            ) / sum by (pod, container) (
+              container_spec_cpu_quota{namespace="firecrawl", container!=""} / container_spec_cpu_period{namespace="firecrawl", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: firecrawl
+          annotations:
+            summary: "Firecrawl container CPU is above 90% of its limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU is above 90% of its limit for more than 5 minutes."
+
+        - alert: FirecrawlMemoryAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container) (
+              container_memory_working_set_bytes{namespace="firecrawl", container!=""}
+            ) / sum by (pod, container) (
+              kube_pod_container_resource_limits{namespace="firecrawl", resource="memory", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: firecrawl
+          annotations:
+            summary: "Firecrawl container memory is above 90% of its limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 90% of its limit for more than 5 minutes."

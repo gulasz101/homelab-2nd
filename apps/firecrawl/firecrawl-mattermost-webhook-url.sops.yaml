@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: firecrawl-mattermost-webhook-url
+    namespace: firecrawl
+type: Opaque
+stringData:
+    url: ENC[AES256_GCM,data:J1ZE+525wuqWEwwIt0r9TTa7OHCKrgSVUGLOhcxkTveODe3FblvGoSvHtkpuFenqh5yOjjNMQ3mk,iv:ieRPxtsd1cVSNGgYeN2cEmV8ICbLmaRq5Kk8eTZmMNA=,tag:nEqn0KWLIBYHVdCUxpRBzQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBuZ2JvWFhXTXhTd2U5MUFv
+            bURCVTNOa2M0SEcrVVBJdUJJYjFGWDRyTXdBCk5qaXkrQXVOSFRJYmlDQUZmN1Jn
+            N0NaTXJkOGE4VzVEKzdSYmFjL1MxZFUKLS0tIFR4NWNveG42NUFRUUw1VGlGTStI
+            cHdCd3pnUkV2ajlLRTlQS0NaL3U2TlUKsHYtD6GqpZaqA/efcmZzvhjAdW7x7hU6
+            Eth5P5f6GSqnmnRamyYCYNdVUGjC0XgQWe7KcPQEewHF4+ZtwUAX2w==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-05T10:12:54Z"
+    mac: ENC[AES256_GCM,data:6Gh16oyS7MZjUYVpYq6O4gKGh+EETB7VZxHOxp0Kdv034JgT4SB/tFJo7FG4+9JXT5+4pbnABHmSpJsRGmJrsjyd25adrFMdWZcT000CHPMclVARpKuA+scAolj3Apl9ATHCUFsulB/BODfmgJZGJYD3oR+Ch9SXw2QcQfkqNiY=,iv:F0zikCRr3+pxemvVgnZ3HQZfkq9EvBK5MAafuvUrD7o=,tag:3IiqApAFju6qq0qc1IkDkA==,type:str]
+    version: 3.13.1

@@ -1,0 +1,26 @@
+---
+# AlertmanagerConfig: route firecrawl namespace alerts to the Mattermost webhook.
+# The webhook secret lives in the same namespace as this CRD per the Prometheus
+# Operator's urlSecret resolution rules.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: firecrawl-mattermost-alerts
+  namespace: firecrawl
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: firecrawl-mattermost
+    matchers:
+      - name: namespace
+        value: firecrawl
+        matchType: '='
+  receivers:
+    - name: firecrawl-mattermost
+      webhookConfigs:
+        - urlSecret:
+            name: firecrawl-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          maxAlerts: 10

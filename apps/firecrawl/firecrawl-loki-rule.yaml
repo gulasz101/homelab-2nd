@@ -1,0 +1,34 @@
+---
+# Loki Ruler rule: fire an alert when Firecrawl logs contain errors or FATAL messages.
+# The OTel collector ships pod logs to Loki with labels k8s_namespace_name and
+# k8s_pod_name.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: firecrawl-error-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  firecrawl-errors.yaml: |
+    groups:
+      - name: firecrawl.errors
+        interval: 1m
+        rules:
+          - alert: FirecrawlErrorLogs
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {k8s_namespace_name="firecrawl", k8s_pod_name=~"firecrawl-api.*|playwright-service.*"}
+                    |~ "ERROR|FATAL|error"
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: firecrawl
+            annotations:
+              summary: "Firecrawl component logging errors"
+              description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} has logged errors in the last 5 minutes."
+              runbook_url: "https://grafana.voitech.dev/explore?orgId=1&left=%7B%22datasource%22:%22Loki%22,%22queries%22:%5B%7B%22refId%22:%22A%22,%22expr%22:%22%7Bk8s_namespace_name%3D%5C%22firecrawl%5C%22%2Ck8s_pod_name%3D%5C%22{{ $labels.pod }}%5C%22%7D%20%7C%3D%20%5C%22ERROR%5C%22%22%7D%5D%2C%22range%22:%7B%22from%22:%22now-1h%22%2C%22to%22:%22now%22%7D%7D"
