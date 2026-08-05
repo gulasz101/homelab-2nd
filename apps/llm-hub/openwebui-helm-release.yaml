@@ -218,6 +218,14 @@ spec:
       - name: LOG_LEVEL
         value: "INFO"
 
+    # Allow in-place rolling updates on a single-node cluster with tight CPU headroom.
+    # maxSurge: 0 means no extra pod is scheduled before the old one terminates.
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+
     service:
       type: ClusterIP
       port: 8080
