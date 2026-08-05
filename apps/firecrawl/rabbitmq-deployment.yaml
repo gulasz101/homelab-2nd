@@ -44,24 +44,29 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
-          livenessProbe:
-            exec:
-              command:
-                - rabbitmq-diagnostics
-                - -q
-                - check_running
-            initialDelaySeconds: 30
-            periodSeconds: 30
-            timeoutSeconds: 5
-          readinessProbe:
-            exec:
-              command:
-                - rabbitmq-diagnostics
-                - -q
-                - check_running
+          # RabbitMQ takes 15-25s to boot on this node under CPU pressure.
+          # Use a startup probe to give it a generous boot window, then lighter
+          # TCP-based liveness/readiness probes so diagnostics commands don't
+          # timeout under load.
+          startupProbe:
+            tcpSocket:
+              port: amqp
             initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: amqp
+            initialDelaySeconds: 0
+            periodSeconds: 30
+            timeoutSeconds: 3
+          readinessProbe:
+            tcpSocket:
+              port: amqp
+            initialDelaySeconds: 0
             periodSeconds: 10
-            timeoutSeconds: 5
+            timeoutSeconds: 3
           volumeMounts:
             - name: data
               mountPath: /var/lib/rabbitmq
