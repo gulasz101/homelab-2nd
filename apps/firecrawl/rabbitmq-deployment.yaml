@@ -39,7 +39,7 @@ spec:
               containerPort: 15672
           resources:
             requests:
-              cpu: 100m
+              cpu: 50m
               memory: 256Mi
             limits:
               cpu: 500m
@@ -52,6 +52,7 @@ spec:
                 - check_running
             initialDelaySeconds: 30
             periodSeconds: 30
+            timeoutSeconds: 5
           readinessProbe:
             exec:
               command:
@@ -60,6 +61,7 @@ spec:
                 - check_running
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 5
           volumeMounts:
             - name: data
               mountPath: /var/lib/rabbitmq
