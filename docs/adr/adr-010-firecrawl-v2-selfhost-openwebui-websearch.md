@@ -1,7 +1,7 @@
 # ADR-010: Self-host Firecrawl v2 and wire it to Open WebUI web search
 
 Date: 2026-08-05
-Status: Proposed
+Status: Accepted
 Supersedes: nothing
 Superseded by: nothing
 
@@ -22,7 +22,7 @@ This ADR records the decision to run Firecrawl inside k3s on `homelab-2nd` and c
    - `USE_DB_AUTHENTICATION=false` (no Supabase dependency).
    - A single SOPS-encrypted `FIRECRAWL_API_KEY` shared between Firecrawl and Open WebUI.
    - `BULL_AUTH_KEY` also SOPS-encrypted and strong, protecting the Bull queue admin UI.
-3. **Queue backend:** Use a dedicated CloudNativePG cluster in the `firecrawl` namespace. If Firecrawl's NUQ schema cannot be initialised cleanly on plain PostgreSQL, document the fallback to the upstream `ghcr.io/firecrawl/nuq-postgres` container as a queue-backend-only exception to the CNPG rule.
+3. **Queue backend:** A dedicated CloudNativePG cluster was attempted first but failed because Firecrawl's NUQ schema requires `pg_cron`/`pgcrypto` and the upstream `nuq.sql` init script. The deployed solution uses the upstream `ghcr.io/firecrawl/nuq-postgres` container as a queue-backend-only exception to the CNPG rule.
 4. **No public ingress.** Firecrawl is LAN-only at `api.firecrawl.svc.cluster.local:3002`. Open WebUI reaches it over the cluster network. A Cloudflare Tunnel may be added later if external tools need API access.
 5. **Search backend:** Google default (`SEARXNG_ENDPOINT` unset). SearXNG can be layered in later with a single env var.
 6. **Wire Open WebUI to the internal Firecrawl service.**
