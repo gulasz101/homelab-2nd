@@ -13,6 +13,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-003 | GPU embeddings run in k3s via Ollama (TEI abandoned for Maxwell sm_52) | Accepted | 2026-06-30 |
 | ADR-004 | Honcho runs in k3s with CNPG and NodePort | Accepted | 2026-07-03 |
 | ADR-005 | Per-namespace observability (dashboards, Prometheus rules, Loki alerts) | Accepted | 2026-07-12 |
+| ADR-010 | Self-host Firecrawl v2 and wire it to Open WebUI web search | Proposed | 2026-08-05 |
 
 ## Writing an ADR
 
