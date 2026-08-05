@@ -41,6 +41,7 @@ resources:
   - llm-hub/litellm-oidc-client.sops.yaml
   - llm-hub/llm-hub-backup-creds.sops.yaml
   - llm-hub/openwebui-minio-creds.sops.yaml
+  - llm-hub/openwebui-firecrawl-api-key.sops.yaml
   - llm-hub/litellm-tunnel-token.sops.yaml
   - llm-hub/openwebui-tunnel-token.sops.yaml
   # LiteLLM virtual-key model-whitelist reconciler

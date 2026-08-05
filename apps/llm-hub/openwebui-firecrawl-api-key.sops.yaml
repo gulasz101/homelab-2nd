@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: firecrawl-api-key
+    namespace: llm-hub
+type: Opaque
+stringData:
+    FIRECRAWL_API_KEY: ENC[AES256_GCM,data:bKpgjNbtqO795r58DHdY4TrQNNxgW+dYRw/1XKOx1G0FWOQHBkzXkLDFtWBAykW9chqsBEIrkYchGvYcarePRQ==,iv:PuejWg3tHyZtCLjRm6p7fq5mEf8ikLQiDxWG+tRvXRk=,tag:B/2GifnFgaOpkrksU9Uzmg==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAyUUJCRmlJaVVmcHgza0x3
+            cEI0Z1hiMVNsUENQR2wxeGxnUVZwUm9NTHdNCjc4YlNlbUY3QkJpSlo4UWZaWW9q
+            cHl0S0JiRU9vbUFVUlkzNHc0SHdkVEUKLS0tIFFhT2NvUEdoOUh3SE5VRjB2dlgz
+            emtEeHAyWk1iQkI5MENjMGFNVmhXRUkKo82yZqnHpYipHVpIdVjBNN8fyi8ucgAF
+            pLEi1rmzG/snoug2/k4oBYTUWnWCoXRNywC2eiZDsfFaoRuA/Lsc1Q==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-05T11:47:46Z"
+    mac: ENC[AES256_GCM,data:lDNt6tHbrYDyt/w/XTrbMqcF6+qGlHXGp+dMdqrRkijTKBGvJ2mUjIWozDYmpqTmfZrYb0xsNOFSPZp/9EZvPKRJ/i6pTvFMRNnLaB3EdrpuxmYJUU9qe34jrCfjL5M+t7uYowv4iYZ5QMLCq6xRGMegZemN62obFM9dNBDNtmg=,iv:NNn4La9+Oo+Nip6w+ysJ8FIZN2Ypu0Lax3ROaTL8UII=,tag:e7LLKToMgJko50gPEqOdnA==,type:str]
+    version: 3.13.1
