@@ -25,7 +25,10 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: ghcr.io/gulasz101/honcho:latest
+          # Pinned to the digest currently running in production. ghcr.io only
+          # has a "latest" tag for this image, so digest pinning is the only
+          # way to prevent surprise upstream changes on pod restart.
+          image: ghcr.io/gulasz101/honcho@sha256:c027a8fb333323e62393638fd0db83f5a7fb2452afe296fd1afb93a7e5fd36af
           command: ["fastapi", "run", "--host", "0.0.0.0", "--port", "8000", "src/main.py"]
           workingDir: /app
           ports:
