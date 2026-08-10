@@ -64,8 +64,30 @@ kubectl exec -n honcho deployment/honcho-api -- python -c \
 - pin to a tagged image and rebuild Honcho with homelab-friendly defaults, or
 - keep auditing the upstream `src/config.py` defaults whenever the image changes.
 
+## Follow-up: pin image digest
+
+Supreme Leader asked to stop using `latest`. `ghcr.io/gulasz101/honcho` only publishes a `latest` tag, so there was no semantic version to pin. Instead, all three Honcho workloads were pinned to the digest currently running in the cluster:
+
+```text
+ghcr.io/gulasz101/honcho@sha256:c027a8fb333323e62393638fd0db83f5a7fb2452afe296fd1afb93a7e5fd36af
+```
+
+Files changed:
+
+- `apps/honcho/honcho-api-deployment.yaml`
+- `apps/honcho/honcho-deriver-deployment.yaml`
+- `apps/honcho/honcho-db-migrate-job.yaml`
+
+Commit: `75cce56` — `fix(honcho): pin image to digest instead of latest`.
+
+Flux reconciled cleanly and the live Deployments now reference the digest.
+
 ## References
 
 - `apps/honcho/honcho-configmap.yaml`
+- `apps/honcho/honcho-api-deployment.yaml`
+- `apps/honcho/honcho-deriver-deployment.yaml`
+- `apps/honcho/honcho-db-migrate-job.yaml`
 - `docs/adr/adr-005-honcho-llm-hub-only.md`
 - Commit `92945cd`
+- Commit `75cce56`
