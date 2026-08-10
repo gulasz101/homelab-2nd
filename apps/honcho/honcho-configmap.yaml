@@ -24,10 +24,16 @@ data:
   SUMMARY_MODEL_CONFIG__TRANSPORT: "openai"
   SUMMARY_MODEL_CONFIG__MODEL: "mistral-3.5-middle"
   SUMMARY_MODEL_CONFIG__OVERRIDES__BASE_URL: "http://litellm.llm-hub.svc.cluster.local:4000/v1"
-  # Dream model.
-  DREAM_MODEL_CONFIG__TRANSPORT: "openai"
-  DREAM_MODEL_CONFIG__MODEL: "mistral-3.5-middle"
-  DREAM_MODEL_CONFIG__OVERRIDES__BASE_URL: "http://litellm.llm-hub.svc.cluster.local:4000/v1"
+  # Dream specialist models. Honcho's Dream subsystem splits work into a
+  # deduction specialist and an induction specialist; each has its own
+  # MODEL_CONFIG with a hardcoded default of openai/gpt-5.4-mini. We
+  # override both so the whole Dream pipeline stays on the internal hub.
+  DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT: "openai"
+  DREAM_DEDUCTION_MODEL_CONFIG__MODEL: "mistral-3.5-middle"
+  DREAM_DEDUCTION_MODEL_CONFIG__OVERRIDES__BASE_URL: "http://litellm.llm-hub.svc.cluster.local:4000/v1"
+  DREAM_INDUCTION_MODEL_CONFIG__TRANSPORT: "openai"
+  DREAM_INDUCTION_MODEL_CONFIG__MODEL: "mistral-3.5-middle"
+  DREAM_INDUCTION_MODEL_CONFIG__OVERRIDES__BASE_URL: "http://litellm.llm-hub.svc.cluster.local:4000/v1"
   # Dialectic levels. Env shape must match Pydantic nested dict keys:
   # DIALECTIC.LEVELS["low"].MODEL_CONFIG.model
   DIALECTIC_LEVELS__MINIMAL__MODEL_CONFIG__TRANSPORT: "openai"

@@ -35,8 +35,11 @@ This applies to:
 
 - `DERIVER_MODEL_CONFIG`
 - `SUMMARY_MODEL_CONFIG`
-- `DREAM_MODEL_CONFIG`
+- `DREAM_DEDUCTION_MODEL_CONFIG`
+- `DREAM_INDUCTION_MODEL_CONFIG`
 - `DIALECTIC_LEVELS__{MINIMAL,LOW,MEDIUM,HIGH,MAX}__MODEL_CONFIG`
+
+(The upstream Honcho image has since split Dream into deduction/induction specialists; the previous top-level `DREAM_MODEL_CONFIG` no longer exists, so per-specialist overrides are required.)
 
 Embeddings remain on the local Ollama `nomic-embed-text` endpoint and are unchanged.
 
@@ -65,6 +68,7 @@ Embeddings remain on the local Ollama `nomic-embed-text` endpoint and are unchan
 - When a heavier model (e.g. `glm-5.2-zai`, a local large model, or an OpenRouter tier) is added to the hub and we want Dream / max dialectic to use it.
 - If `mistral-3.5-middle` becomes unreliable or too expensive for high-volume deriver work.
 - When Honcho adds new features that need their own model config env vars.
+- If Honcho renames or merges `DREAM_DEDUCTION_MODEL_CONFIG` / `DREAM_INDUCTION_MODEL_CONFIG` back into a single `DREAM_MODEL_CONFIG`.
 
 ## References
 
