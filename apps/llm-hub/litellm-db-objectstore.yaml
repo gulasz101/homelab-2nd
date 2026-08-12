@@ -7,7 +7,7 @@ metadata:
   namespace: llm-hub
 spec:
   configuration:
-    destinationPath: s3://cnpg-backups/litellm/
+    destinationPath: s3://cnpg-backups/litellm
     endpointURL: http://openmediavault.local:9000
     s3Credentials:
       accessKeyId:

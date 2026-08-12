@@ -7,7 +7,7 @@ metadata:
   namespace: llm-hub
 spec:
   configuration:
-    destinationPath: s3://cnpg-backups/openwebui/
+    destinationPath: s3://cnpg-backups/openwebui
     endpointURL: http://openmediavault.local:9000
     s3Credentials:
       accessKeyId:
