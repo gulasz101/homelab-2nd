@@ -48,7 +48,7 @@ spec:
         memory: 128Mi
       limits:
         cpu: 300m
-        memory: 384Mi
+        memory: 512Mi
 
     config:
       database:
