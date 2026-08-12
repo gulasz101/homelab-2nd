@@ -62,7 +62,7 @@ spec:
       general:
         defaultDomain: shlink.voitech.dev
         isHttpsEnabled: true
-        memoryLimit: "512M"
+        memoryLimit: "384M"
         timezone: "Europe/Berlin"
       geolite:
         # GeoLite2 disabled for first deployment
@@ -80,3 +80,29 @@ spec:
           secretKeyRef:
             name: shlink-initial-api-key
             key: INITIAL_API_KEY
+
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: shlink-backend
+            patch: |
+              - op: replace
+                path: /spec/template/spec/containers/0/livenessProbe
+                value:
+                  httpGet:
+                    path: /rest/health
+                    port: http
+                  initialDelaySeconds: 60
+                  periodSeconds: 10
+                  failureThreshold: 6
+              - op: replace
+                path: /spec/template/spec/containers/0/readinessProbe
+                value:
+                  httpGet:
+                    path: /rest/health
+                    port: http
+                  initialDelaySeconds: 30
+                  periodSeconds: 5
+                  failureThreshold: 12
