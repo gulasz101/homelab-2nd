@@ -1,0 +1,12 @@
+---
+# Reminder of the public hostname rule (real rule lives in Cloudflare Zero Trust)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shlink-tunnel-ingress
+  namespace: shlink
+data:
+  note: |
+    # shlink.voitech.dev -> http://shlink-backend.shlink.svc.cluster.local:8080
+    # The Cloudflare Tunnel hostname rule uses this internal service URL.
+    # Add the rule in Cloudflare Zero Trust -> Networks -> Tunnels -> shlink.

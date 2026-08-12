@@ -1,0 +1,31 @@
+---
+# Loki Ruler rule for Shlink non-2xx responses (lives in observability namespace)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shlink-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  shlink-http-errors.yaml: |
+    groups:
+      - name: shlink.http-errors
+        interval: 1m
+        rules:
+          - alert: ShlinkNon2xxResponses
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {namespace="shlink", pod=~"shlink-backend-.*"}
+                    |~ "status\":\\s*[3-9]\\d{2}"
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: shlink
+            annotations:
+              summary: "Shlink endpoint returned non-2xx status"
+              description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} logged non-2xx HTTP responses within the last 5 minutes."

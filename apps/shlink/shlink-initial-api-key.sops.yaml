@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: shlink-initial-api-key
+    namespace: shlink
+type: Opaque
+stringData:
+    INITIAL_API_KEY: ENC[AES256_GCM,data:NLEAlEMzf/bmgTcTAB4ry6l6TnysXM4pa+fZ92i/8SUppTCzFTViL09Wwg==,iv:m4b6AcBNhUt0wjEUdwF1FYs/2Ess+li/1q/PyACMels=,tag:Y/sp7mbBO22MMN1SDDIYIQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAxRURSUXVycDZQUTlCNk1W
+            TEthTGdXZlhoeFZxLytGaXNXUUIyQXh6OWo4Ckg5WXdpQWN1MGYzZDcwQ3E5c1l3
+            SHNNSmNUVmxJTWRJeVFOMnZLUkwvL1UKLS0tIDJ4Tm10ZTg5b3E2c3ROMWtBaWdS
+            RW9kSUlHb0ZZMFBTNEFHOGZYWk9JT2cKXdcx6gOq36v7NYVwDbODsW3AyFWzPeio
+            9SsCNxWjYzTJtn0SEU0mKkN/EztDvEfiPl2G95vYydzQZvTz5fovTw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-12T17:47:55Z"
+    mac: ENC[AES256_GCM,data:d+5ALBNfDCuRYWve3604gsDeTgq+dV3otkZ9rmXVgUR4oeLSiO1s803PPrzf4W39CnyMIAWllGk3k/uNhyOjQQ2QSRxiPYAqASaOWoAPrqc3rdDlyIIAVjJDBkhLiOuYvGl6/vQQnoJFvxWbgzcK2pvAL6KDpf3upQoMKAYN3g0=,iv:8VT7bU01E2kOZ8k800clPfDFRSTofJFltp4Jw3A1Xmw=,tag:453/JKiqyvvgvg+ABn8/mw==,type:str]
+    version: 3.13.1

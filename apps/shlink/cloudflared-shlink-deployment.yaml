@@ -1,0 +1,44 @@
+---
+# Dedicated Cloudflare Tunnel for shlink.voitech.dev -> Shlink backend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-shlink
+  namespace: shlink
+  labels:
+    app.kubernetes.io/name: cloudflared-shlink
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-shlink
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-shlink
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+            - --url
+            - http://shlink-backend.shlink.svc.cluster.local:8080
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: shlink-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

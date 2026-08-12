@@ -1,0 +1,22 @@
+---
+# ObjectStore for the Barman Cloud CNPG-I plugin — Shlink backups to OMV MinIO
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: shlink-db-backups
+  namespace: shlink
+spec:
+  configuration:
+    destinationPath: s3://cnpg-backups/shlink/
+    endpointURL: http://openmediavault.local:9000
+    s3Credentials:
+      accessKeyId:
+        name: shlink-minio-backup-creds
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: shlink-minio-backup-creds
+        key: ACCESS_SECRET_KEY
+    data:
+      compression: gzip
+    wal:
+      compression: gzip

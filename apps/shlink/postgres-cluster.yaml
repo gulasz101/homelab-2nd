@@ -1,0 +1,40 @@
+---
+# Shlink Postgres cluster — single instance on local-path NVMe
+# Backups + WAL archiving via the Barman Cloud CNPG-I plugin to OMV MinIO
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: shlink-db
+  namespace: shlink
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
+
+  bootstrap:
+    initdb:
+      database: shlink
+      owner: shlink
+      secret:
+        name: shlink-db-credentials
+
+  storage:
+    storageClass: local-path
+    size: 5Gi
+
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: shlink-db-backups
+        serverName: shlink-db
+
+  backup:
+    retentionPolicy: "30d"
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"

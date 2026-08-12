@@ -1,0 +1,67 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: shlink-resource-alerts
+  namespace: shlink
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: shlink.resources
+      interval: 30s
+      rules:
+        - alert: ShlinkCPUAboveRequest
+          expr: |
+            sum by (pod, container, namespace) (
+              rate(container_cpu_usage_seconds_total{namespace="shlink", container!=""}[5m])
+            ) >
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_requests{namespace="shlink", resource="cpu", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: shlink
+          annotations:
+            summary: "shlink/{{ $labels.pod }} CPU above request"
+        - alert: ShlinkMemoryAboveRequest
+          expr: |
+            sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="shlink", container!=""}
+            ) >
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_requests{namespace="shlink", resource="memory", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: shlink
+          annotations:
+            summary: "shlink/{{ $labels.pod }} memory above request"
+        - alert: ShlinkCPUAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              rate(container_cpu_usage_seconds_total{namespace="shlink", container!=""}[5m])
+            ) / sum by (pod, container, namespace) (
+              container_spec_cpu_quota{namespace="shlink", container!=""} / container_spec_cpu_period{namespace="shlink", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: shlink
+          annotations:
+            summary: "shlink/{{ $labels.pod }} CPU above 90% of limit"
+        - alert: ShlinkMemoryAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="shlink", container!=""}
+            ) / sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="shlink", resource="memory", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: shlink
+          annotations:
+            summary: "shlink/{{ $labels.pod }} memory above 90% of limit"

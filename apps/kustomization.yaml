@@ -244,3 +244,27 @@ resources:
   - firecrawl/firecrawl-alertmanager-config.yaml
   - firecrawl/firecrawl-loki-rule.yaml
   - firecrawl/firecrawl-dashboard-configmap.yaml
+  # Shlink namespace
+  - shlink/namespace.yaml
+  # Helm repository
+  - shlink/shlink-helm-repository.yaml
+  # SOPS-encrypted secrets
+  - shlink/shlink-db-credentials.sops.yaml
+  - shlink/shlink-minio-backup-creds.sops.yaml
+  - shlink/shlink-tunnel-token.sops.yaml
+  - shlink/shlink-initial-api-key.sops.yaml
+  - shlink/shlink-mattermost-webhook-url.sops.yaml
+  # CNPG cluster + backups
+  - shlink/postgres-cluster.yaml
+  - shlink/objectstore.yaml
+  - shlink/scheduled-backup.yaml
+  # Shlink HelmRelease
+  - shlink/shlink-helm-release.yaml
+  # Cloudflare Tunnel for shlink.voitech.dev
+  - shlink/cloudflared-shlink-deployment.yaml
+  - shlink/shlink-tunnel-ingress-configmap.yaml
+  # Observability
+  - shlink/shlink-prometheus-rules.yaml
+  - shlink/shlink-alertmanager-config.yaml
+  - shlink/shlink-loki-rule.yaml
+  - shlink/shlink-dashboard-configmap.yaml
