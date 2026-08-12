@@ -17,7 +17,7 @@ tags:
 
 ## TL;DR
 
-Deploy [Shlink](https://shlink.io) v5.1.5 as a new public-facing URL shortener at `short.voitech.dev` using GitOps. The app is API-key-only, so SSO is impossible in the app core; we will gate the **admin interface** behind Authentik later via an OAuth2 proxy, while keeping short URL redirects public. Observability follows the established OpenGist pattern: Prometheus rules, Alertmanager → Mattermost, Loki error rule, and a namespace Grafana dashboard.
+Deploy [Shlink](https://shlink.io) v5.1.5 as a new public-facing URL shortener at `shlink.voitech.dev` using GitOps. The app is API-key-only, so SSO is impossible in the app core; we will gate the **admin interface** behind Authentik later via an OAuth2 proxy, while keeping short URL redirects public. Observability follows the established OpenGist pattern: Prometheus rules, Alertmanager → Mattermost, Loki error rule, and a namespace Grafana dashboard.
 
 ## The "before" state
 
@@ -29,9 +29,34 @@ A Flux-managed `shlink` namespace containing:
 - Shlink backend `5.1.5` from the `christianhuth/shlink-backend` Helm chart.
 - A dedicated CNPG Postgres cluster `shlink-db` on `local-path` (live) with backups + WAL archive to OMV MinIO (durable).
 - SOPS-encrypted secrets for DB, MinIO backups, Cloudflare tunnel token, initial API key, and Mattermost alert webhook.
-- A dedicated Cloudflare Tunnel for `short.voitech.dev`.
+- A dedicated Cloudflare Tunnel for `shlink.voitech.dev`.
 - LGTM/OTel observability wired in from day one.
 - SSO deferred to an external auth layer in front of the admin UI.
+- Committed and pushed to `gulasz101/homelab-2nd` as commit `e270b28`.
+
+## Decisions made during deployment
+
+| Decision | Final choice | Reason |
+|---|---|---|
+| Public hostname | `shlink.voitech.dev` | Confirmed by Supreme Leader |
+| Authentication | API-key only (no Authentik SSO) | Shlink core has no OIDC support; normal login as requested |
+| GeoLite2 | Skipped | Not needed for first deployment |
+| Cloudflare Tunnel token | SOPS-encrypted in `shlink-tunnel-token.sops.yaml` | Token provided by Supreme Leader, never committed in plain text |
+| Initial API key | Generated and SOPS-encrypted in `shlink-initial-api-key.sops.yaml` | Can be decoded later via `sops --decrypt` |
+| MinIO backup credentials | Mirrored from OpenGist secret, re-encrypted for `shlink` namespace | Follows existing repo convention |
+| Mattermost webhook | Mirrored from OpenGist secret, re-encrypted for `shlink` namespace | Reuses existing alert routing |
+
+## How to retrieve secrets after checking out the repo
+
+Use `sops` with the homelab-2nd age key:
+
+```bash
+cd ~/Projects/homelab-2nd
+SOPS_AGE_KEY_FILE=~/.keys/age-homelab-2nd.txt sops --decrypt apps/shlink/shlink-initial-api-key.sops.yaml
+SOPS_AGE_KEY_FILE=~/.keys/age-homelab-2nd.txt sops --decrypt apps/shlink/shlink-db-credentials.sops.yaml
+```
+
+The age private key lives in the Supreme Leader's password manager; it is **not** in the repo.
 
 ## Why Shlink
 
@@ -225,12 +250,13 @@ spec:
           username: shlink
           existingSecret: shlink-db-credentials
       general:
-        defaultDomain: short.voitech.dev
+        defaultDomain: shlink.voitech.dev
         isHttpsEnabled: true
         memoryLimit: "512M"
         timezone: "Europe/Berlin"
       geolite:
-        licenseKey: ""   # disable until a MaxMind key is provided
+        # GeoLite2 disabled for first deployment
+        licenseKey: ""
         skipInitialDownload: true
       urlShortening:
         autoResolveTitles: true
@@ -257,6 +283,13 @@ spec:
   interval: 1h
   url: https://charts.christianhuth.de
 ```
+
+## Namespace and identity
+
+- **Namespace:** `shlink`
+- **Public hostname:** `shlink.voitech.dev`
+- **Internal service:** `http://shlink-backend.shlink.svc.cluster.local:8080` (port matches chart default)
+- **Cloudflare Tunnel name:** `shlink`
 
 ## Cloudflare Tunnel
 
@@ -291,6 +324,8 @@ spec:
             - run
             - --token
             - $(TUNNEL_TOKEN)
+            - --url
+            - http://shlink-backend.shlink.svc.cluster.local:8080
           env:
             - name: TUNNEL_TOKEN
               valueFrom:
@@ -315,10 +350,12 @@ metadata:
   name: shlink-tunnel-ingress
   namespace: shlink
 data:
-  public-hostname: "short.voitech.dev"
+  public-hostname: "shlink.voitech.dev"
   origin: "http://shlink-backend.shlink.svc.cluster.local:8080"
   note: "Configure this origin in Cloudflare Zero Trust -> Networks -> Tunnels -> shlink"
 ```
+
+The tunnel token is SOPS-encrypted in `shlink-tunnel-token.sops.yaml`.
 
 ## Observability (LGTM)
 
@@ -487,7 +524,7 @@ Shlink core does **not** support OIDC/SSO. The only authentication mechanism is 
 
 Phase 1 (this deployment): use the hosted web client at `https://app.shlink.io` only from trusted networks / Tailscale, and keep the API key in 1Password.
 
-Phase 2 (follow-up): deploy an OAuth2 Proxy sidecar/ingress in front of a self-hosted `shlink-web-client` at a separate hostname (e.g. `shlink-admin.voitech.dev`) with Authentik OIDC. The proxy enforces login; the web client then uses the pre-configured API key from `servers.json`. Public short URLs stay on `short.voitech.dev` and bypass auth.
+Phase 2 (follow-up): deploy an OAuth2 Proxy sidecar/ingress in front of a self-hosted `shlink-web-client` at a separate hostname (e.g. `shlink-admin.voitech.dev`) with Authentik OIDC. The proxy enforces login; the web client then uses the pre-configured API key from `servers.json`. Public short URLs stay on `shlink.voitech.dev` and bypass auth.
 
 This keeps the homelab SSO-first posture without fighting Shlink's architecture.
 
@@ -503,25 +540,40 @@ After Flux reconciles:
    ```
 4. Public health check:
    ```bash
-   curl -s https://short.voitech.dev/rest/health
+   curl -s https://shlink.voitech.dev/rest/health
    ```
-5. Create a short URL:
+5. Create a short URL (replace `<key>` with the value from `shlink-initial-api-key.sops.yaml`):
    ```bash
-   curl -s -X POST https://short.voitech.dev/rest/v3/short-urls \
+   curl -s -X POST https://shlink.voitech.dev/rest/v3/short-urls \
      -H "X-Api-Key: <key>" \
      -H "Content-Type: application/json" \
      -d '{"longUrl":"https://example.com","title":"test"}'
    ```
 6. Visit the returned short URL and confirm redirect + visit stats.
 
-## Open questions for the Supreme Leader
+## Deployment status
 
-1. Confirm public hostname: `short.voitech.dev`?
-2. Provide Cloudflare Tunnel token once the tunnel is created.
-3. Do you want a MaxMind GeoLite2 license key for visit geolocation?
-4. Should I generate the initial admin API key and store it in 1Password + SOPS, or leave it empty and generate manually?
+- Public hostname confirmed: `shlink.voitech.dev`
+- Cloudflare Tunnel token: SOPS-encrypted in `apps/shlink/shlink-tunnel-token.sops.yaml`
+- Initial API key: generated and SOPS-encrypted in `apps/shlink/shlink-initial-api-key.sops.yaml`
+- GeoLite2: skipped
+- Authentik SSO: skipped; normal API-key login
+- Manifests committed and pushed: `e270b28`
+- Flux reconciliation: in progress
 
-## File manifest to add
+## How to retrieve secrets after checking out the repo
+
+Use `sops` with the homelab-2nd age key:
+
+```bash
+cd ~/Projects/homelab-2nd
+SOPS_AGE_KEY_FILE=~/.keys/age-homelab-2nd.txt sops --decrypt apps/shlink/shlink-initial-api-key.sops.yaml
+SOPS_AGE_KEY_FILE=~/.keys/age-homelab-2nd.txt sops --decrypt apps/shlink/shlink-db-credentials.sops.yaml
+```
+
+The age private key lives in the Supreme Leader's password manager; it is **not** in the repo.
+
+## File manifest added
 
 Under `apps/shlink/`:
 
@@ -543,7 +595,7 @@ Under `apps/shlink/`:
 - `shlink-loki-rule.yaml`
 - `shlink-dashboard-configmap.yaml`
 
-And update `apps/kustomization.yaml` to include the new directory.
+And `apps/kustomization.yaml` updated to include the new directory.
 
 ## Resource footprint estimate
 
@@ -567,4 +619,4 @@ Total live PVC: 5Gi on homelab-2nd. Durable backups: OMV MinIO.
 
 ## Next step
 
-Supreme Leader: confirm `short.voitech.dev` and paste the Cloudflare Tunnel token. I will generate the secrets, commit the manifests, and deploy via Flux.
+Wait for Flux to reconcile the new manifests, then verify the public health endpoint and create the first short URL. If the Cloudflare Tunnel hostname rule is not added in Zero Trust, add it with origin `http://shlink-backend.shlink.svc.cluster.local:8080`.
