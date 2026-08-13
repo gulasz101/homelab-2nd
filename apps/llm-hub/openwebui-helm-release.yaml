@@ -174,11 +174,14 @@ spec:
       # Single worker per pod (let K8s handle scaling)
       - name: UVICORN_WORKERS
         value: "1"
-      # Embeddings via LiteLLM proxy (OpenAI-compatible)
+      # Embeddings via the shared GPU-accelerated Ollama service in gpu-embedding.
+      # Ollama exposes an OpenAI-compatible /v1/embeddings endpoint on the same port.
       - name: RAG_EMBEDDING_ENGINE
         value: "openai"
+      - name: RAG_OPENAI_API_BASE_URL
+        value: "http://ollama-embeddings.gpu-embedding.svc.cluster.local:11434/v1"
       - name: RAG_EMBEDDING_MODEL
-        value: "text-embedding-3-small"
+        value: "nomic-embed-text"
       # OpenTelemetry → OTel Collector
       - name: ENABLE_OTEL
         value: "true"
