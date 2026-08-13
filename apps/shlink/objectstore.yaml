@@ -7,7 +7,7 @@ metadata:
   namespace: shlink
 spec:
   configuration:
-    destinationPath: s3://cnpg-backups/shlink/
+    destinationPath: s3://cnpg-backups/shlink
     endpointURL: http://openmediavault.local:9000
     s3Credentials:
       accessKeyId:

@@ -7,7 +7,7 @@ metadata:
   namespace: apps-tldraw
 spec:
   configuration:
-    destinationPath: s3://cnpg-backups/tldraw/
+    destinationPath: s3://cnpg-backups/tldraw
     endpointURL: http://openmediavault.local:9000
     s3Credentials:
       accessKeyId:

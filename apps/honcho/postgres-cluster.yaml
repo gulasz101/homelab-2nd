@@ -38,7 +38,7 @@ spec:
   # Backup + WAL archiving to OMV MinIO S3
   backup:
     barmanObjectStore:
-      destinationPath: s3://cnpg-backups/honcho/
+      destinationPath: s3://cnpg-backups/honcho
       endpointURL: http://openmediavault.local:9000
       s3Credentials:
         accessKeyId:

@@ -7,7 +7,7 @@ metadata:
   namespace: opengist
 spec:
   configuration:
-    destinationPath: s3://cnpg-backups/opengist/
+    destinationPath: s3://cnpg-backups/opengist
     endpointURL: http://openmediavault.local:9000
     s3Credentials:
       accessKeyId:
