@@ -209,7 +209,7 @@ spec:
       - name: AUDIO_OPENAI_API_KEY
         valueFrom:
           secretKeyRef:
-            name: voice-speaches-api-key
+            name: openwebui-speaches-api-key
             key: api-key
       # Self-hosted Firecrawl web search
       - name: ENABLE_WEB_SEARCH
