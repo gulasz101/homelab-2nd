@@ -204,13 +204,15 @@ spec:
       # Route voice STT to the dedicated Speaches service in the voice namespace.
       - name: AUDIO_STT_ENGINE
         value: "openai"
-      - name: AUDIO_OPENAI_API_BASE_URL
+      - name: AUDIO_STT_OPENAI_API_BASE_URL
         value: "http://speaches.voice.svc.cluster.local:8000/v1"
-      - name: AUDIO_OPENAI_API_KEY
+      - name: AUDIO_STT_OPENAI_API_KEY
         valueFrom:
           secretKeyRef:
             name: openwebui-speaches-api-key
             key: api-key
+      - name: AUDIO_STT_MODEL
+        value: "Systran/faster-distil-whisper-small.en"
       # Self-hosted Firecrawl web search
       - name: ENABLE_WEB_SEARCH
         value: "true"
