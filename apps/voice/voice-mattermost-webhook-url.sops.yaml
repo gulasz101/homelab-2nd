@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: voice-mattermost-webhook-url
+    namespace: voice
+type: Opaque
+stringData:
+    url: ENC[AES256_GCM,data:+RtIatDQN7+X2W29p0/mBA/fgajxiee1S62eSy2xje839qLqjc6VUxDXLxje2PEaMjugo5FAZ+gA,iv:kAqe+Q9hfnL5AyvoUg96oY6UtIs+uqKOU0FrugychIc=,tag:86dITgRTmxmyanFRnGiLRQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB4NTBtRjgwZWk0TUUzcTJJ
+            QXlrb0Z1YkpqSmtVN2ROdkhHeGZ3QU9wMlFrCkxaOW1ueEI2c3ljNDQvUk1VN21Y
+            TkNEU2hBb2pIMUtZREF6QWFBbmFucjgKLS0tIHhLdTlTTUtqWFdIcmF0M1FyRWNu
+            V0Y5SlVDWCtVZGNOWCt5c1ExcmRzM28KwjScdZeTArNZs4JEX660KHYnI+ztnWj/
+            kZTkQqv5A/eB8bPXjfbCWXER26+d+2ycvoJ8KAb/Q2VHoyauJELyyw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-13T13:00:24Z"
+    mac: ENC[AES256_GCM,data:e/qb/Yb78wfp4GAFyRau/bds48FUx3tHGzmXGxFVfFVGSjSKpj9YhGPbCYM/MJDu59a7tZwluRaJIo4aAz1rMio9DgJzjECy4VNRhfQmLEx/ecfPxszrwtDwf4RN1G7UPaxqfzWibQotjqFDZ045nrkoNc5mSEPLGmHD7lgOVdg=,iv:ntmQg+ST9OT3q64V4tF7n78Y85hRgccjstSPJFbAslA=,tag:W1K7JJYeDhyXsPLkFvFyEw==,type:str]
+    version: 3.13.1

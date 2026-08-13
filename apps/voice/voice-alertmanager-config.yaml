@@ -1,0 +1,25 @@
+---
+# AlertmanagerConfig: route voice namespace alerts to the Mattermost webhook.
+# The webhook secret must live in the same namespace as this AlertmanagerConfig.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: voice-mattermost-alerts
+  namespace: voice
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: voice-mattermost
+    matchers:
+      - name: namespace
+        value: voice
+        matchType: "="
+  receivers:
+    - name: voice-mattermost
+      webhookConfigs:
+        - urlSecret:
+            name: voice-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          maxAlerts: 10

@@ -27,6 +27,21 @@ resources:
   # Kept in repo as a recipe, but not reconciled continuously: it disables
   # email/username sign-in, which is now intentionally enabled for native apps.
   # - mattermost/mattermost-gitlab-sso-job.yaml
+  # Voice namespace (Speaches STT/TTS backend for Open WebUI)
+  - voice/namespace.yaml
+  # SOPS-encrypted secrets
+  - voice/voice-speaches-api-key.sops.yaml
+  - voice/voice-mattermost-webhook-url.sops.yaml
+  # Speaches model cache PVC (OMV NFS)
+  - voice/speaches-model-cache-pvc.yaml
+  # Speaches deployment + service
+  - voice/speaches-deployment.yaml
+  - voice/speaches-service.yaml
+  # Observability
+  - voice/voice-prometheus-rules.yaml
+  - voice/voice-alertmanager-config.yaml
+  - voice/voice-loki-rule.yaml
+  - voice/voice-dashboard-configmap.yaml
   # LLM hub namespace
   - llm-hub/namespace.yaml
   # SOPS-encrypted secrets

@@ -1,0 +1,32 @@
+---
+# Loki Ruler rule: detect Speaches errors / crashes from pod logs.
+# Lives in observability namespace and is auto-discovered by Loki sidecar.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: voice-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  voice-errors.yaml: |
+    groups:
+      - name: voice.errors
+        interval: 1m
+        rules:
+          - alert: VoiceErrorsOrCrashes
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {k8s_namespace_name="voice", k8s_pod_name=~"speaches.*"}
+                    |~ "Error|ERROR|ERR|FATAL|fatal|Traceback"
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: voice
+            annotations:
+              summary: "voice/speaches logged errors or crashes"
+              description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} logged errors within the last 5 minutes."

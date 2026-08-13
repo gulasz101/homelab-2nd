@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: voice-speaches-api-key
+    namespace: voice
+type: Opaque
+stringData:
+    api-key: ENC[AES256_GCM,data:TKKqK+pro24SYQh+BD5fy3RSw50=,iv:4s3bAiRuOGyth0fqVDffQ82sFU7AxLI3OFr9mKWPQWk=,tag:ayLyNDT+4Vt36P+2yQNR3w==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAydDlIZWVFUXJKamloVGo2
+            WGNzQmlsa3lMRUJtMW9WeklCYytKNCtFbUNFCnpOUG5qUjd0TFFHTXlHVlZjZzFy
+            RjgvbHVuS1NYWGhiam80ZjVNMjErUGsKLS0tIHRIOWV4VUJWUjQ3K0tjckFxWlRG
+            WWQyY0NPVFlOUkJ6UEllekRnZXZlaW8KhrE0UMDQxVo6tWJdbSb0EfnyX73S8aU0
+            BU1mdgLzPZZlKT8hjMtXDcSGcde6+d5Hmm9djsI/B/k7PkGS7djqcg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-13T13:00:24Z"
+    mac: ENC[AES256_GCM,data:iaEmczSa7gqj5SgeOQykIwNUF4AIdJcb9jsJf/C3tps1XCe6t6jShybwVwTXe6chGdOWakx1KqRf+3FE/Xf3qt/ubu+bZb6g9CMst4HE0r8oj+n0sO1GkVMmRID4d8ReVkkSua74mu0K8mkCHtKo12otvbopkHZ9jyJ2b3v7QL4=,iv:v5/wEUBdZQQRVMKkmc1kg3aDvgcuusG4g8DbXD9CgUg=,tag:RFk+GyxvERTNR6CXwYFlOA==,type:str]
+    version: 3.13.1

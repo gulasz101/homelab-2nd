@@ -201,6 +201,16 @@ spec:
         value: "true"
       - name: OTEL_SERVICE_NAME
         value: "open-webui"
+      # Route voice STT to the dedicated Speaches service in the voice namespace.
+      - name: AUDIO_STT_ENGINE
+        value: "openai"
+      - name: AUDIO_OPENAI_API_BASE_URL
+        value: "http://speaches.voice.svc.cluster.local:8000/v1"
+      - name: AUDIO_OPENAI_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: voice-speaches-api-key
+            key: api-key
       # Self-hosted Firecrawl web search
       - name: ENABLE_WEB_SEARCH
         value: "true"

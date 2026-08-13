@@ -1,0 +1,33 @@
+---
+# OMV NFS-backed PVC for Speaches model cache.
+# Models are downloaded on first use; keeping them on NFS avoids re-downloading on every pod restart.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: speaches-model-cache-pv
+  namespace: voice
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: openmediavault.local
+    path: /srv/dev-disk-by-uuid-cda9bf6e-0ed1-4e61-b063-1cbab7351886/speaches/model-cache
+    readOnly: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: speaches-model-cache
+  namespace: voice
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 20Gi
+  volumeName: speaches-model-cache-pv

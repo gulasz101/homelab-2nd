@@ -1,0 +1,82 @@
+---
+# PrometheusRule for voice namespace resource alerts.
+# Labelled with release: prometheus-stack to match the live Prometheus CR ruleSelector.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: voice-resource-alerts
+  namespace: voice
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: voice.resources
+      interval: 1m
+      rules:
+        - alert: VoiceCPUAboveRequest
+          expr: |
+            sum by (pod, container, namespace) (
+              rate(container_cpu_usage_seconds_total{namespace="voice", container!=""}[5m])
+            )
+            >
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_requests{namespace="voice", resource="cpu", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: voice
+          annotations:
+            summary: "voice/{{ $labels.pod }} CPU above request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU usage exceeds its request for more than 5 minutes."
+
+        - alert: VoiceMemoryAboveRequest
+          expr: |
+            sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="voice", container!=""}
+            )
+            >
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_requests{namespace="voice", resource="memory", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: voice
+          annotations:
+            summary: "voice/{{ $labels.pod }} memory above request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory usage exceeds its request for more than 5 minutes."
+
+        - alert: VoiceCPUAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              rate(container_cpu_usage_seconds_total{namespace="voice", container!=""}[5m])
+            )
+            /
+            sum by (pod, container, namespace) (
+              container_spec_cpu_quota{namespace="voice", container!=""} / container_spec_cpu_period{namespace="voice", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: voice
+          annotations:
+            summary: "voice/{{ $labels.pod }} CPU above 90% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU is above 90% of its limit for more than 5 minutes."
+
+        - alert: VoiceMemoryAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="voice", container!=""}
+            )
+            /
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="voice", resource="memory", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: voice
+          annotations:
+            summary: "voice/{{ $labels.pod }} memory above 90% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 90% of its limit for more than 5 minutes."
