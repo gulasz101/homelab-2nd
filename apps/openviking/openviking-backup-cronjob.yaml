@@ -46,7 +46,7 @@ spec:
                   mountPath: /root/.openviking
           containers:
             - name: backup
-              image: ghcr.io/volcengine/openviking@sha256:07b01246fda12ca9ca6b5d7e21add2d2d9673da805ca4f09ec8d026a878dc7
+              image: ghcr.io/volcengine/openviking@sha256:4bca8fa5dadf363d84c3eab1f7bb446f0b69587cd0dc059aad4c87382ee832b3
               imagePullPolicy: IfNotPresent
               command:
                 - /bin/sh
