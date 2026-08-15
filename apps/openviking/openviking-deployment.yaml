@@ -35,7 +35,42 @@ spec:
             - |
               set -e
               mkdir -p /app/.openviking
-              envsubst < /tmpl/ov.conf > /app/.openviking/ov.conf
+              cat > /app/.openviking/ov.conf <<EOF
+              {
+                "server": {
+                  "host": "0.0.0.0",
+                  "port": 1933,
+                  "root_api_key": "${OPENVIKING_ROOT_API_KEY}"
+                },
+                "storage": {
+                  "workspace": "/app/.openviking/workspace"
+                },
+                "log": {
+                  "level": "INFO",
+                  "output": "stdout"
+                },
+                "embedding": {
+                  "dense": {
+                    "api_base": "http://ollama-embeddings.gpu-embedding.svc.cluster.local:11434/v1",
+                    "api_key": "local",
+                    "provider": "openai",
+                    "dimension": 768,
+                    "model": "nomic-embed-text"
+                  }
+                },
+                "vlm": {
+                  "api_base": "http://litellm.llm-hub.svc.cluster.local:4000/v1",
+                  "api_key": "${OPENVIKING_VLM_API_KEY}",
+                  "provider": "openai",
+                  "extra_headers": {
+                    "User-Agent": "OpenViking/1.0"
+                  },
+                  "model": "mistral-3.5-middle",
+                  "timeout": 3600,
+                  "max_concurrent": 64
+                }
+              }
+              EOF
           env:
             - name: OPENVIKING_ROOT_API_KEY
               valueFrom:
@@ -48,8 +83,6 @@ spec:
                   name: openviking-vlm-api-key
                   key: api-key
           volumeMounts:
-            - name: config-template
-              mountPath: /tmpl
             - name: config
               mountPath: /app/.openviking
       containers:
@@ -105,8 +138,5 @@ spec:
             claimName: openviking-workspace
         - name: config
           emptyDir: {}
-        - name: config-template
-          configMap:
-            name: openviking-config
         - name: tmp
           emptyDir: {}

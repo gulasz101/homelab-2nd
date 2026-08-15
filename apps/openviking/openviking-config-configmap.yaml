@@ -1,6 +1,6 @@
----
-# OpenViking server config (non-secret parts). Secrets are substituted
-# by an init container using envsubst before the server starts.
+# OpenViking server config rendered directly by init container shell.
+# Non-secret values are inline; secret values come from env vars injected by Kubernetes.
+# The ConfigMap is kept as a stable reference but is no longer mounted into the pod.
 apiVersion: v1
 kind: ConfigMap
 metadata:
