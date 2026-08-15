@@ -359,7 +359,7 @@ Option B (fallback if `ov restore` mangles vectors or account/user scopes):
 
 1. If 24-hour smoke test passes, `docker rm openviking` and archive `~/.openviking/docker-compose.yml`, `ov.conf`, `watchdog.sh`, and `.watchdog.env` to a migration subfolder.
 
-   **Decommission the MacBook alert:** ensure the cron/launchd job running `watchdog.sh` is disabled so it stops posting to Mattermost.
+   **Decommission the legacy OpenViking watchdog alert:** The old watchdog was a Hermes cron job (`openviking-embedding-watchdog`, ID `331ef9caaf01`) running `openviking-watchdog.sh` every 5 minutes; it has been removed. The PrometheusRules + Alertmanager config in `apps/openviking/openviking-alertmanager-config.yaml` now owns health/embedding alerting.
 
    **Rollback:** If the k3s instance fails, revert `~/.openviking/ovcli.conf` to `http://127.0.0.1:1933` and restart the MacBook Docker container. Data remains intact on the MacBook until explicitly removed.
 2. Verify the first scheduled backup lands in MinIO under `cnpg-backups/openviking/backups/`.
@@ -385,7 +385,7 @@ Option B (fallback if `ov restore` mangles vectors or account/user scopes):
 3. Skip CoreDNS alias; Hermes points directly at `192.168.1.179:30193`.
 4. Skip native metrics / ServiceMonitor.
 5. Add Prometheus pod-health alerts and Loki-based error/embedding-failure rules that replace the old MacBook watchdog.
-6. Decommission the MacBook `watchdog.sh` alert after k3s cutover is verified: stop the cron/launchd job, remove `~/.openviking/watchdog.sh` and `.watchdog.env`, and post a final test to Mattermost from the k3s path to confirm the new alert channel works.
+6. Decommission the legacy OpenViking watchdog alert after k3s cutover is verified. The old watchdog was a Hermes cron job (`openviking-embedding-watchdog`, ID `331ef9caaf01`) running `openviking-watchdog.sh` every 5 minutes; it has been removed. The PrometheusRules + Alertmanager config in `apps/openviking/openviking-alertmanager-config.yaml` now owns health/embedding alerting.
 
 **Status:** executed.
 
