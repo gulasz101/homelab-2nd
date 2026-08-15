@@ -87,7 +87,7 @@ spec:
               mountPath: /app/.openviking
       containers:
         - name: server
-          image: ghcr.io/volcengine/openviking@sha256:4bca8fa5dadf363d84c3eab1f7bb446f0b69587cd0dc059aad4c87382ee832b3
+          image: ghcr.io/volcengine/openviking@sha256:35384e355fc71b9c57871cf43b7779a8297b84cd3021a50f4efdc12a3c947279
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
