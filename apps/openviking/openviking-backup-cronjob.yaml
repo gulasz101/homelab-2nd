@@ -1,0 +1,91 @@
+---
+# Hourly OpenViking backup to OMV MinIO.
+# Uses the OpenViking CLI inside the same image to create a .ovpack,
+# then the MinIO client (mc) to mirror it to cnpg-backups/openviking/backups/.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openviking-backup
+  namespace: openviking
+spec:
+  schedule: "0 * * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          initContainers:
+            - name: render-cli-config
+              image: busybox:1.36
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  mkdir -p /root/.openviking
+                  cat > /root/.openviking/ovcli.conf <<EOF
+                  {
+                    "url": "http://openviking.openviking.svc.cluster.local:1933",
+                    "api_key": "$(OPENVIKING_ROOT_API_KEY)",
+                    "root_api_key": "$(OPENVIKING_ROOT_API_KEY)",
+                    "account": "homelab",
+                    "user": "andrzej"
+                  }
+                  EOF
+              env:
+                - name: OPENVIKING_ROOT_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: openviking-root-api-key
+                      key: root-api-key
+              volumeMounts:
+                - name: ovcli-config
+                  mountPath: /root/.openviking
+          containers:
+            - name: backup
+              image: ghcr.io/volcengine/openviking@sha256:07b01246fda12ca9ca6b5d7e21add2d2d9673da805ca4f09ec8d026a878dc7
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+                  PACK=/tmp/openviking-${TIMESTAMP}.ovpack
+                  echo "Starting OpenViking backup: ${PACK}"
+                  /app/.venv/bin/ov backup "${PACK}" --include-vectors --account homelab --user andrzej
+                  /app/.venv/bin/ov status --account homelab --user andrzej
+                  ls -lh "${PACK}"
+                  # mc mirror to MinIO (alias configured below)
+                  mc mirror --overwrite "${PACK}" homelab/cnpg-backups/openviking/backups/
+                  # Retention: keep 7 days
+                  mc rm --recursive --force --older-than 7d homelab/cnpg-backups/openviking/backups/
+                  echo "Backup complete: ${PACK}"
+              env:
+                - name: MC_HOST_homelab
+                  value: "http://$(OPENVIKING_MINIO_ACCESS_KEY):$(OPENVIKING_MINIO_SECRET_KEY)@openmediavault.local:9000"
+                - name: OPENVIKING_MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: openviking-minio-backup-creds
+                      key: ACCESS_KEY_ID
+                - name: OPENVIKING_MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: openviking-minio-backup-creds
+                      key: ACCESS_SECRET_KEY
+              # MC_HOST format: http://access-key:secret-key@endpoint:port
+              # Secret values are injected by Kubernetes; never committed plaintext.
+              volumeMounts:
+                - name: ovcli-config
+                  mountPath: /root/.openviking
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: ovcli-config
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}

@@ -1,0 +1,49 @@
+---
+# Loki Ruler rules for OpenViking. Replaces the old MacBook watchdog logic.
+# Lives in observability namespace and is auto-discovered by Loki sidecar.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openviking-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  openviking-errors.yaml: |
+    groups:
+      - name: openviking.errors
+        interval: 1m
+        rules:
+          - alert: OpenVikingErrorsOrCrashes
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {k8s_namespace_name="openviking"}
+                    |~ "Error|ERROR|ERR|FATAL|fatal|Traceback|ConnectTimeout|APITimeoutError|UNHEALTHY|unhealthy"
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: openviking
+            annotations:
+              summary: "openviking logged errors or crashes"
+              description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} logged errors within the last 5 minutes."
+
+          - alert: OpenVikingEmbeddingFailures
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {k8s_namespace_name="openviking"}
+                    |~ "embedding|embeddings|nomic-embed-text|ConnectTimeout|APITimeoutError|connection|timeout"
+                  [5m]
+                )
+              ) > 0
+            for: 3m
+            labels:
+              severity: warning
+              namespace: openviking
+            annotations:
+              summary: "openviking embedding endpoint may be failing"
+              description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} logged embedding-related failures in the last 5 minutes."

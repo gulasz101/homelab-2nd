@@ -1,0 +1,25 @@
+---
+# AlertmanagerConfig: route openviking namespace alerts to the Mattermost webhook.
+# The webhook secret must live in the same namespace as this AlertmanagerConfig.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: openviking-mattermost-alerts
+  namespace: openviking
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: openviking-mattermost
+    matchers:
+      - name: namespace
+        value: openviking
+        matchType: "="
+  receivers:
+    - name: openviking-mattermost
+      webhookConfigs:
+        - urlSecret:
+            name: openviking-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          maxAlerts: 10

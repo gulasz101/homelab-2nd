@@ -283,3 +283,21 @@ resources:
   - shlink/shlink-alertmanager-config.yaml
   - shlink/shlink-loki-rule.yaml
   - shlink/shlink-dashboard-configmap.yaml
+  # OpenViking namespace (local-only memory backend)
+  - openviking/namespace.yaml
+  # SOPS-encrypted secrets
+  - openviking/openviking-root-api-key.sops.yaml
+  - openviking/openviking-vlm-api-key.sops.yaml
+  - openviking/openviking-mattermost-webhook-url.sops.yaml
+  - openviking/openviking-minio-backup-creds.sops.yaml
+  # PVC + config + deployment + service
+  - openviking/openviking-config-configmap.yaml
+  - openviking/openviking-deployment.yaml
+  - openviking/openviking-service.yaml
+  # Backup
+  - openviking/openviking-backup-cronjob.yaml
+  # Observability
+  - openviking/openviking-prometheus-rules.yaml
+  - openviking/openviking-alertmanager-config.yaml
+  - openviking/openviking-loki-rule.yaml
+  - openviking/openviking-dashboard-configmap.yaml

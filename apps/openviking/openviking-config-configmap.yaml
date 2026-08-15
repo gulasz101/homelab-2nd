@@ -1,0 +1,44 @@
+---
+# OpenViking server config (non-secret parts). Secrets are substituted
+# by an init container using envsubst before the server starts.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openviking-config
+  namespace: openviking
+data:
+  ov.conf: |
+    {
+      "server": {
+        "host": "0.0.0.0",
+        "port": 1933,
+        "root_api_key": "${OPENVIKING_ROOT_API_KEY}"
+      },
+      "storage": {
+        "workspace": "/app/.openviking/workspace"
+      },
+      "log": {
+        "level": "INFO",
+        "output": "stdout"
+      },
+      "embedding": {
+        "dense": {
+          "api_base": "http://ollama-embeddings.gpu-embedding.svc.cluster.local:11434/v1",
+          "api_key": "local",
+          "provider": "openai",
+          "dimension": 768,
+          "model": "nomic-embed-text"
+        }
+      },
+      "vlm": {
+        "api_base": "http://litellm.llm-hub.svc.cluster.local:4000/v1",
+        "api_key": "${OPENVIKING_VLM_API_KEY}",
+        "provider": "openai",
+        "extra_headers": {
+          "User-Agent": "OpenViking/1.0"
+        },
+        "model": "mistral-3.5-middle",
+        "timeout": 3600,
+        "max_concurrent": 64
+      }
+    }

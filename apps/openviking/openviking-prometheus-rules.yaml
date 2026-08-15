@@ -1,0 +1,105 @@
+---
+# PrometheusRule for openviking namespace.
+# Includes resource alerts (from template) plus pod-health alerts that
+# replace the old MacBook watchdog's basic health check.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: openviking-resource-alerts
+  namespace: openviking
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: openviking.resources
+      interval: 1m
+      rules:
+        - alert: OpenVikingCPUAboveRequest
+          expr: |
+            sum by (pod, container, namespace) (
+              rate(container_cpu_usage_seconds_total{namespace="openviking", container!=""}[5m])
+            )
+            >
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_requests{namespace="openviking", resource="cpu", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: openviking
+          annotations:
+            summary: "openviking/{{ $labels.pod }} CPU above request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU usage exceeds its request for more than 5 minutes."
+
+        - alert: OpenVikingMemoryAboveRequest
+          expr: |
+            sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="openviking", container!=""}
+            )
+            >
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_requests{namespace="openviking", resource="memory", container!=""}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: openviking
+          annotations:
+            summary: "openviking/{{ $labels.pod }} memory above request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory usage exceeds its request for more than 5 minutes."
+
+        - alert: OpenVikingCPUAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              rate(container_cpu_usage_seconds_total{namespace="openviking", container!=""}[5m])
+            )
+            /
+            sum by (pod, container, namespace) (
+              container_spec_cpu_quota{namespace="openviking", container!=""} / container_spec_cpu_period{namespace="openviking", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: openviking
+          annotations:
+            summary: "openviking/{{ $labels.pod }} CPU above 90% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU is above 90% of its limit for more than 5 minutes."
+
+        - alert: OpenVikingMemoryAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="openviking", container!=""}
+            )
+            /
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="openviking", resource="memory", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: openviking
+          annotations:
+            summary: "openviking/{{ $labels.pod }} memory above 90% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 90% of its limit for more than 5 minutes."
+
+        - alert: OpenVikingPodNotReady
+          expr: |
+            kube_pod_status_ready{namespace="openviking", pod=~"openviking.*"} != 1
+          for: 3m
+          labels:
+            severity: critical
+            namespace: openviking
+          annotations:
+            summary: "openviking/{{ $labels.pod }} is not ready"
+            description: "The OpenViking pod has been not ready for more than 3 minutes."
+
+        - alert: OpenVikingContainerRestarting
+          expr: |
+            rate(kube_pod_container_status_restarts_total{namespace="openviking", container="server"}[15m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+            namespace: openviking
+          annotations:
+            summary: "openviking/{{ $labels.pod }} container is restarting"
+            description: "The OpenViking container has restarted in the last 15 minutes."

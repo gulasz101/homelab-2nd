@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: openviking-root-api-key
+    namespace: openviking
+type: Opaque
+stringData:
+    root-api-key: ENC[AES256_GCM,data:B92BnnhZ6JvqbPAz5Oq+fw==,iv:zhna/pPj7KEbz2dN80hwQj0DflyeUG0nbvGeHgIsU6E=,tag:754m92lKknA+56yMPL83zw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBrS3I0VnhHN1IxMHQ1c3Bh
+            QXE4N2wrdytBVzRxYjJvQzBsaVdCbUcxdFRJCndUUnl6UFBEZUVpRjlWRUx4bU9j
+            Nzd6c0gyZVUySGpzd2tlelV0SVFMbTgKLS0tIHhnbHlYL0J2dncvVG56UkhaaHdP
+            dmc2QmtEdk4rQnRCdW5EQ3NpMmc4dWMKFOiu3Qj2A0y0QGwWNK2JD+h79RpQgMlD
+            FX6f3ySXEiUdoem8i3KY9Fk1a4yvJKE19/5tGobzdvxMa/OHtCIXAA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-15T16:39:00Z"
+    mac: ENC[AES256_GCM,data:dxfl0c+wp6uo6aAv6VSWSH1RUKTOvYhJpcoDzJc4sqNhOjlaDxDy9HHEAm2UYPVW14FZEZm3t8j2g173Tw0/JRg6wGRA2QDsk3mFRjCvStWU9rzts5SDzJOZVPcjACiKMy5zxofKwQnwJ9PR+drscu/shWnpZ90ouIwS/haOyXY=,iv:dhg3C+cP5BH0RWt/W2MdgG2Ot5+NVX7qRce3SpRLRgg=,tag:hVWsZ9Dg8l0YOo1Wvhug2g==,type:str]
+    version: 3.13.1
