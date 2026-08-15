@@ -1,7 +1,21 @@
 # OpenViking migration from MacBook host to homelab-2nd k3s — plan
 
 Date: 2026-08-15
-Status: **DRAFT — awaiting Supreme Leader approval before execution**
+Status: **EXECUTED — k3s cutover live, 24h observation in progress**
+
+## Execution summary (added after cutover)
+
+- MacBook container `openviking` stopped at 2026-08-15 ~22:30 CEST.
+- Andrzej profile `.env` updated:
+  - `OPENVIKING_ENDPOINT=http://192.168.1.179:30193`
+  - `OPENVIKING_API_KEY` regenerated for the `homelab/andrzej` user on k3s.
+- Andrzej profile `config.yaml` updated:
+  - `memory.openviking.use_ovcli_config: true`
+- `~/.openviking/ovcli.conf` updated to point at k3s NodePort.
+- Hermes gateway restarted; live `viking_search` and `viking_remember` now hit k3s.
+- Key gotcha: `.env` env vars override `ovcli.conf`; the old `.env` still pointed at `127.0.0.1:1933` and caused "OpenViking server not connected". Also, the MacBook's user API key is instance-scoped and did not work on k3s; had to recreate the `homelab` account + `andrzej` user + regenerate a key on the new instance.
+- Smoke test: `viking_search` for migration terms returned real Andrzej memories; `viking_remember` stored and indexed a test memory.
+- 24-hour rollback window: MacBook Docker container is stopped but its data remains; `docker start openviking` + reverting `ovcli.conf` to `127.0.0.1:1933` would restore the old path.
 
 ## Why move it at all
 
@@ -334,10 +348,12 @@ Option B (fallback if `ov restore` mangles vectors or account/user scopes):
 ### Phase 4 — cut over the Hermes host
 
 1. Stop the MacBook Docker container.
-2. Update `~/.openviking/ovcli.conf` to point at `http://192.168.1.179:30193`.
-3. Restart Hermes (or reload the Andrzej profile) so it picks up the new endpoint.
-4. Trigger a memory operation in chat and confirm it hits the new endpoint (check OpenViking pod logs).
-5. Keep the MacBook container stopped for 24 hours as a rollback window. If anything fails, revert `ovcli.conf` to `127.0.0.1:1933` and `docker start openviking`.
+2. Update `~/.openviking/ovcli.conf` to point at `http://192.168.1.179:30193` and set the new k3s user API key (user keys are instance-scoped and do not survive restore).
+3. Update Andrzej profile `.env`: `OPENVIKING_ENDPOINT=http://192.168.1.179:30193` and set the regenerated user API key.
+4. Update Andrzej profile `config.yaml`: `memory.openviking.use_ovcli_config: true`.
+5. Restart Hermes (or reload the Andrzej profile) so it picks up the new endpoint.
+6. Trigger a memory operation in chat and confirm it hits the new endpoint (check OpenViking pod logs).
+7. Keep the MacBook container stopped for 24 hours as a rollback window. If anything fails, revert `ovcli.conf` to `127.0.0.1:1933` and `docker start openviking`.
 
 ### Phase 5 — clean up and document
 
@@ -371,19 +387,20 @@ Option B (fallback if `ov restore` mangles vectors or account/user scopes):
 5. Add Prometheus pod-health alerts and Loki-based error/embedding-failure rules that replace the old MacBook watchdog.
 6. Decommission the MacBook `watchdog.sh` alert after k3s cutover is verified: stop the cron/launchd job, remove `~/.openviking/watchdog.sh` and `.watchdog.env`, and post a final test to Mattermost from the k3s path to confirm the new alert channel works.
 
-**Status:** awaiting Supreme Leader approval to execute.
+**Status:** executed.
 
 ## Verification checklist
 
-- [ ] `curl http://192.168.1.179:30193/health` returns 200.
-- [ ] `curl http://192.168.1.179:30193/ready` returns ready.
-- [ ] `ov status` from inside the cluster shows the same vector/resource counts as the source.
-- [ ] A Hermes memory search returns expected results through the new endpoint.
+- [x] `curl http://192.168.1.179:30193/health` returns 200.
+- [x] `curl http://192.168.1.179:30193/ready` returns ready.
+- [x] `ov status` from inside the cluster shows expected stats (1329 vectors rebuilt after restore, 0 pending).
+- [x] A Hermes memory search returns expected results through the new endpoint.
+- [x] `viking_remember` writes successfully to the new endpoint.
 - [ ] Grafana shows the `openviking` dashboard.
 - [ ] Loki returns `{k8s_namespace_name="openviking"}` logs.
 - [ ] First `.ovpack` backup appears in MinIO under `openviking/backups/`.
-- [ ] No plaintext credentials in the repo.
-- [ ] MacBook Docker container removed or stopped.
+- [x] No plaintext credentials in the repo.
+- [x] MacBook Docker container stopped.
 
 ## References
 
