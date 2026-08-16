@@ -57,7 +57,9 @@ spec:
                   PACK=/tmp/openviking-${TIMESTAMP}.ovpack
                   echo "Starting OpenViking backup: ${PACK}"
                   /app/.venv/bin/ov language en
-                  /app/.venv/bin/ov backup "${PACK}" --include-vectors --account homelab --user andrzej
+                  # Note: --include-vectors fails when the vector snapshot is incomplete.
+                  # We backup the filesystem + memory data and rebuild vectors from the queue if needed.
+                  /app/.venv/bin/ov backup "${PACK}" --account homelab --user andrzej
                   export BACKUP_PACK="${PACK}"
                   /app/.venv/bin/ov status --account homelab --user andrzej
                   ls -lh "${PACK}"
