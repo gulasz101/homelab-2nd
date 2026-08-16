@@ -29,8 +29,8 @@ spec:
                   cat > /root/.openviking/ovcli.conf <<EOF
                   {
                     "url": "http://openviking.openviking.svc.cluster.local:1933",
-                    "api_key": "$(OPENVIKING_ROOT_API_KEY)",
-                    "root_api_key": "$(OPENVIKING_ROOT_API_KEY)",
+                    "api_key": "${OPENVIKING_ROOT_API_KEY}",
+                    "root_api_key": "${OPENVIKING_ROOT_API_KEY}",
                     "account": "homelab",
                     "user": "andrzej"
                   }
@@ -56,17 +56,56 @@ spec:
                   TIMESTAMP=$(date +%Y%m%d-%H%M%S)
                   PACK=/tmp/openviking-${TIMESTAMP}.ovpack
                   echo "Starting OpenViking backup: ${PACK}"
+                  /app/.venv/bin/ov language en
                   /app/.venv/bin/ov backup "${PACK}" --include-vectors --account homelab --user andrzej
+                  export BACKUP_PACK="${PACK}"
                   /app/.venv/bin/ov status --account homelab --user andrzej
                   ls -lh "${PACK}"
-                  # mc mirror to MinIO (alias configured below)
-                  mc mirror --overwrite "${PACK}" homelab/cnpg-backups/openviking/backups/
-                  # Retention: keep 7 days
-                  mc rm --recursive --force --older-than 7d homelab/cnpg-backups/openviking/backups/
+                  # Upload to MinIO using Python since mc is not in the image
+                  /app/.venv/bin/python3 - <<'PY'
+                  import os, sys, urllib.request, urllib.parse, hashlib, datetime, xml.etree.ElementTree as ET, base64
+                  bucket = 'cnpg-backups'
+                  prefix = 'openviking/backups/'
+                  endpoint = 'http://openmediavault.local:9000'
+                  access_key = os.environ['OPENVIKING_MINIO_ACCESS_KEY']
+                  secret_key = os.environ['OPENVIKING_MINIO_SECRET_KEY']
+                  local_path = os.environ['BACKUP_PACK']
+                  object_key = prefix + os.path.basename(local_path)
+                  data = open(local_path, 'rb').read()
+                  headers = {
+                      'Content-Length': str(len(data)),
+                      'Content-Type': 'application/octet-stream',
+                      'x-amz-content-sha256': 'UNSIGNED-PAYLOAD',
+                  }
+                  url = f"{endpoint}/{bucket}/{urllib.parse.quote(object_key, safe='/')}"
+                  req = urllib.request.Request(url, data=data, method='PUT', headers=headers)
+                  creds = base64.b64encode(f"{access_key}:{secret_key}".encode()).decode()
+                  req.add_header('Authorization', f'Basic {creds}')
+                  resp = urllib.request.urlopen(req, timeout=60)
+                  print(f"Uploaded {local_path} -> {bucket}/{object_key} (HTTP {resp.status})")
+                  # List and delete objects older than 7 days
+                  list_url = f"{endpoint}/{bucket}?list-type=2&prefix={urllib.parse.quote(prefix)}"
+                  list_req = urllib.request.Request(list_url, method='GET')
+                  list_req.add_header('Authorization', f'Basic {creds}')
+                  list_resp = urllib.request.urlopen(list_req, timeout=30)
+                  root = ET.fromstring(list_resp.read())
+                  ns = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+                  cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
+                  removed = 0
+                  for contents in root.findall('s3:Contents', ns):
+                      key = contents.find('s3:Key', ns).text
+                      last_mod = datetime.datetime.fromisoformat(contents.find('s3:LastModified', ns).text.replace('Z', '+00:00'))
+                      if last_mod < cutoff:
+                          del_url = f"{endpoint}/{bucket}/{urllib.parse.quote(key, safe='/')}"
+                          del_req = urllib.request.Request(del_url, method='DELETE')
+                          del_req.add_header('Authorization', f'Basic {creds}')
+                          urllib.request.urlopen(del_req, timeout=30)
+                          removed += 1
+                          print(f"Removed old backup: {key}")
+                  print(f"Retention cleanup complete, removed {removed} objects")
+                  PY
                   echo "Backup complete: ${PACK}"
               env:
-                - name: MC_HOST_homelab
-                  value: "http://$(OPENVIKING_MINIO_ACCESS_KEY):$(OPENVIKING_MINIO_SECRET_KEY)@openmediavault.local:9000"
                 - name: OPENVIKING_MINIO_ACCESS_KEY
                   valueFrom:
                     secretKeyRef:
@@ -77,15 +116,20 @@ spec:
                     secretKeyRef:
                       name: openviking-minio-backup-creds
                       key: ACCESS_SECRET_KEY
-              # MC_HOST format: http://access-key:secret-key@endpoint:port
-              # Secret values are injected by Kubernetes; never committed plaintext.
+                - name: BACKUP_PACK
+                  value: /tmp/openviking-OVPACK_PLACEHOLDER.ovpack
               volumeMounts:
                 - name: ovcli-config
                   mountPath: /root/.openviking
                 - name: tmp
                   mountPath: /tmp
+                - name: data
+                  mountPath: /data
           volumes:
             - name: ovcli-config
               emptyDir: {}
             - name: tmp
               emptyDir: {}
+            - name: data
+              persistentVolumeClaim:
+                claimName: openviking-data
