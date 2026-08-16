@@ -106,6 +106,10 @@ spec:
                   PY
                   echo "Backup complete: ${PACK}"
               env:
+                - name: OPENVIKING_CLI_CONFIG_FILE
+                  value: /root/.openviking/ovcli.conf
+                - name: HOME
+                  value: /root
                 - name: OPENVIKING_MINIO_ACCESS_KEY
                   valueFrom:
                     secretKeyRef:
