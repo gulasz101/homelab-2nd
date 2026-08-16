@@ -132,4 +132,4 @@ spec:
               emptyDir: {}
             - name: data
               persistentVolumeClaim:
-                claimName: openviking-data
+                claimName: openviking-workspace
