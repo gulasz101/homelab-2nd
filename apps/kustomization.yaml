@@ -253,6 +253,10 @@ resources:
   - firecrawl/api-service.yaml
   - firecrawl/playwright-deployment.yaml
   - firecrawl/playwright-service.yaml
+  # Cloudflare Tunnel for firecrawl.voitech.dev
+  - firecrawl/firecrawl-tunnel-token.sops.yaml
+  - firecrawl/cloudflared-firecrawl-deployment.yaml
+  - firecrawl/firecrawl-tunnel-ingress-configmap.yaml
   # Observability
   - firecrawl/service-monitor.yaml
   - firecrawl/firecrawl-prometheus-rules.yaml

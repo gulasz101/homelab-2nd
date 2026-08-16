@@ -1,0 +1,10 @@
+---
+# Reminder of the public hostname rule (real rule lives in Cloudflare Zero Trust)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: firecrawl-tunnel-ingress
+  namespace: firecrawl
+data:
+  note: |
+    # firecrawl.voitech.dev -> http://api.firecrawl.svc.cluster.local:3002
