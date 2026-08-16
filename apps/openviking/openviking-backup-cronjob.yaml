@@ -63,48 +63,106 @@ spec:
                   export BACKUP_PACK="${PACK}"
                   /app/.venv/bin/ov status --account homelab --user andrzej
                   ls -lh "${PACK}"
-                  # Upload to MinIO using Python since mc is not in the image
+                  # Upload to MinIO using Python with AWS SigV4 signing (mc is not in the image)
                   /app/.venv/bin/python3 - <<'PY'
-                  import os, sys, urllib.request, urllib.parse, hashlib, datetime, xml.etree.ElementTree as ET, base64
+                  import os, sys, urllib.request, urllib.parse, hashlib, hmac, datetime, xml.etree.ElementTree as ET, base64, time
+                  import http.client
+
                   bucket = 'cnpg-backups'
                   prefix = 'openviking/backups/'
                   endpoint = 'http://openmediavault.local:9000'
                   access_key = os.environ['OPENVIKING_MINIO_ACCESS_KEY']
                   secret_key = os.environ['OPENVIKING_MINIO_SECRET_KEY']
                   local_path = os.environ['BACKUP_PACK']
+                  region = 'us-east-1'
+                  service = 's3'
+
+                  def sha256(data):
+                      return hashlib.sha256(data if isinstance(data, bytes) else data.encode('utf-8')).hexdigest()
+
+                  def sign(key, msg):
+                      return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+
+                  def get_signature_key(secret, date_stamp, region, service):
+                      k_date = sign(('AWS4' + secret).encode('utf-8'), date_stamp)
+                      k_region = sign(k_date, region)
+                      k_service = sign(k_region, service)
+                      return sign(k_service, 'aws4_request')
+
+                  def signed_request(method, path, payload=b'', query=''):
+                      t = datetime.datetime.now(datetime.timezone.utc)
+                      date_stamp = t.strftime('%Y%m%d')
+                      amz_date = t.strftime('%Y%m%dT%H%M%SZ')
+                      if isinstance(payload, str):
+                          payload = payload.encode('utf-8')
+                      payload_hash = sha256(payload)
+                      host = 'openmediavault.local:9000'
+                      headers = {
+                          'host': host,
+                          'x-amz-content-sha256': payload_hash,
+                          'x-amz-date': amz_date,
+                      }
+                      if method in ('PUT', 'POST'):
+                          headers['content-length'] = str(len(payload))
+                      header_keys = sorted(headers.keys())
+                      signed_headers = ';'.join(header_keys)
+                      canonical_request = '\n'.join([
+                          method,
+                          path,
+                          query,
+                          ''.join(f'{k}:{headers[k]}\n' for k in header_keys),
+                          signed_headers,
+                          payload_hash,
+                      ])
+                      credential_scope = f'{date_stamp}/{region}/{service}/aws4_request'
+                      string_to_sign = '\n'.join([
+                          'AWS4-HMAC-SHA256',
+                          amz_date,
+                          credential_scope,
+                          sha256(canonical_request.encode('utf-8')),
+                      ])
+                      signing_key = get_signature_key(secret_key, date_stamp, region, service)
+                      signature = hmac.new(signing_key, string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+                      auth_header = f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'
+                      headers['Authorization'] = auth_header
+                      url = f'{endpoint}{path}'
+                      req = urllib.request.Request(url, data=payload, method=method, headers=headers)
+                      return urllib.request.urlopen(req, timeout=120)
+
                   object_key = prefix + os.path.basename(local_path)
                   data = open(local_path, 'rb').read()
-                  headers = {
-                      'Content-Length': str(len(data)),
-                      'Content-Type': 'application/octet-stream',
-                      'x-amz-content-sha256': 'UNSIGNED-PAYLOAD',
-                  }
-                  url = f"{endpoint}/{bucket}/{urllib.parse.quote(object_key, safe='/')}"
-                  req = urllib.request.Request(url, data=data, method='PUT', headers=headers)
-                  creds = base64.b64encode(f"{access_key}:{secret_key}".encode()).decode()
-                  req.add_header('Authorization', f'Basic {creds}')
-                  resp = urllib.request.urlopen(req, timeout=60)
-                  print(f"Uploaded {local_path} -> {bucket}/{object_key} (HTTP {resp.status})")
+                  encoded_key = urllib.parse.quote(object_key, safe='/')
+
+                  for attempt in range(3):
+                      try:
+                          resp = signed_request('PUT', f'/{bucket}/{encoded_key}', data)
+                          print(f'Uploaded {local_path} -> {bucket}/{object_key} (HTTP {resp.status})')
+                          break
+                      except Exception as e:
+                          print(f'Upload attempt {attempt + 1} failed: {e}')
+                          if attempt == 2:
+                              raise
+                          time.sleep(2 ** attempt)
+
                   # List and delete objects older than 7 days
-                  list_url = f"{endpoint}/{bucket}?list-type=2&prefix={urllib.parse.quote(prefix)}"
-                  list_req = urllib.request.Request(list_url, method='GET')
-                  list_req.add_header('Authorization', f'Basic {creds}')
-                  list_resp = urllib.request.urlopen(list_req, timeout=30)
+                  list_path = f'/{bucket}'
+                  list_query = urllib.parse.urlencode({'prefix': prefix, 'list-type': '2'})
+                  list_resp = signed_request('GET', list_path, b'', list_query)
                   root = ET.fromstring(list_resp.read())
                   ns = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
                   cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
                   removed = 0
                   for contents in root.findall('s3:Contents', ns):
-                      key = contents.find('s3:Key', ns).text
+                      key_el = contents.find('s3:Key', ns)
+                      if key_el is None:
+                          continue
+                      key = key_el.text
                       last_mod = datetime.datetime.fromisoformat(contents.find('s3:LastModified', ns).text.replace('Z', '+00:00'))
                       if last_mod < cutoff:
-                          del_url = f"{endpoint}/{bucket}/{urllib.parse.quote(key, safe='/')}"
-                          del_req = urllib.request.Request(del_url, method='DELETE')
-                          del_req.add_header('Authorization', f'Basic {creds}')
-                          urllib.request.urlopen(del_req, timeout=30)
+                          signed_request('DELETE', f'/{bucket}/{urllib.parse.quote(key, safe="/")}')
                           removed += 1
-                          print(f"Removed old backup: {key}")
-                  print(f"Retention cleanup complete, removed {removed} objects")
+                          print(f'Removed old backup: {key}')
+                  print(f'Retention cleanup complete, removed {removed} objects')
                   PY
                   echo "Backup complete: ${PACK}"
               env:
