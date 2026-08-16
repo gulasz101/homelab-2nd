@@ -108,7 +108,7 @@ spec:
                       signed_headers = ';'.join(header_keys)
                       canonical_request = '\n'.join([
                           method,
-                          path,
+                          urllib.parse.quote(path, safe='/'),
                           query,
                           ''.join(f'{k}:{headers[k]}\n' for k in header_keys),
                           signed_headers,
@@ -147,9 +147,11 @@ spec:
                           time.sleep(2 ** attempt)
 
                   # List and delete objects older than 7 days
-                  list_path = f'/{bucket}'
-                  list_query = urllib.parse.urlencode({'prefix': prefix, 'list-type': '2'})
-                  list_resp = signed_request('GET', list_path, b'', list_query)
+                  list_query = urllib.parse.urlencode(
+                      {'list-type': '2', 'prefix': prefix},
+                      quote_via=urllib.parse.quote,
+                  )
+                  list_resp = signed_request('GET', f'/{bucket}', b'', list_query)
                   root = ET.fromstring(list_resp.read())
                   ns = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
                   cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
