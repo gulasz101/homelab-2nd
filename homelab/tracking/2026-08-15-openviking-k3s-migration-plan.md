@@ -15,6 +15,13 @@ Status: **EXECUTED — k3s cutover live, 24h observation in progress**
 - Hermes gateway restarted; live `viking_search` and `viking_remember` now hit k3s.
 - Key gotcha: `.env` env vars override `ovcli.conf`; the old `.env` still pointed at `127.0.0.1:1933` and caused "OpenViking server not connected". Also, the MacBook's user API key is instance-scoped and did not work on k3s; had to recreate the `homelab` account + `andrzej` user + regenerate a key on the new instance.
 - Smoke test: `viking_search` for migration terms returned real Andrzej memories; `viking_remember` stored and indexed a test memory.
+- 20 hours later (2026-08-16): pod healthy, 1351 vectors, 0 queue errors. Hourly backups to OMV MinIO fixed after multiple bugs:
+  - CronJob init container used `$(VAR)` (command substitution) instead of `${VAR}`; wrote empty API keys.
+  - Backup container needed `OPENVIKING_CLI_CONFIG_FILE` and `HOME` env vars.
+  - OpenViking image lacks `mc`; replaced with Python `urllib`.
+  - MinIO requires AWS SigV4, not Basic auth.
+  - Reused `honcho-backups` service account was scoped only to `cnpg-backups/honcho/*`; created dedicated `openviking-backups` user + policy for `cnpg-backups/openviking/*`.
+  - `--include-vectors` fails on incomplete snapshot; removed from backup command.
 - 24-hour rollback window: MacBook Docker container is stopped but its data remains; `docker start openviking` + reverting `ovcli.conf` to `127.0.0.1:1933` would restore the old path.
 
 ## Why move it at all
