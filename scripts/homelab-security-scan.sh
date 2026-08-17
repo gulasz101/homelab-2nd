@@ -284,21 +284,38 @@ if [[ $CRITICAL -gt 0 ]]; then
   echo "Action required: critical findings detected. Check the sections above and open or update task notes in homelab/tasks/."
   echo ""
   echo "Open task notes:"
+  echo ""
   python3 - "$TASK_DIR" <<'PY'
 import pathlib, re, sys
 d = pathlib.Path(sys.argv[1])
-open_tasks = []
+rows = []
 for f in sorted(d.glob('*.md')):
     text = f.read_text()
-    m = re.search(r'^status:\s*(\S+)', text, re.M)
-    if m and m.group(1) in ('open', 'in_progress'):
-        open_tasks.append(f.name)
-if open_tasks:
-    for name in open_tasks:
-        print(name)
+    status = re.search(r'^status:\s*(\S+)', text, re.M)
+    status = status.group(1) if status else 'unknown'
+    if status not in ('open', 'in_progress'):
+        continue
+    title = re.search(r'^title:\s*"([^"]+)"', text, re.M)
+    title = title.group(1) if title else ''
+    priority = re.search(r'^priority:\s*(\S+)', text, re.M)
+    priority = priority.group(1) if priority else ''
+    created = re.search(r'^created:\s*(\S+)', text, re.M)
+    created = created.group(1) if created else ''
+    labels = re.search(r'^labels:\s*\n((?:\s+-\s+[^\n]+\n)+)', text, re.M)
+    if labels:
+        labels = ', '.join(re.findall(r'-\s+([^\n]+)', labels.group(1)))
+    else:
+        labels = ''
+    rows.append((f.name, title, status, priority, created, labels))
+if rows:
+    print('| File | Title | Status | Priority | Created | Labels |')
+    print('|------|-------|--------|----------|---------|--------|')
+    for r in rows:
+        print(f'| {r[0]} | {r[1]} | {r[2]} | {r[3]} | {r[4]} | {r[5]} |')
 else:
     print('(none)')
 PY
+  echo ""
 elif [[ $WARNINGS -gt 0 ]]; then
   echo "No criticals, but warnings need review."
 else
