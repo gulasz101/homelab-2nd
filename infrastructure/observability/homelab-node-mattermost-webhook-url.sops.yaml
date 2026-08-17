@@ -1,0 +1,23 @@
+apiVersion: v1
+data:
+    url: ENC[AES256_GCM,data:i9s2GsBnxiDrBl6d61yaCs5ZU+zESGxQ1a1ePmtz4eomUvd7zDZY9KK2mrFPGm4J4/fSo7lJ+bBaEOzGM0PXcpXVJ3KqiK5g7bmk/Q==,iv:qknohf0ZgoctZpzLaINiRF3jaAID6EIk2hqkhPiu/30=,tag:ohW7i4Ko0DxTQtv655byVg==,type:str]
+kind: Secret
+metadata:
+    name: homelab-node-mattermost-webhook-url
+    namespace: observability
+type: Opaque
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA5aWMybS9mZXF2cldIaE0v
+            YmN5Z3l6YmhLd2tFdmxhcWdFMWhndGx6VjFrCnNxM2Y1RytOdUl4Qmxxdk9jcTZB
+            cVYwU1JpRjh5YUM0YkNxamNHMHZNWVkKLS0tIC9xY05FbUhpZ2crdUNNdGpXaVVK
+            OUJkNTNqZG5Iazk0SFdhZ0o2bGFBVnMK01x3FfSfQxWO/WMlucmSf3AfSB1cQ4QK
+            2qIlCxwaCr+peD1Fe14pLU0GiRNJ7bHhC3fI6FnQeA3AjEQ0UM4eew==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-17T06:27:36Z"
+    mac: ENC[AES256_GCM,data:bRyA6a90su1V+8scPT2LU9izE6INbw1YuEEti8hCugzdx/Vo6kfEsIz3ELTmkEtw9UlgbM6r5dSP4Eqqtdb4TLSgbj24nS3pK6csapbv5t6Vngj5SywyyTZP/5ONZzHNri04VZBRQtw2EE0+X+vecJIyu5xcx68NSbTW/TQN+TI=,iv:PMoeM8uGT1JEA5QtLRjYt9G+t8ylaxwdXl258d12Bw0=,tag:wer6dlMWHFr9WoQmliei4A==,type:str]
+    version: 3.13.1
