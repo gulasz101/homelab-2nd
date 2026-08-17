@@ -1,0 +1,28 @@
+---
+# AlertmanagerConfig: route llm-hub namespace alerts to the Mattermost webhook.
+# The webhook secret must live in the same namespace as this AlertmanagerConfig
+# because the Prometheus Operator only resolves urlSecret references within the
+# CRD's own namespace. The operator reads the secret and inlines the URL into
+# Alertmanager's generated config; no cross-namespace lookup is performed.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: llm-hub-mattermost-alerts
+  namespace: llm-hub
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: llm-hub-mattermost
+    matchers:
+      - name: namespace
+        value: llm-hub
+        matchType: '='
+  receivers:
+    - name: llm-hub-mattermost
+      webhookConfigs:
+        - urlSecret:
+            name: llm-hub-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          maxAlerts: 10

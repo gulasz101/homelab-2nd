@@ -79,6 +79,11 @@ resources:
   - llm-hub/openwebui-helm-release.yaml
   # Provisioned Grafana dashboard for llm-hub
   - llm-hub/llm-hub-dashboard-configmap.yaml
+  # Observability
+  - llm-hub/llm-hub-mattermost-webhook-url.sops.yaml
+  - llm-hub/llm-hub-alertmanager-config.yaml
+  - llm-hub/llm-hub-prometheus-rules.yaml
+  - llm-hub/llm-hub-loki-rules.yaml
   # Cloudflare Tunnels for llm.voitech.dev and ai-chat.voitech.dev
   - llm-hub/cloudflared-litellm-deployment.yaml
   - llm-hub/cloudflared-openwebui-deployment.yaml

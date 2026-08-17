@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: llm-hub-mattermost-webhook-url
+    namespace: llm-hub
+stringData:
+    url: ENC[AES256_GCM,data:d3RkEjWWh4xOTkNd7to5kYGxREdYIp6opxL6qjasp2cMnwU/YsgoQnDXGHFDUcMi0XyGRYdKJUqB,iv:f1T87gSZt4/cQ/v8z7kETz4J7crZT9hkQwTvQy+Iy1Y=,tag:zkAI4ZBULnDpUhYwQRQc3A==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA2VGZpdVZjNE8xNDhwODMz
+            eG9ES0xZY0w4dDBncmlHcEZyYkhyS1dkaXh3CklVckh6dXNzOVJxbHlIdDBsMlF1
+            WU85UUNYbEtCaDQyeHRGQVhXWmEyK3MKLS0tIDRaRVdRZHZsMGI2YndrKytPRjd0
+            dzdNZHBZUDJ4UllCSU1RWmdMb0hobm8KZ46AJH0voiAACucYwnEm4/tpAl1at4Ak
+            7p7yHWdfnKmmRRsmxOvHKQuyi1zLMvPVBAXsd+D9IjptBrIj/uU4OQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-17T17:53:18Z"
+    mac: ENC[AES256_GCM,data:SfesZ8bqKA3cRhUJ4lh4XpAxStwZZ3m1E1W371iA9hcpw8hZF7uLXRjjdbhxLh31ACDEjbfRsoh/s/NRniQQ03nAycM4uYrg387r/mnh0ISMDJbehTNxnGggkBgk+NZwkboZqSn61C47zT5v8WlfnWu28jgLZiPkGk6N0AEaFG4=,iv:mF5W50IB1wuAFpwvMhU2qtC7B5LcEIXFDsc4ny/CMsU=,tag:UgPNPSlsh2uZd7mJyZ28KQ==,type:str]
+    version: 3.13.1

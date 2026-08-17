@@ -1,0 +1,54 @@
+---
+# Loki Ruler rule: fire an alert when LiteLLM logs upstream 429 rate-limit errors
+# or Zai “Insufficient balance” errors. The loki-sc-rules sidecar in the loki-0
+# pod watches ConfigMaps labelled loki_rule and mounts them into /rules for the
+# Loki Ruler to evaluate. Alerts are sent to Alertmanager via
+# loki.rulerConfig.alertmanager_url.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-hub-error-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  llm-hub-errors.yaml: |
+    groups:
+      - name: llm-hub.errors
+        interval: 1m
+        rules:
+          - alert: LiteLLMUpstreamRateLimited
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {k8s_namespace_name="llm-hub", k8s_pod_name=~"litellm.*"}
+                    |~ "429 Too Many Requests|RateLimitError|ZaiException|Insufficient balance or no resource package"
+                  [5m]
+                )
+              ) > 0
+            for: 1m
+            labels:
+              severity: warning
+              namespace: llm-hub
+            annotations:
+              summary: "LiteLLM is getting rate-limited by an upstream provider"
+              description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} has logged upstream 429/rate-limit errors in the last 5 minutes."
+              runbook_url: "https://grafana.voitech.dev/explore?orgId=1&left=%7B%22datasource%22:%22Loki%22,%22queries%22:%5B%7B%22refId%22:%22A%22,%22expr%22:%22%7Bk8s_namespace_name%3D%5C%22llm-hub%5C%22%2Ck8s_pod_name%3D%5C%22{{ $labels.pod }}%5C%22%7D%20%7C%3D%20%5C%22429%5C%22%20or%20%7C%3D%20%5C%22RateLimitError%5C%22%20or%20%7C%3D%20%5C%22Insufficient%20balance%5C%22%22%7D%5D%2C%22range%22:%7B%22from%22:%22now-1h%22%2C%22to%22:%22now%22%7D%7D"
+
+          - alert: OpenWebUIStreamParseError
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {k8s_namespace_name="llm-hub", k8s_pod_name=~"open-webui.*"}
+                    |~ "Unexpected token|is not valid JSON|data: \\{\"id"
+                  [5m]
+                )
+              ) > 0
+            for: 1m
+            labels:
+              severity: warning
+              namespace: llm-hub
+            annotations:
+              summary: "Open WebUI logged a streaming/SSE JSON parse error"
+              description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} logged an SSE/JSON parse error in the last 5 minutes."
+              runbook_url: "https://grafana.voitech.dev/explore?orgId=1&left=%7B%22datasource%22:%22Loki%22,%22queries%22:%5B%7B%22refId%22:%22A%22,%22expr%22:%22%7Bk8s_namespace_name%3D%5C%22llm-hub%5C%22%2Ck8s_pod_name%3D%5C%22{{ $labels.pod }}%5C%22%7D%20%7C%3D%20%5C%22Unexpected%20token%5C%22%20or%20%7C%3D%20%5C%22is%20not%20valid%20JSON%5C%22%22%7D%5D%2C%22range%22:%7B%22from%22:%22now-1h%22%2C%22to%22:%22now%22%7D%7D"

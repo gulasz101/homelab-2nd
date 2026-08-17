@@ -1,0 +1,87 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: llm-hub-resource-alerts
+  namespace: llm-hub
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: llm-hub.resources
+      interval: 1m
+      rules:
+        - alert: OpenWebUIMemoryAbove80PercentLimit
+          expr: |
+            100 * sum by (pod, container) (
+              container_memory_working_set_bytes{namespace="llm-hub", container="open-webui"}
+            ) / sum by (pod, container) (
+              kube_pod_container_resource_limits{namespace="llm-hub", container="open-webui", resource="memory"}
+            ) > 80
+          for: 1m
+          labels:
+            severity: critical
+            namespace: llm-hub
+          annotations:
+            summary: "Open WebUI memory is above 80% of its limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 80% of its limit for more than 1 minute."
+
+        - alert: LiteLLMMemoryAbove80PercentLimit
+          expr: |
+            100 * sum by (pod, container) (
+              container_memory_working_set_bytes{namespace="llm-hub", container="litellm"}
+            ) / sum by (pod, container) (
+              kube_pod_container_resource_limits{namespace="llm-hub", container="litellm", resource="memory"}
+            ) > 80
+          for: 1m
+          labels:
+            severity: critical
+            namespace: llm-hub
+          annotations:
+            summary: "LiteLLM memory is above 80% of its limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 80% of its limit for more than 1 minute."
+
+        - alert: LLMHubContainerOOMKilled
+          expr: |
+            sum by (pod, container) (
+              kube_pod_container_status_terminated_reason{namespace="llm-hub", reason="OOMKilled"}
+            ) > 0
+          for: 0m
+          labels:
+            severity: critical
+            namespace: llm-hub
+          annotations:
+            summary: "LLM-hub container was OOM-killed"
+            description: "{{ $labels.pod }}/{{ $labels.container }} was terminated due to OOMKilled."
+
+        - alert: OpenWebUICPUAboveRequest
+          expr: |
+            sum by (pod, container) (
+              rate(container_cpu_usage_seconds_total{namespace="llm-hub", container="open-webui"}[5m])
+            ) >
+            sum by (pod, container) (
+              kube_pod_container_resource_requests{namespace="llm-hub", container="open-webui", resource="cpu"}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: llm-hub
+          annotations:
+            summary: "Open WebUI CPU usage is above its request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU usage exceeds the requested CPU for more than 5 minutes."
+
+        - alert: LiteLLMCPUAboveRequest
+          expr: |
+            sum by (pod, container) (
+              rate(container_cpu_usage_seconds_total{namespace="llm-hub", container="litellm"}[5m])
+            ) >
+            sum by (pod, container) (
+              kube_pod_container_resource_requests{namespace="llm-hub", container="litellm", resource="cpu"}
+            )
+          for: 5m
+          labels:
+            severity: warning
+            namespace: llm-hub
+          annotations:
+            summary: "LiteLLM CPU usage is above its request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU usage exceeds the requested CPU for more than 5 minutes."
