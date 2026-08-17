@@ -284,9 +284,21 @@ if [[ $CRITICAL -gt 0 ]]; then
   echo "Action required: critical findings detected. Check the sections above and open or update task notes in homelab/tasks/."
   echo ""
   echo "Open task notes:"
-  ls -1 "$TASK_DIR"/*.md 2>/dev/null | while read -r t; do
-    basename "$t"
-  done
+  python3 - "$TASK_DIR" <<'PY'
+import pathlib, re, sys
+d = pathlib.Path(sys.argv[1])
+open_tasks = []
+for f in sorted(d.glob('*.md')):
+    text = f.read_text()
+    m = re.search(r'^status:\s*(\S+)', text, re.M)
+    if m and m.group(1) in ('open', 'in_progress'):
+        open_tasks.append(f.name)
+if open_tasks:
+    for name in open_tasks:
+        print(name)
+else:
+    print('(none)')
+PY
 elif [[ $WARNINGS -gt 0 ]]; then
   echo "No criticals, but warnings need review."
 else
