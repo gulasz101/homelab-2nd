@@ -406,22 +406,6 @@ spec:
       interval: 15s
       scrapeTimeout: 10s
 
-    # Single-node k3s is usually at ~99% CPU requests. A 1-replica Deployment
-    # with maxSurge:25% cannot schedule the new pod before the old one dies.
-    # Use Recreate so Helm upgrades terminate old then start new. Brief outage
-    # is unavoidable on a one-node cluster with no surge headroom.
-    postRenderers:
-      - kustomize:
-          patches:
-            - target:
-                kind: Deployment
-                name: litellm
-              patch: |
-                - op: replace
-                  path: /spec/strategy
-                  value:
-                    type: Recreate
-
     resources:
       requests:
         cpu: "1"
