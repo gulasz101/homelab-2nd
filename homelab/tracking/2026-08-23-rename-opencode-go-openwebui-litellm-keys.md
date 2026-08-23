@@ -75,11 +75,13 @@ rm /tmp/litellm-master-key.yaml /tmp/openwebui-litellm-api-key.yaml
    ```
 2. Push and let Flux reconcile.
 3. Check that the `llm-hub` Kustomization becomes ready.
-4. Confirm the Open WebUI pod restarts and still lists all LiteLLM models, including the `-go` ones.
-5. Smoke-test a working `-go` model (e.g. `minimax-m3-go`) via the public UI.
+4. Confirm LiteLLM HelmRelease upgrades successfully after switching its Deployment strategy to `Recreate` so the single-node cluster can roll without surge headroom.
+5. Confirm the Open WebUI pod restarts and still lists all LiteLLM models, including the `-go` ones.
+6. Smoke-test a working `-go` model (e.g. `minimax-m3-go`) via the public UI.
 
 ## Notes
 
 - No plaintext credentials were committed. The age private key is stored in the Supreme Leader's password manager and was referenced via `~/.keys/age-homelab-2nd.txt` locally.
 - The actual LiteLLM master key value did not change; only the secret name consumed by Open WebUI changed.
+- The LiteLLM Deployment strategy was changed to `Recreate` via Helm `postRenderers`. On a single-node k3s cluster at ~99% CPU requests, a rolling update with `maxSurge: 25%` cannot schedule a second pod, so the old pod must terminate first. This causes a brief outage during LiteLLM upgrades but is unavoidable without freeing CPU headroom.
 - The China-hosted DeepSeek opt-in error for `deepseek-v4-flash-go` is out of scope for this change and would require action in the OpenCode workspace if the Supreme Leader wants that specific model enabled.
