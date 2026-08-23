@@ -44,8 +44,9 @@ spec:
     # Use chart-native OpenAI backend settings so it doesn't default to Pipelines.
     enableOpenaiApi: true
     openaiBaseApiUrl: "http://litellm.llm-hub.svc.cluster.local:4000/v1"
-    openaiApiKeyExistingSecret: "litellm-master-key"
-    openaiApiKeyExistingSecretKey: "master-key"
+    # Dedicated secret naming the LiteLLM API key from Open WebUI's perspective.
+    openaiApiKeyExistingSecret: "openwebui-litellm-api-key"
+    openaiApiKeyExistingSecretKey: "api-key"
 
     pipelines:
       enabled: false
