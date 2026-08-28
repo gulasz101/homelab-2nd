@@ -98,8 +98,8 @@ spec:
                 cpu: 50m
                 memory: 256Mi
               limits:
-                cpu: 500m
-                memory: 1Gi
+                cpu: "1"
+                memory: 2Gi
 
             probes:
               liveness:
@@ -108,6 +108,8 @@ spec:
                 spec:
                   initialDelaySeconds: 30
                   periodSeconds: 15
+                  timeoutSeconds: 10
+                  failureThreshold: 3
                   httpGet:
                     path: /api/health
                     port: 3000
@@ -117,6 +119,7 @@ spec:
                 spec:
                   initialDelaySeconds: 30
                   periodSeconds: 10
+                  timeoutSeconds: 5
                   httpGet:
                     path: /api/health
                     port: 3000
