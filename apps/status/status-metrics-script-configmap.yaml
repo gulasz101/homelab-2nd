@@ -8,6 +8,8 @@ data:
   server.py: |
     #!/usr/bin/env python3
     import json
+    import os
+    import ssl
     import threading
     import time
     from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -20,10 +22,17 @@ data:
     QUERIES = {
         "cpu": "avg(100 - (avg by (instance) (irate(node_cpu_seconds_total{mode='idle'}[5m])) * 100))",
         "memory": "avg(100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)))",
-        "pods": "count(kube_pod_status_phase{phase='Running'})",
+        "load1": "node_load1",
+        "load5": "node_load5",
+        "load15": "node_load15",
+        "uptime": "node_time_seconds - node_boot_time_seconds",
+        "total_nodes": "count(kube_node_info)",
+        "pods_running": "count(kube_pod_status_phase{phase='Running'})",
+        "pods_total": "count(count by (pod, namespace) (kube_pod_status_phase))",
+        "node_name": "kube_node_info",
     }
 
-    cache = {"cpu": 0, "memory": 0, "pods": 0, "error": None, "cached_at": None}
+    cache = {"error": None, "cached_at": None}
     lock = threading.Lock()
 
     def query_prometheus(q):
@@ -31,16 +40,47 @@ data:
         with urlopen(url, timeout=10) as r:
             data = json.loads(r.read().decode())
         if data.get("status") == "success" and data["data"]["result"]:
-            return float(data["data"]["result"][0]["value"][1])
-        return None
+            return data["data"]["result"]
+        return []
+
+    def get_cluster_age():
+        """Read kube-system namespace creationTimestamp from the in-cluster API server."""
+        try:
+            token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+            ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+            if not os.path.exists(token_path):
+                return None
+            with open(token_path, "r") as f:
+                token = f.read().strip()
+            ctx = ssl.create_default_context(cafile=ca_path)
+            req = urlopen(
+                "https://kubernetes.default.svc/api/v1/namespaces/kube-system",
+                headers={"Authorization": f"Bearer {token}"},
+                context=ctx,
+                timeout=10,
+            )
+            data = json.loads(req.read().decode())
+            return data.get("metadata", {}).get("creationTimestamp")
+        except Exception:
+            return None
 
     def updater():
         while True:
             try:
                 result = {}
                 for key, q in QUERIES.items():
-                    result[key] = query_prometheus(q)
+                    rows = query_prometheus(q)
+                    if not rows:
+                        result[key] = None
+                        continue
+                    if key == "node_name":
+                        result[key] = rows[0]["metric"].get("node", "homelab-2nd")
+                    elif key in ("pods_running", "pods_total", "total_nodes"):
+                        result[key] = int(float(rows[0]["value"][1]))
+                    else:
+                        result[key] = float(rows[0]["value"][1])
                 with lock:
+                    cache.clear()
                     cache.update(result)
                     cache["error"] = None
                     cache["cached_at"] = datetime.utcnow().isoformat() + "Z"
@@ -51,16 +91,23 @@ data:
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path != "/metrics.json":
+            if self.path == "/metrics.json":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                with lock:
+                    self.wfile.write(json.dumps(cache).encode())
+            elif self.path == "/cluster-age.json":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                created = get_cluster_age()
+                self.wfile.write(json.dumps({"created": created}).encode())
+            else:
                 self.send_response(404)
                 self.end_headers()
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            with lock:
-                self.wfile.write(json.dumps(cache).encode())
 
         def log_message(self, fmt, *args):
             pass

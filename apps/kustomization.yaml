@@ -317,6 +317,8 @@ resources:
 
   # Status page namespace
   - status/namespace.yaml
+  # RBAC for the metrics sidecar to read kube-system namespace age
+  - status/status-metrics-rbac.yaml
   # Static website content
   - status/status-website-configmap.yaml
   - status/status-metrics-script-configmap.yaml

@@ -16,6 +16,8 @@ spec:
       labels:
         app.kubernetes.io/name: status-website
     spec:
+      serviceAccountName: status-metrics
+      automountServiceAccountToken: true
       containers:
         - name: website
           image: nginx:alpine
