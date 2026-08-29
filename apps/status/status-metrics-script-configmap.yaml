@@ -21,7 +21,12 @@ data:
 
     NODE_QUERIES = {
         "cpu": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)",
+        "cpu_user": "avg by (instance) (irate(node_cpu_seconds_total{mode='user'}[5m])) * 100",
+        "cpu_system": "avg by (instance) (irate(node_cpu_seconds_total{mode='system'}[5m])) * 100",
+        "cpu_iowait": "avg by (instance) (irate(node_cpu_seconds_total{mode='iowait'}[5m])) * 100",
         "memory": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))",
+        "mem_total": "node_memory_MemTotal_bytes",
+        "mem_available": "node_memory_MemAvailable_bytes",
         "load1": "node_load1",
         "load5": "node_load5",
         "load15": "node_load15",
@@ -61,7 +66,6 @@ data:
         out = {}
         for row in rows:
             instance = row["metric"].get("instance") or "unknown"
-            # strip port
             host = instance.split(":")[0]
             out[host] = float(row["value"][1])
         return out
@@ -101,12 +105,14 @@ data:
             parts.append(f"{minutes}m")
         return " ".join(parts) if parts else "0m"
 
+    def fmt_bytes_gb(b):
+        return round(b / (1024 ** 3), 1)
+
     def updater():
         while True:
             try:
                 name_map = get_node_name_map()
 
-                # per-node metrics keyed by host (ip or name)
                 node_data = {name: scrape_node_metric(q) for name, q in NODE_QUERIES.items()}
                 nodes = []
                 all_names = set()
@@ -115,10 +121,18 @@ data:
 
                 for host in sorted(all_names):
                     friendly = name_map.get(host, host)
+                    total = node_data["mem_total"].get(host, 0)
+                    available = node_data["mem_available"].get(host, 0)
+                    used = total - available if total and available else 0
                     nodes.append({
                         "name": friendly,
                         "cpu": round(node_data["cpu"].get(host, 0), 1),
+                        "cpu_user": round(node_data["cpu_user"].get(host, 0), 1),
+                        "cpu_system": round(node_data["cpu_system"].get(host, 0), 1),
+                        "cpu_iowait": round(node_data["cpu_iowait"].get(host, 0), 1),
                         "memory": round(node_data["memory"].get(host, 0), 1),
+                        "memory_used_gb": fmt_bytes_gb(used),
+                        "memory_total_gb": fmt_bytes_gb(total),
                         "load1": round(node_data["load1"].get(host, 0), 2),
                         "load5": round(node_data["load5"].get(host, 0), 2),
                         "load15": round(node_data["load15"].get(host, 0), 2),
@@ -126,7 +140,6 @@ data:
                         "uptime_human": fmt_uptime(node_data["uptime"].get(host, 0)),
                     })
 
-                # cluster-wide metrics
                 cluster = {}
                 for key, q in CLUSTER_QUERIES.items():
                     rows = query_prometheus(q)

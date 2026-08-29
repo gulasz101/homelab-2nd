@@ -11,9 +11,10 @@ data:
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>voitech.dev - Homelab Status</title>
+        <title>voitech.dev - Homelab-2nd Status</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
         <style>
             :root {
                 --bg: #0b1120;
@@ -49,6 +50,31 @@ data:
                 display: inline-block;
                 margin-right: 0.5rem;
             }
+            .metric-label {
+                color: var(--muted);
+                font-size: 0.875rem;
+            }
+            .metric-sub {
+                color: var(--muted);
+                font-size: 0.75rem;
+            }
+            .node-detail {
+                border-top: 1px solid var(--border);
+                padding-top: 0.75rem;
+                margin-top: 0.75rem;
+            }
+            .progress-bg {
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 9999px;
+                height: 0.5rem;
+                overflow: hidden;
+            }
+            .progress-fill {
+                background: var(--accent);
+                height: 100%;
+                border-radius: 9999px;
+                transition: width 0.3s ease;
+            }
         </style>
     </head>
     <body class="min-h-screen flex flex-col">
@@ -56,7 +82,7 @@ data:
             <div class="container mx-auto px-6 py-6 flex items-center justify-between flex-wrap">
                 <div class="flex items-center space-x-3">
                     <span class="text-2xl font-bold tracking-tight">voitech.dev</span>
-                    <span class="text-sm" style="color: var(--muted);">Homelab Status</span>
+                    <span class="text-sm" style="color: var(--muted);">Homelab-2nd Status</span>
                 </div>
                 <div class="flex items-center mt-2 sm:mt-0">
                     <span class="status-dot"></span>
@@ -74,34 +100,34 @@ data:
             <h2 class="section-title text-lg font-semibold mb-4">Cluster Overview</h2>
             <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
                 <div class="card p-4">
-                    <div class="text-xs mb-1" style="color: var(--muted);">Nodes Online</div>
+                    <div class="metric-label mb-1">Nodes Online</div>
                     <div class="text-2xl font-bold metric-value" id="nodes-online">-/-</div>
-                    <div class="text-xs" style="color: var(--muted);">Active</div>
+                    <div class="metric-sub">Active</div>
                 </div>
                 <div class="card p-4">
-                    <div class="text-xs mb-1" style="color: var(--muted);">Avg CPU</div>
+                    <div class="metric-label mb-1">Avg CPU</div>
                     <div class="text-2xl font-bold metric-value" id="cluster-cpu">-%</div>
-                    <div class="text-xs" style="color: var(--muted);">Usage</div>
+                    <div class="metric-sub">Usage</div>
                 </div>
                 <div class="card p-4">
-                    <div class="text-xs mb-1" style="color: var(--muted);">Avg Memory</div>
+                    <div class="metric-label mb-1">Avg Memory</div>
                     <div class="text-2xl font-bold metric-value" id="cluster-memory">-%</div>
-                    <div class="text-xs" style="color: var(--muted);">Usage</div>
+                    <div class="metric-sub">Usage</div>
                 </div>
                 <div class="card p-4">
-                    <div class="text-xs mb-1" style="color: var(--muted);">Avg Load</div>
+                    <div class="metric-label mb-1">Avg Load</div>
                     <div class="text-2xl font-bold metric-value" id="cluster-load">-</div>
-                    <div class="text-xs" style="color: var(--muted);">1min</div>
+                    <div class="metric-sub">1min</div>
                 </div>
                 <div class="card p-4">
-                    <div class="text-xs mb-1" style="color: var(--muted);">Cluster Age</div>
+                    <div class="metric-label mb-1">Cluster Age</div>
                     <div class="text-2xl font-bold metric-value" id="cluster-age">-</div>
-                    <div class="text-xs" style="color: var(--muted);">Days</div>
+                    <div class="metric-sub">Days</div>
                 </div>
                 <div class="card p-4">
-                    <div class="text-xs mb-1" style="color: var(--muted);">Pods Running</div>
+                    <div class="metric-label mb-1">Pods Running</div>
                     <div class="text-2xl font-bold metric-value" id="cluster-pods">-</div>
-                    <div class="text-xs" style="color: var(--muted);"><span id="cluster-pods-total">-</span> total</div>
+                    <div class="metric-sub"><span id="cluster-pods-total">-</span> total</div>
                 </div>
             </div>
 
@@ -113,6 +139,7 @@ data:
             <div class="container mx-auto px-6 py-6">
                 <div class="flex justify-center flex-wrap gap-6 mb-3 text-sm">
                     <a href="https://gulasz101.github.io/morning-brew/" target="_blank" class="hover:text-[#00d4aa] transition-colors">Morning Brew</a>
+                    <a href="https://gulasz101.github.io/about/" target="_blank" class="hover:text-[#00d4aa] transition-colors">About</a>
                     <a href="https://www.linkedin.com/in/wojciech-gula-57797070/" target="_blank" class="hover:text-[#00d4aa] transition-colors">LinkedIn</a>
                     <a href="https://github.com/gulasz101/homelab-2nd" target="_blank" class="hover:text-[#00d4aa] transition-colors">GitHub</a>
                     <a href="https://status.voitech.dev" class="hover:text-[#00d4aa] transition-colors">Home</a>
@@ -125,6 +152,12 @@ data:
 
         <script>
             const fmt = (n, d=1) => Number.isFinite(n) ? n.toFixed(d) : '-';
+            const clamp = (n) => Math.min(Math.max(n, 0), 100);
+
+            function renderBar(percent) {
+                const p = clamp(percent);
+                return `<div class="progress-bg"><div class="progress-fill" style="width: ${p}%"></div></div>`;
+            }
 
             function render(data) {
                 const nodes = data.nodes || [];
@@ -143,32 +176,47 @@ data:
                     : '-';
 
                 const grid = document.getElementById('nodes-grid');
-                grid.innerHTML = nodes.map(n => `
+                grid.innerHTML = nodes.map(n => {
+                    const cpuBreakdown = n.cpu_user != null || n.cpu_system != null || n.cpu_iowait != null
+                        ? `<div class="metric-sub mt-1">User: ${fmt(n.cpu_user || 0)}%, Sys: ${fmt(n.cpu_system || 0)}%, IO: ${fmt(n.cpu_iowait || 0)}%</div>`
+                        : '';
+                    const memAbs = n.memory_used_gb != null && n.memory_total_gb != null
+                        ? `<div class="metric-sub mt-1">${n.memory_used_gb} GB / ${n.memory_total_gb} GB</div>`
+                        : '';
+                    return `
                     <div class="card p-5">
                         <h3 class="text-base font-semibold mb-4 pb-2 border-b" style="border-color: var(--border);">${n.name}</h3>
-                        <div class="space-y-3">
-                            <div class="flex justify-between items-center">
-                                <span class="text-sm" style="color: var(--muted);">CPU Usage</span>
-                                <span class="text-lg font-semibold metric-value">${fmt(n.cpu)}%</span>
+                        <div class="space-y-4">
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <span class="metric-label">CPU Usage</span>
+                                    <span class="text-lg font-semibold metric-value">${fmt(n.cpu)}%</span>
+                                </div>
+                                ${renderBar(n.cpu)}
+                                ${cpuBreakdown}
+                            </div>
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <span class="metric-label">Memory</span>
+                                    <span class="text-lg font-semibold metric-value">${fmt(n.memory)}%</span>
+                                </div>
+                                ${renderBar(n.memory)}
+                                ${memAbs}
                             </div>
                             <div class="flex justify-between items-center">
-                                <span class="text-sm" style="color: var(--muted);">Memory</span>
-                                <span class="text-lg font-semibold metric-value">${fmt(n.memory)}%</span>
-                            </div>
-                            <div class="flex justify-between items-center">
-                                <span class="text-sm" style="color: var(--muted);">Load Avg</span>
+                                <span class="metric-label">Load Avg</span>
                                 <span class="text-lg font-semibold metric-value">${fmt(n.load1, 2)}</span>
                             </div>
                             <div class="flex justify-between items-center">
-                                <span class="text-sm" style="color: var(--muted);">Uptime</span>
+                                <span class="metric-label">Uptime</span>
                                 <span class="text-lg font-semibold">${n.uptime_human || fmt(n.uptime, 0) + 's'}</span>
                             </div>
                         </div>
-                        <div class="mt-4 text-xs" style="color: var(--muted);">
+                        <div class="node-detail metric-sub">
                             1m ${fmt(n.load1, 2)} · 5m ${fmt(n.load5, 2)} · 15m ${fmt(n.load15, 2)}
                         </div>
                     </div>
-                `).join('');
+                `}).join('');
 
                 if (nodes.length === 0) {
                     grid.innerHTML = '<div style="color: var(--muted);">No nodes found.</div>';
