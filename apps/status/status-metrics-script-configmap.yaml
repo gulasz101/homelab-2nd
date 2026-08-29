@@ -45,14 +45,25 @@ data:
             return data["data"]["result"]
         return []
 
+    def get_node_name_map():
+        """Map internal IP -> Kubernetes node name from kube_node_info."""
+        rows = query_prometheus("kube_node_info")
+        mapping = {}
+        for row in rows:
+            internal_ip = row["metric"].get("internal_ip")
+            node = row["metric"].get("node")
+            if internal_ip and node:
+                mapping[internal_ip] = node
+        return mapping
+
     def scrape_node_metric(q):
         rows = query_prometheus(q)
         out = {}
         for row in rows:
-            key = row["metric"].get("node") or row["metric"].get("instance") or "unknown"
-            # strip port from instance if node label is missing
-            key = key.split(":")[0]
-            out[key] = float(row["value"][1])
+            instance = row["metric"].get("instance") or "unknown"
+            # strip port
+            host = instance.split(":")[0]
+            out[host] = float(row["value"][1])
         return out
 
     def get_cluster_age():
@@ -93,23 +104,26 @@ data:
     def updater():
         while True:
             try:
-                # per-node metrics
+                name_map = get_node_name_map()
+
+                # per-node metrics keyed by host (ip or name)
                 node_data = {name: scrape_node_metric(q) for name, q in NODE_QUERIES.items()}
                 nodes = []
                 all_names = set()
                 for metric_values in node_data.values():
                     all_names.update(metric_values.keys())
 
-                for name in sorted(all_names):
+                for host in sorted(all_names):
+                    friendly = name_map.get(host, host)
                     nodes.append({
-                        "name": name,
-                        "cpu": round(node_data["cpu"].get(name, 0), 1),
-                        "memory": round(node_data["memory"].get(name, 0), 1),
-                        "load1": round(node_data["load1"].get(name, 0), 2),
-                        "load5": round(node_data["load5"].get(name, 0), 2),
-                        "load15": round(node_data["load15"].get(name, 0), 2),
-                        "uptime": node_data["uptime"].get(name, 0),
-                        "uptime_human": fmt_uptime(node_data["uptime"].get(name, 0)),
+                        "name": friendly,
+                        "cpu": round(node_data["cpu"].get(host, 0), 1),
+                        "memory": round(node_data["memory"].get(host, 0), 1),
+                        "load1": round(node_data["load1"].get(host, 0), 2),
+                        "load5": round(node_data["load5"].get(host, 0), 2),
+                        "load15": round(node_data["load15"].get(host, 0), 2),
+                        "uptime": node_data["uptime"].get(host, 0),
+                        "uptime_human": fmt_uptime(node_data["uptime"].get(host, 0)),
                     })
 
                 # cluster-wide metrics
