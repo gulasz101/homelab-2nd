@@ -18,18 +18,22 @@ spec:
     spec:
       containers:
         - name: website
-          image: nginx:1.31.4-alpine
+          image: nginx:alpine
           ports:
             - containerPort: 80
           volumeMounts:
             - name: website-content
-              mountPath: /usr/share/nginx/html
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
           resources:
             requests:
-              memory: "64Mi"
-              cpu: "50m"
+              memory: "32Mi"
+              cpu: "5m"
             limits:
-              memory: "128Mi"
+              memory: "64Mi"
               cpu: "100m"
           livenessProbe:
             httpGet:
@@ -43,7 +47,31 @@ spec:
               port: 80
             initialDelaySeconds: 5
             periodSeconds: 5
+
+        - name: metrics
+          image: python:3.11-alpine
+          command:
+            - python3
+            - /scripts/server.py
+          volumeMounts:
+            - name: metrics-script
+              mountPath: /scripts
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "5m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+
       volumes:
         - name: website-content
           configMap:
             name: status-website-content
+        - name: nginx-config
+          configMap:
+            name: status-website-content
+        - name: metrics-script
+          configMap:
+            name: status-metrics-script
+            defaultMode: 0755

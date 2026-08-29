@@ -319,6 +319,7 @@ resources:
   - status/namespace.yaml
   # Static website content
   - status/status-website-configmap.yaml
+  - status/status-metrics-script-configmap.yaml
   - status/status-website-deployment.yaml
   - status/status-website-service.yaml
   # Cloudflare Tunnel for status.voitech.dev

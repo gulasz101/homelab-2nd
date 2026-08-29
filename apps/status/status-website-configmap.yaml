@@ -20,6 +20,51 @@ data:
     <body>
       <h1>voitech.dev homelab-2nd Status</h1>
       <p>Public status page deployed via GitOps.</p>
-      <!-- Add live metric placeholders later -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-6">
+        <div class="bg-gray-800 rounded p-4 text-center">
+          <div class="text-gray-400 text-sm">CPU</div>
+          <div id="cpu" class="text-3xl font-bold text-blue-400">--%</div>
+        </div>
+        <div class="bg-gray-800 rounded p-4 text-center">
+          <div class="text-gray-400 text-sm">Memory</div>
+          <div id="memory" class="text-3xl font-bold text-green-400">--%</div>
+        </div>
+        <div class="bg-gray-800 rounded p-4 text-center">
+          <div class="text-gray-400 text-sm">Pods Running</div>
+          <div id="pods" class="text-3xl font-bold text-purple-400">--</div>
+        </div>
+      </div>
+    <script>
+    async function updateMetrics() {
+      try {
+        const r = await fetch('/metrics.json');
+        const d = await r.json();
+        if (d.cpu !== null) document.getElementById('cpu').textContent = d.cpu.toFixed(1) + '%';
+        if (d.memory !== null) document.getElementById('memory').textContent = d.memory.toFixed(1) + '%';
+        if (d.pods !== null) document.getElementById('pods').textContent = Math.round(d.pods);
+      } catch (e) {
+        console.error('metrics fetch failed', e);
+      }
+    }
+    updateMetrics();
+    setInterval(updateMetrics, 5000);
+    </script>
+
     </body>
     </html>
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+
+        location /metrics.json {
+            proxy_pass http://127.0.0.1:8081/metrics.json;
+            proxy_http_version 1.1;
+        }
+    }
+
