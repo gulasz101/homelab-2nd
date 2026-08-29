@@ -23,6 +23,12 @@ data:
             .status-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }
             .status-online { background: #10b981; box-shadow: 0 0 8px rgba(16,185,129,0.5); }
             .status-offline { background: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.5); }
+            .pulse { animation: pulse 2s infinite; }
+            @keyframes pulse {
+                0% { opacity: 1; }
+                50% { opacity: 0.5; }
+                100% { opacity: 1; }
+            }
         </style>
     </head>
     <body class="bg-gray-900 text-white min-h-screen">
@@ -36,229 +42,195 @@ data:
                         </div>
                         <span class="hidden md:inline-block text-sm text-gray-200">Homelab Status</span>
                     </div>
-                    <div class="flex items-center space-x-4">
-                        <span id="current-time" class="text-sm md:text-base font-medium text-gray-200"></span>
-                        <span class="text-lg md:text-xl font-bold text-gray-200">
-                            <span id="total-nodes-header">0</span>/<span id="total-nodes-expected">1</span> Nodes Online
-                        </span>
+                    <div class="mt-4 md:mt-0 flex items-center space-x-3">
+                        <span class="status-indicator status-online pulse"></span>
+                        <span class="text-sm font-medium">Operational</span>
                     </div>
                 </div>
             </div>
         </header>
 
-        <main class="container mx-auto px-6 py-12">
-            <div class="text-center mb-12">
-                <h1 class="text-4xl md:text-5xl font-bold mb-4">Real-Time Homelab Metrics</h1>
-                <p class="text-gray-400 text-lg">Live monitoring of the bare-metal Kubernetes cluster</p>
+        <main class="container mx-auto px-6 py-8">
+            <div class="mb-8">
+                <h2 class="text-2xl font-bold mb-2">
+                    <i class="fas fa-tachometer-alt mr-2 text-blue-400"></i>
+                    Real-Time Homelab Metrics
+                </h2>
+                <p class="text-gray-400">Live monitoring of the bare-metal Kubernetes cluster</p>
             </div>
 
-            <!-- Cluster Overview -->
-            <div class="bg-gradient-to-r from-gray-800 to-gray-900 rounded-lg p-8 mb-12 shadow-xl">
-                <div class="text-center mb-6">
-                    <h2 class="text-2xl md:text-3xl font-bold text-white mb-4">Cluster Overview</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <div class="metric-card bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-gray-400">Nodes Online</h3>
+                        <i class="fas fa-server text-blue-400"></i>
+                    </div>
+                    <div class="text-3xl font-bold" id="nodes-online">-/-</div>
+                    <div class="text-sm text-gray-400 mt-1">Active</div>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
-                    <div class="metric-card bg-gray-800 rounded-lg p-6 shadow-xl flex flex-col items-center text-center">
-                        <div class="text-4xl text-green-400 mb-4"><i class="fas fa-server"></i></div>
-                        <div class="text-xl font-bold text-gray-300 mb-2">Nodes Online</div>
-                        <div id="total-nodes" class="text-4xl font-extrabold text-green-300">0/1</div>
-                        <div class="text-gray-400">Active</div>
+
+                <div class="metric-card bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-gray-400">Cluster CPU</h3>
+                        <i class="fas fa-microchip text-green-400"></i>
                     </div>
-                    <div class="metric-card bg-gray-800 rounded-lg p-6 shadow-xl flex flex-col items-center text-center">
-                        <div class="text-4xl text-purple-400 mb-4"><i class="fas fa-microchip"></i></div>
-                        <div class="text-xl font-bold text-gray-300 mb-2">CPU</div>
-                        <div id="cluster-cpu" class="text-4xl font-extrabold text-purple-300">--%</div>
-                        <div class="text-gray-400">Usage</div>
+                    <div class="text-3xl font-bold" id="cluster-cpu">-%</div>
+                    <div class="text-sm text-gray-400 mt-1">Average usage</div>
+                </div>
+
+                <div class="metric-card bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-gray-400">Cluster Memory</h3>
+                        <i class="fas fa-memory text-purple-400"></i>
                     </div>
-                    <div class="metric-card bg-gray-800 rounded-lg p-6 shadow-xl flex flex-col items-center text-center">
-                        <div class="text-4xl text-blue-400 mb-4"><i class="fas fa-memory"></i></div>
-                        <div class="text-xl font-bold text-gray-300 mb-2">Memory</div>
-                        <div id="cluster-memory" class="text-4xl font-extrabold text-blue-300">--%</div>
-                        <div class="text-gray-400">Usage</div>
+                    <div class="text-3xl font-bold" id="cluster-memory">-%</div>
+                    <div class="text-sm text-gray-400 mt-1">Average usage</div>
+                </div>
+
+                <div class="metric-card bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-gray-400">Pods</h3>
+                        <i class="fas fa-cubes text-yellow-400"></i>
                     </div>
-                    <div class="metric-card bg-gray-800 rounded-lg p-6 shadow-xl flex flex-col items-center text-center">
-                        <div class="text-4xl text-orange-400 mb-4"><i class="fas fa-tachometer-alt"></i></div>
-                        <div class="text-xl font-bold text-gray-300 mb-2">Load</div>
-                        <div id="cluster-load" class="text-4xl font-extrabold text-orange-300">--</div>
-                        <div class="text-gray-400">1min</div>
-                    </div>
-                    <div class="metric-card bg-gray-800 rounded-lg p-6 shadow-xl flex flex-col items-center text-center">
-                        <div class="text-4xl text-yellow-400 mb-4"><i class="fas fa-calendar-alt"></i></div>
-                        <div class="text-xl font-bold text-gray-300 mb-2">Cluster Age</div>
-                        <div id="cluster-age" class="text-4xl font-extrabold text-yellow-300">--</div>
-                        <div class="text-gray-400">Days</div>
-                    </div>
-                    <div class="metric-card bg-gray-800 rounded-lg p-6 shadow-xl flex flex-col items-center text-center">
-                        <div class="text-4xl text-green-400 mb-4"><i class="fas fa-cubes"></i></div>
-                        <div class="text-xl font-bold text-gray-300 mb-2">Pods</div>
-                        <div id="pods-running" class="text-4xl font-extrabold text-green-300">--</div>
-                        <div class="text-gray-400"><span id="pods-total">--</span> Total</div>
-                    </div>
+                    <div class="text-3xl font-bold" id="cluster-pods">-</div>
+                    <div class="text-sm text-gray-400 mt-1" id="cluster-pods-detail">- total</div>
                 </div>
             </div>
 
-            <!-- Node Cards -->
-            <div id="node-cards"></div>
-
-            <!-- Status line -->
-            <div class="text-center mt-12">
-                <div class="bg-gradient-to-r from-gray-800 to-gray-900 rounded-lg p-6 shadow-xl">
-                    <div class="text-lg font-semibold text-white mb-2">
-                        <i class="fas fa-sync-alt mr-2"></i>Auto-refreshing every 5 seconds
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                <div class="metric-card bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-gray-400">Cluster Load</h3>
+                        <i class="fas fa-weight-hanging text-red-400"></i>
                     </div>
-                    <div class="text-gray-400">
-                        Last update: <span id="last-update" class="text-blue-300 font-mono">Never</span>
-                    </div>
+                    <div class="text-3xl font-bold" id="cluster-load">-</div>
+                    <div class="text-sm text-gray-400 mt-1">Average 1min load</div>
                 </div>
+
+                <div class="metric-card bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-gray-400">Cluster Age</h3>
+                        <i class="fas fa-calendar-alt text-indigo-400"></i>
+                    </div>
+                    <div class="text-3xl font-bold" id="cluster-age">-</div>
+                    <div class="text-sm text-gray-400 mt-1">Days since bootstrap</div>
+                </div>
+
+                <div class="metric-card bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-gray-400">Last Update</h3>
+                        <i class="fas fa-clock text-cyan-400"></i>
+                    </div>
+                    <div class="text-lg font-bold" id="last-update">-</div>
+                    <div class="text-sm text-gray-400 mt-1">Auto-refresh every 5s</div>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <h2 class="text-xl font-bold mb-4">
+                    <i class="fas fa-server mr-2 text-blue-400"></i>
+                    Nodes
+                </h2>
+            </div>
+
+            <div id="nodes-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Node cards injected here -->
             </div>
         </main>
 
-        <footer class="bg-gray-800 border-t border-gray-700 py-8 mt-12">
-            <div class="container mx-auto px-6">
-                <div class="text-center">
-                    <div class="flex justify-center space-x-8 mb-4">
-                        <a href="https://gulasz101.github.io/morning-brew/" target="_blank" class="text-green-400 hover:text-green-300 transition-colors">
-                            <i class="fas fa-coffee mr-2"></i>Morning Brew
-                        </a>
-                        <a href="https://www.linkedin.com/in/wojciech-gula-57797070/" target="_blank" class="text-blue-400 hover:text-blue-300 transition-colors">
-                            <i class="fab fa-linkedin mr-2"></i>LinkedIn
-                        </a>
-                        <a href="https://github.com/gulasz101/homelab-2nd" target="_blank" class="text-gray-400 hover:text-gray-300 transition-colors">
-                            <i class="fab fa-github mr-2"></i>GitHub
-                        </a>
-                    </div>
-                    <p class="text-gray-400 text-sm">
-                        Wojciech Gula — real-time Kubernetes monitoring on bare-metal infrastructure
-                    </p>
+        <footer class="bg-gray-800 mt-12 border-t border-gray-700">
+            <div class="container mx-auto px-6 py-8">
+                <div class="flex justify-center space-x-8 mb-4 flex-wrap">
+                    <a href="https://gulasz101.github.io/morning-brew/" target="_blank" class="text-green-400 hover:text-green-300 transition-colors m-2">
+                        <i class="fas fa-coffee mr-2"></i>Morning Brew
+                    </a>
+                    <a href="https://www.linkedin.com/in/wojciech-gula-57797070/" target="_blank" class="text-blue-400 hover:text-blue-300 transition-colors m-2">
+                        <i class="fab fa-linkedin mr-2"></i>LinkedIn
+                    </a>
+                    <a href="https://github.com/gulasz101/homelab-2nd" target="_blank" class="text-gray-400 hover:text-gray-300 transition-colors m-2">
+                        <i class="fab fa-github mr-2"></i>GitHub
+                    </a>
+                    <a href="https://status.voitech.dev" class="text-blue-400 hover:text-blue-300 transition-colors m-2">
+                        <i class="fas fa-home mr-2"></i>Home
+                    </a>
+                </div>
+                <div class="text-center text-gray-500 text-sm">
+                    Powered by k3s, Prometheus, and a tiny Python sidecar. No cookies, no tracking.
                 </div>
             </div>
         </footer>
 
         <script>
-            const REFRESH_INTERVAL = 5000;
-            let clusterCreated = null;
+            const fmt = (n, d=1) => Number.isFinite(n) ? n.toFixed(d) : '-';
 
-            function formatDuration(seconds) {
-                const days = Math.floor(seconds / 86400);
-                const hours = Math.floor((seconds % 86400) / 3600);
-                const minutes = Math.floor((seconds % 3600) / 60);
-                return { days, hours, minutes };
-            }
+            function render(data) {
+                const nodes = data.nodes || [];
+                const cluster = data.cluster || {};
 
-            function renderNodeCard(name, d) {
-                const online = d.cpu !== null && d.memory !== null;
-                const statusClass = online ? 'status-online' : 'status-offline';
-                const load1 = d.load1 ?? 0;
-                const load5 = d.load5 ?? 0;
-                const load15 = d.load15 ?? 0;
-                const up = formatDuration(d.uptime ?? 0);
+                document.getElementById('nodes-online').textContent =
+                    `${cluster.online_nodes || nodes.length || 0}/${cluster.total_nodes || nodes.length || 0}`;
+                document.getElementById('cluster-cpu').textContent = `${fmt(cluster.avg_cpu)}%`;
+                document.getElementById('cluster-memory').textContent = `${fmt(cluster.avg_memory)}%`;
+                document.getElementById('cluster-load').textContent = fmt(cluster.avg_load || 0, 2);
+                document.getElementById('cluster-age').textContent = cluster.cluster_age_days || '-';
+                document.getElementById('cluster-pods').textContent = cluster.pods_running || '-';
+                document.getElementById('cluster-pods-detail').textContent =
+                    `${cluster.pods_total || '-'} total`;
+                document.getElementById('last-update').textContent = data.cached_at
+                    ? new Date(data.cached_at).toLocaleTimeString()
+                    : '-';
 
-                return `
-                <div class="bg-gradient-to-r from-purple-800 to-purple-900 rounded-lg p-8 mb-8 shadow-xl">
-                    <h2 class="text-2xl md:text-3xl font-bold text-white mb-6 text-center">
-                        <span class="status-indicator ${statusClass}"></span>
-                        ${name}
-                    </h2>
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        <div class="metric-card bg-gray-800 rounded-lg p-6 shadow-xl text-center">
-                            <div class="text-4xl text-green-400 mb-4"><i class="fas fa-microchip"></i></div>
-                            <div class="text-lg font-bold text-gray-300 mb-2">CPU Usage</div>
-                            <div class="text-3xl font-extrabold text-green-300">${online ? d.cpu.toFixed(1) + '%' : '--'}</div>
+                const grid = document.getElementById('nodes-grid');
+                grid.innerHTML = nodes.map(n => `
+                    <div class="metric-card bg-gray-800 rounded-xl p-6 border border-gray-700">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-lg font-bold truncate" title="${n.name}">${n.name}</h3>
+                            <span class="status-indicator status-online"></span>
                         </div>
-                        <div class="metric-card bg-gray-800 rounded-lg p-6 shadow-xl text-center">
-                            <div class="text-4xl text-blue-400 mb-4"><i class="fas fa-memory"></i></div>
-                            <div class="text-lg font-bold text-gray-300 mb-2">Memory</div>
-                            <div class="text-3xl font-extrabold text-blue-300">${online ? d.memory.toFixed(1) + '%' : '--'}</div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <div class="text-xs text-gray-400">CPU</div>
+                                <div class="text-xl font-semibold">${fmt(n.cpu)}%</div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-400">Memory</div>
+                                <div class="text-xl font-semibold">${fmt(n.memory)}%</div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-400">Load Avg</div>
+                                <div class="text-xl font-semibold">${fmt(n.load1, 2)}</div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-400">Uptime</div>
+                                <div class="text-xl font-semibold">${n.uptime_human || fmt(n.uptime, 0) + 's'}</div>
+                            </div>
                         </div>
-                        <div class="metric-card bg-gray-800 rounded-lg p-6 shadow-xl text-center">
-                            <div class="text-4xl text-orange-400 mb-4"><i class="fas fa-tachometer-alt"></i></div>
-                            <div class="text-lg font-bold text-gray-300 mb-2">Load Avg</div>
-                            <div class="text-3xl font-extrabold text-orange-300">${load1.toFixed(2)}</div>
-                            <div class="text-sm text-gray-400">${load5.toFixed(2)}, ${load15.toFixed(2)}</div>
-                        </div>
-                        <div class="metric-card bg-gray-800 rounded-lg p-6 shadow-xl text-center">
-                            <div class="text-4xl text-purple-400 mb-4"><i class="fas fa-clock"></i></div>
-                            <div class="text-lg font-bold text-gray-300 mb-2">Uptime</div>
-                            <div class="text-3xl font-extrabold text-purple-300">${up.days}d ${up.hours}h</div>
-                            <div class="text-sm text-gray-400">${up.days}d ${up.hours}h ${up.minutes}m</div>
+                        <div class="mt-4 text-xs text-gray-500">
+                            load5: ${fmt(n.load5, 2)} · load15: ${fmt(n.load15, 2)}
                         </div>
                     </div>
-                </div>
-                `;
-            }
+                `).join('');
 
-            async function updateMetrics() {
-                try {
-                    const r = await fetch('/metrics.json');
-                    const d = await r.json();
-
-                    if (d.error) {
-                        console.error('metrics error:', d.error);
-                        return;
-                    }
-
-                    const totalNodes = d.total_nodes ?? 1;
-                    document.getElementById('total-nodes-expected').textContent = totalNodes;
-                    document.getElementById('total-nodes').textContent = `${totalNodes}/${totalNodes}`;
-                    document.getElementById('total-nodes-header').textContent = totalNodes;
-
-                    if (d.cpu !== null) document.getElementById('cluster-cpu').textContent = d.cpu.toFixed(1) + '%';
-                    if (d.memory !== null) document.getElementById('cluster-memory').textContent = d.memory.toFixed(1) + '%';
-                    if (d.load1 !== null) document.getElementById('cluster-load').textContent = d.load1.toFixed(2);
-                    if (d.pods_running !== null) document.getElementById('pods-running').textContent = d.pods_running;
-                    if (d.pods_total !== null) document.getElementById('pods-total').textContent = d.pods_total;
-
-                    if (!clusterCreated) {
-                        const ns = await fetch('/cluster-age.json').catch(() => null);
-                        if (ns && ns.ok) {
-                            const nsData = await ns.json();
-                            clusterCreated = nsData.created;
-                        }
-                    }
-                    if (clusterCreated) {
-                        const created = new Date(clusterCreated);
-                        const now = new Date();
-                        const days = Math.floor((now - created) / (1000 * 86400));
-                        document.getElementById('cluster-age').textContent = days;
-                    }
-
-                    const nodeName = d.node_name ?? 'homelab-2nd';
-                    document.getElementById('node-cards').innerHTML = renderNodeCard(nodeName, d);
-
-                    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
-                } catch (e) {
-                    console.error('update failed', e);
+                if (nodes.length === 0) {
+                    grid.innerHTML = '<div class="text-gray-400">No nodes found.</div>';
                 }
             }
 
-            function updateClock() {
-                document.getElementById('current-time').textContent = new Date().toLocaleTimeString();
+            async function refresh() {
+                try {
+                    const res = await fetch('/metrics.json?t=' + Date.now());
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    const data = await res.json();
+                    if (data.error) throw new Error(data.error);
+                    render(data);
+                } catch (e) {
+                    console.error('refresh failed:', e);
+                    document.getElementById('nodes-online').textContent = 'ERR';
+                }
             }
 
-            updateClock();
-            setInterval(updateClock, 1000);
-            updateMetrics();
-            setInterval(updateMetrics, REFRESH_INTERVAL);
+            refresh();
+            setInterval(refresh, 5000);
         </script>
     </body>
     </html>
-  default.conf: |
-    server {
-        listen 80;
-        server_name localhost;
-
-        location / {
-            root /usr/share/nginx/html;
-            index index.html;
-        }
-
-        location /metrics.json {
-            proxy_pass http://127.0.0.1:8081/metrics.json;
-            proxy_http_version 1.1;
-        }
-
-        location /cluster-age.json {
-            proxy_pass http://127.0.0.1:8081/cluster-age.json;
-            proxy_http_version 1.1;
-        }
-    }

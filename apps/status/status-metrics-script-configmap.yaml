@@ -15,24 +15,26 @@ data:
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from urllib.request import urlopen, Request
     from urllib.parse import quote
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     PROMETHEUS = "http://prometheus-stack-kube-prom-prometheus.observability.svc.cluster.local:9090"
 
-    QUERIES = {
-        "cpu": "avg(100 - (avg by (instance) (irate(node_cpu_seconds_total{mode='idle'}[5m])) * 100))",
-        "memory": "avg(100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)))",
+    NODE_QUERIES = {
+        "cpu": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)",
+        "memory": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))",
         "load1": "node_load1",
         "load5": "node_load5",
         "load15": "node_load15",
         "uptime": "node_time_seconds - node_boot_time_seconds",
+    }
+
+    CLUSTER_QUERIES = {
         "total_nodes": "count(kube_node_info)",
         "pods_running": "count(kube_pod_status_phase{phase='Running'})",
         "pods_total": "count(count by (pod, namespace) (kube_pod_status_phase))",
-        "node_name": "kube_node_info",
     }
 
-    cache = {"error": None, "cached_at": None}
+    cache = {"nodes": [], "cluster": {}, "error": None, "cached_at": None}
     lock = threading.Lock()
 
     def query_prometheus(q):
@@ -43,8 +45,17 @@ data:
             return data["data"]["result"]
         return []
 
+    def scrape_node_metric(q):
+        rows = query_prometheus(q)
+        out = {}
+        for row in rows:
+            key = row["metric"].get("node") or row["metric"].get("instance") or "unknown"
+            # strip port from instance if node label is missing
+            key = key.split(":")[0]
+            out[key] = float(row["value"][1])
+        return out
+
     def get_cluster_age():
-        """Read kube-system namespace creationTimestamp from the in-cluster API server."""
         try:
             token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
             ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
@@ -63,26 +74,67 @@ data:
         except Exception:
             return None
 
+    def avg(values):
+        return sum(values) / len(values) if values else 0
+
+    def fmt_uptime(seconds):
+        days, rem = divmod(int(seconds), 86400)
+        hours, rem = divmod(rem, 3600)
+        minutes, _ = divmod(rem, 60)
+        parts = []
+        if days:
+            parts.append(f"{days}d")
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes:
+            parts.append(f"{minutes}m")
+        return " ".join(parts) if parts else "0m"
+
     def updater():
         while True:
             try:
-                result = {}
-                for key, q in QUERIES.items():
+                # per-node metrics
+                node_data = {name: scrape_node_metric(q) for name, q in NODE_QUERIES.items()}
+                nodes = []
+                all_names = set()
+                for metric_values in node_data.values():
+                    all_names.update(metric_values.keys())
+
+                for name in sorted(all_names):
+                    nodes.append({
+                        "name": name,
+                        "cpu": round(node_data["cpu"].get(name, 0), 1),
+                        "memory": round(node_data["memory"].get(name, 0), 1),
+                        "load1": round(node_data["load1"].get(name, 0), 2),
+                        "load5": round(node_data["load5"].get(name, 0), 2),
+                        "load15": round(node_data["load15"].get(name, 0), 2),
+                        "uptime": node_data["uptime"].get(name, 0),
+                        "uptime_human": fmt_uptime(node_data["uptime"].get(name, 0)),
+                    })
+
+                # cluster-wide metrics
+                cluster = {}
+                for key, q in CLUSTER_QUERIES.items():
                     rows = query_prometheus(q)
-                    if not rows:
-                        result[key] = None
-                        continue
-                    if key == "node_name":
-                        result[key] = rows[0]["metric"].get("node", "homelab-2nd")
-                    elif key in ("pods_running", "pods_total", "total_nodes"):
-                        result[key] = int(float(rows[0]["value"][1]))
-                    else:
-                        result[key] = float(rows[0]["value"][1])
+                    cluster[key] = int(float(rows[0]["value"][1])) if rows else 0
+
+                cluster["cluster_age"] = get_cluster_age()
+                cluster["cluster_age_days"] = 0
+                if cluster["cluster_age"]:
+                    created = datetime.fromisoformat(cluster["cluster_age"].replace("Z", "+00:00"))
+                    cluster["cluster_age_days"] = (datetime.now(timezone.utc) - created).days
+
+                cluster["avg_cpu"] = round(avg([n["cpu"] for n in nodes]), 1)
+                cluster["avg_memory"] = round(avg([n["memory"] for n in nodes]), 1)
+                cluster["avg_load"] = round(avg([n["load1"] for n in nodes]), 2)
+                cluster["online_nodes"] = len(nodes)
+
                 with lock:
                     cache.clear()
-                    cache.update(result)
+                    cache["nodes"] = nodes
+                    cache["cluster"] = cluster
                     cache["error"] = None
-                    cache["cached_at"] = datetime.utcnow().isoformat() + "Z"
+                    cache["cached_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             except Exception as e:
                 with lock:
                     cache["error"] = str(e)
@@ -90,7 +142,7 @@ data:
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path == "/metrics.json":
+            if self.path in ("/metrics.json", "/"):
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
