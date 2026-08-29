@@ -137,7 +137,7 @@ data:
                 document.getElementById('cluster-load').textContent = fmt(cluster.avg_load || 0, 2);
                 document.getElementById('cluster-age').textContent = cluster.cluster_age_days || '-';
                 document.getElementById('cluster-pods').textContent = cluster.pods_running || '-';
-                document.getElementById('cluster-pods-total').textContent = ` / ${cluster.pods_total || '-'} total`;
+                document.getElementById('cluster-pods-total').textContent = cluster.pods_total || '-';
                 document.getElementById('last-update').textContent = data.cached_at
                     ? new Date(data.cached_at).toLocaleTimeString()
                     : '-';
