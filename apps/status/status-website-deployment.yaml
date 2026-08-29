@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: website
-          image: nginx:alpine:1-alpine3.23
+          image: nginx:1.31.4-alpine
           ports:
             - containerPort: 80
           volumeMounts:
