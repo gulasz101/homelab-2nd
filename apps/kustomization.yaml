@@ -101,20 +101,23 @@ resources:
   - docs-mcp/docs-mcp-service.yaml
   # Provisioned Grafana dashboard for docs-mcp
   - docs-mcp/docs-mcp-dashboard-configmap.yaml
-  # tldraw namespace
-  - tldraw/namespace.yaml
-  # SOPS-encrypted secrets
-  - tldraw/tldraw-db-credentials.sops.yaml
-  - tldraw/tldraw-minio-backup-creds.sops.yaml
-  - tldraw/tldraw-oidc-client.sops.yaml
-  - tldraw/tldraw-tunnel-token.sops.yaml
-  # CNPG cluster + backups for tldraw
-  - tldraw/objectstore.yaml
-  - tldraw/postgres-cluster.yaml
-  - tldraw/scheduled-backup.yaml
-  # Cloudflare Tunnel for white-board.voitech.dev
-  - tldraw/cloudflared-tldraw-deployment.yaml
-  - tldraw/tldraw-tunnel-ingress-configmap.yaml
+#################################
+# temp removed to release CPU 
+#################################
+  # # tldraw namespace
+  # - tldraw/namespace.yaml
+  # # SOPS-encrypted secrets
+  # - tldraw/tldraw-db-credentials.sops.yaml
+  # - tldraw/tldraw-minio-backup-creds.sops.yaml
+  # - tldraw/tldraw-oidc-client.sops.yaml
+  # - tldraw/tldraw-tunnel-token.sops.yaml
+  # # CNPG cluster + backups for tldraw
+  # - tldraw/objectstore.yaml
+  # - tldraw/postgres-cluster.yaml
+  # - tldraw/scheduled-backup.yaml
+  # # Cloudflare Tunnel for white-board.voitech.dev
+  # - tldraw/cloudflared-tldraw-deployment.yaml
+  # - tldraw/tldraw-tunnel-ingress-configmap.yaml
   # GPU-accelerated embedding platform service (TEI - preferred GPU path)
   # Disabled: TEI prebuilt images do not support Maxwell sm_52 and the CPU image
   # fails to parse the nomic model config. Keep files in repo for a future GPU upgrade.
