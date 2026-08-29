@@ -1,0 +1,16 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: status-website
+  namespace: status
+  labels:
+    app.kubernetes.io/name: status-website
+spec:
+  selector:
+    app.kubernetes.io/name: status-website
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: ClusterIP

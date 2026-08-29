@@ -1,0 +1,25 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: status-website-content
+  namespace: status
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>voitech.dev - homelab-2nd Status</title>
+      <style>
+        body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; padding: 2rem; }
+        h1 { color: #38bdf8; }
+      </style>
+    </head>
+    <body>
+      <h1>voitech.dev homelab-2nd Status</h1>
+      <p>Public status page deployed via GitOps.</p>
+      <!-- Add live metric placeholders later -->
+    </body>
+    </html>

@@ -311,3 +311,13 @@ resources:
   - openviking/openviking-alertmanager-config.yaml
   - openviking/openviking-loki-rule.yaml
   - openviking/openviking-dashboard-configmap.yaml
+
+  # Status page namespace
+  - status/namespace.yaml
+  # Static website content
+  - status/status-website-configmap.yaml
+  - status/status-website-deployment.yaml
+  - status/status-website-service.yaml
+  # Cloudflare Tunnel for status.voitech.dev
+  - status/status-tunnel-token.sops.yaml
+  - status/cloudflared-status-deployment.yaml
