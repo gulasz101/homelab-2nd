@@ -13,7 +13,7 @@ data:
     import threading
     import time
     from http.server import HTTPServer, BaseHTTPRequestHandler
-    from urllib.request import urlopen
+    from urllib.request import urlopen, Request
     from urllib.parse import quote
     from datetime import datetime
 
@@ -53,13 +53,12 @@ data:
             with open(token_path, "r") as f:
                 token = f.read().strip()
             ctx = ssl.create_default_context(cafile=ca_path)
-            req = urlopen(
+            req = Request(
                 "https://kubernetes.default.svc/api/v1/namespaces/kube-system",
                 headers={"Authorization": f"Bearer {token}"},
-                context=ctx,
-                timeout=10,
             )
-            data = json.loads(req.read().decode())
+            with urlopen(req, context=ctx, timeout=10) as r:
+                data = json.loads(r.read().decode())
             return data.get("metadata", {}).get("creationTimestamp")
         except Exception:
             return None
