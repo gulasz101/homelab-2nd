@@ -30,20 +30,17 @@ spec:
     storageClass: local-path
     size: 20Gi
 
-  # Backup + WAL archiving to OMV MinIO S3
+  # Backup + WAL archiving to OMV MinIO S3 via the barman-cloud CNPG-I plugin.
+  # The in-tree backup.barmanObjectStore API is deprecated in CNPG v1.30+ and
+  # is mutually exclusive with the WAL archiver plugin.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: nextcloud-db-backups
+        serverName: nextcloud-db
+
   backup:
-    barmanObjectStore:
-      destinationPath: s3://cnpg-backups/nextcloud
-      endpointURL: http://openmediavault.local:9000
-      s3Credentials:
-        accessKeyId:
-          name: nextcloud-backup-creds
-          key: ACCESS_KEY_ID
-        secretAccessKey:
-          name: nextcloud-backup-creds
-          key: ACCESS_SECRET_KEY
-      data:
-        compression: gzip
     retentionPolicy: "30d"
 
   # Resource limits — reasonable for a homelab

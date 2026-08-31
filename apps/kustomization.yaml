@@ -175,6 +175,7 @@ resources:
   - nextcloud/nextcloud-data-pvc.yaml
   # CNPG Cluster for Nextcloud
   - nextcloud/postgres-cluster.yaml
+  - nextcloud/objectstore.yaml
   - nextcloud/scheduled-backup.yaml
   # Nextcloud HelmRelease
   - nextcloud/nextcloud-helm-release.yaml

@@ -1,0 +1,22 @@
+---
+# ObjectStore for the Barman Cloud CNPG-I plugin — Nextcloud backups to OMV MinIO
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: nextcloud-db-backups
+  namespace: nextcloud
+spec:
+  configuration:
+    destinationPath: s3://cnpg-backups/nextcloud
+    endpointURL: http://openmediavault.local:9000
+    s3Credentials:
+      accessKeyId:
+        name: nextcloud-backup-creds
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: nextcloud-backup-creds
+        key: SECRET_ACCESS_KEY
+    data:
+      compression: gzip
+    wal:
+      compression: gzip
