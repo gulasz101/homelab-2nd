@@ -46,15 +46,6 @@ spec:
         compression: gzip
     retentionPolicy: "30d"
 
-  # CNPG plugin — required in v1.30+ for barman-cloud WAL archiving + backups
-  plugins:
-    - name: barman-cloud.cloudnative-pg.io
-      enabled: true
-      isWALArchiver: true
-      parameters:
-        barmanObjectName: nextcloud-db-backups
-        serverName: nextcloud-db
-
   # Resource limits — reasonable for a homelab
   resources:
     requests:
