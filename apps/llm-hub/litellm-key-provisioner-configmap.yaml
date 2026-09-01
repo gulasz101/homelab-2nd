@@ -54,6 +54,13 @@ data:
         "glm-5.2-go",
         "glm-5.1-go",
         "glm-5-go",
+        # Honcho deriver/summary/dream/dialectic models
+        "nemotron-3-nano-30b-ollama",
+        "openai/nemotron-3-nano-30b-ollama",
+        "nemotron-3-super-ollama",
+        "openai/nemotron-3-super-ollama",
+        "nemotron-3-ultra-ollama",
+        "openai/nemotron-3-ultra-ollama",
         "minimax-m3-go",
         "minimax-m2.7-go",
         "minimax-m2.5-go",
@@ -75,12 +82,12 @@ data:
         # LiteLLM clients may pass either the bare model name or an
         # openai/ prefixed name. Allow both forms so keys work regardless
         # of how the caller names the model.
-        expanded = []
+        expanded = set()
         for m in models:
-            expanded.append(m)
+            expanded.add(m)
             if not m.startswith("openai/"):
-                expanded.append(f"openai/{m}")
-        return expanded
+                expanded.add(f"openai/{m}")
+        return sorted(expanded)
 
     # Kubernetes maps secret keys like 'hermes-andrzej-key' to env vars
     # HERMES_ANDRZEJ_KEY. This list must match the keys in the

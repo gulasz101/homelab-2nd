@@ -22,7 +22,7 @@ data:
               sum by (pod, namespace) (
                 count_over_time(
                   {k8s_namespace_name="honcho", k8s_pod_name=~"honcho-api.*|honcho-deriver.*"}
-                    |~ "PermissionDeniedError|RetryError|maximum pending requests exceeded|InternalServerError"
+                    |~ "PermissionDeniedError|RetryError|maximum pending requests exceeded|InternalServerError|key_model_access_denied|key not allowed to access model"
                   [5m]
                 )
               ) > 0
