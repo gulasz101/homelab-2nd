@@ -20,9 +20,11 @@ spec:
         matchType: '='
   receivers:
     - name: honcho-mattermost
-      webhookConfigs:
-        - urlSecret:
+      slackConfigs:
+        - apiURL:
             name: honcho-mattermost-webhook-url
             key: url
           sendResolved: true
-          maxAlerts: 10
+          title: "{{ .CommonAnnotations.summary }}"
+          text: "{{ .CommonAnnotations.description }}"
+          fallback: "honcho alert: {{ .CommonAnnotations.summary }}"
