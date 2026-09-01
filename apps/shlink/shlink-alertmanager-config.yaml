@@ -15,9 +15,11 @@ spec:
         matchType: "="
   receivers:
     - name: shlink-mattermost
-      webhookConfigs:
-        - urlSecret:
+      slackConfigs:
+        - apiURL:
             name: shlink-mattermost-webhook-url
             key: url
           sendResolved: true
-          maxAlerts: 10
+          title: "{{ .CommonAnnotations.summary }}"
+          text: "{{ .CommonAnnotations.description }}"
+          fallback: "shlink alert: {{ .CommonAnnotations.summary }}"

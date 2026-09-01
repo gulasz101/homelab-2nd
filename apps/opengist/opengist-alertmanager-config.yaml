@@ -15,9 +15,11 @@ spec:
         matchType: "="
   receivers:
     - name: opengist-mattermost
-      webhookConfigs:
-        - urlSecret:
+      slackConfigs:
+        - apiURL:
             name: opengist-mattermost-webhook-url
             key: url
           sendResolved: true
-          maxAlerts: 10
+          title: "{{ .CommonAnnotations.summary }}"
+          text: "{{ .CommonAnnotations.description }}"
+          fallback: "opengist alert: {{ .CommonAnnotations.summary }}"

@@ -18,9 +18,11 @@ spec:
         matchType: '='
   receivers:
     - name: firecrawl-mattermost
-      webhookConfigs:
-        - urlSecret:
+      slackConfigs:
+        - apiURL:
             name: firecrawl-mattermost-webhook-url
             key: url
           sendResolved: true
-          maxAlerts: 10
+          title: "{{ .CommonAnnotations.summary }}"
+          text: "{{ .CommonAnnotations.description }}"
+          fallback: "firecrawl alert: {{ .CommonAnnotations.summary }}"

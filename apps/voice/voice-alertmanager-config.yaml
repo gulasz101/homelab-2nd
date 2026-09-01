@@ -17,9 +17,11 @@ spec:
         matchType: "="
   receivers:
     - name: voice-mattermost
-      webhookConfigs:
-        - urlSecret:
+      slackConfigs:
+        - apiURL:
             name: voice-mattermost-webhook-url
             key: url
           sendResolved: true
-          maxAlerts: 10
+          title: "{{ .CommonAnnotations.summary }}"
+          text: "{{ .CommonAnnotations.description }}"
+          fallback: "voice alert: {{ .CommonAnnotations.summary }}"

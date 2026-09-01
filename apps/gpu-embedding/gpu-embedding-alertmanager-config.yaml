@@ -17,9 +17,11 @@ spec:
         matchType: "="
   receivers:
     - name: gpu-embedding-mattermost
-      webhookConfigs:
-        - urlSecret:
+      slackConfigs:
+        - apiURL:
             name: gpu-embedding-mattermost-webhook-url
             key: url
           sendResolved: true
-          maxAlerts: 10
+          title: "{{ .CommonAnnotations.summary }}"
+          text: "{{ .CommonAnnotations.description }}"
+          fallback: "gpu-embedding alert: {{ .CommonAnnotations.summary }}"
