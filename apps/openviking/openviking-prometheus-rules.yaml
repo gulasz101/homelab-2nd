@@ -84,7 +84,11 @@ spec:
 
         - alert: OpenVikingPodNotReady
           expr: |
-            kube_pod_status_ready{namespace="openviking", pod=~"openviking.*"} != 1
+            (
+              kube_pod_status_ready{namespace="openviking", pod=~"openviking.*", condition="true"} != 1
+            )
+            unless on(pod)
+            kube_pod_owner{namespace="openviking", owner_kind="Job"}
           for: 3m
           labels:
             severity: critical
