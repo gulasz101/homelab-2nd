@@ -31,22 +31,22 @@ spec:
             summary: "openviking/{{ $labels.pod }} CPU above request"
             description: "{{ $labels.pod }}/{{ $labels.container }} CPU usage exceeds its request for more than 5 minutes."
 
-        - alert: OpenVikingMemoryAboveRequest
+        - alert: OpenVikingMemoryAbove85PercentLimit
           expr: |
-            sum by (pod, container, namespace) (
+            100 * sum by (pod, container, namespace) (
               container_memory_working_set_bytes{namespace="openviking", container!=""}
             )
-            >
+            /
             sum by (pod, container, namespace) (
-              kube_pod_container_resource_requests{namespace="openviking", resource="memory", container!=""}
-            )
-          for: 5m
+              kube_pod_container_resource_limits{namespace="openviking", resource="memory", container!=""}
+            ) > 85
+          for: 15m
           labels:
             severity: warning
             namespace: openviking
           annotations:
-            summary: "openviking/{{ $labels.pod }} memory above request"
-            description: "{{ $labels.pod }}/{{ $labels.container }} memory usage exceeds its request for more than 5 minutes."
+            summary: "openviking/{{ $labels.pod }} memory above 85% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 85% of its limit for more than 15 minutes."
 
         - alert: OpenVikingCPUAbove90PercentLimit
           expr: |
