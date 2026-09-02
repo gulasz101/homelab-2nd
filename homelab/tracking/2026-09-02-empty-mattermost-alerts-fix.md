@@ -112,3 +112,43 @@ kubectl -n honcho delete prometheusrule test-alertmanager-template
 - Always verify the Prometheus CR `ruleSelector` label matches the labels on `PrometheusRule` resources. A mismatched label silently disables the entire rule group.
 - The `AlertmanagerConfig` selector label (`release=kube-prometheus-stack`) is independent of the Prometheus rule selector; keep them straight to avoid confusion.
 - A real end-to-end test with a temporary `vector(1)` alert is the fastest way to prove notifications render correctly without waiting for production failures.
+
+## Follow-up: empty alerts continued after the first fix
+
+After the first commit, the Supreme Leader reported he was still receiving empty alerts. Investigation revealed two additional problems:
+
+### 1. Manual test payloads left in the channel
+While debugging, I sent three direct webhook test payloads to reproduce the empty-post behavior. One had content ("Test title / Test text"), but the other two intentionally had empty `title`/`text`. These appeared as empty `akadmin` posts in `#gulaszteam` around 10:10. This was sloppy — test traffic should never go to a production channel.
+
+### 2. The new template used an unsupported function
+The templates introduced in the first fix used `{{ .CommonLabels.namespace | default "homelab" }}`. Alertmanager's Go template engine does **not** include the Sprig/Helm `default` function. When the template failed to render, the output was empty, producing the exact empty posts the fix was meant to prevent.
+
+All alerts routed by these `AlertmanagerConfig` CRDs already carry a `namespace` label because the route matcher requires it, so the `default` guard was unnecessary.
+
+### Final template
+
+```yaml
+title: |-
+  [{{ .Status | toUpper }}] {{ .CommonLabels.namespace }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+text: |-
+  {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+  {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+  {{ end }}
+fallback: |-
+  {{ .CommonLabels.namespace }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+```
+
+### Verification after second fix
+
+- Committed `fix(alerting): remove unsupported default() template function`.
+- Flux reconciled; Alertmanager reloaded config at `2026-09-02T10:04:19Z` without errors.
+- Created a temporary `TestMattermostTemplate` warning alert in `honcho` (`expr: vector(1)`).
+- `alertmanager_notifications_total{integration="slack"}` increased from 65 to 79 and `alertmanager_notifications_failed_total{integration="slack"}` stayed at 0.
+- The temporary rule was deleted.
+
+## Updated commits
+
+1. `fix(alerting): ensure Mattermost alerts always have content`
+2. `fix(alerting): align PrometheusRule labels and add missing descriptions`
+3. `fix(alerting): remove unsupported default() template function`
+4. `docs(tracking): empty Mattermost alert fix`
