@@ -8,7 +8,7 @@ metadata:
   name: gpu-embedding-resource-alerts
   namespace: gpu-embedding
   labels:
-    release: kube-prometheus-stack
+    release: prometheus-stack
 spec:
   groups:
     - name: gpu-embedding.resources

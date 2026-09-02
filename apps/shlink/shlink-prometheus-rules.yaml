@@ -5,7 +5,7 @@ metadata:
   name: shlink-resource-alerts
   namespace: shlink
   labels:
-    release: kube-prometheus-stack
+    release: prometheus-stack
 spec:
   groups:
     - name: shlink.resources

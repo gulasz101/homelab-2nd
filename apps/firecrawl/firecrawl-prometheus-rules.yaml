@@ -8,7 +8,7 @@ metadata:
   name: firecrawl-resource-alerts
   namespace: firecrawl
   labels:
-    release: kube-prometheus-stack
+    release: prometheus-stack
 spec:
   groups:
     - name: firecrawl.resources

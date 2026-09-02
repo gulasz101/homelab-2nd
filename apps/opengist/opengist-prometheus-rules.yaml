@@ -5,7 +5,7 @@ metadata:
   name: opengist-resource-alerts
   namespace: opengist
   labels:
-    release: kube-prometheus-stack
+    release: prometheus-stack
 spec:
   groups:
     - name: opengist.resources

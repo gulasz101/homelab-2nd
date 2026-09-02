@@ -5,7 +5,7 @@ metadata:
   name: llm-hub-resource-alerts
   namespace: llm-hub
   labels:
-    release: kube-prometheus-stack
+    release: prometheus-stack
 spec:
   groups:
     - name: llm-hub.resources

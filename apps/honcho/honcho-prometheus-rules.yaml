@@ -4,7 +4,7 @@ metadata:
   name: honcho-resource-alerts
   namespace: honcho
   labels:
-    release: kube-prometheus-stack
+    release: prometheus-stack
 spec:
   groups:
     - name: honcho.resources
