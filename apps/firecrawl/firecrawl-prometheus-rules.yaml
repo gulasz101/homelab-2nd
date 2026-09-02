@@ -25,48 +25,32 @@ spec:
             summary: "Firecrawl API pod is down"
             description: "No firecrawl-api pod has been reported as up for more than 2 minutes."
 
-        - alert: FirecrawlPlaywrightPodDown
+        - alert: FirecrawlPlaywrightPodNotReady
           expr: |
-            absent(up{namespace="firecrawl", pod=~"playwright-service.*"}) == 1
+            kube_pod_status_ready{namespace="firecrawl", pod=~"playwright-service.*", condition="true"} != 1
+            unless on (pod) kube_pod_owner{namespace="firecrawl", owner_kind="Job"}
           for: 2m
           labels:
             severity: critical
             namespace: firecrawl
           annotations:
-            summary: "Firecrawl Playwright pod is down"
-            description: "No playwright-service pod has been reported as up for more than 2 minutes."
+            summary: "Firecrawl Playwright pod is not ready"
+            description: "The playwright-service pod in firecrawl has been not ready for more than 2 minutes."
 
-        - alert: FirecrawlCPUAboveRequest
+        - alert: FirecrawlMemoryAbove85PercentLimit
           expr: |
-            sum by (pod, container) (
-              rate(container_cpu_usage_seconds_total{namespace="firecrawl", container!=""}[5m])
-            ) >
-            sum by (pod, container) (
-              kube_pod_container_resource_requests{namespace="firecrawl", resource="cpu", container!=""}
-            )
-          for: 5m
-          labels:
-            severity: warning
-            namespace: firecrawl
-          annotations:
-            summary: "Firecrawl container CPU is above its request"
-            description: "{{ $labels.pod }}/{{ $labels.container }} CPU usage exceeds its requested CPU for more than 5 minutes."
-
-        - alert: FirecrawlMemoryAboveRequest
-          expr: |
-            sum by (pod, container) (
+            100 * sum by (pod, container) (
               container_memory_working_set_bytes{namespace="firecrawl", container!=""}
-            ) >
-            sum by (pod, container) (
-              kube_pod_container_resource_requests{namespace="firecrawl", resource="memory", container!=""}
-            )
-          for: 5m
+            ) / sum by (pod, container) (
+              kube_pod_container_resource_limits{namespace="firecrawl", resource="memory", container!=""}
+            ) > 85
+          for: 15m
           labels:
             severity: warning
             namespace: firecrawl
           annotations:
-            summary: "Firecrawl container memory is above its request"
-            description: "{{ $labels.pod }}/{{ $labels.container }} memory usage exceeds its requested memory for more than 5 minutes."
+            summary: "Firecrawl container memory is above 85% of its limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 85% of its limit for more than 15 minutes."
 
         - alert: FirecrawlCPUAbove90PercentLimit
           expr: |

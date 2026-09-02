@@ -40,10 +40,10 @@ spec:
           resources:
             requests:
               cpu: 50m
-              memory: 256Mi
+              memory: 512Mi
             limits:
               cpu: 500m
-              memory: 512Mi
+              memory: 1Gi
           # RabbitMQ takes 15-25s to boot on this node under CPU pressure.
           # Use a startup probe to give it a generous boot window, then lighter
           # TCP-based liveness/readiness probes so diagnostics commands don't
