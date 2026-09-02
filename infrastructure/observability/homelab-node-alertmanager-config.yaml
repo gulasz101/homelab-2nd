@@ -23,6 +23,11 @@ spec:
             name: homelab-node-mattermost-webhook-url
             key: url
           sendResolved: true
-          title: "{{ .CommonAnnotations.summary }}"
-          text: "{{ .CommonAnnotations.description }}"
-          fallback: "homelab-2nd alert: {{ .CommonAnnotations.summary }}"
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.namespace | default "homelab" }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.namespace | default "homelab" }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

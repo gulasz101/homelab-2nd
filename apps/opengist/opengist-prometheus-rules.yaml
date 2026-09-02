@@ -25,6 +25,7 @@ spec:
             namespace: opengist
           annotations:
             summary: "opengist/{{ $labels.pod }} CPU above request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU usage exceeds its request for more than 5 minutes."
         - alert: OpenGistMemoryAboveRequest
           expr: |
             sum by (pod, container, namespace) (
@@ -39,6 +40,7 @@ spec:
             namespace: opengist
           annotations:
             summary: "opengist/{{ $labels.pod }} memory above request"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory usage exceeds its request for more than 5 minutes."
         - alert: OpenGistCPUAbove90PercentLimit
           expr: |
             100 * sum by (pod, container, namespace) (
@@ -52,6 +54,7 @@ spec:
             namespace: opengist
           annotations:
             summary: "opengist/{{ $labels.pod }} CPU above 90% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU is above 90% of its limit for more than 5 minutes."
         - alert: OpenGistMemoryAbove90PercentLimit
           expr: |
             100 * sum by (pod, container, namespace) (
@@ -65,3 +68,4 @@ spec:
             namespace: opengist
           annotations:
             summary: "opengist/{{ $labels.pod }} memory above 90% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 90% of its limit for more than 5 minutes."
