@@ -37,7 +37,7 @@ data:
                 count_over_time(
                   {k8s_namespace_name="openviking"}
                     |~ "embedding|embeddings|nomic-embed-text"
-                    |~ "Error|ERROR|ERR|FATAL|fatal|Traceback|Exception|exception|unhealthy|timeout|Timeout|connect.*refused|ConnectionError|5[0-9][0-9]|4[0-9][0-9]"
+                    |~ "Error|ERROR|ERR|FATAL|fatal|Traceback|Exception|exception|unhealthy|timeout|Timeout|connect.*refused|ConnectionError"
                   [5m]
                 )
               ) > 0
