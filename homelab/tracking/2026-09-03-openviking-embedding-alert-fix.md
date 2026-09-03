@@ -24,7 +24,7 @@ He checked the logs and found nothing worrying.
 
 ## Root cause
 
-The `OpenVikingEmbeddingFailures` rule in `apps/openviking/openviking-loki-rule.yaml` used this regex:
+The `OpenVikingEmbeddingFailures` rule in `apps/openviking/openviking-loki-rule.yaml` originally used this regex:
 
 ```logql
 |~ "embedding|embeddings|nomic-embed-text|ConnectTimeout|APITimeoutError|connection|timeout"
@@ -32,29 +32,33 @@ The `OpenVikingEmbeddingFailures` rule in `apps/openviking/openviking-loki-rule.
 
 This matched **every log line containing the word "embedding" or "embeddings"**, including healthy embedding requests. The alert was effectively an "embedding feature exists" detector, not a failure detector.
 
+A first fix tightened the rule to require embedding context **and** an error/timeout/HTTP-error indicator, but the `4[0-9][0-9]|5[0-9][0-9]` part still matched any three-digit number starting with 4 or 5 anywhere in the line — including response times like `/embeddings in 0.434700` and `duration_ms=5608.60` from slow-but-healthy embedding calls.
+
 ## Changes made
 
 ### `apps/openviking/openviking-loki-rule.yaml`
 
-Replaced the broad single regex with two chained filters that require embedding context **and** an actual error/timeout/HTTP-error indicator:
+Final expression requires embedding context **and** an explicit error/timeout/exception indicator:
 
 ```logql
 { k8s_namespace_name="openviking" }
   |~ "embedding|embeddings|nomic-embed-text"
-  |~ "Error|ERROR|ERR|FATAL|fatal|Traceback|Exception|exception|unhealthy|timeout|Timeout|connect.*refused|ConnectionError|5[0-9][0-9]|4[0-9][0-9]"
+  |~ "Error|ERROR|ERR|FATAL|fatal|Traceback|Exception|exception|unhealthy|timeout|Timeout|connect.*refused|ConnectionError"
 ```
 
-This still catches genuine embedding failures (timeouts, connection errors, HTTP 4xx/5xx, exceptions) but ignores routine embedding request logs.
+The naive `4[0-9][0-9]|5[0-9][0-9]` HTTP-status guess was removed because it matched arbitrary numeric substrings in timing values.
 
 ## Verification
 
 - Committed and pushed: `36f9323 — fix(openviking): tighten OpenVikingEmbeddingFailures Loki rule`.
-- Flux `flux-system` GitRepository fetched new revision `main@sha1:36f9323fd32508a06d1b4f0b03a97039f9693650`.
-- Flux `apps` kustomization applied revision `main@sha1:36f9323fd32508a06d1b4f0b03a97039f9693650`.
-- `ConfigMap/openviking-loki-rules` in `observability` namespace updated with the new expression.
-- Loki Ruler reloaded the file at `2026-09-03T12:27:00.455Z` (`updating rule file /var/loki/rules-temp/fake/openviking-errors.yaml`).
-- Next evaluation at `2026-09-03T12:28:39Z` ran the new query.
-- Alertmanager `/api/v2/alerts` no longer listed `OpenVikingEmbeddingFailures` as active.
+- The first fix still fired because `4[0-9][0-9]|5[0-9][0-9]` matched timing values.
+- Second commit and push: `5b1d6c1 — fix(openviking): remove naive HTTP-status regex from embedding alert`.
+- Flux `flux-system` GitRepository fetched new revision `main@sha1:5b1d6c108141b88ddeb4bb4eb43eceed1493c90f`.
+- Flux `apps` kustomization applied revision `main@sha1:5b1d6c108141b88ddeb4bb4eb43eceed1493c90f`.
+- `ConfigMap/openviking-loki-rules` in `observability` namespace updated with the final expression.
+- Direct Loki query over the last 2.5 hours returned **zero** matches for the final expression.
+- Loki Ruler evaluation at `2026-09-03T14:42:39Z` ran the final query with `post_filter_lines: 0`.
+- Alertmanager `/api/v2/alerts` listed **zero** active OpenViking alerts.
 
 ## Commands used
 
@@ -88,9 +92,9 @@ ssh homelab-2nd \
 
 ## Result
 
-- The noisy `OpenVikingEmbeddingFailures` alert no longer fires on healthy embedding traffic.
-- The rule now detects actual embedding-related failures instead of all embedding mentions.
+- The noisy `OpenVikingEmbeddingFailures` alert no longer fires on healthy embedding traffic or slow-but-successful embedding calls.
+- The rule now detects actual embedding-related failures (errors, exceptions, connection refused, timeouts) instead of all embedding mentions or numeric timing values.
 
 ## Lesson
 
-When writing log-based alerts, avoid matching generic feature keywords. Anchor the regex to failure indicators (errors, exceptions, timeouts, non-2xx HTTP status codes) or the alert will page on normal operation.
+When writing log-based alerts, avoid matching generic feature keywords or unanchored numeric patterns. `4[0-9][0-9]|5[0-9][0-9]` matches any three-digit number starting with 4 or 5 anywhere in the line — including benign response times and durations. Anchor HTTP-status matching to the actual log format, or rely on explicit error/timeout words.
