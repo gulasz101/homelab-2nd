@@ -47,7 +47,7 @@ spec:
             - name: TZ
               value: Europe/Berlin
             - name: HOMEPAGE_ALLOWED_HOSTS
-              value: "192.168.1.162,arr-box.local,localhost"
+              value: "*"
             - name: HOMEPAGE_VAR_SONARR_API_KEY
               valueFrom:
                 secretKeyRef:

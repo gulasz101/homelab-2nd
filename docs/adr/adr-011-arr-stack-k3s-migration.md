@@ -1,6 +1,6 @@
 # ADR-011: arr-stack migrates to a dedicated k3s namespace
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-09-05  
 
 ## Context
@@ -28,10 +28,12 @@ We will create a new k3s namespace `arr-stack` under `apps/arr-stack/` in `gulas
 7. **Keep SQLite** for Sonarr, Radarr, Bazarr, and Jellyfin on `local-path` PVCs; no CNPG databases in this phase. This is a deliberate exception recorded here.
 8. **Rotate all *arr API keys and the qBittorrent password** during migration and store them in SOPS-encrypted Secrets.
 9. **Stop the Docker Compose stack before cutover** to avoid two containers using the same Mullvad WireGuard key simultaneously.
+10. **Daily config backups go to OMV MinIO S3**, not NFS. A dedicated bucket `arr-stack-backups` and user `arr-stack-backups` are scoped to it; a CronJob uploads each config PVC tarball using Python stdlib SigV4.
 
 ## Consequences
 
 **Positive**
+- Config backups are durable object storage on OMV, matching the long-term move to the MinIO S3 operator.
 
 - One less hand-maintained Docker Compose stack to drift out of sync with git.
 - Storage stays on OMV; config PVCs are rebuildable from the lifted configs or backups.
@@ -40,6 +42,7 @@ We will create a new k3s namespace `arr-stack` under `apps/arr-stack/` in `gulas
 - The shared gluetun proxy model avoids running five separate Mullvad tunnels.
 
 **Negative**
+- The S3 backup CronJob uses a hand-rolled SigV4 Python script because `mc` is not in the `busybox` image; any SigV4 drift will break backups silently unless the CronJob is monitored.
 
 - `arr-box` has only 8 GB RAM. Running both Docker Compose and k3s pods during cutover is impossible; the compose stack must be stopped before k3s pods start.
 - The proxy model requires reconfiguring qBittorrent and the *arr apps to use the proxy and to use cluster DNS for internal URLs (Prowlarr ↔ Sonarr/Radarr, Bazarr ↔ Sonarr/Radarr).
