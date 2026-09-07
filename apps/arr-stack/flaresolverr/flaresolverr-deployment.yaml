@@ -7,7 +7,7 @@ metadata:
   labels:
     app.kubernetes.io/name: flaresolverr
 spec:
-  replicas: 1
+  replicas: 0
   strategy:
     type: Recreate
   selector:
@@ -32,10 +32,6 @@ spec:
               mountPath: /dev/shm
             - name: tmp
               mountPath: /tmp
-          command:
-            - /bin/sh
-            - -c
-            - "sleep 3600"
           env:
             - name: LOG_LEVEL
               value: info

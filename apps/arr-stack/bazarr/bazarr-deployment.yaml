@@ -43,6 +43,12 @@ spec:
             - name: http
               containerPort: 6767
               protocol: TCP
+          env:
+            - name: BAZARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-api-keys
+                  key: bazarr-api-key
           volumeMounts:
             - name: config
               mountPath: /config
@@ -56,23 +62,27 @@ spec:
               memory: 128Mi
             limits:
               cpu: 500m
-              memory: 512Mi
+              memory: 1Gi
           livenessProbe:
-            httpGet:
-              path: /
-              port: http
-            initialDelaySeconds: 30
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "wget -qO- --header=\"X-API-KEY: $BAZARR_API_KEY\" http://127.0.0.1:6767/api/system/status > /dev/null 2>&1"
+            initialDelaySeconds: 60
             periodSeconds: 30
             timeoutSeconds: 5
-            failureThreshold: 3
+            failureThreshold: 5
           readinessProbe:
-            httpGet:
-              path: /
-              port: http
-            initialDelaySeconds: 15
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "wget -qO- --header=\"X-API-KEY: $BAZARR_API_KEY\" http://127.0.0.1:6767/api/system/status > /dev/null 2>&1"
+            initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 3
+            failureThreshold: 5
       volumes:
         - name: config
           persistentVolumeClaim:
