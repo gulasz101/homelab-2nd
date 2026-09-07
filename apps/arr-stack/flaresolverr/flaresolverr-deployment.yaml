@@ -32,6 +32,10 @@ spec:
               mountPath: /dev/shm
             - name: tmp
               mountPath: /tmp
+          command:
+            - /bin/sh
+            - -c
+            - "sleep 3600"
           env:
             - name: LOG_LEVEL
               value: info
