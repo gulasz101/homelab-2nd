@@ -1,0 +1,39 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-config
+  namespace: arr-stack
+data:
+  services.yaml: |
+    - Media:
+        - Jellyfin:
+            href: http://192.168.1.162:30096
+            description: Media server
+        - Sonarr:
+            href: http://192.168.1.162:30089
+            description: TV
+        - Radarr:
+            href: http://192.168.1.162:30078
+            description: Movies
+        - Prowlarr:
+            href: http://192.168.1.162:30069
+            description: Indexers
+        - Bazarr:
+            href: http://192.168.1.162:30076
+            description: Subtitles
+        - qBittorrent:
+            href: http://192.168.1.162:30080
+            description: Torrents
+  settings.yaml: |
+    title: arr-stack
+    background: https://images.unsplash.com/photo-1550684848-fac1c5b4e853
+    cardBlur: sm
+    useEqualHeights: true
+    color: slate
+    theme: dark
+  widgets.yaml: |
+    - resources:
+        cpu: true
+        memory: true
+        label: arr-box

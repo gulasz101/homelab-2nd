@@ -1,0 +1,30 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arr-stack-error-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  arr-stack-errors.yaml: |
+    groups:
+      - name: arr-stack.errors
+        interval: 1m
+        rules:
+          - alert: ArrStackAppErrors
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {k8s_namespace_name="arr-stack", k8s_pod_name=~"(gluetun|qbittorrent|sonarr|radarr|prowlarr|bazarr|jellyfin|homepage|flaresolverr).*"}
+                    |~ "ERROR|Exception|Traceback|error|Unhealthy|unauthorized|Unauthorized"
+                  [5m]
+                )
+              ) > 0
+            for: 1m
+            labels:
+              severity: warning
+              namespace: arr-stack
+            annotations:
+              summary: "arr-stack component logged errors"
+              description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} logged errors in the last 5 minutes."

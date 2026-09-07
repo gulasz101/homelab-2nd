@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: arr-stack-mattermost-webhook-url
+    namespace: arr-stack
+type: Opaque
+stringData:
+    url: ENC[AES256_GCM,data:3Ejr2iYCCFcbaUVQDGBjgbt3LiCrkRl6loIDbKzUnXmLCVw7jpQbS8bTUS6ABrc2tsZtER6aEBxM,iv:l6oPCYSEBb0zrWxW6I+MCfQcHbKZm/HSGBGbiQsoeco=,tag:so3JIHhDiKkFGVQ5fMlzIA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBIdk51Rlk2RWNRMVlVdmZy
+            bmNVZ3Q5ckgxYnFsWmF1dTFXMU1GRjQ5b3lRCmlMcXRyak5uaFNtVWQ2MGluVHRY
+            U0ZjbXpDOG94Z0hrOW5DcXhpeW45TFEKLS0tIEdid25PRVcwQjdBYWNoVHE5N1Jp
+            ZC9WdisvTzZMSXE0UEdZb2tadXdBa1UKu4l6xOWl+PNOKph4yk8Arrp9qwqjfdK5
+            RZh/7FRWcKQKSVjdYdHkZ+iSEThR9Xs4oT5wUVs+akXpggBQqh2qTg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-07T18:39:14Z"
+    mac: ENC[AES256_GCM,data:MOEJI9w/9RCU4UCP3j4x/ozP0RxxfmVRF9loMX1nUcgpgyPtcVDA4xAPeGQxG3TxRZKKS9YjO1rhbDXzgyzojIz+v2Ph9WgIdFKm3eVrYX8i3IEc30IZNuNfzIh3sYSy9x0lGDYZB6oBKYMfMzi+3A55uNcwj7ObkiqUxvqFgeM=,iv:LrsQfv2d3fggBEZXd43ZWfHrN1lQaYqdWRczW46DvZs=,tag:giBIguk7D2d3ZYem4KyfZg==,type:str]
+    version: 3.13.1

@@ -1,0 +1,110 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homepage
+  namespace: arr-stack
+  labels:
+    app.kubernetes.io/name: homepage
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: homepage
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: homepage
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: arr-box
+      initContainers:
+        - name: fix-perms
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - "chown -R 1100:1100 /app/config || true"
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          securityContext:
+            runAsUser: 0
+      containers:
+        - name: homepage
+          image: ghcr.io/gethomepage/homepage:v1.13.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PUID
+              value: "1100"
+            - name: PGID
+              value: "1100"
+            - name: TZ
+              value: Europe/Berlin
+            - name: HOMEPAGE_ALLOWED_HOSTS
+              value: "192.168.1.162,arr-box.local,localhost"
+            - name: HOMEPAGE_VAR_SONARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-api-keys
+                  key: sonarr-api-key
+            - name: HOMEPAGE_VAR_RADARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-api-keys
+                  key: radarr-api-key
+            - name: HOMEPAGE_VAR_PROWLARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-api-keys
+                  key: prowlarr-api-key
+            - name: HOMEPAGE_VAR_BAZARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-api-keys
+                  key: bazarr-api-key
+            - name: HOMEPAGE_VAR_JELLYFIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-api-keys
+                  key: jellyfin-api-key
+            - name: HOMEPAGE_VAR_QBITTORRENT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-api-keys
+                  key: qbittorrent-password
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: homepage-config

@@ -1,0 +1,15 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bazarr-nodeport
+  namespace: arr-stack
+spec:
+  selector:
+    app.kubernetes.io/name: bazarr
+  ports:
+    - name: http
+      port: 6767
+      targetPort: http
+      nodePort: 30076
+  type: NodePort

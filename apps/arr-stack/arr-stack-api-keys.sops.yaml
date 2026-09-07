@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: arr-stack-api-keys
+    namespace: arr-stack
+type: Opaque
+stringData:
+    sonarr-api-key: ENC[AES256_GCM,data:hpfiIiFdQNNfCHTITv37qcc+nInmvJVN9Kb0tnaCJ/s=,iv:AznoyUaGo+lehCFkUlqsRsho2TRduqCR/INn/+Mw0mI=,tag:6i5OaQP307PisayeQwk3CQ==,type:str]
+    radarr-api-key: ENC[AES256_GCM,data:ZhcMGFCdZqhoDEbhk9/u8AwMx6BQMNzTwmLrtfRBQAw=,iv:6AHiNpkI0y/OiUomi3LelJnuptEC4IMBiJ+yPQr9Rs8=,tag:ysG3RFqiFoF8mjRLb/HU1w==,type:str]
+    prowlarr-api-key: ENC[AES256_GCM,data:2oafVZAxs/oIHAWzZiIh2PiITglmsS6Uq4SM3KxSk3I=,iv:GJLhM7xSlRPtUOjUnpRq4BA5PoZT0TpcAJvBKdehY/I=,tag:pHYDJDL+QifKWlYg1/cDLg==,type:str]
+    bazarr-api-key: ENC[AES256_GCM,data:lkzc/rQB89oLypkJuJq5MNnLrF6cgYcWiMmrP9iebG0=,iv:IO+n5rBDoFNTKzzA2GjZvUgwnQFU/+OhUpJr+49wguU=,tag:4OiPHwQ5IaSRRyBd7WS4yA==,type:str]
+    jellyfin-api-key: ENC[AES256_GCM,data:1FOu6jK0w/xWDAV2ameOjg4Jw2RoVovJPDd9+MzvymI=,iv:UNbCVa6n56XP1wYTmyiHETEdtuVT1wQvVf4si8l8GV8=,tag:KNKvLOKB2bclXXPmHpjQqg==,type:str]
+    qbittorrent-password: ENC[AES256_GCM,data:Ydx//js0B/ADRO7kVll0xw==,iv:jnrvwLdzK+HJNiZMSGxD908k+uTzdvLEoOxfqg4J9Us=,tag:bEX773IR/TtOlRr/b0JIVQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA1RW8zSHBFZEJlRllXMmdE
+            ZzNWWGRRVHVpUVVZZnJvdVgrdDcwak4wTFdnCmxCSHRzSTJvOG5sZ1hYVUpNNjZ2
+            V2w3OVZpTFRkaytYTmpNeVhkVWxYOVUKLS0tIEZncWFlbFptdXA2KzQ3SlFTMDA1
+            ZDY2VHAxc085NTZwaUtVRXFmdEkyWjgKokxaqh37D4zt0O8zY2U1KJYwFQ/HI4x8
+            IQpUesr2sRK7TH4dyYuunEGmimJ/N00umauBN/KnQI8GbcHNFg9y1g==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-07T18:23:12Z"
+    mac: ENC[AES256_GCM,data:Z6IxDDw5BNAqGrvhJ68nLn1jbKTXN8OU2hJnroGcZ3fFRTgHujjf0wsl1hK/Rg2ToRkDubBj6AfsNuu5GDgSMYg07K9QLybSZ7837D/oW35Wl0Kh5MY5IZc6kA0pSiSSs9FdWIst9lqcu//FWZhuMMfEudc6iiyCKwoHwRagVmo=,iv:fy4/Qem/oWIwxX367Bq+A+MAtgThavUFc4L9E54Wugo=,tag:b9zh/GylCulE/ze97PFICA==,type:str]
+    version: 3.13.1

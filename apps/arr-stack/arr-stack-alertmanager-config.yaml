@@ -1,0 +1,30 @@
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: arr-stack-mattermost-alerts
+  namespace: arr-stack
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: arr-stack-mattermost
+    matchers:
+      - name: namespace
+        value: arr-stack
+        matchType: "="
+  receivers:
+    - name: arr-stack-mattermost
+      slackConfigs:
+        - apiURL:
+            name: arr-stack-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.namespace }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.namespace }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

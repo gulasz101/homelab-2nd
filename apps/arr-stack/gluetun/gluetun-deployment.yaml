@@ -1,0 +1,117 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gluetun
+  namespace: arr-stack
+  labels:
+    app.kubernetes.io/name: gluetun
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gluetun
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gluetun
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: arr-box
+      hostNetwork: false
+      containers:
+        - name: gluetun
+          image: qmcgaw/gluetun:v3.41.1
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            capabilities:
+              add:
+                - NET_ADMIN
+            allowPrivilegeEscalation: true
+          ports:
+            - name: socks5
+              containerPort: 1080
+              protocol: TCP
+            - name: http-proxy
+              containerPort: 8888
+              protocol: TCP
+            - name: qbittorrent-ui
+              containerPort: 8080
+              protocol: TCP
+            - name: torrent-tcp
+              containerPort: 6881
+              protocol: TCP
+            - name: torrent-udp
+              containerPort: 6881
+              protocol: UDP
+            - name: prowlarr
+              containerPort: 9696
+              protocol: TCP
+            - name: sonarr
+              containerPort: 8989
+              protocol: TCP
+            - name: radarr
+              containerPort: 7878
+              protocol: TCP
+            - name: flaresolvr
+              containerPort: 8191
+              protocol: TCP
+          env:
+            - name: VPN_SERVICE_PROVIDER
+              value: mullvad
+            - name: VPN_TYPE
+              value: wireguard
+            - name: WIREGUARD_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gluetun-mullvad-keys
+                  key: private-key
+            - name: WIREGUARD_ADDRESSES
+              valueFrom:
+                secretKeyRef:
+                  name: gluetun-mullvad-keys
+                  key: address
+            - name: SERVER_COUNTRIES
+              value: Spain
+            - name: HTTPPROXY
+              value: "on"
+            - name: HTTPPROXY_LISTENING_ADDRESS
+              value: ":8888"
+            - name: FIREWALL_OUTBOUND_SUBNETS
+              valueFrom:
+                secretKeyRef:
+                  name: gluetun-mullvad-keys
+                  key: lan-subnet
+            - name: PUID
+              value: "1100"
+            - name: PGID
+              value: "1100"
+            - name: TZ
+              value: Europe/Berlin
+          volumeMounts:
+            - name: config
+              mountPath: /gluetun
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            exec:
+              command:
+                - /gluetun-entrypoint
+                - healthcheck
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: gluetun-config

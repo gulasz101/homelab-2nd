@@ -1,0 +1,46 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: arr-stack
+resources:
+  - namespace.yaml
+  - arr-stack-nfs-media-pv.yaml
+  - arr-stack-nfs-downloads-pv.yaml
+  - gluetun-pvc.yaml
+  - qbittorrent-pvc.yaml
+  - sonarr-pvc.yaml
+  - radarr-pvc.yaml
+  - prowlarr-pvc.yaml
+  - bazarr-pvc.yaml
+  - jellyfin-pvc.yaml
+  - homepage-pvc.yaml
+  - gluetun/gluetun-deployment.yaml
+  - gluetun/gluetun-service.yaml
+  - qbittorrent/qbittorrent-deployment.yaml
+  - qbittorrent/qbittorrent-service.yaml
+  - sonarr/sonarr-deployment.yaml
+  - sonarr/sonarr-service.yaml
+  - radarr/radarr-deployment.yaml
+  - radarr/radarr-service.yaml
+  - prowlarr/prowlarr-deployment.yaml
+  - prowlarr/prowlarr-service.yaml
+  - bazarr/bazarr-deployment.yaml
+  - bazarr/bazarr-service.yaml
+  - jellyfin/jellyfin-deployment.yaml
+  - jellyfin/jellyfin-service.yaml
+  - homepage/homepage-deployment.yaml
+  - homepage/homepage-service.yaml
+  - homepage/homepage-config-configmap.yaml
+  - flaresolverr/flaresolverr-deployment.yaml
+  - flaresolverr/flaresolverr-service.yaml
+  - arr-stack-api-keys.sops.yaml
+  - gluetun-mullvad-keys.sops.yaml
+  - arr-stack-mattermost-webhook-url.sops.yaml
+  - arr-stack-minio-backup-creds.sops.yaml
+  - arr-stack-backup-script-configmap.yaml
+  - arr-stack-prometheus-rules.yaml
+  - arr-stack-alertmanager-config.yaml
+  - arr-stack-loki-rule.yaml
+  - arr-stack-dashboard-configmap.yaml
+  - arr-stack-backup-cronjob.yaml

@@ -1,0 +1,100 @@
+---
+# Daily arr-stack config backup to OMV MinIO S3 (bucket: arr-stack-backups).
+# Each config PVC is tarred and uploaded under configs/<svc>/<timestamp>.tar.gz.
+# Retention: last 7 backups per service.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: arr-stack-config-backup
+  namespace: arr-stack
+spec:
+  schedule: "0 4 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            kubernetes.io/hostname: arr-box
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: busybox:1.36
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  TS=\$(date +%Y%m%d-%H%M%S)
+                  BUCKET=arr-stack-backups
+                  ENDPOINT=http://openmediavault.local:9000
+                  REGION=us-east-1
+                  ACCESS_KEY=\${MINIO_ACCESS_KEY}
+                  SECRET_KEY=\${MINIO_SECRET_KEY}
+
+                  python3 /scripts/minio-s3-upload.py \
+                    --bucket "\${BUCKET}" --endpoint "\${ENDPOINT}" --region "\${REGION}" \
+                    --access-key "\${ACCESS_KEY}" --secret-key "\${SECRET_KEY}" \
+                    --timestamp "\${TS}"
+              env:
+                - name: MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-stack-minio-backup-creds
+                      key: ACCESS_KEY_ID
+                - name: MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-stack-minio-backup-creds
+                      key: ACCESS_SECRET_KEY
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                - name: gluetun
+                  mountPath: /configs/gluetun
+                - name: qbittorrent
+                  mountPath: /configs/qbittorrent
+                - name: sonarr
+                  mountPath: /configs/sonarr
+                - name: radarr
+                  mountPath: /configs/radarr
+                - name: prowlarr
+                  mountPath: /configs/prowlarr
+                - name: bazarr
+                  mountPath: /configs/bazarr
+                - name: jellyfin
+                  mountPath: /configs/jellyfin
+                - name: homepage
+                  mountPath: /configs/homepage
+          volumes:
+            - name: scripts
+              configMap:
+                name: arr-stack-backup-script
+                defaultMode: 0755
+            - name: gluetun
+              persistentVolumeClaim:
+                claimName: gluetun-config
+            - name: qbittorrent
+              persistentVolumeClaim:
+                claimName: qbittorrent-config
+            - name: sonarr
+              persistentVolumeClaim:
+                claimName: sonarr-config
+            - name: radarr
+              persistentVolumeClaim:
+                claimName: radarr-config
+            - name: prowlarr
+              persistentVolumeClaim:
+                claimName: prowlarr-config
+            - name: bazarr
+              persistentVolumeClaim:
+                claimName: bazarr-config
+            - name: jellyfin
+              persistentVolumeClaim:
+                claimName: jellyfin-config
+            - name: homepage
+              persistentVolumeClaim:
+                claimName: homepage-config

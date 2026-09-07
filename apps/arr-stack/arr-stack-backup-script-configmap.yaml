@@ -1,0 +1,145 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arr-stack-backup-script
+  namespace: arr-stack
+data:
+  minio-s3-upload.py: |
+    #!/usr/bin/env python3
+    import argparse, datetime, hashlib, hmac, json, os, subprocess, sys, time, urllib.parse, urllib.request, xml.etree.ElementTree as ET
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bucket", required=True)
+    parser.add_argument("--endpoint", required=True)
+    parser.add_argument("--region", default="us-east-1")
+    parser.add_argument("--access-key", required=True)
+    parser.add_argument("--secret-key", required=True)
+    parser.add_argument("--timestamp", required=True)
+    args = parser.parse_args()
+    
+    bucket = args.bucket
+    endpoint = args.endpoint.rstrip("/")
+    region = args.region
+    access_key = args.access_key
+    secret_key = args.secret_key
+    timestamp = args.timestamp
+    
+    services = ["gluetun", "qbittorrent", "sonarr", "radarr", "prowlarr", "bazarr", "jellyfin", "homepage"]
+    
+    
+    def sha256(data):
+        return hashlib.sha256(data if isinstance(data, bytes) else data.encode("utf-8")).hexdigest()
+    
+    
+    def sign(key, msg):
+        return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
+    
+    
+    def get_signature_key(secret, date_stamp, r, service):
+        k_date = sign(("AWS4" + secret).encode("utf-8"), date_stamp)
+        k_region = sign(k_date, r)
+        k_service = sign(k_region, service)
+        return sign(k_service, "aws4_request")
+    
+    
+    def request(method, path, payload=b"", query=""):
+        t = datetime.datetime.now(datetime.timezone.utc)
+        date_stamp = t.strftime("%Y%m%d")
+        amz_date = t.strftime("%Y%m%dT%H%M%SZ")
+        if isinstance(payload, str):
+            payload = payload.encode("utf-8")
+        payload_hash = sha256(payload)
+        host = urllib.parse.urlparse(endpoint).netloc
+        headers = {
+            "host": host,
+            "x-amz-content-sha256": payload_hash,
+            "x-amz-date": amz_date,
+        }
+        if method in ("PUT", "POST"):
+            headers["content-length"] = str(len(payload))
+        if method == "PUT":
+            headers["content-type"] = "application/gzip"
+        header_keys = sorted(headers.keys())
+        signed_headers = ";".join(header_keys)
+        canonical_request = "\n".join([
+            method,
+            urllib.parse.quote(path, safe="/"),
+            query,
+            "".join(f"{k}:{headers[k]}\n" for k in header_keys),
+            signed_headers,
+            payload_hash,
+        ])
+        credential_scope = f"{date_stamp}/{region}/s3/aws4_request"
+        string_to_sign = "\n".join([
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            credential_scope,
+            sha256(canonical_request.encode("utf-8")),
+        ])
+        signing_key = get_signature_key(secret_key, date_stamp, region, "s3")
+        signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+        headers["Authorization"] = (
+            f"AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, "
+            f"SignedHeaders={signed_headers}, Signature={signature}"
+        )
+        url = f"{endpoint}{path}"
+        if query:
+            url = f"{url}?{query}"
+        req = urllib.request.Request(url, data=payload, method=method, headers=headers)
+        return urllib.request.urlopen(req, timeout=120)
+    
+    
+    def upload(service, local_path):
+        key = f"configs/{service}/{timestamp}.tar.gz"
+        encoded = urllib.parse.quote(f"/{bucket}/{key}", safe="/")
+        data = open(local_path, "rb").read()
+        for attempt in range(3):
+            try:
+                resp = request("PUT", encoded, data)
+                print(f"Uploaded {service} -> {bucket}/{key} (HTTP {resp.status})")
+                return
+            except Exception as e:
+                print(f"Upload {service} attempt {attempt + 1} failed: {e}")
+                if attempt == 2:
+                    raise
+                time.sleep(2 ** attempt)
+    
+    
+    def cleanup(service):
+        prefix = f"configs/{service}/"
+        query = urllib.parse.urlencode({"list-type": "2", "prefix": prefix}, quote_via=urllib.parse.quote)
+        try:
+            resp = request("GET", f"/{bucket}", b"", query)
+            root = ET.fromstring(resp.read())
+            ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+            items = []
+            for contents in root.findall("s3:Contents", ns):
+                key_el = contents.find("s3:Key", ns)
+                if key_el is None:
+                    continue
+                key = key_el.text
+                last_mod = datetime.datetime.fromisoformat(
+                    contents.find("s3:LastModified", ns).text.replace("Z", "+00:00")
+                )
+                items.append((last_mod, key))
+            items.sort(reverse=True)
+            for _, key in items[7:]:
+                request("DELETE", f"/{bucket}/{urllib.parse.quote(key, safe='/')}")
+                print(f"Removed old backup: {key}")
+        except Exception as e:
+            print(f"Cleanup for {service} skipped: {e}")
+    
+    
+    os.makedirs("/tmp/arr-backups", exist_ok=True)
+    for svc in services:
+        src = f"/configs/{svc}"
+        if not os.path.isdir(src) or not os.listdir(src):
+            print(f"Skipping {svc}: source empty")
+            continue
+        tar_path = f"/tmp/arr-backups/{svc}-{timestamp}.tar.gz"
+        subprocess.run(["tar", "czf", tar_path, "-C", src, "."], check=True)
+        upload(svc, tar_path)
+        cleanup(svc)
+    
+    print("Backup complete")

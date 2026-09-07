@@ -1,0 +1,39 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gluetun
+  namespace: arr-stack
+spec:
+  selector:
+    app.kubernetes.io/name: gluetun
+  ports:
+    - name: socks5
+      port: 1080
+      targetPort: 1080
+    - name: http-proxy
+      port: 8888
+      targetPort: 8888
+    - name: qbittorrent-webui
+      port: 8080
+      targetPort: 8080
+    - name: torrent-tcp
+      port: 6881
+      targetPort: 6881
+    - name: torrent-udp
+      port: 6881
+      targetPort: 6881
+      protocol: UDP
+    - name: prowlarr
+      port: 9696
+      targetPort: 9696
+    - name: sonarr
+      port: 8989
+      targetPort: 8989
+    - name: radarr
+      port: 7878
+      targetPort: 7878
+    - name: flaresolverr
+      port: 8191
+      targetPort: 8191
+  type: ClusterIP
