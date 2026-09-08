@@ -7,8 +7,8 @@ metadata:
   namespace: itsaplan
 data:
   note: |
-    # plan.voitech.dev -> http://itsaplan-itsaplan-web.itsaplan.svc.cluster.local:3001
-    # api.plan.voitech.dev -> http://itsaplan-itsaplan-api.itsaplan.svc.cluster.local:3000
+    # plan.voitech.dev -> http://itsaplan-web.itsaplan.svc.cluster.local:3001
+    # api.plan.voitech.dev -> http://itsaplan-api.itsaplan.svc.cluster.local:3000
     #
     # Add both public hostname rules in Cloudflare Zero Trust:
     #   Networks -> Tunnels -> itsaplan / itsaplan-api.
