@@ -5,7 +5,7 @@ metadata:
     namespace: itsaplan
 type: Opaque
 stringData:
-    token: ENC[AES256_GCM,data:ZIfWu/iaF+KvPLxnWxe1xRPq1CIiO7MlDLXymC2h7kiVBSE38JM77xX3iS0K9OrPQJqGLjSmqbAqIZxtOL9pY4e3N+rgA9sXW5U=,iv:BhkUu0H+VDlgW/QU9wB971bC8GIXJHbYMekvaCaNChU=,tag:/5SjT3kqHLjD+uvxin15cg==,type:str]
+    token: ENC[AES256_GCM,data:TX3BnzO8ydlhouUfQbUNAizTdfrKa/q7oFELb/1NB+QMI9XFTD2Hyfr4SM9Ao5s9V2CaUPl8vqIxTnTvjgJ7gStSbTLMokrJIseBpgPcNUAcrTkkogHGuz8TJuqJXJ1OyyBMJe1D6z0+XwGEABpfr8/xiLvTodPS2xh9uXB7gtGbs8uO1Sddq2gvKarZryu18yksUtrlDEYinpYQZyQUp+cTYCfyqCr12l9iZpiUm12PR4G6TpGKGw==,iv:2Vw4k6W7toxUBUf3VnI8tzUtDlWNH1RnSJvd/KZqS6c=,tag:8p6qV5w3EFFl5TvK1c5EyA==,type:str]
 sops:
     age:
         - enc: |
@@ -18,6 +18,6 @@ sops:
             -----END AGE ENCRYPTED FILE-----
           recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-09-08T13:09:28Z"
-    mac: ENC[AES256_GCM,data:PIiSquV+x8CYFjCLftR7eYPQElZlFnCJQT1+p6UtByktz/ZzVabXGlCwbNBS85xU8SFe/Y9LWDfCLkufn76nk+Rp7M72MFxiiQQGwSOWVwYyjk05bnaAWYJsunuXUqql2cOj/sKCa+EcWAcJUmALyxojhmpFh9jNaQg0Hu/hJcE=,iv:a+02JJbl00QIAwDwcBeVivldyDN+5+99T1kWJUhevdg=,tag:9WBlhQlR0otDT8SO5Z5daA==,type:str]
-    version: 3.13.1
+    lastmodified: "2026-09-08T20:59:26Z"
+    mac: ENC[AES256_GCM,data:iTZIq7EJt1CCxqinV97D2tn2rcHDoRN2urrHKHCw+EKyydN8Lv6YmG+uIQD4IpkHNsYwuSrxsSExkeFieW1rHWU0fZrMEo3Afo8AyIFNy3zc6XmoTgZkon+tgdVdWsnz+hP4C4XwqQeyP+UfCU6ALkjRCwJOahLHlhrrX5UpTdQ=,iv:3elnLi5mWR6cRuOz8BF2VuusG9s1r3+IjrJJRCmiS2s=,tag:gQ+s8t145dRi6rvnwdqa0Q==,type:str]
+    version: 3.13.3
