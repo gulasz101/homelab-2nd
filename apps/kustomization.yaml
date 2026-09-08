@@ -331,3 +331,28 @@ resources:
   # Cloudflare Tunnel for status.voitech.dev
   - status/status-tunnel-token.sops.yaml
   - status/cloudflared-status-deployment.yaml
+
+  # itsaplan namespace (agent task tracker)
+  - itsaplan/namespace.yaml
+  # SOPS-encrypted secrets
+  - itsaplan/itsaplan-db-credentials.sops.yaml
+  - itsaplan/itsaplan-minio-creds.sops.yaml
+  - itsaplan/itsaplan-minio-backup-creds.sops.yaml
+  - itsaplan/itsaplan-secrets.sops.yaml
+  - itsaplan/itsaplan-tunnel-token.sops.yaml
+  - itsaplan/itsaplan-api-tunnel-token.sops.yaml
+  - itsaplan/itsaplan-mattermost-webhook-url.sops.yaml
+  # CNPG cluster + backups
+  - itsaplan/objectstore.yaml
+  - itsaplan/postgres-cluster.yaml
+  - itsaplan/scheduled-backup.yaml
+  # Itsaplan HelmRelease
+  - itsaplan/itsaplan-helm-release.yaml
+  # Cloudflare Tunnels for plan.voitech.dev + api.plan.voitech.dev
+  - itsaplan/cloudflared-itsaplan-deployment.yaml
+  - itsaplan/itsaplan-tunnel-ingress-configmap.yaml
+  # Observability
+  - itsaplan/itsaplan-prometheus-rules.yaml
+  - itsaplan/itsaplan-alertmanager-config.yaml
+  - itsaplan/itsaplan-loki-rule.yaml
+  - itsaplan/itsaplan-dashboard-configmap.yaml

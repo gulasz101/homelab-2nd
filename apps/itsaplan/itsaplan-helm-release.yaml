@@ -1,0 +1,210 @@
+---
+# Itsaplan HelmRelease — uses upstream chart via GitRepository source
+# Pinned to arr-box; CNPG Postgres + OMV MinIO for storage; bot disabled
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: itsaplan
+  namespace: itsaplan
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: charts/itsaplan
+      version: "0.1.0"
+      sourceRef:
+        kind: GitRepository
+        name: itsaplan
+        namespace: flux-system
+      interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  valuesFrom:
+    - kind: Secret
+      name: itsaplan-db-credentials
+      valuesKey: externalConnectionString
+      targetPath: externalDatabase.url
+  values:
+    nameOverride: itsaplan
+
+    # Use CloudNativePG + OMV MinIO, never the chart-bundled Postgres/MinIO
+    postgresql:
+      enabled: false
+    minio:
+      enabled: false
+    bot:
+      enabled: false
+
+    # Pin to the arr-box worker node
+    nodeSelector:
+      kubernetes.io/hostname: arr-box
+
+    api:
+      replicaCount: 1
+      image:
+        tag: "0.15.0"
+        pullPolicy: IfNotPresent
+      env:
+        API_URL: "https://api.plan.voitech.dev"
+        APP_URL: "https://plan.voitech.dev"
+        S3_BUCKET: "itsaplan-attachments"
+        S3_REGION: "us-east-1"
+        S3_FORCE_PATH_STYLE: "true"
+        TELEMETRY_DISABLED: "1"
+      nodeSelector:
+        kubernetes.io/hostname: arr-box
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      healthcheck:
+        initialDelaySeconds: 60
+        periodSeconds: 15
+        timeoutSeconds: 5
+        failureThreshold: 5
+
+    web:
+      replicaCount: 1
+      image:
+        tag: "0.15.0"
+        pullPolicy: IfNotPresent
+      env:
+        HOSTNAME: "0.0.0.0"
+      nodeSelector:
+        kubernetes.io/hostname: arr-box
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 300m
+          memory: 256Mi
+      healthcheck:
+        initialDelaySeconds: 30
+        periodSeconds: 15
+        timeoutSeconds: 5
+        failureThreshold: 5
+
+    worker:
+      replicaCount: 1
+      image:
+        tag: "0.15.0"
+        pullPolicy: IfNotPresent
+      env:
+        TELEMETRY_DISABLED: "1"
+        DO_NOT_TRACK: "1"
+      nodeSelector:
+        kubernetes.io/hostname: arr-box
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+    ingress:
+      enabled: false
+
+    secrets:
+      # These are intentionally empty; real values come from SOPS Secret resources
+      # via extraEnv below. The chart still requires keys to exist, so we keep them.
+      postgresPassword: ""
+      betterAuthSecret: ""
+      appEncryptionKey: ""
+      workerInternalToken: ""
+      s3AccessKeyId: ""
+      s3SecretAccessKey: ""
+
+    externalS3:
+      endpoint: "http://openmediavault.local:9000"
+
+  # Inject all real secrets from SOPS-encrypted Kubernetes Secrets
+  postRenderers:
+    - kustomize:
+        patchesStrategicMerge:
+          - |
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: itsaplan-api
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: api
+                      env:
+                        - name: BETTER_AUTH_SECRET
+                          valueFrom:
+                            secretKeyRef:
+                              name: itsaplan-secrets
+                              key: BETTER_AUTH_SECRET
+                        - name: APP_ENCRYPTION_KEY
+                          valueFrom:
+                            secretKeyRef:
+                              name: itsaplan-secrets
+                              key: APP_ENCRYPTION_KEY
+                        - name: WORKER_INTERNAL_TOKEN
+                          valueFrom:
+                            secretKeyRef:
+                              name: itsaplan-secrets
+                              key: WORKER_INTERNAL_TOKEN
+                        - name: S3_ACCESS_KEY_ID
+                          valueFrom:
+                            secretKeyRef:
+                              name: itsaplan-minio-creds
+                              key: ACCESS_KEY_ID
+                        - name: S3_SECRET_ACCESS_KEY
+                          valueFrom:
+                            secretKeyRef:
+                              name: itsaplan-minio-creds
+                              key: ACCESS_SECRET_KEY
+          - |
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: itsaplan-web
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: web
+                      env:
+                        - name: WORKER_INTERNAL_TOKEN
+                          valueFrom:
+                            secretKeyRef:
+                              name: itsaplan-secrets
+                              key: WORKER_INTERNAL_TOKEN
+          - |
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: itsaplan-worker
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: worker
+                      env:
+                        - name: BETTER_AUTH_SECRET
+                          valueFrom:
+                            secretKeyRef:
+                              name: itsaplan-secrets
+                              key: BETTER_AUTH_SECRET
+                        - name: APP_ENCRYPTION_KEY
+                          valueFrom:
+                            secretKeyRef:
+                              name: itsaplan-secrets
+                              key: APP_ENCRYPTION_KEY
+                        - name: WORKER_INTERNAL_TOKEN
+                          valueFrom:
+                            secretKeyRef:
+                              name: itsaplan-secrets
+                              key: WORKER_INTERNAL_TOKEN

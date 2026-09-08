@@ -1,0 +1,8 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: itsaplan
+  labels:
+    app.kubernetes.io/name: itsaplan
+    monitoring: enabled

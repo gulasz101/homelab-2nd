@@ -1,0 +1,16 @@
+---
+# GitRepository source for the upstream itsaplan Helm chart
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: itsaplan
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://github.com/croffasia/itsaplan.git
+  ref:
+    branch: main
+  ignore: |
+    # exclude everything except the Helm chart
+    /*
+    !/charts/itsaplan/

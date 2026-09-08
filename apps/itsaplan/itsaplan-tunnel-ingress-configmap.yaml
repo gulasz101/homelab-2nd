@@ -1,0 +1,17 @@
+---
+# Reminder of the public hostname rules (real rules live in Cloudflare Zero Trust)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: itsaplan-tunnel-ingress
+  namespace: itsaplan
+data:
+  note: |
+    # plan.voitech.dev -> http://itsaplan-itsaplan-web.itsaplan.svc.cluster.local:3001
+    # api.plan.voitech.dev -> http://itsaplan-itsaplan-api.itsaplan.svc.cluster.local:3000
+    #
+    # Add both public hostname rules in Cloudflare Zero Trust:
+    #   Networks -> Tunnels -> itsaplan / itsaplan-api.
+    # Protect plan.voitech.dev behind a Cloudflare Access application wired to Authentik OIDC.
+    # The api.plan.voitech.dev hostname should share the same Access application domain policy
+    # so better-auth cookies/CORS work correctly.

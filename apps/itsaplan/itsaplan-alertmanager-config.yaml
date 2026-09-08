@@ -1,0 +1,30 @@
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: itsaplan-mattermost-alerts
+  namespace: itsaplan
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: itsaplan-mattermost
+    matchers:
+      - name: namespace
+        value: itsaplan
+        matchType: "="
+  receivers:
+    - name: itsaplan-mattermost
+      slackConfigs:
+        - apiURL:
+            name: itsaplan-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.namespace }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.namespace }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
