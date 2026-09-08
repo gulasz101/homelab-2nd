@@ -47,7 +47,7 @@ data:
             description: Torrent Client
             widget:
               type: qbittorrent
-              url: http://qbittorrent-nodeport:8080
+              url: http://gluetun:8080
               username: admin
               password: {{HOMEPAGE_VAR_QBITTORRENT_PASSWORD}}
     

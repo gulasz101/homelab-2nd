@@ -39,7 +39,7 @@ spec:
             - name: http-proxy
               containerPort: 8888
               protocol: TCP
-            - name: qbittorrent-ui
+            - name: qbit-ui
               containerPort: 8080
               protocol: TCP
             - name: torrent-tcp
@@ -93,7 +93,7 @@ spec:
             - name: TZ
               value: Europe/Berlin
           volumeMounts:
-            - name: config
+            - name: gluetun-config
               mountPath: /gluetun
           resources:
             requests:
@@ -111,7 +111,86 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 3
+        - name: qbittorrent
+          image: lscr.io/linuxserver/qbittorrent:5.2.3_v2.0.13-ls467
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              for i in $(seq 1 30); do
+                COUNTRY=$(python3 -c "import urllib.request, json; print(json.loads(urllib.request.urlopen('https://am.i.mullvad.net/json', timeout=10).read()).get('country',''))" 2>/dev/null || true)
+                if [ "$COUNTRY" = "Spain" ]; then
+                  echo "OK: VPN exit IP country is Spain; starting qBittorrent"
+                  break
+                fi
+                echo "Attempt $i: VPN exit IP country is '${COUNTRY:-unknown}', retrying in 10s..."
+                sleep 10
+              done
+              if [ "$COUNTRY" != "Spain" ]; then
+                echo "FATAL: VPN exit IP is not Spain. Refusing to start qBittorrent."
+                exit 1
+              fi
+              exec /init
+          securityContext:
+            allowPrivilegeEscalation: false
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: WEBUI_PORT
+              value: "8080"
+            - name: TORRENTING_PORT
+              value: "6881"
+            - name: PUID
+              value: "1100"
+            - name: PGID
+              value: "1100"
+            - name: TZ
+              value: Europe/Berlin
+            # No HTTP_PROXY/HTTPS_PROXY here: qBittorrent shares gluetun network namespace.
+          volumeMounts:
+            - name: qbittorrent-config
+              mountPath: /config
+            - name: downloads
+              mountPath: /downloads
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
+                  COUNTRY=$(python3 -c "import urllib.request, json; print(json.loads(urllib.request.urlopen('https://am.i.mullvad.net/json', timeout=10).read()).get('country',''))" 2>/dev/null || true)
+                  [ "$COUNTRY" = "Spain" ] || { echo "Liveness fail: country=$COUNTRY"; exit 1; }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 2
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
       volumes:
-        - name: config
+        - name: gluetun-config
           persistentVolumeClaim:
             claimName: gluetun-config
+        - name: qbittorrent-config
+          persistentVolumeClaim:
+            claimName: qbittorrent-config
+        - name: downloads
+          persistentVolumeClaim:
+            claimName: arr-stack-downloads

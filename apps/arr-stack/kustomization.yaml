@@ -8,7 +8,6 @@ resources:
   - arr-stack-nfs-media-pv.yaml
   - arr-stack-nfs-downloads-pv.yaml
   - gluetun-pvc.yaml
-  - qbittorrent-pvc.yaml
   - sonarr-pvc.yaml
   - radarr-pvc.yaml
   - prowlarr-pvc.yaml
@@ -17,8 +16,7 @@ resources:
   - homepage-pvc.yaml
   - gluetun/gluetun-deployment.yaml
   - gluetun/gluetun-service.yaml
-  - qbittorrent/qbittorrent-deployment.yaml
-  - qbittorrent/qbittorrent-service.yaml
+  - qbittorrent-pvc.yaml
   - sonarr/sonarr-deployment.yaml
   - sonarr/sonarr-service.yaml
   - radarr/radarr-deployment.yaml

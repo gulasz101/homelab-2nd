@@ -14,7 +14,7 @@ spec:
     - name: http-proxy
       port: 8888
       targetPort: 8888
-    - name: qbittorrent-webui
+    - name: qbit-ui
       port: 8080
       targetPort: 8080
     - name: torrent-tcp
@@ -33,7 +33,22 @@ spec:
     - name: radarr
       port: 7878
       targetPort: 7878
-    - name: flaresolverr
+    - name: flaresolvr
       port: 8191
       targetPort: 8191
   type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qbittorrent-nodeport
+  namespace: arr-stack
+spec:
+  selector:
+    app.kubernetes.io/name: gluetun
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080
+  type: NodePort
