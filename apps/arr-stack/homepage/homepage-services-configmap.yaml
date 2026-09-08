@@ -1,0 +1,72 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-services-config
+  namespace: arr-stack
+  labels:
+    app.kubernetes.io/name: homepage
+data:
+  services.yaml: |
+    # Services configuration
+    # href: user-facing URL (what opens in browser when clicked)
+    # widget url: internal container-to-container URL for live stats
+    ---
+    - Media Management:
+        - Sonarr:
+            icon: sonarr.png
+            href: http://192.168.1.162:30089
+            description: TV Series
+            widget:
+              type: sonarr
+              url: http://sonarr-nodeport:8989
+              key: {{HOMEPAGE_VAR_SONARR_API_KEY}}
+    
+        - Radarr:
+            icon: radarr.png
+            href: http://192.168.1.162:30078
+            description: Movies
+            widget:
+              type: radarr
+              url: http://radarr-nodeport:7878
+              key: {{HOMEPAGE_VAR_RADARR_API_KEY}}
+    
+        - Prowlarr:
+            icon: prowlarr.png
+            href: http://192.168.1.162:30069
+            description: Indexer Manager
+            widget:
+              type: prowlarr
+              url: http://prowlarr-nodeport:9696
+              key: {{HOMEPAGE_VAR_PROWLARR_API_KEY}}
+    
+    - Downloads:
+        - qBittorrent:
+            icon: qbittorrent.png
+            href: http://192.168.1.162:30080
+            description: Torrent Client
+            widget:
+              type: qbittorrent
+              url: http://qbittorrent-nodeport:8080
+              username: admin
+              password: {{HOMEPAGE_VAR_QBITTORRENT_PASSWORD}}
+    
+        - Bazarr:
+            icon: bazarr.png
+            href: http://192.168.1.162:30076
+            description: Subtitles
+            widget:
+              type: bazarr
+              url: http://bazarr-nodeport:6767
+              key: {{HOMEPAGE_VAR_BAZARR_API_KEY}}
+    
+    - Streaming:
+        - Jellyfin:
+            icon: jellyfin.png
+            href: http://192.168.1.162:30096
+            description: Media Server
+            widget:
+              type: jellyfin
+              url: http://jellyfin-nodeport:8096
+              key: {{HOMEPAGE_VAR_JELLYFIN_API_KEY}}
+              enableBlocks: true
