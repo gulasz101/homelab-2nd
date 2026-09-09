@@ -30,7 +30,7 @@ spec:
                 name: itsaplan-oidc-creds
           env:
             - name: API_URL
-              value: "http://itsaplan-api.itsaplan.svc.cluster.local:3000"
+              value: "https://plan-api.voitech.dev"
             - name: APP_URL
               value: "https://plan.voitech.dev"
           command:
