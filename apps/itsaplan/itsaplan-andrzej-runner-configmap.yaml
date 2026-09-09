@@ -22,5 +22,5 @@ data:
     \  }\n  console.log(text);\n})();\n"
   itsaplan-runner.json: "{\n  \"url\": \"https://plan-api.voitech.dev\",\n  \"command\"\
     : \"node /etc/itsaplan-runner/post-to-andrzej.js\",\n  \"cwd\": \"/tmp\",\n  \"\
-    concurrency\": 1,\n  \"pollIntervalMs\": 5000,\n  \"timeoutMs\": 60000,\n  \"\
+    concurrency\": 1,\n  \"pollIntervalMs\": 5000,\n  \"timeoutMs\": 1800000,\n  \"\
     outputFormat\": \"text\"\n}"
