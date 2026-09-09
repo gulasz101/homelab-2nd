@@ -14,6 +14,38 @@ data:
         interval: 1m
         rules:
           - alert: ItsaplanNon2xxResponses
+          - alert: ItsaplanAndrzejRunnerWebhookError
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {namespace="itsaplan", pod=~"itsaplan-andrzej-runner-.*"}
+                    |= "Webhook returned"
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: itsaplan
+            annotations:
+              summary: "Itsaplan Andrzej runner webhook returned an error"
+              description: "{{ $labels.pod }} reported a non-2xx response when POSTing to the Andrzej webhook."
+          - alert: ItsaplanAndrzejRunnerNoActivity
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {namespace="itsaplan", pod=~"itsaplan-andrzej-runner-.*"}
+                    |= "polling"
+                  [10m]
+                )
+              ) == 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: itsaplan
+            annotations:
+              summary: "Itsaplan Andrzej runner stopped polling"
+              description: "No 'polling' log lines from {{ $labels.pod }} in the last 10 minutes. The runner may be stuck."
             expr: |
               sum by (pod, namespace) (
                 count_over_time(
