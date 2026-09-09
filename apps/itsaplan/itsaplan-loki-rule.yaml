@@ -1,5 +1,5 @@
 ---
-# Loki Ruler rule for Itsaplan non-2xx responses (lives in observability namespace)
+# Loki Ruler rules for Itsaplan (lives in observability namespace)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -50,7 +50,7 @@ data:
               sum by (pod, namespace) (
                 count_over_time(
                   {namespace="itsaplan", pod=~"itsaplan-(api|web|worker)-.*"}
-                    |~ "status\\":\\s*[3-9]\\d{2}"
+                    |~ "status\\\":\\\\s*[3-9]\\d{2}"
                   [5m]
                 )
               ) > 0
@@ -61,3 +61,35 @@ data:
             annotations:
               summary: "Itsaplan endpoint returned non-2xx status"
               description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} logged non-2xx HTTP responses within the last 5 minutes."
+          - alert: ItsaplanAndrzejRunnerWebhookError
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {namespace="itsaplan", pod=~"itsaplan-andrzej-runner-.*"}
+                    |= "Webhook returned"
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: itsaplan
+            annotations:
+              summary: "Itsaplan Andrzej runner webhook returned an error"
+              description: "{{ $labels.pod }} reported a non-2xx response when POSTing to the Andrzej webhook."
+          - alert: ItsaplanAndrzejRunnerNoActivity
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {namespace="itsaplan", pod=~"itsaplan-andrzej-runner-.*"}
+                    |= "polling"
+                  [10m]
+                )
+              ) == 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: itsaplan
+            annotations:
+              summary: "Itsaplan Andrzej runner stopped polling"
+              description: "No 'polling' log lines from {{ $labels.pod }} in the last 10 minutes. The runner may be stuck."
