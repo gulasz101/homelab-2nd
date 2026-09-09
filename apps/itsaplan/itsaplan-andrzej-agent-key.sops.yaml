@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: itsaplan-andrzej-agent-key
+    namespace: itsaplan
+type: Opaque
+stringData:
+    ITSAPLAN_API_KEY: ENC[AES256_GCM,data:57gnRJ+xBEblkP80b3u15kmckLjuLmdz5cEPOXRp8PJ6zhUkAx/Wxkr24f0XpITT1YFspebfZv3FVL2dp2jXnNfRODM=,iv:OYYMyNmJDlzHwfDprJ2T2T6oUD76J+3wjgcfRsdnbQ0=,tag:wobcSPFI6cj1fGKMMMyt8Q==,type:str]
+    ITSAPLAN_URL: ENC[AES256_GCM,data:pRmMVnhuYUfAz0QqJDAPsWoDzadAkQcQDXhk9A==,iv:UkGWSpEyp1H4RcK10r8GUgXmg9MQEh0z5A475NaXeZI=,tag:H6Aa7nj0FGfRPMapLAvSJw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAzNjBDem5CeXRHM1ZCY1VR
+            NEhHY01hcWJQMnVkT0NGU3kyUHYwZmNuRXdJCkJLNnhlUjN1cmQvWjk5bWNWV3ZH
+            NzNLazRwUlFGWUtTTkY2MW1td3RXdE0KLS0tIHlialg1Z2tkazNkZVEzcTBvNHNm
+            a2tNcVNiMzRFeDd4K3BHeXlDYzlJcHcKtPmXgQ6TjDibZ1vIsBPHCDCIWxqzD+j7
+            7H4bGsa73mHSuI4vLqVah/1REoNdjJRsrMhfIY4PQf6zJzGRlDXhLQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-09T19:59:35Z"
+    mac: ENC[AES256_GCM,data:e0BbQT6oxsN/pePesBtb0s3bI58IJVg2nYYa1CtV6K9Pq6Xjzo9TsXgQPxkjK5G3/jX2JZ9Qy/ByQqu2QQ5zArylhpLCFgivhLgRwSRUPagnhQtjLTxSlq3pXejubkbV1kCZ4DANj7yEHpICVVFlxKOpll6X102dc26X6PzcYBQ=,iv:ufofCuJEjV727FU5D+KqSMhXu2/C/IFm2Hw5aA7zgAc=,tag:w0lqK0lkpNfGmqDGTuFl/g==,type:str]
+    version: 3.13.1

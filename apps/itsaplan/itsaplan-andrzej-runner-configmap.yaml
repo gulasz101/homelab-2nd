@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: itsaplan-andrzej-runner
+  namespace: itsaplan
+data:
+  post-to-andrzej.js: "const crypto = require(\"crypto\");\nconst fs = require(\"\
+    fs\");\n\n(async () => {\n  const taskBody = fs.readFileSync(0, \"utf8\");\n \
+    \ const url = process.env.WEBHOOK_URL;\n  const secret = process.env.WEBHOOK_SECRET;\n\
+    \  if (!url || !secret) {\n    console.error(\"WEBHOOK_URL and WEBHOOK_SECRET\
+    \ must be set\");\n    process.exit(1);\n  }\n\n  const payload = {\n    event:\
+    \ \"task\",\n    trigger: process.env.ITSAPLAN_TRIGGER || \"\",\n    run_id: process.env.ITSAPLAN_RUN_ID\
+    \ || \"\",\n    issue: process.env.ITSAPLAN_ISSUE || \"\",\n    issue_id: process.env.ITSAPLAN_ISSUE_ID\
+    \ || \"\",\n    task: taskBody,\n  };\n\n  const body = JSON.stringify(payload);\n\
+    \  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signed\
+    \ = `${timestamp}.${body}`;\n  const sig = crypto.createHmac(\"sha256\", secret).update(signed,\
+    \ \"utf8\").digest(\"hex\");\n\n  const res = await fetch(url, {\n    method:\
+    \ \"POST\",\n    headers: {\n      \"Content-Type\": \"application/json\",\n \
+    \     \"X-Webhook-Timestamp\": timestamp,\n      \"X-Webhook-Signature-V2\": sig,\n\
+    \    },\n    body,\n  });\n\n  const text = await res.text();\n  if (!res.ok)\
+    \ {\n    console.error(`Webhook returned ${res.status}: ${text}`);\n    process.exit(1);\n\
+    \  }\n  console.log(text);\n})();\n"
+  itsaplan-runner.json: "{\n  \"url\": \"https://plan-api.voitech.dev\",\n  \"command\"\
+    : \"node /etc/itsaplan-runner/post-to-andrzej.js\",\n  \"cwd\": \"/tmp\",\n  \"\
+    concurrency\": 1,\n  \"pollIntervalMs\": 5000,\n  \"timeoutMs\": 60000,\n  \"\
+    outputFormat\": \"text\"\n}"

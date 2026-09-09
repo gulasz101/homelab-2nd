@@ -355,6 +355,11 @@ resources:
   - itsaplan/itsaplan-helm-release.yaml
   # Cloudflare Tunnels for plan.voitech.dev + api.plan.voitech.dev
   - itsaplan/cloudflared-itsaplan-deployment.yaml
+  # Andrzej external agent runner: receives Itsaplan schedules/mentions/assignments
+  - itsaplan/itsaplan-andrzej-agent-key.sops.yaml
+  - itsaplan/itsaplan-andrzej-webhook-creds.sops.yaml
+  - itsaplan/itsaplan-andrzej-runner-configmap.yaml
+  - itsaplan/itsaplan-andrzej-runner-deployment.yaml
   - itsaplan/itsaplan-tunnel-ingress-configmap.yaml
   # Observability
   - itsaplan/itsaplan-prometheus-rules.yaml
