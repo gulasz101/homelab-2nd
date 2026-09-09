@@ -30,6 +30,8 @@ spec:
           env:
             - name: API_URL
               value: "http://itsaplan-api.itsaplan.svc.cluster.local:3000"
+            - name: APP_URL
+              value: "https://plan.voitech.dev"
           command:
             - /bin/sh
             - -c
@@ -50,7 +52,7 @@ spec:
               echo "Creating setup user..."
               curl -fsS -c /tmp/cookies.txt -b /tmp/cookies.txt \
                 -H "Content-Type: application/json" \
-                -d '{"name":"Setup Account","email":"'"${SETUP_EMAIL}"'","password":"'"${SETUP_PASSWORD}"'"}' \
+                -d '{"name":"Setup Account","email":"'"${SETUP_EMAIL}"'","password":"'"${SETUP_PASSWORD}"'","callbackURL":"'"${APP_URL}"'/login"}' \
                 "${API_URL}/api/auth/sign-up/email" >/dev/null
 
               # Enable Authentik OIDC.
