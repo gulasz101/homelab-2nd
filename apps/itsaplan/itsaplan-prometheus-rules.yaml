@@ -50,36 +50,6 @@ spec:
             summary: "itsaplan pod {{ $labels.pod }} is not ready"
             description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has been not ready for more than 5 minutes."
         - alert: ItsaplanPodRestartLoop
-        - alert: ItsaplanAndrzejRunnerDown
-          expr: |
-            kube_pod_status_ready{namespace="itsaplan", pod=~"itsaplan-andrzej-runner-.*", condition="true"} == 0
-          for: 5m
-          labels:
-            severity: warning
-            namespace: itsaplan
-          annotations:
-            summary: "itsaplan Andrzej runner pod is not ready"
-            description: "The Itsaplan→Andrzej agent runner pod {{ $labels.pod }} has been not ready for more than 5 minutes. Scheduled tasks will not be picked up."
-        - alert: ItsaplanAndrzejRunnerAbsent
-          expr: |
-            absent(kube_pod_status_ready{namespace="itsaplan", pod=~"itsaplan-andrzej-runner-.*", condition="true"}) == 1
-          for: 5m
-          labels:
-            severity: critical
-            namespace: itsaplan
-          annotations:
-            summary: "itsaplan Andrzej runner pod is missing"
-            description: "No Itsaplan→Andrzej agent runner pod exists in namespace itsaplan. Scheduled/assigned tasks will not reach Andrzej."
-        - alert: ItsaplanAndrzejRunnerRestartLoop
-          expr: |
-            increase(kube_pod_container_status_restarts_total{namespace="itsaplan", pod=~"itsaplan-andrzej-runner-.*"}[30m]) > 3
-          for: 0m
-          labels:
-            severity: warning
-            namespace: itsaplan
-          annotations:
-            summary: "itsaplan Andrzej runner is restarting frequently"
-            description: "Andrzej runner pod {{ $labels.pod }} has restarted more than 3 times in the last 30 minutes."
           expr: |
             increase(kube_pod_container_status_restarts_total{namespace="itsaplan"}[30m]) > 3
           for: 0m
