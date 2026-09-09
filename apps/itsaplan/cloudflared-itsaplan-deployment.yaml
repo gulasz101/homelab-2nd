@@ -45,7 +45,7 @@ spec:
               cpu: 200m
               memory: 128Mi
 ---
-# Dedicated Cloudflare Tunnel for api.plan.voitech.dev -> itsaplan api
+# Dedicated Cloudflare Tunnel for plan-api.voitech.dev -> itsaplan api
 apiVersion: apps/v1
 kind: Deployment
 metadata:

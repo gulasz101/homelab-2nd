@@ -49,7 +49,7 @@ spec:
         tag: "0.15.0"
         pullPolicy: IfNotPresent
       env:
-        API_URL: "https://api.plan.voitech.dev"
+        API_URL: "https://plan-api.voitech.dev"
         APP_URL: "https://plan.voitech.dev"
         S3_BUCKET: "itsaplan-attachments"
         S3_REGION: "us-east-1"
