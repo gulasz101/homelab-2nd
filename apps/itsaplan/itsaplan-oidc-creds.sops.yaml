@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: itsaplan-oidc-creds
+    namespace: itsaplan
+type: Opaque
+stringData:
+    SETUP_EMAIL: ENC[AES256_GCM,data:+mPplzaTVYlNF4KHifpl72G+7eQ=,iv:yME5h3hF3Fj7CN0c4Zz2d19Cs0uAparP9dLu/OKnQKg=,tag:FnhIU47WlLlmWQP74G8DhA==,type:str]
+    SETUP_PASSWORD: ENC[AES256_GCM,data:fbK54OdrDcZU1+8/Is+m/2G87ve0xAD4ctAbZzyAvFw=,iv:fwT0qII2BnAHrg/fh70jaUhgCHtyzIKI4KtnEz13mPc=,tag:cZ0FHYOZA0JXNsNho9CKTw==,type:str]
+    OIDC_CLIENT_ID: ENC[AES256_GCM,data:1mL1AWXdME1pIK+d+q6EZ2CGV6LhgOpZEW9l/R3ycYP0XnNZh4SkGA==,iv:92aCTRvWNr3zPEgR67HvHb2FwAxddGVixZNyhnjj+rI=,tag:q2SszvwN1bFJ+VBR5105uw==,type:str]
+    OIDC_CLIENT_SECRET: ENC[AES256_GCM,data:b8DxNo4/jSZfIGjB14FST7QG0C8/pHjvxtm939XAYzKZjIi6if/mIDVxu0LQujDfcBUS8h7uRQ8//H97,iv:yvPUDBOZYTD79h9eVKKoiUSKE6QvGD82zSGZmzcniRc=,tag:JgHI4dxygDbwaANBiS2vJQ==,type:str]
+    OIDC_DISCOVERY_URL: ENC[AES256_GCM,data:KeFU4MKQTuvYBx09c2EYwGM/OyKc7MD52rKNeD0tYVOZVwMVGZrJyFOQ714CI6gCueMq/fT2XEoE8vxmI5id/QDofAxKh5BPHwVoAKtfWcw=,iv:ZCKRQ/Jd3cuOStGlv2Kz+nG8XBZLjXT00QvTxUa36mY=,tag:9KkoryCfwmA8+mKUMPI0Ag==,type:str]
+    OIDC_LABEL: ENC[AES256_GCM,data:v/TL+QDPtSJV,iv:vcSCPSwXhH27UMu9e6HsNojykfFKEXXz5Uvkqauwr6A=,tag:4UQeP7BBqS81xaJzVW3rUg==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBnQ2VMbDNIb3B4TGxKV1dP
+            RUpxYmFIQlZzZU1ZRjl3RnZSRmVwbHFvNlZnCm5JRjVTcHZkT2kzUXJBaStRRllG
+            emZmSGV3bHZiTGRLb2VqV0dQWVoxL28KLS0tIGpncERVUmRsTGZCWklQYjJYbDdq
+            OThidUlGS0dtUTViSTRmcWNLQjBJbFkK+dIfZ1IGzQQvdNA0EPGcqYbm952oPZ9G
+            NC/9YdU7QaYQ6017KLupgNtJbmNt9lmiH4Zoq18BacXkLX8xGXvYFA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-09T06:52:32Z"
+    mac: ENC[AES256_GCM,data:yBEjU9ViqjLrMKvCgQMQbLIWpCiv0VuvpYXBCyxisIgbjjQTG5y0pdgxdzT6OxqW58ab/RNJV1KzOdDN8rZeI98GPzW80Pf7Cx6HFhtkLu+oE3l03oe8NvdpJOZYbHU1CUWie36YN8adsf0ZxBoDX/B6LUjykILlht2CPVsjRm0=,iv:M9nwxhFSgRyr37OGlLuoqtbZq2M/zLKWH10VbltQDis=,tag:zVo3/jgZ90XEMW1gWdggJg==,type:str]
+    version: 3.13.1

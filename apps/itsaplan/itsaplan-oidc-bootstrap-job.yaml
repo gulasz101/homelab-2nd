@@ -1,0 +1,83 @@
+---
+# One-off bootstrap job: create a throwaway god account, enable Authentik OIDC,
+# then close registration and disable email/password auth.
+# The job is idempotent-ish: it exits 0 if already bootstrapped.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: itsaplan-oidc-bootstrap
+  namespace: itsaplan
+  annotations:
+    # Flux will reconcile this once. Delete the Job manually after success.
+    fluxcd.io/ignore: "false"
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      nodeSelector:
+        kubernetes.io/hostname: arr-box
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: arr-box
+          effect: NoSchedule
+      containers:
+        - name: bootstrap
+          image: curlimages/curl:latest
+          envFrom:
+            - secretRef:
+                name: itsaplan-oidc-creds
+          env:
+            - name: API_URL
+              value: "http://itsaplan-api.itsaplan.svc.cluster.local:3000"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+
+              # Wait for API to be ready
+              for i in $(seq 1 60); do
+                if curl -fsS "${API_URL}/" >/dev/null 2>&1; then
+                  break
+                fi
+                echo "waiting for api..."
+                sleep 5
+              done
+
+              # Sign up the throwaway setup user as the first (god) account.
+              # Registration must still be open at this point (default).
+              echo "Creating setup user..."
+              curl -fsS -c /tmp/cookies.txt -b /tmp/cookies.txt \
+                -H "Content-Type: application/json" \
+                -d '{"name":"Setup Account","email":"'"${SETUP_EMAIL}"'","password":"'"${SETUP_PASSWORD}"'"}' \
+                "${API_URL}/api/auth/sign-up/email" >/dev/null
+
+              # Enable Authentik OIDC.
+              echo "Enabling OIDC provider..."
+              curl -fsS -c /tmp/cookies.txt -b /tmp/cookies.txt \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "enabled": true,
+                  "label": "'"${OIDC_LABEL}"'",
+                  "discoveryUrl": "'"${OIDC_DISCOVERY_URL}"'",
+                  "clientId": "'"${OIDC_CLIENT_ID}"'",
+                  "clientSecret": "'"${OIDC_CLIENT_SECRET}"'",
+                  "scopes": ["openid", "profile", "email"],
+                  "pkce": true
+                }' \
+                "${API_URL}/god/oidc-settings" >/dev/null
+
+              # Disable email/password auth and close registration.
+              echo "Locking down auth settings..."
+              curl -fsS -c /tmp/cookies.txt -b /tmp/cookies.txt \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "registration": "closed",
+                  "emailPassword": false,
+                  "requireEmailVerification": false,
+                  "magicLink": false
+                }' \
+                "${API_URL}/god/auth-settings" >/dev/null
+
+              echo "Itsaplan OIDC bootstrap complete."

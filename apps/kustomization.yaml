@@ -342,6 +342,10 @@ resources:
   - itsaplan/itsaplan-tunnel-token.sops.yaml
   - itsaplan/itsaplan-api-tunnel-token.sops.yaml
   - itsaplan/itsaplan-mattermost-webhook-url.sops.yaml
+  # OIDC credentials for Authentik SSO bootstrap
+  - itsaplan/itsaplan-oidc-creds.sops.yaml
+  # One-off Job to bootstrap Authentik OIDC and lock down local auth
+  - itsaplan/itsaplan-oidc-bootstrap-job.yaml
   # CNPG cluster + backups
   - itsaplan/objectstore.yaml
   - itsaplan/postgres-cluster.yaml

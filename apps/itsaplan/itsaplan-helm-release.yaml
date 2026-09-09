@@ -51,6 +51,7 @@ spec:
       env:
         API_URL: "https://plan-api.voitech.dev"
         APP_URL: "https://plan.voitech.dev"
+        COOKIE_DOMAIN: ".voitech.dev"
         S3_BUCKET: "itsaplan-attachments"
         S3_REGION: "us-east-1"
         S3_FORCE_PATH_STYLE: "true"
