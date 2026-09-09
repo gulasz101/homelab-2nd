@@ -1,14 +1,15 @@
 ---
 # One-off bootstrap job: create a throwaway god account, enable Authentik OIDC,
 # then close registration and disable email/password auth.
-# The job is idempotent-ish: it exits 0 if already bootstrapped.
+# Idempotent: if the setup user already exists, it signs in; if auth is already
+# locked down with OIDC enabled, the job exits cleanly.
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: itsaplan-oidc-bootstrap
   namespace: itsaplan
   annotations:
-    # Flux will reconcile this once. Delete the Job manually after success.
+    # Flux reconciles this once. Delete the Job manually after success.
     fluxcd.io/ignore: "false"
 spec:
   template:
@@ -38,7 +39,7 @@ spec:
             - |
               set -eu
 
-              # Wait for API to be ready
+              # Wait for API to be ready.
               for i in $(seq 1 60); do
                 if curl -fsS "${API_URL}/" >/dev/null 2>&1; then
                   break
@@ -47,13 +48,34 @@ spec:
                 sleep 5
               done
 
-              # Sign up the throwaway setup user as the first (god) account.
-              # Registration must still be open at this point (default).
-              echo "Creating setup user..."
-              curl -fsS -c /tmp/cookies.txt -b /tmp/cookies.txt \
+              # If already fully bootstrapped, do nothing.
+              auth_config=$(curl -fsS "${API_URL}/auth-config")
+              echo "Current auth-config: ${auth_config}"
+              if echo "${auth_config}" | grep -q '"registration":"closed"' \
+                && echo "${auth_config}" | grep -q '"emailPassword":false' \
+                && echo "${auth_config}" | grep -q '"oidc":true'; then
+                echo "SSO is already enabled and local auth is disabled. Nothing to do."
+                exit 0
+              fi
+
+              # Acquire a session as the setup (god) user. Try sign-up first; if the
+              # user exists from a previous run, sign in instead.
+              signup_response=$(curl -sS -c /tmp/cookies.txt -b /tmp/cookies.txt \
                 -H "Content-Type: application/json" \
                 -d '{"name":"Setup Account","email":"'"${SETUP_EMAIL}"'","password":"'"${SETUP_PASSWORD}"'","callbackURL":"'"${APP_URL}"'/login"}' \
-                "${API_URL}/api/auth/sign-up/email" >/dev/null
+                "${API_URL}/api/auth/sign-up/email" || true)
+              if echo "${signup_response}" | grep -q '"code":"USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL"'; then
+                echo "Setup user already exists; signing in..."
+                curl -fsS -c /tmp/cookies.txt -b /tmp/cookies.txt \
+                  -H "Content-Type: application/json" \
+                  -d '{"email":"'"${SETUP_EMAIL}"'","password":"'"${SETUP_PASSWORD}"'","rememberMe":true}' \
+                  "${API_URL}/api/auth/sign-in/email" >/dev/null
+              elif echo "${signup_response}" | grep -q '"token"'; then
+                echo "Setup user created."
+              else
+                echo "Unexpected sign-up response: ${signup_response}"
+                exit 1
+              fi
 
               # Enable Authentik OIDC.
               echo "Enabling OIDC provider..."
@@ -82,4 +104,14 @@ spec:
                 }' \
                 "${API_URL}/god/auth-settings" >/dev/null
 
-              echo "Itsaplan OIDC bootstrap complete."
+              # Verify final state.
+              final_config=$(curl -fsS "${API_URL}/auth-config")
+              echo "Final auth-config: ${final_config}"
+              if echo "${final_config}" | grep -q '"registration":"closed"' \
+                && echo "${final_config}" | grep -q '"emailPassword":false' \
+                && echo "${final_config}" | grep -q '"oidc":true'; then
+                echo "Itsaplan OIDC bootstrap complete."
+              else
+                echo "Bootstrap did not reach expected final state."
+                exit 1
+              fi
