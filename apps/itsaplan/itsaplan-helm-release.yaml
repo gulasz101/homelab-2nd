@@ -46,7 +46,7 @@ spec:
     api:
       replicaCount: 1
       image:
-        tag: "0.15.0"
+        tag: "0.17.0"
         pullPolicy: IfNotPresent
       env:
         API_URL: "https://plan-api.voitech.dev"
@@ -74,7 +74,7 @@ spec:
     web:
       replicaCount: 1
       image:
-        tag: "0.15.0"
+        tag: "0.17.0"
         pullPolicy: IfNotPresent
       env:
         HOSTNAME: "0.0.0.0"
@@ -96,7 +96,7 @@ spec:
     worker:
       replicaCount: 1
       image:
-        tag: "0.15.0"
+        tag: "0.17.0"
         pullPolicy: IfNotPresent
       env:
         TELEMETRY_DISABLED: "1"
