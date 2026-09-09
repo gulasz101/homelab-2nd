@@ -24,7 +24,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: bootstrap
-          image: curlimages/curl:latest
+          image: curlimages/curl:8.13.0
           envFrom:
             - secretRef:
                 name: itsaplan-oidc-creds
@@ -77,9 +77,11 @@ spec:
                 exit 1
               fi
 
-              # Enable Authentik OIDC.
+              # Enable Authentik OIDC. Explicit -X PUT is required: the API only
+              # exposes PUT /god/oidc-settings; curl -d without -X defaults to POST,
+              # which Elysia routes as 404.
               echo "Enabling OIDC provider..."
-              curl -fsS -c /tmp/cookies.txt -b /tmp/cookies.txt \
+              curl -fsS -X PUT -c /tmp/cookies.txt -b /tmp/cookies.txt \
                 -H "Content-Type: application/json" \
                 -d '{
                   "enabled": true,
@@ -94,7 +96,7 @@ spec:
 
               # Disable email/password auth and close registration.
               echo "Locking down auth settings..."
-              curl -fsS -c /tmp/cookies.txt -b /tmp/cookies.txt \
+              curl -fsS -X PUT -c /tmp/cookies.txt -b /tmp/cookies.txt \
                 -H "Content-Type: application/json" \
                 -d '{
                   "registration": "closed",
