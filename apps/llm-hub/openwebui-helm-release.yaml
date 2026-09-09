@@ -160,7 +160,7 @@ spec:
       - name: DEFAULT_MODELS
         value: "gemma-4-12b-uncensored"
       - name: DEFAULT_PINNED_MODELS
-        value: "gemma-4-12b-uncensored,glm-5.2-zai,mistral-3.5-middle,kimi-k2.7-code"
+        value: "gemma-4-12b-uncensored,glm-5.2-zai,mistral-3.5-middle,kimi-k2.7-code,glm-5.3-ollama,glm-5.3-flash-ollama"
       # Use LiteLLM proxy for small background tasks too
       - name: TASK_MODEL_EXTERNAL
         value: "glm-5.2-zai"

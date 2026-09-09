@@ -140,6 +140,16 @@ spec:
             model: openai/glm-5.2
             api_base: "https://ollama.com/v1"
             api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: glm-5.3-ollama
+          litellm_params:
+            model: openai/glm-5.3
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: glm-5.3-flash-ollama
+          litellm_params:
+            model: openai/glm-5.3-flash
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
         - model_name: glm-5.1-ollama
           litellm_params:
             model: openai/glm-5.1

@@ -22,6 +22,8 @@ data:
         "kimi-k2.7-code",
         # Ollama Cloud models (all with -ollama suffix)
         "glm-5.2-ollama",
+        "glm-5.3-ollama",
+        "glm-5.3-flash-ollama",
         "glm-5.1-ollama",
         "kimi-k2.7-code-ollama",
         "kimi-k2.6-ollama",
