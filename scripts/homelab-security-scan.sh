@@ -2,6 +2,10 @@
 # Nightly security scan for the gulasz101/homelab-2nd GitOps repo.
 # Runs on the Hermes host, pulls main, scans with gitleaks/trivy/kubeconform/kube-score/pluto,
 # then prints a verbose, emoji-laden markdown report to stdout.
+# 2026-09-10: also collects critical/warning findings and creates deduped
+# Itsaplan (H2) BACKLOG issues via scripts/itsaplan_sync.py. The scan itself
+# never assigns or moves issues; it only creates in Backlog when a new
+# fingerprint appears. Set ITSAPLAN_SYNC=0 to skip the sync.
 set -u
 
 REPO="${REPO:-$HOME/Projects/homelab-2nd}"
@@ -324,3 +328,29 @@ fi
 
 echo ""
 echo "Next scan: tomorrow night."
+
+# --- 9. Itsaplan task sync (deduped Backlog issues) ---
+if [[ "${ITSAPLAN_SYNC:-1}" == "1" ]]; then
+  echo ""
+  echo "## Itsaplan sync"
+  echo ""
+  FINDINGS_JSON="$TMPDIR/findings.json"
+  if python3 "$REPO/scripts/security_scan_findings.py" \
+        "$TMPDIR/trivy.json" "$TMPDIR/gitleaks.json" \
+        "$PLAIN_SECRET" "$CUSTOM_CRITICAL" \
+        "$(date -Iseconds)" "$GIT_SHA" > "$FINDINGS_JSON" 2>"$TMPDIR/findings.err"; then
+    if python3 "$REPO/scripts/itsaplan_sync.py" "$FINDINGS_JSON" 2>&1 | tee "$TMPDIR/itsaplan-sync.out"; then
+      echo "Itsaplan sync OK."
+    else
+      echo "Itsaplan sync FAILED (see itsaplan-sync output above)."
+    fi
+  else
+    echo "Finding collection failed:"
+    head -5 "$TMPDIR/findings.err"
+  fi
+else
+  echo ""
+  echo "## Itsaplan sync"
+  echo ""
+  echo "Skipped (ITSAPLAN_SYNC=0)."
+fi
