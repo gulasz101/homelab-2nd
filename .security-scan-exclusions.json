@@ -63,6 +63,10 @@
       {
         "file": "infrastructure/observability/opentelemetry-collector-helm-release.yaml",
         "reason": "filelog receiver reads root-owned node log files"
+      },
+      {
+        "file": "apps/arr-stack/gluetun/gluetun-deployment.yaml",
+        "reason": "gluetun manages the WireGuard tunnel and its firewall (NET_ADMIN, iptables, /dev/net/tun); it must start as uid 0. Hard requirement: torrent traffic must never leak outside the Mullvad/Spain VPN."
       }
     ]
   }
