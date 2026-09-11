@@ -12,7 +12,7 @@ GitOps-managed homelab cluster running on k3s + Flux.
 ## Structure
 
 ```
-├── clusters/homelab-2nd/   # Flux sync root (cluster-specific config)
+├── clusters/production/   # Flux sync root (cluster-specific config)
 │   ├── flux-system/        # Flux bootstrap manifests
 │   ├── infrastructure.yaml # Kustomization: infra (CNPG, cert-manager, etc.)
 │   └── apps.yaml           # Kustomization: application workloads
