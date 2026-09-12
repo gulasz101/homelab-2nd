@@ -29,6 +29,10 @@ kind: Cluster
 metadata:
   name: authentik-db
   namespace: auth
+  annotations:
+    # The WAL archive for this server already contains history, so the
+    # "archive must be empty" guard must be bypassed for archiving/bootstraps.
+    cnpg.io/skipEmptyWalArchiveCheck: "enabled"
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
