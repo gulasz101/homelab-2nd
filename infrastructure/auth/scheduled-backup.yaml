@@ -6,7 +6,7 @@ metadata:
   name: authentik-db-daily
   namespace: auth
 spec:
-  schedule: "0 3 * * *"  # Daily at 03:00 (cron without seconds)
+  schedule: "0 0 3 * * *"  # 03:00 daily (6-field cron with seconds)
   backupOwnerReference: self
   cluster:
     name: authentik-db

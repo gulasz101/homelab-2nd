@@ -5,7 +5,7 @@ metadata:
   name: itsaplan-db
   namespace: itsaplan
 spec:
-  schedule: "0 4 * * *"
+  schedule: "0 0 4 * * *"  # 04:00 daily (6-field cron with seconds)
   backupOwnerReference: self
   cluster:
     name: itsaplan-db

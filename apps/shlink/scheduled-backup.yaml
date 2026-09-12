@@ -6,7 +6,7 @@ metadata:
   name: shlink-db-daily
   namespace: shlink
 spec:
-  schedule: "0 3 * * *"
+  schedule: "0 0 3 * * *"  # 03:00 daily (6-field cron with seconds)
   backupOwnerReference: self
   cluster:
     name: shlink-db
