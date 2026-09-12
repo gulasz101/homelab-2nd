@@ -146,9 +146,9 @@ resources:
   - karakeep/karakeep-tunnel-token.sops.yaml
   - karakeep/karakeep-litellm-key.sops.yaml
   - karakeep/karakeep-minio-backup-creds.sops.yaml
-  # OMV NFS PV/PVC for Karakeep working data
+  # OMV NFS PV + pre-provisioned StatefulSet data PVC for Karakeep working data
   - karakeep/karakeep-data-pv.yaml
-  - karakeep/karakeep-data-pvc.yaml
+  - karakeep/data-karakeep-0-pvc.yaml
   # HelmForge repository + Karakeep HelmRelease
   - karakeep/karakeep-helm-repository.yaml
   - karakeep/karakeep-helm-release.yaml

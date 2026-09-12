@@ -19,6 +19,10 @@ spec:
       template:
         spec:
           restartPolicy: OnFailure
+          # data-karakeep-0 is now the OMV NFS PVC, whose export is only
+          # granted to homelab-2nd; the backup pod must run there to mount it.
+          nodeSelector:
+            kubernetes.io/hostname: homelab-2nd
           containers:
             - name: backup
               image: python:3.13-alpine

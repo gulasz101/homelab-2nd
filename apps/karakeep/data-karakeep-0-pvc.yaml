@@ -1,0 +1,23 @@
+---
+# Karakeep StatefulSet data volume, pre-provisioned on durable OMV NFS.
+#
+# The upstream karakeep chart (common 3.7.3) does NOT support `volumeName` in
+# `statefulset.volumeClaimTemplates`, so the StatefulSet cannot bind its
+# generated PVC to a specific static PV. Instead we create the PVC the
+# StatefulSet expects (name must be `<template>-<statefulset>-<ordinal>` =
+# data-karakeep-0) up-front and pin it to the static NFS PV `karakeep-data`
+# via `volumeName`. The StatefulSet controller reuses an existing PVC of that
+# name instead of dynamically provisioning local-path storage.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-karakeep-0
+  namespace: karakeep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: ""
+  volumeName: karakeep-data

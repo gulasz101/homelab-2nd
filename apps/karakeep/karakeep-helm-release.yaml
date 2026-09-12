@@ -125,12 +125,15 @@ spec:
                     port: 3000
 
         statefulset:
+          # The upstream common chart (3.7.3) silently drops `volumeName` and
+          # treats `storageClass: ""` as unset, so the generated PVC cannot be
+          # pinned to the NFS PV from here. Instead the PVC `data-karakeep-0`
+          # is pre-created by data-karakeep-0-pvc.yaml and bound to the static
+          # PV `karakeep-data`; the StatefulSet reuses it by name.
           volumeClaimTemplates:
             - name: data
               accessMode: ReadWriteOnce
               size: 10Gi
-              storageClass: ""
-              volumeName: karakeep-data
 
       chrome:
         enabled: false
@@ -153,6 +156,10 @@ spec:
 
     # Prometheus scraping annotations on the karakeep pod
     defaultPodOptions:
+      # The karakeep-data NFS export on OMV is granted only to homelab-2nd
+      # (192.168.1.179), so the karakeep pod must run there to mount it.
+      nodeSelector:
+        kubernetes.io/hostname: homelab-2nd
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "3000"
