@@ -108,7 +108,7 @@ echo "## Kubeconform: validate rendered Kubernetes manifests"
 echo ""
 echo "What it does: We render the Flux Kustomizations with kubectl kustomize and then run kubeconform against JSON schemas. It catches typos, wrong API versions, and invalid fields. Custom CRDs (HelmRelease, Cluster, etc.) need extra schema locations, so some failures are expected when the CRD catalog does not have a schema yet."
 echo ""
-for dir in infrastructure apps clusters/homelab-2nd; do
+for dir in infrastructure apps clusters/production; do
   if [[ -f "$dir/kustomization.yaml" ]] || [[ -f "$dir/kustomization.yml" ]]; then
     out="$TMPDIR/rendered-$dir.yaml"
     if kubectl kustomize "$dir" > "$out" 2>"$TMPDIR/kustomize-$dir.err"; then
