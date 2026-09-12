@@ -1,0 +1,34 @@
+---
+# PodMonitor: scrape every CloudNativePG instance pod (named port "metrics",
+# 9187) across all namespaces.
+#
+# The clusters do not enable spec.monitoring.enablePodMonitor and we must not
+# modify the running database clusters, so this standalone PodMonitor selects
+# the instance pods directly. It exposes the barman-cloud plugin metrics
+# (barman_cloud_cloudnative_pg_io_*), the WAL archiver metrics
+# (cnpg_pg_stat_archiver_*) and the collector metrics (cnpg_collector_*).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cnpg-instance-metrics
+  namespace: observability
+  labels:
+    release: prometheus-stack
+spec:
+  # Discover instance pods in every namespace, not just observability.
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      cnpg.io/podRole: instance
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      # Surface a clean "cluster" label on every sample so alerts can name the
+      # offending cluster (podTargetLabels would sanitize it to cnpg_io_cluster).
+      relabelings:
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+          targetLabel: cluster

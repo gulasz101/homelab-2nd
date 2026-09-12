@@ -1,0 +1,92 @@
+---
+# PrometheusRule: alert on CloudNativePG base-backup and WAL-archiving health.
+#
+# Two metric families cover the CNPG clusters in this repo:
+#   * barman_cloud_cloudnative_pg_io_* — emitted by the barman-cloud plugin,
+#     used by every cluster except honcho-db.
+#   * cnpg_collector_last_{available,failed}_backup_timestamp — the legacy
+#     in-tree barman object store, still used by honcho-db.
+#   * cnpg_pg_stat_archiver_* and cnpg_collector_pg_wal_archive_status — WAL
+#     archiving state exposed by the instance manager.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cnpg-backup-alerts
+  namespace: observability
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: cnpg-backup
+      interval: 60s
+      rules:
+        - alert: CNPGBackupFailed
+          # Fires only when the most recent base-backup event was a failure.
+          # The legacy branch is guarded by last_available > 0 so the latched
+          # deprecated collector timestamp on plugin clusters cannot produce a
+          # false positive.
+          expr: |
+            (
+              (barman_cloud_cloudnative_pg_io_last_failed_backup_timestamp > 0)
+              and
+              (barman_cloud_cloudnative_pg_io_last_failed_backup_timestamp
+                > barman_cloud_cloudnative_pg_io_last_available_backup_timestamp)
+            )
+            or
+            (
+              (cnpg_collector_last_available_backup_timestamp > 0)
+              and
+              (cnpg_collector_last_failed_backup_timestamp
+                > cnpg_collector_last_available_backup_timestamp)
+            )
+          for: 30m
+          labels:
+            severity: critical
+            alertgroup: cnpg-backup
+            namespace: observability
+          annotations:
+            summary: "CNPG backup failing for {{ $labels.cluster }}"
+            description: "The most recent base backup attempt for CNPG cluster {{ $labels.cluster }} failed and no newer successful backup exists — the cluster has no fresh recovery point."
+
+        - alert: CNPGBaseBackupTooOld
+          # Catches silent failures where backups simply stop happening and no
+          # failure timestamp is ever recorded. Guard on last_available > 0 for
+          # the legacy metric so plugin clusters (whose deprecated collector
+          # timestamp is always 0) do not false-positive.
+          expr: |
+            (time() - barman_cloud_cloudnative_pg_io_last_available_backup_timestamp > 30 * 3600)
+            or
+            (
+              (cnpg_collector_last_available_backup_timestamp > 0)
+              and
+              (time() - cnpg_collector_last_available_backup_timestamp > 30 * 3600)
+            )
+          for: 1h
+          labels:
+            severity: warning
+            alertgroup: cnpg-backup
+            namespace: observability
+          annotations:
+            summary: "CNPG cluster {{ $labels.cluster }} has no recent base backup"
+            description: "No successful CloudNativePG base backup for cluster {{ $labels.cluster }} in the last 30 hours. Scheduled backups may have silently stopped."
+
+        - alert: CNPGArchivingStalled
+          # A stalled archiver leaves WAL segments in "ready" (itsaplan/shlink
+          # sat at 9-11), and -1 means "never archived since stats reset". The
+          # seconds-since threshold is deliberately loose (6h) because an idle
+          # database can legitimately go a long time without a WAL switch, so
+          # the WAL backlog is the primary signal.
+          expr: |
+            (cnpg_collector_pg_wal_archive_status{value="ready"} > 5)
+            or
+            (cnpg_pg_stat_archiver_seconds_since_last_archival < 0)
+            or
+            (cnpg_pg_stat_archiver_seconds_since_last_archival > 6 * 3600)
+          for: 30m
+          labels:
+            severity: warning
+            alertgroup: cnpg-backup
+            namespace: observability
+          annotations:
+            summary: "CNPG continuous archiving stalled for {{ $labels.cluster }}"
+            description: "WAL archiving for CNPG cluster {{ $labels.cluster }} has not succeeded recently (or has never succeeded) — the point-in-time recovery window is not advancing."

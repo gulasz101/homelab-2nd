@@ -1,0 +1,36 @@
+---
+# AlertmanagerConfig: route CNPG backup alerts to the existing Mattermost
+# webhook via the kube-prometheus-stack Alertmanager, formatted as Slack
+# messages so Mattermost renders them nicely and includes the measured value.
+# Reuses the homelab-node-mattermost-webhook-url Secret already present in the
+# observability namespace (the Prometheus Operator resolves urlSecret in the
+# AlertmanagerConfig's own namespace).
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: cnpg-backup-mattermost-alerts
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: cnpg-backup-mattermost
+    matchers:
+      - name: alertgroup
+        value: cnpg-backup
+        matchType: "="
+  receivers:
+    - name: cnpg-backup-mattermost
+      slackConfigs:
+        - apiURL:
+            name: homelab-node-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.namespace }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.namespace }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

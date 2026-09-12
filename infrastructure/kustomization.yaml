@@ -39,6 +39,10 @@ resources:
   - observability/homelab-node-prometheus-rules.yaml
   - observability/homelab-node-alertmanager-config.yaml
   - observability/homelab-node-mattermost-webhook-url.sops.yaml
+  # CloudNativePG backup health: PodMonitor + PrometheusRule + AlertmanagerConfig
+  - observability/cnpg-instance-podmonitor.yaml
+  - observability/cnpg-backup-prometheus-rules.yaml
+  - observability/cnpg-backup-alertmanager-config.yaml
   - observability/grafana-helm-release.yaml
   - observability/opentelemetry-collector-helm-release.yaml
   - observability/cloudflared-grafana-deployment.yaml
