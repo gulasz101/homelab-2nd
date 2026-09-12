@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-12",
+  "source": "/home/voitech/homelab-recovery/itsaplan-logs-arr-box.tgz",
+  "source_sha256": "445ea72eaafb68c6f14aca0f43a3fd3035989cbb50f6169a240cbf9ec52bfc21",
+  "recovered_task_count": 0,
+  "recovered_tasks": [],
+  "provenance": {
+    "method": "Extracted tarball to /tmp/opencode/itsaplan-logs (original untouched) and parsed all six container 0.log files programmatically (Python): CRI prefix stripping, keyword scan for task fields, JSON/SSE body extraction, UUID/endpoint enumeration, and full-text scan for human-readable task tokens.",
+    "log_files": [
+      "itsaplan_itsaplan-api-749bf7df57-js5d9_bb8dfdf7-9e4f-4795-8ac3-39c03b440a3f/api/0.log",
+      "itsaplan_itsaplan-worker-6775978db6-k87fj_27a1ffd3-feca-41c1-b969-cd00392b400b/worker/0.log",
+      "itsaplan_itsaplan-andrzej-runner-f94f9bb94-rbbcq_61b460d1-1ecd-46e2-b134-4ac6aadbee05/runner/0.log",
+      "itsaplan_itsaplan-web-7fb8bb4ff5-tbxh4_bf405fa5-ce35-4b58-8a23-dc2707b0c496/web/0.log",
+      "itsaplan_cloudflared-plan-api-d75774496-wlckj_bff644ca-11cd-43d0-8edc-54a71da5f252/cloudflared/0.log",
+      "itsaplan_cloudflared-plan-7f864df449-bzsp5_d7e6fff9-e295-41fd-a917-67409049a40d/cloudflared/0.log"
+    ],
+    "log_time_range": {
+      "earliest": "2026-09-11T22:29:52.222936927+02:00",
+      "latest": "2026-09-11T22:43:19.634265402+02:00"
+    },
+    "total_log_lines": 6213
+  },
+  "key_finding": "The saved logs are POST-wipe startup logs from the freshly recreated empty database, not pre-wipe logs. They contain no task data. The API log begins with 'Running migrations...' then 'Migrations applied'; the only recurring content is '[planner] ... APIError: Invalid API key' and agent/chat claim failures (HTTP 500/502).",
+  "database_state_at_recovery": {
+    "cluster": "itsaplan-db",
+    "namespace": "itsaplan",
+    "issue": 0,
+    "project": 0,
+    "user": 0,
+    "project_column": 0,
+    "issue_activity": 0,
+    "issue_status": 0,
+    "issue_type": 0,
+    "issue_attachment": 0,
+    "agent_run": 0,
+    "drizzle_migrations_applied": 119
+  },
+  "api_model_discovered": {
+    "public_base_url": "https://plan-api.voitech.dev",
+    "mcp_endpoint": "https://plan-api.voitech.dev/mcp",
+    "mcp_transport": "JSON-RPC 2.0 over HTTP POST; responses are text/event-stream (SSE, 'data: {...}')",
+    "mcp_auth": "Authorization: Bearer <MCP_ITSAPLAN_API_KEY>",
+    "mcp_tools": [
+      {"name": "get_project", "arguments": {"projectKey": "H2"}, "returns": "columns[] (with id/stateType), issueTypes[] (with id/name)"},
+      {"name": "list_issues", "arguments": {"projectKey": "H2", "limit": 500}, "returns": "issues[] with title (description not returned)"},
+      {"name": "create_issue", "arguments": {"projectKey": "H2", "columnId": "<backlog column id>", "title": "...", "description": "...", "priority": "high|medium", "typeId": "<optional>"}}
+    ],
+    "agent_runner_rest": [
+      "POST /agent-runs/claim",
+      "POST /agent-chats/claim"
+    ],
+    "reference": "scripts/itsaplan_sync.py implements the full idempotent create flow (fingerprint in title, search-before-create)"
+  },
+  "recreation": {
+    "attempted": false,
+    "created_count": 0,
+    "reason": "No records recovered, so there is nothing to recreate. No writes were made to the Itsaplan DB or API."
+  },
+  "blockers": [
+    "Zero task records exist in the saved logs: they are post-wipe logs from the new empty DB.",
+    "No MCP_ITSAPLAN_API_KEY is present in the cluster namespace (itsaplan secrets checked) or in this repo; the security-scan sync runs externally (Hermes).",
+    "All project / board-column / issue-type / user IDs were destroyed with the database; no IDs remain to target even if records were recovered.",
+    "The live app is unhealthy: itsaplan-andrzej-runner gets HTTP 500 from /agent-runs/claim and /agent-chats/claim, and the API logs '[planner] APIError: Invalid API key', so an API-based recreation would currently fail regardless."
+  ],
+  "recommended_next_sources": [
+    "Loki / Grafana long-term retention for namespace itsaplan prior to 2026-09-11T22:29 (queried only as a follow-up; not available in this tarball).",
+    "Rotated/compressed container logs on the arr-box node (e.g. /var/log/pods/.../*.log.2026-09-10* or journald) if any survived.",
+    "OMV MinIO bucket itsaplan-attachments or any exported DB dump from before the prune."
+  ]
+}
