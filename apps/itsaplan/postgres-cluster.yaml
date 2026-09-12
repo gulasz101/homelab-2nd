@@ -6,10 +6,10 @@ kind: Cluster
 metadata:
   name: itsaplan-db
   namespace: itsaplan
-  annotations:
-    # The WAL archive for this server already contains history, so the
-    # "archive must be empty" guard must be bypassed for archiving/bootstraps.
-    cnpg.io/skipEmptyWalArchiveCheck: "enabled"
+  # Barman serverName generation convention: see
+  # docs/cnpg-backup-servername-generations.md. A rebuilt cluster archives into
+  # a fresh "<name>-genN" namespace while recovering from the previous one, so
+  # the cnpg.io/skipEmptyWalArchiveCheck annotation is no longer needed.
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie
@@ -30,6 +30,7 @@ spec:
       isWALArchiver: true
       parameters:
         barmanObjectName: itsaplan-db-backups
+        # Current generation (archiver target); bump to "<name>-genN" (fresh) on rebuild.
         serverName: itsaplan-db
 
   backup:

@@ -26,6 +26,8 @@ spec:
       isWALArchiver: true
       parameters:
         barmanObjectName: tldraw-db-backups
+        # Current generation (archiver target); bump to "<name>-genN" (fresh) on rebuild.
+        # See docs/cnpg-backup-servername-generations.md.
         serverName: tldraw-db
 
   backup:

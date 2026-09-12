@@ -6,10 +6,10 @@ kind: Cluster
 metadata:
   name: openwebui-db
   namespace: llm-hub
-  annotations:
-    # Recovery reuses the same ObjectStore/serverName as the source, so the
-    # "archive must be empty" guard must be bypassed.
-    cnpg.io/skipEmptyWalArchiveCheck: "enabled"
+  # Barman serverName generation convention: see
+  # docs/cnpg-backup-servername-generations.md. A rebuilt cluster archives into
+  # a fresh "<name>-genN" namespace while recovering from the previous one, so
+  # the cnpg.io/skipEmptyWalArchiveCheck annotation is no longer needed.
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
@@ -40,6 +40,7 @@ spec:
         name: barman-cloud.cloudnative-pg.io
         parameters:
           barmanObjectName: openwebui-db-backups
+          # Previous generation (recovery source); bump to the prior genN on rebuild.
           serverName: openwebui-db
 
   storage:
@@ -51,6 +52,7 @@ spec:
       isWALArchiver: true
       parameters:
         barmanObjectName: openwebui-db-backups
+        # Current generation (archiver target); bump to "<name>-genN" (fresh) on rebuild.
         serverName: openwebui-db
 
   backup:
