@@ -1,0 +1,196 @@
+---
+# Daily Karakeep SQLite backup to OMV MinIO (s3://karakeep-backups/karakeep/).
+# Karakeep's data lives on the local-path PVC data-karakeep-0 (/data/db.db,
+# /data/queue.db). The PVC is mounted read-only here and snapshotted with
+# Python's sqlite3 online-backup API (WAL-safe) before upload. mc is not used
+# so there is no dependency on an external binary; uploads use AWS SigV4.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: karakeep-backup
+  namespace: karakeep
+spec:
+  schedule: "15 3 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: python:3.13-alpine
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  echo "Starting Karakeep SQLite backup"
+                  python3 - <<'PY'
+                  import os, glob, sqlite3, tempfile, shutil, datetime, time
+                  import urllib.request, urllib.parse, hashlib, hmac
+                  import xml.etree.ElementTree as ET
+
+                  bucket = 'karakeep-backups'
+                  prefix = 'karakeep/'
+                  endpoint = 'http://openmediavault.local:9000'
+                  region = 'us-east-1'
+                  service = 's3'
+                  access_key = os.environ['KARAKEEP_MINIO_ACCESS_KEY']
+                  secret_key = os.environ['KARAKEEP_MINIO_SECRET_KEY']
+                  src_dir = '/data'
+                  retention_days = 14
+
+                  def sha256(data):
+                      return hashlib.sha256(data if isinstance(data, bytes) else data.encode('utf-8')).hexdigest()
+
+                  def sign(key, msg):
+                      return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+
+                  def get_signature_key(secret, date_stamp, region, service):
+                      k_date = sign(('AWS4' + secret).encode('utf-8'), date_stamp)
+                      k_region = sign(k_date, region)
+                      k_service = sign(k_region, service)
+                      return sign(k_service, 'aws4_request')
+
+                  def signed_request(method, path, payload=b'', query=''):
+                      t = datetime.datetime.now(datetime.timezone.utc)
+                      date_stamp = t.strftime('%Y%m%d')
+                      amz_date = t.strftime('%Y%m%dT%H%M%SZ')
+                      if isinstance(payload, str):
+                          payload = payload.encode('utf-8')
+                      payload_hash = sha256(payload)
+                      host = 'openmediavault.local:9000'
+                      headers = {
+                          'host': host,
+                          'x-amz-content-sha256': payload_hash,
+                          'x-amz-date': amz_date,
+                      }
+                      if method in ('PUT', 'POST'):
+                          headers['content-length'] = str(len(payload))
+                      header_keys = sorted(headers.keys())
+                      signed_headers = ';'.join(header_keys)
+                      canonical_request = '\n'.join([
+                          method,
+                          urllib.parse.quote(path, safe='/'),
+                          query,
+                          ''.join(f'{k}:{headers[k]}\n' for k in header_keys),
+                          signed_headers,
+                          payload_hash,
+                      ])
+                      credential_scope = f'{date_stamp}/{region}/{service}/aws4_request'
+                      string_to_sign = '\n'.join([
+                          'AWS4-HMAC-SHA256',
+                          amz_date,
+                          credential_scope,
+                          sha256(canonical_request.encode('utf-8')),
+                      ])
+                      signing_key = get_signature_key(secret_key, date_stamp, region, service)
+                      signature = hmac.new(signing_key, string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+                      headers['Authorization'] = (
+                          f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, '
+                          f'SignedHeaders={signed_headers}, Signature={signature}'
+                      )
+                      url = f'{endpoint}{path}'
+                      if query:
+                          url = f'{url}?{query}'
+                      req = urllib.request.Request(url, data=payload, method=method, headers=headers)
+                      return urllib.request.urlopen(req, timeout=120)
+
+                  dbs = sorted(glob.glob(os.path.join(src_dir, '*.db')))
+                  if not dbs:
+                      raise SystemExit('No .db files found under /data')
+                  print(f'Found databases: {[os.path.basename(d) for d in dbs]}')
+
+                  tmp = tempfile.mkdtemp()
+                  outdir = os.path.join(tmp, 'out')
+                  os.makedirs(outdir)
+                  ts = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')
+
+                  for db in dbs:
+                      name = os.path.basename(db)
+                      snap = os.path.join(tmp, name)
+                      shutil.copy2(db, snap)
+                      for ext in ('-wal', '-shm'):
+                          if os.path.exists(db + ext):
+                              shutil.copy2(db + ext, snap + ext)
+                      out = os.path.join(outdir, name)
+                      done = False
+                      for attempt in range(3):
+                          try:
+                              s = sqlite3.connect(snap)
+                              d = sqlite3.connect(out)
+                              s.backup(d)
+                              d.close()
+                              s.close()
+                              done = True
+                              break
+                          except sqlite3.OperationalError as e:
+                              print(f'sqlite backup attempt {attempt + 1} for {name} failed: {e}')
+                              time.sleep(2)
+                      if not done:
+                          shutil.copy2(snap, out)
+                          print(f'Fell back to raw copy for {name}')
+                      key = prefix + f'{name[:-3]}-{ts}.db'
+                      data = open(out, 'rb').read()
+                      for attempt in range(3):
+                          try:
+                              resp = signed_request('PUT', f'/{bucket}/{urllib.parse.quote(key, safe="/")}', data)
+                              print(f'Uploaded {name} -> {bucket}/{key} ({len(data)} bytes, HTTP {resp.status})')
+                              break
+                          except Exception as e:
+                              print(f'Upload attempt {attempt + 1} for {name} failed: {e}')
+                              if attempt == 2:
+                                  raise
+                              time.sleep(2 ** attempt)
+
+                  # Retention: delete objects older than retention_days
+                  list_query = urllib.parse.urlencode({'list-type': '2', 'prefix': prefix}, quote_via=urllib.parse.quote)
+                  list_resp = signed_request('GET', f'/{bucket}', b'', list_query)
+                  root = ET.fromstring(list_resp.read())
+                  ns = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+                  cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=retention_days)
+                  removed = 0
+                  for contents in root.findall('s3:Contents', ns):
+                      key_el = contents.find('s3:Key', ns)
+                      if key_el is None:
+                          continue
+                      key = key_el.text
+                      last_mod = datetime.datetime.fromisoformat(contents.find('s3:LastModified', ns).text.replace('Z', '+00:00'))
+                      if last_mod < cutoff:
+                          signed_request('DELETE', f'/{bucket}/{urllib.parse.quote(key, safe="/")}')
+                          removed += 1
+                          print(f'Removed old backup: {key}')
+                  print(f'Retention cleanup complete, removed {removed} objects')
+                  PY
+                  echo "Karakeep backup complete"
+              env:
+                - name: KARAKEEP_MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: karakeep-minio-backup-creds
+                      key: ACCESS_KEY_ID
+                - name: KARAKEEP_MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: karakeep-minio-backup-creds
+                      key: ACCESS_SECRET_KEY
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 20m
+                  memory: 64Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: data-karakeep-0
+                readOnly: true
