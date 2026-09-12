@@ -6,6 +6,10 @@ kind: Cluster
 metadata:
   name: litellm-db
   namespace: llm-hub
+  annotations:
+    # Recovery reuses the same ObjectStore/serverName as the source, so the
+    # "archive must be empty" guard must be bypassed.
+    cnpg.io/skipEmptyWalArchiveCheck: "enabled"
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
@@ -20,16 +24,23 @@ spec:
         image:
           reference: ghcr.io/cloudnative-pg/pgvector:0.8.3-18-trixie
 
+  # Recovery bootstrap: if this cluster is ever recreated, restore the latest
+  # available base backup from the barman ObjectStore and replay WAL.
   bootstrap:
-    initdb:
+    recovery:
+      source: origin
       database: litellm
       owner: litellm
       secret:
         name: litellm-db-credentials
-      postInitTemplateSQLRefs:
-        configMapRefs:
-          - name: litellm-db-init-scripts
-            key: init-template.sql
+
+  externalClusters:
+    - name: origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: litellm-db-backups
+          serverName: litellm-db
 
   storage:
     storageClass: local-path

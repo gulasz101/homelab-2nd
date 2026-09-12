@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: authentik-blueprint-users
+    namespace: auth
+type: Opaque
+stringData:
+    users.yaml: ENC[AES256_GCM,data:iuzcqDz/S8YfQ4p/32PgNZu/hJ+S6HRvidJfC5Hmzq1cpBj9CpSBOEdYLFPpi3bayeprmgOEtK14ttcFZSoS3Gd04uKyVBhjl5ZByeVZwSu9+P12A9hwV7l+pmO2+cMVE18rIygXhzNn8gL4ri6R1KybYONVQRyAFJn+n9E1xjX79/uQJ2lJjibz2+ronWk8QDD5J3UrQ5j6hoigMb1MUM8RQbc/GaSDND+c9gfop2BxejIhSMBWL90I+viNvtaM1Esrwp7xIwiA9LAWOWwDUUhwTvBuUAT3R05NLfnySq3mVgxFkU6v8yCCg7nJYjvhzvYn+XvpSFVNW9JSo9uXPKKxWVSWRuMEEch2H8CIpUqvqJQ15NLGLP7NJBavwit9cIV+0y1ZnkUE1zhqKWyT8DnGH+8V/h68sr4FhLHKqjzlkfoFDYmFNeNHYy0fEufqIpiaWgMZRo//1OZkHV2iEzorOj20q3W46k+Y+CroUJQ+CumRZVat5QohkjeiJ96cVJXRFMjeyBQy84XjOl7MyCD2zIvQjF9WqyyElTpa1H+qpaKpedFFL3yBU0jvXFT5r9jXBkAlHZqSfIW0z3APrNWsGWemHjzNYCQ2d7nTpL9cO5ONFWEFeyMm0+8bX/wSdslPFwZdw7fisl8QilN8hazo4e+79GdlU4jB6NSmOPQwW0y+AVulHdTTuuiHtfnWbd9GnXvBojHGus/eF1Ctci+74XrJICM=,iv:C2ForX8RG+HVCy4xIrEPsBUpWf/Phv8pUIJFtY54IOY=,tag:ntvKLj1LNP1rshH4Sr8Epw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB4Y3htQjRzUStELzNySitN
+            V0hyLzl1aDZkamRLcFozdXhSZXFPTWlpSkdNClVXREVDOHVwbmJ4dUpEekNXUUF5
+            M1VrK24ycDhIRjFmTVNCVERtVTFzY00KLS0tIEdDQm5NTTB2VDA4Z1hSNGZWNXQy
+            MGZnV1lhZXcwaU5HYTdSM0F1NTZFY0EK9RI5cwOsi8u29aG0IWj94lGY1dgD9DNx
+            bH/o7xvg22AttpeUQAdv0aMEYoasVImFUFlKzDmidk2bCfbzPV5oSA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-12T19:52:44Z"
+    mac: ENC[AES256_GCM,data:RYoSNDz2K86ws0090gE9+25ez3MW1U9RlECuLKV9+g7zDQT9pAzU6un4PFjH6lqTVQETqgch0TTOqpVMB6VtG7KuD35KuT2PHkxUsxMu52SDe+gnlq2uRu4vSQ9kjmeYy9cF+o0rpCFSbxSCGf2Ll2JT+60lOVfxF5vHG2mK8Sk=,iv:U2RGnvqN3heJ3UZoh9Wcv3lNER0651swDm1MR4azQOU=,tag:CU2SjihOQFnCI8OYqnEbxg==,type:str]
+    version: 3.13.3

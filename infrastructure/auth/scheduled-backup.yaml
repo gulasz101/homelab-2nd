@@ -10,4 +10,7 @@ spec:
   backupOwnerReference: self
   cluster:
     name: authentik-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
   immediate: true  # Take a backup right away when first created

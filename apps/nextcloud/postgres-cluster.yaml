@@ -6,6 +6,10 @@ kind: Cluster
 metadata:
   name: nextcloud-db
   namespace: nextcloud
+  annotations:
+    # Recovery reuses the same ObjectStore/serverName as the source, so the
+    # "archive must be empty" guard must be bypassed.
+    cnpg.io/skipEmptyWalArchiveCheck: "enabled"
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie
@@ -17,13 +21,23 @@ spec:
       shared_buffers: "512MB"
       effective_cache_size: "1GB"
 
-  # Bootstrapping — create the nextcloud database and user
+  # Recovery bootstrap: if this cluster is ever recreated, restore the latest
+  # available base backup from the barman ObjectStore and replay WAL.
   bootstrap:
-    initdb:
+    recovery:
+      source: origin
       database: nextcloud
       owner: nextcloud
       secret:
         name: nextcloud-db-credentials
+
+  externalClusters:
+    - name: origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: nextcloud-db-backups
+          serverName: nextcloud-db
 
   # Storage — local-path on homelab-2nd NVMe (fast, NOT durable)
   storage:

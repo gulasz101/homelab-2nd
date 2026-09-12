@@ -1,0 +1,79 @@
+---
+# Self-healing Authentik bootstrap helper.
+#
+# Authentik's internal "setup complete" flag lives in the database and is
+# normally set by the OOBE wizard. On a Helm/CNPG deployment the wizard never
+# runs, so a freshly built database makes "/" redirect to /setup (which 500s
+# because the initial-setup flow does not exist). This CronJob idempotently
+# repairs that state and, only when the database is fresh, re-applies the
+# akadmin password from the SOPS-managed secret.
+#
+# It is intentionally a CronJob (not a Job) so that a database rebuild
+# self-heals without any manual intervention.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-setup-script
+  namespace: auth
+data:
+  setup.py: |
+    import os
+    from authentik.core.apps import Setup
+    from authentik.core.models import User
+    from authentik.tenants.models import Tenant
+
+    tenant = Tenant.objects.get(schema_name="public")
+    if Setup.get(tenant=tenant):
+        print("Authentik setup already complete")
+    else:
+        user = User.objects.get(username="akadmin")
+        user.set_password(os.environ["ADMIN_PASSWORD"])
+        user.email = os.environ.get("ADMIN_EMAIL", "admin@voitech.dev")
+        user.save()
+        Setup.set(True, tenant=tenant)
+        print("Marked Authentik setup complete and set akadmin password")
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: authentik-setup
+  namespace: auth
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 5
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: setup
+              image: ghcr.io/goauthentik/server:2026.5.4
+              command:
+                - /bin/sh
+                - -c
+                - 'ak shell -c "$(cat /scripts/setup.py)"'
+              envFrom:
+                - secretRef:
+                    name: authentik
+              env:
+                - name: ADMIN_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: authentik-admin-password
+                      key: password
+                - name: ADMIN_EMAIL
+                  valueFrom:
+                    secretKeyRef:
+                      name: authentik-admin-password
+                      key: email
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+          volumes:
+            - name: script
+              configMap:
+                name: authentik-setup-script

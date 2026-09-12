@@ -6,16 +6,31 @@ kind: Cluster
 metadata:
   name: opengist-db
   namespace: opengist
+  annotations:
+    # Recovery reuses the same ObjectStore/serverName as the source, so the
+    # "archive must be empty" guard must be bypassed.
+    cnpg.io/skipEmptyWalArchiveCheck: "enabled"
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
 
+  # Recovery bootstrap: if this cluster is ever recreated, restore the latest
+  # available base backup from the barman ObjectStore and replay WAL.
   bootstrap:
-    initdb:
+    recovery:
+      source: origin
       database: opengist
       owner: opengist
       secret:
         name: opengist-db-credentials
+
+  externalClusters:
+    - name: origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: opengist-db-backups
+          serverName: opengist-db
 
   storage:
     storageClass: local-path

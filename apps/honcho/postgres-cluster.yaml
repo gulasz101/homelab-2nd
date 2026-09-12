@@ -9,6 +9,10 @@ kind: Cluster
 metadata:
   name: honcho-db
   namespace: honcho
+  annotations:
+    # Recovery reuses the same object store/serverName as the source, so the
+    # "archive must be empty" guard must be bypassed.
+    cnpg.io/skipEmptyWalArchiveCheck: "enabled"
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:16
@@ -20,15 +24,33 @@ spec:
       shared_buffers: "256MB"
       effective_cache_size: "512MB"
 
-  # Bootstrapping — create the honcho database and user
+  # Recovery bootstrap: if this cluster is ever recreated, restore the latest
+  # available base backup from the (in-tree) barman object store and replay WAL.
   bootstrap:
-    initdb:
+    recovery:
+      source: origin
       database: honcho
       owner: honcho
       secret:
         name: honcho-db-credentials
-      postInitApplicationSQL:
-        - CREATE EXTENSION IF NOT EXISTS vector;
+
+  externalClusters:
+    - name: origin
+      barmanObjectStore:
+        destinationPath: s3://cnpg-backups/honcho
+        endpointURL: http://openmediavault.local:9000
+        serverName: honcho-db
+        s3Credentials:
+          accessKeyId:
+            name: honcho-minio-backup-creds
+            key: ACCESS_KEY_ID
+          secretAccessKey:
+            name: honcho-minio-backup-creds
+            key: ACCESS_SECRET_KEY
+        data:
+          compression: gzip
+        wal:
+          compression: gzip
 
   # Storage — local-path on homelab-2nd NVMe (fast, NOT durable)
   storage:

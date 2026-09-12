@@ -6,6 +6,10 @@ kind: Cluster
 metadata:
   name: mattermost-db
   namespace: mattermost
+  annotations:
+    # Recovery reuses the same ObjectStore/serverName as the source, so the
+    # "archive must be empty" guard must be bypassed.
+    cnpg.io/skipEmptyWalArchiveCheck: "enabled"
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie
@@ -17,13 +21,23 @@ spec:
       shared_buffers: "256MB"
       effective_cache_size: "512MB"
 
-  # Bootstrapping — create the mattermost database and user
+  # Recovery bootstrap: if this cluster is ever recreated, restore the latest
+  # available base backup from the barman ObjectStore and replay WAL.
   bootstrap:
-    initdb:
+    recovery:
+      source: origin
       database: mattermost
       owner: mattermost
       secret:
         name: mattermost-db-credentials
+
+  externalClusters:
+    - name: origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: mattermost-db-backups
+          serverName: mattermost-db
 
   # Storage — local-path on homelab-2nd NVMe (fast, NOT durable)
   storage:
