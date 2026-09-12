@@ -139,6 +139,12 @@ spec:
     externalRedis:
       enabled: false
 
+    # The OMV NFS exports backing nextcloud-html and nextcloud-data are only
+    # exported to homelab-2nd, so pin the pod to that node or the NFS mount
+    # fails with access denied if it is ever rescheduled elsewhere.
+    nodeSelector:
+      kubernetes.io/hostname: homelab-2nd
+
     # Persistence: keep the whole Nextcloud root on the existing OMV NFS PVC
     # (nextcloud-html, 20Gi). This holds code, config, apps, cache, and local
     # thumbnails. The data directory (/var/www/html/data) is split out to the
