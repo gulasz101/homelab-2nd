@@ -47,13 +47,23 @@ spec:
       shared_buffers: "256MB"
       effective_cache_size: "512MB"
 
-  # Bootstrapping — create the authentik database and user
+  # Recovery bootstrap: if this cluster is ever recreated, restore the latest
+  # available base backup from the barman ObjectStore and replay WAL.
   bootstrap:
-    initdb:
+    recovery:
+      source: origin
       database: authentik
       owner: authentik
       secret:
         name: authentik-db-credentials
+
+  externalClusters:
+    - name: origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: authentik-db-backups
+          serverName: authentik-db
 
   # Storage — local-path on homelab-2nd NVMe (fast, NOT durable)
   storage:
