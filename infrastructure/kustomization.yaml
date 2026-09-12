@@ -60,6 +60,7 @@ resources:
   - auth/authentik-redis-credentials.sops.yaml
   - auth/authentik-admin-password.sops.yaml
   - auth/sylwia-authentik-password.sops.yaml
+  - auth/authentik-blueprint-users.sops.yaml
   - auth/authentik-minio-backup-creds.sops.yaml
   - auth/authentik-blueprint-secret.sops.yaml
   - auth/auth-tunnel-token.sops.yaml
@@ -69,6 +70,7 @@ resources:
   - auth/redis-deployment.yaml
   - auth/redis-service.yaml
   - auth/authentik-helm-release.yaml
+  - auth/authentik-setup-cronjob.yaml
   - auth/cloudflared-auth-deployment.yaml
   - auth/auth-tunnel-ingress-configmap.yaml
   - auth/auth-dashboard-configmap.yaml
