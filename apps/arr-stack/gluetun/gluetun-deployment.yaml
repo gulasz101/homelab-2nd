@@ -196,7 +196,7 @@ spec:
           image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
           imagePullPolicy: IfNotPresent
           ports:
-            - name: flaresolverr-http
+            - name: flare-http
               containerPort: 8191
               protocol: TCP
           env:
