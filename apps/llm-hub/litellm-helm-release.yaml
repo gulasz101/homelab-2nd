@@ -195,6 +195,11 @@ spec:
             model: "openai/deepseek-v4-flash:0731"
             api_base: "https://ollama.com/v1"
             api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: deepseek-v4.1-flash-ollama
+          litellm_params:
+            model: openai/deepseek-v4.1-flash
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
         - model_name: qwen3.5-397b-ollama
           litellm_params:
             model: "openai/qwen3.5:397b"

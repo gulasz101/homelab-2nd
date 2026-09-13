@@ -60,6 +60,11 @@ spec:
                     secretKeyRef:
                       name: litellm-user-keys
                       key: hermes-bill-cipher-key
+                - name: OPENVIKING_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: litellm-user-keys
+                      key: openviking-key
               volumeMounts:
                 - name: scripts
                   mountPath: /scripts

@@ -65,7 +65,8 @@ spec:
                   "extra_headers": {
                     "User-Agent": "OpenViking/1.0"
                   },
-                  "model": "mistral-3.5-middle",
+                  "model": "deepseek-v4.1-flash-ollama",
+                  "reasoning_effort": "high",
                   "timeout": 3600,
                   "max_concurrent": 64
                 }
