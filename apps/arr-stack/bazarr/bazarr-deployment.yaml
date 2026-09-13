@@ -30,13 +30,20 @@ spec:
             - name: http
               containerPort: 6767
               protocol: TCP
+          env:
+            - name: PUID
+              value: "1100"
+            - name: PGID
+              value: "1100"
           volumeMounts:
             - name: config
               mountPath: /config
             - name: media
               mountPath: /tv
+              subPath: tv
             - name: media
               mountPath: /movies
+              subPath: movies
           resources:
             requests:
               cpu: 50m
