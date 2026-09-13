@@ -28,6 +28,12 @@ Data lost (no backups at the time):
 
 ## Resolved
 
+### arr-stack API-key drift / Bazarr CrashLoopBackOff — DONE (2026-09-13)
+
+- Collateral of the 2026-09-11 prune cascade: the arr-stack PVCs were wiped and their configs restored from MinIO backup, but `arr-stack-api-keys` was applied separately from Git, so **all four** *arr keys diverged. Only Bazarr broke, because its liveness probe authenticated with the key (`401` → 220 restarts). Homepage widgets were also silently broken.
+- Fixed: secret re-derived from the live app configs (commits `8ad3ebf`, `4412121`); Bazarr probes changed to a key-independent `tcpSocket: 6767`. See ADR-014.
+- Guard against recurrence: `scripts/arr-stack-sync-api-keys.sh` + `docs/arr-stack-recovery.md` (mandatory post-restore key sync).
+
 ### Karakeep durable storage + backups — DONE (2026-09-12)
 
 - Root cause: the StatefulSet `volumeClaimTemplates.volumeName: karakeep-data` was silently dropped by the chart's schema, so `data-karakeep-0` fell back to `local-path`; a separate static PVC had claimed the NFS PV anyway.

@@ -17,6 +17,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-011 | arr-stack migrates to a dedicated k3s namespace | Proposed | 2026-09-05 |
 | ADR-012 | Multi-environment Flux repo layout (`clusters/production` + `clusters/staging`) | Accepted | 2026-09-12 |
 | ADR-013 | NetBird host firewall disabled on the k3s control-plane node | Accepted | 2026-09-13 |
+| ADR-014 | arr-stack API keys are owned by the apps; the SOPS secret mirrors them | Accepted | 2026-09-13 |
 
 ## Writing an ADR
 
