@@ -31,8 +31,6 @@ resources:
   - homepage/homepage-service.yaml
   - homepage/homepage-config-configmap.yaml
   - homepage/homepage-services-configmap.yaml
-  - flaresolverr/flaresolverr-deployment.yaml
-  - flaresolverr/flaresolverr-service.yaml
   - arr-stack-api-keys.sops.yaml
   - gluetun-mullvad-keys.sops.yaml
   - arr-stack-mattermost-webhook-url.sops.yaml

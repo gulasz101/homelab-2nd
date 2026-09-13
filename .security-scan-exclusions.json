@@ -66,7 +66,7 @@
       },
       {
         "file": "apps/arr-stack/gluetun/gluetun-deployment.yaml",
-        "reason": "gluetun manages the WireGuard tunnel and its firewall (NET_ADMIN, iptables, /dev/net/tun); it must start as uid 0. Hard requirement: torrent traffic must never leak outside the Mullvad/Spain VPN."
+        "reason": "gluetun manages the WireGuard tunnel and its firewall (NET_ADMIN, iptables, /dev/net/tun); it must start as uid 0. The FlareSolverr container shares this pod's netns so its Chromium traffic egresses only via the Mullvad/Spain tunnel. Hard requirement: torrent traffic must never leak outside the Mullvad/Spain VPN."
       }
     ]
   }

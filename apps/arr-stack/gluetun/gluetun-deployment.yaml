@@ -187,6 +187,51 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
+        # FlareSolverr runs *inside* the gluetun pod so its Chromium traffic to
+        # Cloudflare-protected indexers egresses through the Mullvad/Spain tunnel
+        # (same netns as the old Docker `network_mode: service:gluetun` setup).
+        # No HTTP_PROXY needed: sharing the netns means tun0 is the only egress
+        # the killswitch permits.
+        - name: flaresolverr
+          image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: flaresolverr-http
+              containerPort: 8191
+              protocol: TCP
+          env:
+            - name: LOG_LEVEL
+              value: info
+            - name: TZ
+              value: Europe/Berlin
+          volumeMounts:
+            - name: flaresolverr-dshm
+              mountPath: /dev/shm
+            - name: flaresolverr-tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8191
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8191
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
       volumes:
         - name: gluetun-config
           persistentVolumeClaim:
@@ -197,3 +242,10 @@ spec:
         - name: downloads
           persistentVolumeClaim:
             claimName: arr-stack-downloads
+        - name: flaresolverr-dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+        - name: flaresolverr-tmp
+          emptyDir:
+            sizeLimit: 256Mi
