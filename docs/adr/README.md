@@ -19,6 +19,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-013 | NetBird host firewall disabled on the k3s control-plane node | Accepted | 2026-09-13 |
 | ADR-014 | arr-stack API keys are owned by the apps; the SOPS secret mirrors them | Accepted | 2026-09-13 |
 | ADR-015 | Authentik SSO providers are declared in a Blueprint, never created imperatively | Accepted | 2026-09-13 |
+| ADR-016 | Karakeep state is reconstructed from vault manifests + Hermes history; back up before the thing you want to protect | Accepted | 2026-09-13 |
 
 ## Writing an ADR
 
