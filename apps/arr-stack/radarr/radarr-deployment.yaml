@@ -37,6 +37,10 @@ spec:
               value: "http://gluetun.arr-stack.svc.cluster.local:8888"
             - name: NO_PROXY
               value: "localhost,127.0.0.1,cluster.local,.arr-stack.svc.cluster.local,openmediavault.local"
+            - name: PUID
+              value: "1100"
+            - name: PGID
+              value: "1100"
           volumeMounts:
             - name: config
               mountPath: /config
@@ -44,6 +48,7 @@ spec:
               mountPath: /downloads
             - name: media
               mountPath: /movies
+              subPath: movies
           resources:
             requests:
               cpu: 50m
