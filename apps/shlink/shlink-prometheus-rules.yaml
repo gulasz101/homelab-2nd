@@ -26,21 +26,23 @@ spec:
           annotations:
             summary: "shlink/{{ $labels.pod }} CPU above request"
             description: "{{ $labels.pod }}/{{ $labels.container }} CPU usage exceeds its request for more than 5 minutes."
-        - alert: ShlinkMemoryAboveRequest
+        - alert: ShlinkMemoryAbove85PercentLimit
+          # Fires on real memory pressure (85% of the cgroup limit) instead of
+          # crossing the low request floor, which fired constantly for
+          # shlink-backend (128Mi request vs 512Mi limit).
           expr: |
-            sum by (pod, container, namespace) (
+            100 * sum by (pod, container, namespace) (
               container_memory_working_set_bytes{namespace="shlink", container!=""}
-            ) >
-            sum by (pod, container, namespace) (
-              kube_pod_container_resource_requests{namespace="shlink", resource="memory", container!=""}
-            )
+            ) / sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="shlink", resource="memory", container!=""}
+            ) > 85
           for: 5m
           labels:
             severity: warning
             namespace: shlink
           annotations:
-            summary: "shlink/{{ $labels.pod }} memory above request"
-            description: "{{ $labels.pod }}/{{ $labels.container }} memory usage exceeds its request for more than 5 minutes."
+            summary: "shlink/{{ $labels.pod }} memory above 85% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 85% of its limit for more than 5 minutes."
         - alert: ShlinkCPUAbove90PercentLimit
           expr: |
             100 * sum by (pod, container, namespace) (

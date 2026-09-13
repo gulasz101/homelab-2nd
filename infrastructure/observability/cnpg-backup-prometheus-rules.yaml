@@ -72,16 +72,22 @@ spec:
 
         - alert: CNPGArchivingStalled
           # A stalled archiver leaves WAL segments in "ready" (itsaplan/shlink
-          # sat at 9-11), and -1 means "never archived since stats reset". The
-          # seconds-since threshold is deliberately loose (6h) because an idle
-          # database can legitimately go a long time without a WAL switch, so
-          # the WAL backlog is the primary signal.
+          # sat at 9-11), and -1 means "never archived since stats reset".
+          # The seconds-since clause MUST be gated on an actual WAL backlog:
+          # PostgreSQL only force-switches a WAL segment via archive_timeout
+          # when at least one write has occurred, so a genuinely idle database
+          # legitimately never archives and would otherwise trip a bare time
+          # threshold (shlink-db sat at 16.8h with ready=0 — false positive).
           expr: |
             (cnpg_collector_pg_wal_archive_status{value="ready"} > 5)
             or
             (cnpg_pg_stat_archiver_seconds_since_last_archival < 0)
             or
-            (cnpg_pg_stat_archiver_seconds_since_last_archival > 6 * 3600)
+            (
+              (cnpg_collector_pg_wal_archive_status{value="ready"} > 0)
+              and on (namespace, pod)
+              (cnpg_pg_stat_archiver_seconds_since_last_archival > 6 * 3600)
+            )
           for: 30m
           labels:
             severity: warning
