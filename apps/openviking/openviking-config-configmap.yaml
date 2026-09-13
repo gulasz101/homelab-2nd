@@ -38,7 +38,9 @@ data:
           "User-Agent": "OpenViking/1.0"
         },
         "model": "deepseek-v4.1-flash-ollama",
-        "reasoning_effort": "high",
+        "extra_request_body": {
+          "reasoning_effort": "high"
+        },
         "timeout": 3600,
         "max_concurrent": 64
       }
