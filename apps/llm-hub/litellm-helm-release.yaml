@@ -200,6 +200,10 @@ spec:
             model: openai/deepseek-v4.1-flash
             api_base: "https://ollama.com/v1"
             api_key: "os.environ/OLLAMA_API_KEY"
+            # Ollama Cloud accepts reasoning_effort; allow the openai provider to
+            # forward it (LiteLLM blocks unknown params otherwise).
+            allowed_openai_params:
+              - reasoning_effort
         - model_name: qwen3.5-397b-ollama
           litellm_params:
             model: "openai/qwen3.5:397b"
