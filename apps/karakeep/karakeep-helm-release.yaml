@@ -104,17 +104,19 @@ spec:
                 memory: 3Gi
 
             probes:
-              # Liveness = "process is up", NOT "app is responsive" (see ADR-014 for
-              # the same lesson on Bazarr). A busy crawler must not get the pod killed.
+              # Liveness stays HTTP (the chart merges its default handler, so a
+              # tcpSocket here would produce an invalid probe with two handlers),
+              # but is tolerant enough that a busy crawler can't get the pod killed.
               liveness:
                 enabled: true
                 custom: true
                 spec:
                   initialDelaySeconds: 60
                   periodSeconds: 30
-                  timeoutSeconds: 5
-                  failureThreshold: 6
-                  tcpSocket:
+                  timeoutSeconds: 30
+                  failureThreshold: 10
+                  httpGet:
+                    path: /api/health
                     port: 3000
               # Readiness stays HTTP but is tolerant of slow periods under load.
               readiness:
