@@ -20,6 +20,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-014 | arr-stack API keys are owned by the apps; the SOPS secret mirrors them | Accepted | 2026-09-13 |
 | ADR-015 | Authentik SSO providers are declared in a Blueprint, never created imperatively | Accepted | 2026-09-13 |
 | ADR-016 | Karakeep state is reconstructed from vault manifests + Hermes history; back up before the thing you want to protect | Accepted | 2026-09-13 |
+| ADR-017 | Itsaplan H2 is reconstructed through its own API with historical ids; API keys are re-seeded by hash | Accepted | 2026-09-13 |
 
 ## Writing an ADR
 
