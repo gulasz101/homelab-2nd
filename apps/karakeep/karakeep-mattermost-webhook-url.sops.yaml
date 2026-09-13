@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: karakeep-mattermost-webhook-url
+    namespace: karakeep
+type: Opaque
+stringData:
+    url: ENC[AES256_GCM,data:GeYJflCe+E1Dden1zT6zMcwaLGAnG0olJn03KZBV5Uo1xxsLhx1E6sTK4TvHXcri8SlvGg4Db8Sp,iv:LijUyFVFTTHevUdCJRUm4P31ELbIVzU78GhsDOqPID0=,tag:UCvN5ksDZdiQkBPcXu5ZtA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBaVUNmeStWS0JpZ21EMWhB
+            OW9DalU2Y1VMNXMyeFJ3L09FMXF1RFlscTNzCjgwN0dUU0YzOWRNQ1crYUpwTkpa
+            MUE0Z1h1QnQwVXdaZFEyYjhtTG5EcDAKLS0tIFc0S0pXZmx5ajRXbTM2M3p3SDV3
+            UWJsWFlvenE2cWFhZzlSemFRMHlxeGMKH+uQuyOfc5weTgFV0JrTBhPmZOZwId20
+            cFSW9oTY6k/NUt1gRyfj2Fr6AQF85R/beku5F2o0NZe+RTNs5kaqcg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-13T19:19:27Z"
+    mac: ENC[AES256_GCM,data:Cipt+Lo9WRbf+KB+AXpFfmyQiAYJYqJq0zygEc44j68IKbY+5Wxyq3wkfZIEJNqGOnfpS/Ke+zzdEPdtlIditawTQK3090CGzI4gAKe6TulwtGEdQ3/tZ6OOpTKt7+edYjH45mQw1vhRhmd1qiCtXU6IMf5LCNDm8eA5HkiknZU=,iv:2YRy+Ih+zkM7oeNyDD7fJCuKAE+TiDCVXuJeFA32IRM=,tag:8kouIbgd1b1QRvEg6I/3ZQ==,type:str]
+    version: 3.13.3

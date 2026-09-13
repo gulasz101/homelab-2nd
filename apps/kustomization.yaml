@@ -146,6 +146,7 @@ resources:
   - karakeep/karakeep-tunnel-token.sops.yaml
   - karakeep/karakeep-litellm-key.sops.yaml
   - karakeep/karakeep-minio-backup-creds.sops.yaml
+  - karakeep/karakeep-mattermost-webhook-url.sops.yaml
   # OMV NFS PV + pre-provisioned StatefulSet data PVC for Karakeep working data
   - karakeep/karakeep-data-pv.yaml
   - karakeep/data-karakeep-0-pvc.yaml
@@ -159,6 +160,9 @@ resources:
   - karakeep/service-monitor.yaml
   # Daily Karakeep SQLite backup to MinIO
   - karakeep/karakeep-backup-cronjob.yaml
+  # Alerts: backup freshness + Karakeep inference health, routed to Mattermost
+  - karakeep/karakeep-prometheus-rules.yaml
+  - karakeep/karakeep-alertmanager-config.yaml
   # Nextcloud namespace
   - nextcloud/namespace.yaml
   # SOPS-encrypted secrets

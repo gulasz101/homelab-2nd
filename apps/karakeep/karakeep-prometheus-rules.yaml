@@ -1,0 +1,74 @@
+---
+# PrometheusRule: Karakeep durability + AI-dependency alerts.
+#
+# Two failure classes surfaced by the 2026-09-11 outage / 2026-09-13 rebuild:
+#   * the daily SQLite->MinIO backup CronJob only started producing objects
+#     AFTER the DB was wiped, so there was nothing to restore — alert when the
+#     backup stops succeeding.
+#   * Karakeep AI tagging/summarization depends on LiteLLM -> LM Studio on the
+#     M1 Max over the LAN; an address change silently broke it for hours.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: karakeep-alerts
+  namespace: karakeep
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: karakeep.backup
+      interval: 60s
+      rules:
+        - alert: KarakeepBackupStale
+          # kube_cronjob_status_last_successful_time is the epoch of the last
+          # successful run. Schedule is 03:15 daily; 30h gives a day of slack.
+          expr: |
+            (time() - kube_cronjob_status_last_successful_time{cronjob="karakeep-backup"} > 30 * 3600)
+          for: 1h
+          labels:
+            severity: warning
+            namespace: karakeep
+          annotations:
+            summary: "Karakeep backup has not succeeded recently"
+            description: "No successful karakeep-backup run in the last 30 hours (schedule 03:15 daily). The SQLite DB has no fresh recovery copy in MinIO."
+
+        - alert: KarakeepBackupJobFailed
+          expr: |
+            kube_job_status_failed{job_name=~"karakeep-backup-.+"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            namespace: karakeep
+          annotations:
+            summary: "Karakeep backup job failed"
+            description: "Karakeep SQLite backup job {{ $labels.job_name }} has failed pods — the MinIO upload did not complete."
+
+        - alert: KarakeepBackupCronJobMissing
+          # Catches a deleted/renamed/suspended CronJob (no metric at all).
+          expr: |
+            absent(kube_cronjob_status_last_successful_time{cronjob="karakeep-backup"})
+          for: 1h
+          labels:
+            severity: warning
+            namespace: karakeep
+          annotations:
+            summary: "Karakeep backup CronJob not reporting"
+            description: "The karakeep-backup CronJob metric is absent — it may have been deleted, renamed, or suspended."
+
+    - name: karakeep.inference
+      interval: 60s
+      rules:
+        - alert: KarakeepInferenceFailing
+          # LiteLLM records failures per deployment; requested_model is the
+          # Karakeep-facing alias. No successes + repeated failures = the
+          # LM Studio backend on the M1 Max is unreachable (wrong IP, LM Studio
+          # down, model unloaded).
+          expr: |
+            increase(litellm_deployment_failure_responses_total{requested_model="gemma-4-12b-uncensored"}[30m]) > 3
+          for: 15m
+          labels:
+            severity: warning
+            namespace: karakeep
+          annotations:
+            summary: "Karakeep AI inference is failing"
+            description: "LiteLLM is recording repeated failures for gemma-4-12b-uncensored (Karakeep tagging/summarization). Check LM Studio on the M1 Max is running and that its LAN IP still matches the litellm api_base (currently 192.168.1.148:1234)."
