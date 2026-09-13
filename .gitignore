@@ -8,3 +8,6 @@
 !**/.env.example
 !**/.env.sops
 /AGENTS.md
+
+# Local agent tooling (opencode skills/config) — never committed
+/.opencode/
