@@ -267,13 +267,16 @@ spec:
             model: openrouter/tencent/hy3:free
             api_key: "os.environ/OPENROUTER_API_KEY"
 
-        # ── Local LM Studio model on Hermes host (macOS LAN IP) ────────
+        # ── Local LM Studio model on the Hermes M1 Max (same LAN as the cluster) ──
         - model_name: gemma-4-12b-uncensored
           litellm_params:
-            # LM Studio local API server on 192.168.1.101:1234
-            # Reachable from homelab-2nd; no real API key required
+            # LM Studio on the M1 Max, reached over the LAN (NOT NetBird).
+            # The Mac's address is a static lease on OPNsense (m1max.local);
+            # K8s pods cannot resolve `.local`, so pin the LAN IP here. If the
+            # address ever changes it must be updated in ONE place: this line.
+            # Reachable from homelab-2nd; no real API key required.
             model: openai/gemma4-12b-qat-uncensored-hauhaucs-balanced
-            api_base: "http://192.168.1.101:1234/v1"
+            api_base: "http://192.168.1.148:1234/v1"
             api_key: "os.environ/DUMMY_API_KEY"
 
         # ── OpenCode Go subscription models (all with -go suffix) ──────
