@@ -1,0 +1,121 @@
+---
+# Itsaplan bridge.
+#
+# The @itsaplan/runner hands each delegated task to this script on stdin and
+# reports stdout back to Itsaplan as the run output. The script:
+#   1. logs into OpenChamber and mints a long-lived client token,
+#   2. creates a session in the managed OpenCode server (so it shows in the UI),
+#   3. sends the task prompt,
+#   4. waits for the session to go idle, then prints the assistant's final text.
+#
+# No npm dependencies — Node 22+ global fetch only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openchamber-itsaplan-bridge
+  namespace: openchamber
+data:
+  bridge.js: |
+    // Itsaplan -> OpenChamber bridge. Task on stdin, final answer on stdout.
+    const BASE = process.env.OPENCHAMBER_URL || 'http://openchamber.openchamber.svc.cluster.local:3000';
+    const PASSWORD = process.env.OPENCHAMBER_UI_PASSWORD || '';
+    const DIRECTORY = process.env.OPENCHAMBER_WORKDIR || '/storage/workspaces/homelab-2nd';
+    const PROVIDER = process.env.OPENCHAMBER_PROVIDER || 'opencode-go';
+    const MODEL = process.env.OPENCHAMBER_MODEL || 'deepseek-v4.1-flash';
+    const AGENT = process.env.OPENCHAMBER_AGENT || 'itsaplan-worker';
+    const TIMEOUT_MS = Number(process.env.OPENCHAMBER_TASK_TIMEOUT_MS || 1800000);
+    const POLL_MS = Number(process.env.OPENCHAMBER_POLL_MS || 5000);
+
+    const log = (...a) => console.error('[bridge]', ...a);
+    const die = (msg, code = 1) => { console.error('[bridge] ERROR:', msg); process.exit(code); };
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    async function api(path, opts = {}, token) {
+      const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${BASE}${path}`, Object.assign({}, opts, { headers }));
+      const text = await res.text();
+      let body = null;
+      try { body = text ? JSON.parse(text) : null; } catch { body = { raw: text }; }
+      if (!res.ok) throw new Error(`${opts.method || 'GET'} ${path} -> ${res.status} ${text.slice(0, 300)}`);
+      return body;
+    }
+
+    async function login() {
+      const r = await api('/auth/session', {
+        method: 'POST',
+        body: JSON.stringify({
+          password: PASSWORD,
+          issueClientToken: true,
+          clientLabel: 'itsaplan-runner',
+          clientKind: 'service',
+        }),
+      });
+      if (!r || !r.clientToken) die('login returned no clientToken (is OPENCHAMBER_UI_PASSWORD set?)');
+      return r.clientToken;
+    }
+
+    function assistantText(messages) {
+      if (!Array.isArray(messages)) return '';
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (!m || !m.info || m.info.role !== 'assistant') continue;
+        const parts = (m.parts || []).filter((p) => p && p.type === 'text' && typeof p.text === 'string');
+        const joined = parts.map((p) => p.text.trim()).filter(Boolean).join('\n\n');
+        if (joined) return joined;
+      }
+      return '';
+    }
+
+    async function main() {
+      const chunks = [];
+      for await (const c of process.stdin) chunks.push(c);
+      const task = Buffer.concat(chunks).toString('utf8').trim();
+      if (!task) die('empty task on stdin', 2);
+
+      const token = await login();
+      const title = task.split('\n')[0].slice(0, 70) || 'Itsaplan task';
+      const created = await api('/api/openchamber/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ directory: DIRECTORY, title: `[itsaplan] ${title}` }),
+      }, token);
+      const sessionId = created.sessionId || created.id;
+      if (!sessionId) die(`session create returned no id: ${JSON.stringify(created).slice(0, 200)}`);
+      log(`session ${sessionId} in ${DIRECTORY}`);
+
+      await api(`/api/openchamber/sessions/${sessionId}/send`, {
+        method: 'POST',
+        body: JSON.stringify({
+          directory: DIRECTORY,
+          prompt: task,
+          providerID: PROVIDER,
+          modelID: MODEL,
+          agent: AGENT,
+        }),
+      }, token);
+      log(`prompt dispatched, waiting (timeout ${TIMEOUT_MS}ms)`);
+
+      const deadline = Date.now() + TIMEOUT_MS;
+      await sleep(3000);
+      for (;;) {
+        let status = 'busy';
+        try {
+          const s = await api(`/api/sessions/${sessionId}/status`, {}, token);
+          status = (s && s.status) || 'idle';
+        } catch (e) { log('status poll failed:', e.message); }
+        if (status !== 'busy' && status !== 'retry') break;
+        if (Date.now() > deadline) die(`timed out waiting for session ${sessionId}`, 3);
+        await sleep(POLL_MS);
+      }
+
+      const messages = await api(
+        `/api/session/${sessionId}/message?directory=${encodeURIComponent(DIRECTORY)}`,
+        {}, token,
+      );
+      const answer = assistantText(messages);
+      if (!answer) die(`session ${sessionId} produced no assistant text`, 4);
+      process.stdout.write(`OpenChamber session ${sessionId}\n\n${answer}\n`);
+    }
+
+    main().catch((e) => die(e && e.stack ? e.stack : String(e)));

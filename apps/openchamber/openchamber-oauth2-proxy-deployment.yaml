@@ -1,0 +1,85 @@
+---
+# oauth2-proxy enforces Authentik SSO in front of OpenChamber.
+#
+# OpenChamber has no native OIDC, so the homelab's "app-native OIDC" pattern
+# does not apply. This proxy is the SSO gate: Cloudflare Tunnel -> oauth2-proxy
+# -> OpenChamber. The Authentik OAuth2 provider "OpenChamber OIDC" is declared
+# in infrastructure/auth/authentik-blueprint-secret.sops.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openchamber-oauth2-proxy
+  namespace: openchamber
+  labels:
+    app.kubernetes.io/name: openchamber-oauth2-proxy
+    app.kubernetes.io/component: sso
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openchamber-oauth2-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openchamber-oauth2-proxy
+        app.kubernetes.io/component: sso
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: t460
+      containers:
+        - name: oauth2-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4
+          args:
+            - --provider=oidc
+            - --oidc-issuer-url=https://auth.voitech.dev/application/o/openchamber/
+            - --redirect-url=https://openchamber.voitech.dev/oauth2/callback
+            - --email-domain=*
+            - --upstream=http://openchamber.openchamber.svc.cluster.local:3000/
+            - --http-address=0.0.0.0:4180
+            - --reverse-proxy=true
+            - --set-xauthrequest=true
+            - --cookie-secure=true
+            - --cookie-expire=168h
+            - --cookie-refresh=1h
+            - --whitelist-domain=.voitech.dev
+            - --skip-provider-button=true
+            - --scope=openid email profile
+          env:
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-oauth2-proxy
+                  key: client-id
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-oauth2-proxy
+                  key: client-secret
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-oauth2-proxy
+                  key: cookie-secret
+          ports:
+            - name: http
+              containerPort: 4180
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

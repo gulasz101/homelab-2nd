@@ -1,0 +1,24 @@
+---
+# Reminder of the Cloudflare Zero Trust configuration (the real rule lives in
+# the Cloudflare dashboard, not here).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openchamber-tunnel-ingress
+  namespace: openchamber
+data:
+  note: |
+    # openchamber.voitech.dev -> http://openchamber-oauth2-proxy.openchamber.svc.cluster.local:4180
+    #
+    # Steps (once, in Cloudflare Zero Trust):
+    #   1. Networks -> Tunnels: create a tunnel (e.g. "openchamber") and copy
+    #      its token into the SOPS secret openchamber-tunnel-token.
+    #   2. Add a Public Hostname: openchamber.voitech.dev ->
+    #      http://openchamber-oauth2-proxy.openchamber.svc.cluster.local:4180
+    #      (the tunnel runs with --url, so a route-less tunnel works too).
+    #   3. Ensure the DNS record for openchamber.voitech.dev resolves through
+    #      the tunnel.
+    #
+    # SSO is enforced in-cluster by oauth2-proxy against Authentik
+    # (provider "OpenChamber OIDC", redirect https://openchamber.voitech.dev/oauth2/callback).
+    # Cloudflare Access is optional on top of that.

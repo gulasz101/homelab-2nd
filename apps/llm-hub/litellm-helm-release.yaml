@@ -342,6 +342,16 @@ spec:
             model: openai/deepseek-v4-flash
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        # OpenChamber worker model. Named WITHOUT the -go suffix on purpose:
+        # OpenChamber's OpenCode uses the NATIVE `opencode-go` provider (the only
+        # one that emits the `x-opencode-session` header the Go gateway requires),
+        # and that provider sends the native model id. general_settings below
+        # forwards the client's x-opencode-session header to the Go endpoint.
+        - model_name: deepseek-v4.1-flash
+          litellm_params:
+            model: openai/deepseek-v4.1-flash
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
         - model_name: qwen3.7-max-go
           litellm_params:
             model: openai/qwen3.7-max
@@ -402,6 +412,11 @@ spec:
         # master_key is also supplied via env var from the secret
         master_key: "os.environ/PROXY_MASTER_KEY"
         database_url: "os.environ/DATABASE_URL"
+        # Forward client request headers (x-opencode-session, user-agent, ...)
+        # to the upstream provider. Required by the OpenCode Go gateway, which
+        # rejects requests that do not carry a stable per-conversation
+        # `x-opencode-session` header (vendor-enforced since 2026-09-06).
+        forward_client_headers_to_llm_api: true
         # Restrict UI to admins only; combined with no UI_USERNAME/UI_PASSWORD
         # this hides the local login form, leaving only the SSO button
         ui_access_mode: "admin_only"

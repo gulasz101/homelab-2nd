@@ -374,3 +374,6 @@ resources:
   - itsaplan/itsaplan-alertmanager-config.yaml
   - itsaplan/itsaplan-loki-rule.yaml
   - itsaplan/itsaplan-dashboard-configmap.yaml
+
+  # OpenChamber worker namespace (Ubuntu OpenCode/OpenChamber agent on t460)
+  - openchamber/

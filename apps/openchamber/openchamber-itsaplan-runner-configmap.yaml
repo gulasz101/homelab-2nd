@@ -1,0 +1,19 @@
+---
+# Itsaplan runner: polls plan-api for tasks delegated to the `OpenChamber`
+# external agent and hands each one to bridge.js.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openchamber-itsaplan-runner
+  namespace: openchamber
+data:
+  itsaplan-runner.json: |
+    {
+      "url": "https://plan-api.voitech.dev",
+      "command": "node /etc/itsaplan-runner/bridge.js",
+      "cwd": "/tmp",
+      "concurrency": 1,
+      "pollIntervalMs": 5000,
+      "timeoutMs": 1800000,
+      "outputFormat": "text"
+    }

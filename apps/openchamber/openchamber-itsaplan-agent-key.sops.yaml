@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: openchamber-itsaplan-agent-key
+    namespace: openchamber
+type: Opaque
+stringData:
+    ITSAPLAN_API_KEY: ENC[AES256_GCM,data:ko/OwxWLmswuwenZiUGOjD/nJH6XTY3u+0seb1OUDdCJEYHrmch0I0BtnAyZez0rh+0GrmrWpZ6EkizBqb8sO2oQlfo=,iv:yvoLTwy+5xOx8X8keS05s7DioPlDG445hf5JGGsrXpQ=,tag:JrNbWfaPiTFQ1XB9qtkUfQ==,type:str]
+    ITSAPLAN_URL: ENC[AES256_GCM,data:ptgmEiBy5OOKJk63TK2MTICmux71IIJQECqGLw==,iv:Pfsh6DekatEwUlN8IFuriOYahnXvMX8WUxsiaVIS1p0=,tag:j3rgwN8Ajpj9WcSzLjgDmA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAzWHByRHZRbDY0Si9abnRJ
+            d3l4ZXBVaTlIM0M5UUZtUWVxT21QNHYrOEYwCkttMFFVaHJ6Mi9GUTN3QVAyVGRT
+            OCtJelJORmdEdm9pTnlOOHROZkpHNDQKLS0tIGFQQk5ON2NOQnl6RVlCMCtaZHU2
+            UnpOQm90UEhxNmFPd01qRDVZS212VVUKxfSBH+i9W7HlWgeqpW176Mz165agZUuW
+            0yZticP4lXSOy4Xdri67lVrpC0QxdYuJD0rBxzea9Y7glr43qecSFQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-14T17:26:48Z"
+    mac: ENC[AES256_GCM,data:tLnzrPVvZWF8wADelxY/iiXbUFTLvTJAuOGXqlc/qFKcVUATMSO3GGpGtOBSK1CtRpEK1EdMbGpCmudLH0C2+pjjdTFPZF27DED/XumBzrBH7uQIEBcOfsFsj5psIH8+B7/gf6vyTpWuewEUC3KFOR91XSV6sOx/5ZzH9F+PP44=,iv:2oXpyIkjUkq2U4OCXxMXpOlSuxbTlDhg6udiR/CogcE=,tag:DN3C5uw9E4VZg/mdm0ixZQ==,type:str]
+    version: 3.13.3

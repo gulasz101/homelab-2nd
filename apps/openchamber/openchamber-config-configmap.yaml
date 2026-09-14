@@ -1,0 +1,67 @@
+---
+# Seed OpenCode configuration for the OpenChamber worker.
+#
+# Copied once into <OPENCODE_CONFIG_DIR>/opencode.json by the prepare init
+# container (only if absent), so the UI can still edit and persist changes.
+#
+# Key design points:
+#   * Provider is the native `opencode-go` provider — NOT a custom
+#     OpenAI-compatible provider — because only the native provider sends the
+#     `x-opencode-session` header the OpenCode Go gateway requires. Its baseURL
+#     is pointed at LiteLLM, which forwards client headers upstream.
+#   * The model name is the native Go model id (`deepseek-v4.1-flash`) so
+#     OpenCode picks the right transport; LiteLLM exposes the same model name
+#     and forwards to https://opencode.ai/zen/go/v1.
+#   * MCP servers give the agent the same tools the homelab agents have.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openchamber-opencode-config
+  namespace: openchamber
+data:
+  opencode.json: |
+    {
+      "$schema": "https://opencode.ai/config.json",
+      "autoupdate": false,
+      "model": "opencode-go/deepseek-v4.1-flash",
+      "provider": {
+        "opencode-go": {
+          "options": {
+            "baseURL": "http://litellm.llm-hub.svc.cluster.local:4000/v1",
+            "apiKey": "{env:OPENCHAMBER_LITELLM_KEY}"
+          }
+        }
+      },
+      "mcp": {
+        "openviking": {
+          "type": "remote",
+          "url": "http://openviking.openviking.svc.cluster.local:1933/mcp",
+          "enabled": true,
+          "headers": {
+            "Authorization": "Bearer {env:OPENVIKING_API_KEY}"
+          }
+        },
+        "docs-mcp": {
+          "type": "remote",
+          "url": "http://docs-mcp-server.docs-mcp.svc.cluster.local:6280/sse",
+          "enabled": true
+        },
+        "firecrawl": {
+          "type": "local",
+          "command": ["npx", "-y", "firecrawl-mcp"],
+          "enabled": true,
+          "environment": {
+            "FIRECRAWL_API_URL": "http://api.firecrawl.svc.cluster.local:3002",
+            "FIRECRAWL_API_KEY": "self-hosted",
+            "FIRECRAWL_RETRY_MAX_ATTEMPTS": "3"
+          }
+        }
+      },
+      "agent": {
+        "itsaplan-worker": {
+          "description": "Worker agent driven by Itsaplan schedules",
+          "model": "opencode-go/deepseek-v4.1-flash",
+          "prompt": "You are the OpenChamber worker agent for the homelab-2nd project. Execute the task you are given. If it touches the homelab, follow the homelab GitOps workflow: Flux + Helm only, SOPS-age encrypted secrets, no plaintext credentials, and write a tracking note under homelab/tracking/ in the Obsidian vault. Finish by summarising what you did."
+        }
+      }
+    }

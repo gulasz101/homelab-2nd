@@ -1,0 +1,26 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  # SOPS-encrypted secrets
+  - openchamber-secrets.sops.yaml
+  - openchamber-oauth2-proxy.sops.yaml
+  - openchamber-tunnel-token.sops.yaml
+  - openchamber-itsaplan-agent-key.sops.yaml
+  # Storage + config
+  - openchamber-storage-pvc.yaml
+  - openchamber-config-configmap.yaml
+  # OpenChamber worker (t460)
+  - openchamber-deployment.yaml
+  - openchamber-service.yaml
+  # Authentik SSO gate (oauth2-proxy)
+  - openchamber-oauth2-proxy-deployment.yaml
+  - openchamber-oauth2-proxy-service.yaml
+  # Cloudflare Tunnel for openchamber.voitech.dev
+  - cloudflared-openchamber-deployment.yaml
+  - openchamber-tunnel-ingress-configmap.yaml
+  # Itsaplan external-agent runner -> OpenChamber bridge
+  - openchamber-itsaplan-bridge-configmap.yaml
+  - openchamber-itsaplan-runner-configmap.yaml
+  - openchamber-itsaplan-runner-deployment.yaml

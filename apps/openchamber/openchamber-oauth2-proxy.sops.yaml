@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: openchamber-oauth2-proxy
+    namespace: openchamber
+type: Opaque
+stringData:
+    client-id: ENC[AES256_GCM,data:J+x+CcbKdnnvDvoSJNBqTJpPomxd27dJ1SEkCibbQOLrOeaU0q/AItWQF2AHEKiq,iv:UKSngxbFB21hXuyM92QXNsP/JkBS4toKCk5+TMvMqk8=,tag:C2Mhl69op2vLpm8w1/LaeA==,type:str]
+    client-secret: ENC[AES256_GCM,data:v1kgiig68tBza2tw97TA29LUMPUk2xpnHZ2byOIosKVKl/ipIt5ddI5cAg==,iv:UhRY/DRaZLLgKmJdHM0hDkwcjn2l1wUZORRKMMUnJTs=,tag:PRymrRt0EZMGYfJC7VSYug==,type:str]
+    cookie-secret: ENC[AES256_GCM,data:I7v6fOIhp4wcun41tFpzqj4M4DMmGJPxcp5Oj560TZEuca+3iF2l9/rBFw==,iv:XGQQ375mkjFg2fofszbbNjl3kOudDLWxrq7tdzZ8jos=,tag:DOwKwBoWFaBIQvC7JJGr7g==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA4R2NZNUFyS0VJL3RmaU5M
+            TTZMSnNWWHpBWWJRRGZEdG5RMGNFOTFVQ3drCnpxZlE1M0t2UHR6bVhCcnJmclIr
+            Y0pnYXVKeWg3MThqQ3BESTFWMmI3QUUKLS0tIE4xN0J0cTdZM0pBM2N6M1JtZ3di
+            UVZwa3JrVHEwcytXTGlGOVVXRjMxU00KqhMXpTg1KizqD1GJwIv/c6xq8aZOzfi0
+            rJjWwxTlMyR27vl14xK4LyIsSA/GUdD1+f2vvUhnE8TX+76kF15v6g==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-14T17:29:26Z"
+    mac: ENC[AES256_GCM,data:pq/ssshi1vwM6UF+aOzPa36bmLkFueLU9nLlIatg4VdSu5BVrPUzNOf67uyOErnzkXzvhVS9n+1DyBaKHXih3nB60SGMuzAQQRYBv6cbocp8K2f9IUD2yQMg+cEqvSuDKTtaIIOCVRu5GdDHOo6U7BHSjSnKrdZeWPW2BwRH00Q=,iv:rgzgY1kdFSCHMYZN2C1yAAcpKXm3u87f5eZUmJ6iStk=,tag:/hxJfS85kTmRUqIMN6QIrw==,type:str]
+    version: 3.13.3

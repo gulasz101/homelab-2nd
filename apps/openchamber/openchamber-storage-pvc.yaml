@@ -1,0 +1,20 @@
+---
+# OpenChamber worker storage.
+#
+# The pod is pinned to t460 (an idle 4c/7.6G k3s worker). OMV NFS is the homelab's
+# durable store, but OMV only exports per-client subpaths and t460 is not in any
+# export's client list yet, so live data sits on t460's local NVMe (local-path).
+# Durability is provided by the MinIO backup CronJob in this directory.
+# See homelab/docs/adr/adr-018-openchamber-worker-on-t460.md.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openchamber-storage
+  namespace: openchamber
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 30Gi

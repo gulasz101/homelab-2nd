@@ -1,0 +1,24 @@
+---
+# OpenChamber itself: web UI (3000) + managed OpenCode server (4096).
+# ClusterIP only — the LAN/NodePort is not needed because access is either
+# via the dedicated Cloudflare Tunnel or from inside the cluster (Itsaplan runner).
+apiVersion: v1
+kind: Service
+metadata:
+  name: openchamber
+  namespace: openchamber
+  labels:
+    app.kubernetes.io/name: openchamber
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: openchamber
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      protocol: TCP
+    - name: opencode
+      port: 4096
+      targetPort: 4096
+      protocol: TCP

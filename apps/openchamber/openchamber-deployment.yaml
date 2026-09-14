@@ -1,0 +1,142 @@
+---
+# OpenChamber worker — Ubuntu image with Node, the OpenCode CLI and the
+# OpenChamber web server. Pinned to t460, the idle 4c/7.6G k3s worker.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openchamber
+  namespace: openchamber
+  labels:
+    app.kubernetes.io/name: openchamber
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openchamber
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openchamber
+        app.kubernetes.io/component: worker
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: t460
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        - name: prepare
+          image: alpine/git:2.45.2
+          securityContext:
+            runAsUser: 0
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /storage/openchamber /storage/opencode-data \
+                       /storage/opencode-config /storage/workspaces
+              if [ ! -f /storage/opencode-config/opencode.json ]; then
+                cp /config-seed/opencode.json /storage/opencode-config/opencode.json
+                echo "[prepare] seeded opencode.json"
+              fi
+              if [ ! -d /storage/workspaces/homelab-2nd/.git ]; then
+                git clone --depth 1 https://github.com/gulasz101/homelab-2nd.git \
+                  /storage/workspaces/homelab-2nd || true
+              fi
+              chown -R 1000:1000 /storage
+          volumeMounts:
+            - name: storage
+              mountPath: /storage
+            - name: config-seed
+              mountPath: /config-seed
+              readOnly: true
+      containers:
+        - name: openchamber
+          image: ghcr.io/gulasz101/openchamber-web:1.23.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+            - name: opencode
+              containerPort: 4096
+              protocol: TCP
+          env:
+            - name: OPENCHAMBER_HOST
+              value: "0.0.0.0"
+            - name: OPENCHAMBER_DATA_DIR
+              value: /storage/openchamber
+            - name: OPENCODE_DATA_DIR
+              value: /storage/opencode-data
+            - name: OPENCODE_CONFIG_DIR
+              value: /storage/opencode-config
+            - name: OPENCODE_PORT
+              value: "4096"
+            - name: OPENCHAMBER_OPENCODE_HOSTNAME
+              value: "0.0.0.0"
+            - name: OPENCHAMBER_WORKDIR
+              value: /storage/workspaces/homelab-2nd
+            - name: OPENCHAMBER_UI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-secrets
+                  key: OPENCHAMBER_UI_PASSWORD
+            - name: OPENCODE_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-secrets
+                  key: OPENCODE_JWT_SECRET
+            - name: OPENCHAMBER_LITELLM_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-secrets
+                  key: OPENCHAMBER_LITELLM_KEY
+            - name: OPENVIKING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-secrets
+                  key: OPENVIKING_API_KEY
+          volumeMounts:
+            - name: storage
+              mountPath: /storage
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 4
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 3Gi
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: openchamber-storage
+        - name: config-seed
+          configMap:
+            name: openchamber-opencode-config

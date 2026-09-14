@@ -1,0 +1,49 @@
+---
+# Dedicated Cloudflare Tunnel for openchamber.voitech.dev -> oauth2-proxy (SSO)
+# -> OpenChamber. TLS is terminated at the Cloudflare edge; the in-cluster hop
+# is plain HTTP, per the homelab ingress rule.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-openchamber
+  namespace: openchamber
+  labels:
+    app.kubernetes.io/name: cloudflared-openchamber
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-openchamber
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-openchamber
+        app.kubernetes.io/component: tunnel
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: t460
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+            - --url
+            - http://openchamber-oauth2-proxy.openchamber.svc.cluster.local:4180
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

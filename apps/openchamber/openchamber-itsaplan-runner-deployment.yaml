@@ -1,0 +1,80 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openchamber-itsaplan-runner
+  namespace: openchamber
+  labels:
+    app.kubernetes.io/name: openchamber-itsaplan-runner
+    app.kubernetes.io/component: agent-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openchamber-itsaplan-runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openchamber-itsaplan-runner
+        app.kubernetes.io/component: agent-runner
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: t460
+      containers:
+        - name: runner
+          image: node:26-alpine
+          workingDir: /etc/itsaplan-runner
+          command:
+            - npx
+            - -y
+            - "@itsaplan/runner@0.5.0"
+            - ./itsaplan-runner.json
+          env:
+            - name: ITSAPLAN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-itsaplan-agent-key
+                  key: ITSAPLAN_API_KEY
+            - name: ITSAPLAN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-itsaplan-agent-key
+                  key: ITSAPLAN_URL
+            - name: OPENCHAMBER_URL
+              value: http://openchamber.openchamber.svc.cluster.local:3000
+            - name: OPENCHAMBER_WORKDIR
+              value: /storage/workspaces/homelab-2nd
+            - name: OPENCHAMBER_PROVIDER
+              value: opencode-go
+            - name: OPENCHAMBER_MODEL
+              value: deepseek-v4.1-flash
+            - name: OPENCHAMBER_AGENT
+              value: itsaplan-worker
+            - name: OPENCHAMBER_UI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-secrets
+                  key: OPENCHAMBER_UI_PASSWORD
+          volumeMounts:
+            - name: bridge
+              mountPath: /etc/itsaplan-runner/bridge.js
+              subPath: bridge.js
+            - name: runner-config
+              mountPath: /etc/itsaplan-runner/itsaplan-runner.json
+              subPath: itsaplan-runner.json
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              cpu: 300m
+              memory: 384Mi
+      volumes:
+        - name: bridge
+          configMap:
+            name: openchamber-itsaplan-bridge
+            defaultMode: 0755
+        - name: runner-config
+          configMap:
+            name: openchamber-itsaplan-runner
+            defaultMode: 0755
