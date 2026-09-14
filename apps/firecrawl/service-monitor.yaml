@@ -1,8 +1,12 @@
 ---
-# Prometheus scraping for Firecrawl.
-# The upstream image does not expose a stable /metrics endpoint, so we rely on
-# kubelet/cAdvisor container metrics plus this ServiceMonitor if the image
-# later adds an application metrics port.
+# Prometheus scraping for Firecrawl API application metrics.
+#
+# Firecrawl does NOT expose /metrics. Its Prometheus metrics live at
+# /admin/<BULL_AUTH_KEY>/metrics (upstream apps/api/src/routes/admin.ts).
+# ServiceMonitor paths are static strings (no secret refs) and a relabel-based
+# path injection would leak the key into Prometheus target labels, so the api
+# pod runs a tiny nginx sidecar ("metrics-proxy") that serves plain /metrics
+# on :9100 and forwards to the authenticated endpoint on localhost:3002.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -10,14 +14,14 @@ metadata:
   namespace: firecrawl
   labels:
     app.kubernetes.io/name: firecrawl-api
-    release: kube-prometheus-stack
+    release: prometheus-stack
 spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: firecrawl-api
       app.kubernetes.io/part-of: firecrawl
   endpoints:
-    - port: http
+    - port: metrics
       path: /metrics
       interval: 30s
       scrapeTimeout: 10s

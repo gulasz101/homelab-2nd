@@ -88,3 +88,51 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 3
+        - name: metrics-proxy
+          # Auth-injecting reverse proxy for Prometheus scraping.
+          # Firecrawl exposes its Prometheus metrics ONLY at
+          # /admin/<BULL_AUTH_KEY>/metrics (verified in upstream
+          # apps/api/src/routes/admin.ts — there is no dedicated
+          # metrics key and ServiceMonitor paths are static strings,
+          # so the key must be injected at request time).
+          #
+          #   Prometheus -> http://pod:9100/metrics -> nginx -> localhost:3002/admin/$KEY/metrics
+          #
+          # The key arrives via secretKeyRef (same key the api container
+          # already receives) and is rendered by the official nginx
+          # template mechanism (envsubst at container start). It never
+          # appears in the repo, in Prometheus target labels, or in any
+          # externally visible scrape URL. 9100 is not exposed publicly —
+          # firecrawl has no public ingress at all.
+          image: nginx:1.27-alpine
+          ports:
+            - name: metrics
+              containerPort: 9100
+          env:
+            - name: BULL_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: firecrawl-api-key
+                  key: BULL_AUTH_KEY
+          volumeMounts:
+            - name: nginx-metrics-template
+              mountPath: /etc/nginx/templates
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: 9100
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: nginx-metrics-template
+          configMap:
+            name: firecrawl-metrics-proxy-nginx

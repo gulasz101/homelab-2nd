@@ -1,0 +1,28 @@
+---
+# nginx config template for the firecrawl-api metrics-proxy sidecar.
+# The official nginx image envsubst's *.template files from /etc/nginx/templates
+# into /etc/nginx/conf.d at container start, so ${BULL_AUTH_KEY} is resolved
+# from the pod's environment (secretKeyRef) and never persisted anywhere.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: firecrawl-metrics-proxy-nginx
+  namespace: firecrawl
+  labels:
+    app.kubernetes.io/name: firecrawl-api
+    app.kubernetes.io/part-of: firecrawl
+data:
+  metrics-proxy.template: |
+    server {
+      listen 9100;
+      # Keep the response identical to what the API returns (text/plain Prometheus).
+      location = /metrics {
+        proxy_pass http://127.0.0.1:3002/admin/${BULL_AUTH_KEY}/metrics;
+        proxy_pass_request_headers off;
+        proxy_set_header Host localhost:3002;
+      }
+      # Everything else: nope.
+      location / {
+        return 404;
+      }
+    }

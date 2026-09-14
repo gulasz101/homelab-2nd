@@ -268,6 +268,7 @@ resources:
   # Firecrawl API/worker and Playwright
   - firecrawl/api-deployment.yaml
   - firecrawl/api-service.yaml
+  - firecrawl/metrics-proxy-configmap.yaml
   - firecrawl/playwright-deployment.yaml
   - firecrawl/playwright-service.yaml
   # Cloudflare Tunnel for firecrawl.voitech.dev
