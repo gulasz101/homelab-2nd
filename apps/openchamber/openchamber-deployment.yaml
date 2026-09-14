@@ -40,6 +40,7 @@ spec:
             - |
               set -eu
               mkdir -p /storage/openchamber /storage/opencode-data \
+                       /storage/opencode-state \
                        /storage/opencode-config /storage/workspaces
               if [ ! -f /storage/opencode-config/opencode.json ]; then
                 cp /config-seed/opencode.json /storage/opencode-config/opencode.json
@@ -104,9 +105,32 @@ spec:
                 secretKeyRef:
                   name: openchamber-secrets
                   key: OPENVIKING_API_KEY
+            # GitHub access — token from SOPS, never written to disk.
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-github
+                  key: GITHUB_TOKEN
+            - name: GIT_AUTHOR_NAME
+              value: OpenChamber Worker
+            - name: GIT_COMMITTER_NAME
+              value: OpenChamber Worker
+            - name: GIT_AUTHOR_EMAIL
+              value: gulasz101@gmail.com
+            - name: GIT_COMMITTER_EMAIL
+              value: gulasz101@gmail.com
           volumeMounts:
             - name: storage
               mountPath: /storage
+            # OpenCode stores its sessions in SQLite under XDG data/state paths.
+            # These are subPath mounts of the SAME PVC so sessions survive pod
+            # restarts; OPENCODE_DATA_DIR is not honoured for the DB location.
+            - name: storage
+              mountPath: /home/openchamber/.local/share/opencode
+              subPath: opencode-data
+            - name: storage
+              mountPath: /home/openchamber/.local/state/opencode
+              subPath: opencode-state
           readinessProbe:
             httpGet:
               path: /health

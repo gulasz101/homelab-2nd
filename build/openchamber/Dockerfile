@@ -17,7 +17,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPM_CONFIG_PREFIX=/home/openchamber/.npm-global \
     PATH=/home/openchamber/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Base tooling: git/ssh for workspaces, ripgrep+jq for opencode UX, tini for PID 1.
+# Base tooling: git/ssh for workspaces, gh for PRs, ripgrep+jq for opencode UX,
+# tini for PID 1.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg git jq less ripgrep python3 openssh-client tini \
@@ -26,8 +27,13 @@ RUN apt-get update \
         | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
     && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
         > /etc/apt/sources.list.d/nodesource.list \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get install -y --no-install-recommends nodejs gh \
     && rm -rf /var/lib/apt/lists/*
 
 # OpenChamber + OpenCode, installed globally as the openchamber user's prefix.
@@ -54,7 +60,8 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && chown -R 1000:1000 /home/openchamber
 
 COPY entrypoint.sh /usr/local/bin/openchamber-entrypoint.sh
-RUN chmod +x /usr/local/bin/openchamber-entrypoint.sh
+COPY git-credential-github.sh /usr/local/bin/git-credential-github
+RUN chmod +x /usr/local/bin/openchamber-entrypoint.sh /usr/local/bin/git-credential-github
 
 USER 1000:1000
 WORKDIR /home/openchamber

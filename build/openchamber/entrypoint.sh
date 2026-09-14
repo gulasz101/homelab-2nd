@@ -28,6 +28,21 @@ if [ -z "${OPENCHAMBER_UI_PASSWORD:-}" ]; then
   echo "[entrypoint] WARNING: OPENCHAMBER_UI_PASSWORD is not set — UI will be unauthenticated" >&2
 fi
 
+# GitHub access for the worker. The token comes from the environment and is
+# never written to disk (the credential helper reads $GITHUB_TOKEN); GH_TOKEN
+# additionally enables the `gh` CLI for PR workflows.
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  export GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN}}"
+  git config --global credential."https://github.com".helper git-credential-github || true
+  echo "[entrypoint] GitHub token present — git push and gh CLI are enabled"
+else
+  echo "[entrypoint] WARNING: GITHUB_TOKEN is not set — the worker cannot push to GitHub" >&2
+fi
+git config --global user.name "${GIT_AUTHOR_NAME:-OpenChamber Worker}" || true
+git config --global user.email "${GIT_AUTHOR_EMAIL:-openchamber@voitech.dev}" || true
+git config --global init.defaultBranch main || true
+git config --global --add safe.directory '*' || true
+
 echo "[entrypoint] starting openchamber on ${OPENCHAMBER_HOST}:${OPENCHAMBER_PORT} (opencode :${OPENCODE_PORT})"
 
 # --foreground keeps the server attached so tini/containerd manage it as PID 1's child.

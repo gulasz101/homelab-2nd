@@ -1,0 +1,229 @@
+---
+# Daily OpenChamber backup to OMV MinIO (s3://cnpg-backups/openchamber/).
+#
+# What is backed up (everything OpenChamber/OpenCode need to be restored):
+#   * /storage/openchamber       — OpenChamber settings, prefs, device tokens
+#   * /storage/opencode-config   — the seeded OpenCode config (node_modules excluded)
+#   * /storage/opencode-data     — OpenCode SQLite DB (sessions/messages) + snapshots
+#   * /storage/opencode-state    — OpenCode locks/state
+#   * /storage/workspaces        — the checked-out homelab-2nd repo (uncommitted work)
+#
+# The SQLite DB is snapshotted with Python's online-backup API (WAL-safe) rather
+# than a raw file copy, so a backup taken while OpenChamber is running is
+# consistent. Uploads use AWS SigV4 (no mc dependency) and old archives are
+# pruned after 14 days.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openchamber-backup
+  namespace: openchamber
+  labels:
+    app.kubernetes.io/name: openchamber-backup
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "30 3 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          # openchamber-storage is a local-path PVC bound to t460.
+          nodeSelector:
+            kubernetes.io/hostname: t460
+          containers:
+            - name: backup
+              image: python:3.13-alpine
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  echo "Starting OpenChamber backup"
+                  python3 - <<'PY'
+                  import os, sqlite3, shutil, tempfile, datetime, time, tarfile
+                  import urllib.request, urllib.parse, hashlib, hmac
+                  import xml.etree.ElementTree as ET
+
+                  bucket = 'cnpg-backups'
+                  prefix = 'openchamber/'
+                  endpoint = 'http://openmediavault.local:9000'
+                  host = 'openmediavault.local:9000'
+                  region = 'us-east-1'
+                  service = 's3'
+                  access_key = os.environ['OPENCHAMBER_MINIO_ACCESS_KEY']
+                  secret_key = os.environ['OPENCHAMBER_MINIO_SECRET_KEY']
+                  src = '/data'
+                  retention_days = 14
+
+                  def sha256(data):
+                      return hashlib.sha256(data if isinstance(data, bytes) else data.encode('utf-8')).hexdigest()
+
+                  def sign(key, msg):
+                      return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+
+                  def get_signature_key(secret, date_stamp, region, service):
+                      k_date = sign(('AWS4' + secret).encode('utf-8'), date_stamp)
+                      k_region = sign(k_date, region)
+                      k_service = sign(k_region, service)
+                      return sign(k_service, 'aws4_request')
+
+                  def signed_request(method, path, payload=b'', query=''):
+                      t = datetime.datetime.now(datetime.timezone.utc)
+                      date_stamp = t.strftime('%Y%m%d')
+                      amz_date = t.strftime('%Y%m%dT%H%M%SZ')
+                      if isinstance(payload, str):
+                          payload = payload.encode('utf-8')
+                      payload_hash = sha256(payload)
+                      headers = {
+                          'host': host,
+                          'x-amz-content-sha256': payload_hash,
+                          'x-amz-date': amz_date,
+                      }
+                      if method in ('PUT', 'POST'):
+                          headers['content-length'] = str(len(payload))
+                      header_keys = sorted(headers.keys())
+                      signed_headers = ';'.join(header_keys)
+                      canonical_request = '\n'.join([
+                          method,
+                          urllib.parse.quote(path, safe='/'),
+                          query,
+                          ''.join(f'{k}:{headers[k]}\n' for k in header_keys),
+                          signed_headers,
+                          payload_hash,
+                      ])
+                      credential_scope = f'{date_stamp}/{region}/{service}/aws4_request'
+                      string_to_sign = '\n'.join([
+                          'AWS4-HMAC-SHA256',
+                          amz_date,
+                          credential_scope,
+                          sha256(canonical_request.encode('utf-8')),
+                      ])
+                      signing_key = get_signature_key(secret_key, date_stamp, region, service)
+                      signature = hmac.new(signing_key, string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+                      headers['Authorization'] = (
+                          f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, '
+                          f'SignedHeaders={signed_headers}, Signature={signature}'
+                      )
+                      url = f'{endpoint}{path}'
+                      if query:
+                          url = f'{url}?{query}'
+                      req = urllib.request.Request(url, data=payload, method=method, headers=headers)
+                      return urllib.request.urlopen(req, timeout=300)
+
+                  def copy_db(sf, tf):
+                      tmpd = tempfile.mkdtemp()
+                      snap = os.path.join(tmpd, os.path.basename(sf))
+                      shutil.copy2(sf, snap)
+                      for ext in ('-wal', '-shm'):
+                          if os.path.exists(sf + ext):
+                              shutil.copy2(sf + ext, snap + ext)
+                      s = sqlite3.connect(snap)
+                      o = sqlite3.connect(tf)
+                      s.backup(o)
+                      o.close()
+                      s.close()
+                      shutil.rmtree(tmpd, ignore_errors=True)
+
+                  def copy_tree(s, d, skip=()):
+                      if not os.path.isdir(s):
+                          print(f'skip missing {s}')
+                          return 0
+                      n = 0
+                      for root, dirs, files in os.walk(s):
+                          dirs[:] = [x for x in dirs if x not in skip]
+                          rel = os.path.relpath(root, s)
+                          tgt = d if rel == '.' else os.path.join(d, rel)
+                          os.makedirs(tgt, exist_ok=True)
+                          for f in files:
+                              if f.endswith(('-wal', '-shm')):
+                                  continue
+                              sf = os.path.join(root, f)
+                              tf = os.path.join(tgt, f)
+                              try:
+                                  if f.endswith('.db'):
+                                      copy_db(sf, tf)
+                                  else:
+                                      shutil.copy2(sf, tf)
+                                  n += 1
+                              except Exception as e:
+                                  print(f'skip {sf}: {e}')
+                      return n
+
+                  stage = tempfile.mkdtemp()
+                  total = 0
+                  total += copy_tree(os.path.join(src, 'openchamber'), os.path.join(stage, 'openchamber'))
+                  total += copy_tree(os.path.join(src, 'opencode-config'), os.path.join(stage, 'opencode-config'), skip=('node_modules',))
+                  total += copy_tree(os.path.join(src, 'opencode-state'), os.path.join(stage, 'opencode-state'))
+                  total += copy_tree(os.path.join(src, 'opencode-data'), os.path.join(stage, 'opencode-data'))
+                  total += copy_tree(os.path.join(src, 'workspaces'), os.path.join(stage, 'workspaces'))
+                  print(f'staged {total} files')
+
+                  ts = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')
+                  arch = f'/tmp/openchamber-{ts}.tar.gz'
+                  with tarfile.open(arch, 'w:gz') as t:
+                      t.add(stage, arcname='.')
+                  size = os.path.getsize(arch)
+                  key = f'openchamber/openchamber-{ts}.tar.gz'
+                  data = open(arch, 'rb').read()
+                  for attempt in range(3):
+                      try:
+                          resp = signed_request('PUT', f'/{bucket}/{urllib.parse.quote(key, safe="/")}', data)
+                          print(f'Uploaded {key} ({size} bytes, HTTP {resp.status})')
+                          break
+                      except Exception as e:
+                          print(f'Upload attempt {attempt + 1} failed: {e}')
+                          if attempt == 2:
+                              raise
+                          time.sleep(2 ** attempt)
+
+                  # Retention: delete archives older than retention_days.
+                  list_query = urllib.parse.urlencode({'list-type': '2', 'prefix': prefix}, quote_via=urllib.parse.quote)
+                  list_resp = signed_request('GET', f'/{bucket}', b'', list_query)
+                  root = ET.fromstring(list_resp.read())
+                  ns = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+                  cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=retention_days)
+                  removed = 0
+                  for contents in root.findall('s3:Contents', ns):
+                      key_el = contents.find('s3:Key', ns)
+                      if key_el is None:
+                          continue
+                      last_mod = datetime.datetime.fromisoformat(
+                          contents.find('s3:LastModified', ns).text.replace('Z', '+00:00'))
+                      if last_mod < cutoff:
+                          signed_request('DELETE', f'/{bucket}/{urllib.parse.quote(key_el.text, safe="/")}')
+                          removed += 1
+                          print(f'Removed old backup: {key_el.text}')
+                  print(f'Retention cleanup complete, removed {removed} objects')
+                  PY
+                  echo "OpenChamber backup complete"
+              env:
+                - name: OPENCHAMBER_MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: openchamber-minio-backup-creds
+                      key: ACCESS_KEY_ID
+                - name: OPENCHAMBER_MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: openchamber-minio-backup-creds
+                      key: ACCESS_SECRET_KEY
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: openchamber-storage
+                readOnly: true

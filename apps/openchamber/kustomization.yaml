@@ -8,6 +8,8 @@ resources:
   - openchamber-oauth2-proxy.sops.yaml
   - openchamber-tunnel-token.sops.yaml
   - openchamber-itsaplan-agent-key.sops.yaml
+  - openchamber-github.sops.yaml
+  - openchamber-minio-backup-creds.sops.yaml
   # Storage + config
   - openchamber-storage-pvc.yaml
   - openchamber-config-configmap.yaml
@@ -24,3 +26,5 @@ resources:
   - openchamber-itsaplan-bridge-configmap.yaml
   - openchamber-itsaplan-runner-configmap.yaml
   - openchamber-itsaplan-runner-deployment.yaml
+  # Daily session/data backup to OMV MinIO
+  - openchamber-backup-cronjob.yaml
