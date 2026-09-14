@@ -33,7 +33,7 @@ fi
 # additionally enables the `gh` CLI for PR workflows.
 if [ -n "${GITHUB_TOKEN:-}" ]; then
   export GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN}}"
-  git config --global credential."https://github.com".helper git-credential-github || true
+  git config --global credential."https://github.com".helper github || true
   echo "[entrypoint] GitHub token present — git push and gh CLI are enabled"
 else
   echo "[entrypoint] WARNING: GITHUB_TOKEN is not set — the worker cannot push to GitHub" >&2
