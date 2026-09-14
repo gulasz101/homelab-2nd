@@ -5,7 +5,7 @@ metadata:
     namespace: openchamber
 type: Opaque
 stringData:
-    token: ENC[AES256_GCM,data:rka2jgr596RH3wIdhFbk6EeJBofN4O8IsORnKBNKoMXUwLoA,iv:nYD57E0XGigMKrdjEc7oRbDPwYkJlTeA6dEtLy/DSXY=,tag:i/BG04OtYDU0HKyK8DchWg==,type:str]
+    token: ENC[AES256_GCM,data:qHhUWbdm5sF3OERZEk+rvdYzikTB/FawGP3O27QJ/4V87iqfR/dcR2B/VwjqZIG1AG0KMVTPMBF25OEih8l1CLSuxxm9I8/aSWKVanbde6DlVpGewW+uX/WNMhVWMTeUYP5BaHNl3qTZNKd+KAvC79EHbWYJYMzW+yfy+V1vQmJnxB7dprV3G+q0RVfkNG4EVMmYEcPcDcXCgkXzjJpFseWVZAf6lNHxgSib/kXX/GDI701xtUibPQ==,iv:Ghzqf+xOUsTyhbrx/cjTMrnNAGqo4MOaSgq19v7GjQQ=,tag:Rzo3t2eSl+W/Dio60WwWOg==,type:str]
 sops:
     age:
         - enc: |
@@ -18,6 +18,6 @@ sops:
             -----END AGE ENCRYPTED FILE-----
           recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-09-14T17:30:49Z"
-    mac: ENC[AES256_GCM,data:sVLRFzm6wcMnh4rNfujODhO8hFzG5+2iD81CXAg44jsOR4RNEriY0hENYW2aXxOdad3n1amvI6JoLIN7KSGZ2WdKV3Kz0vE7McRikGV2duyoFllP9pdh1xW5I/D3u9YqjEs1MfT3vpxhQNN0hf84iExHE6SCMC4T/3cIS1Ny2Y0=,iv:l9uKq8OQC1ugZy2fz8w15l82FiUgUXO0u7QszFstzZQ=,tag:GOLvmhoRfSeHKz91QR7qNA==,type:str]
+    lastmodified: "2026-09-14T20:05:23Z"
+    mac: ENC[AES256_GCM,data:Fq8bdIQ1sbTgEBXS2uviqSxXgNJMKmYZll3A1Qd/BNsMK2Uh5/H3KzNVFw1oAPmC3pSmbknboMNzeghb/hTPRbLyLuNAlWvCGNWo3Eaj8Vn8AMIrPLq1Qi/Z0YOK4kQwlANoEpaeh02k4kCNczBvyW/Lxv4DVk/X+xPxmaRyNE8=,iv:gExpB8BJOLomU+PvtELmres1L2Cvht9VvhozrPls4pE=,tag:+lECOItQh7uN0F/JRpeKTg==,type:str]
     version: 3.13.3
