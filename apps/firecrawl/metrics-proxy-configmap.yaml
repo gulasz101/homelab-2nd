@@ -12,7 +12,11 @@ metadata:
     app.kubernetes.io/name: firecrawl-api
     app.kubernetes.io/part-of: firecrawl
 data:
-  metrics-proxy.template: |
+  # File name matters: the nginx image envsubst's *.template -> same basename,
+  # and nginx only includes /etc/nginx/conf.d/*.conf — so the rendered file
+  # must end in .conf. Template "metrics-proxy.conf.template" renders to
+  # "metrics-proxy.conf" which the default include glob picks up.
+  metrics-proxy.conf.template: |
     server {
       listen 9100;
       # Keep the response identical to what the API returns (text/plain Prometheus).
