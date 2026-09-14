@@ -1,0 +1,43 @@
+name: build-openchamber-image
+
+# Builds the Ubuntu + Node + OpenCode + OpenChamber worker image and pushes it to
+# GHCR. The k3s Deployment in apps/openchamber references the pushed tag.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "build/openchamber/**"
+      - ".github/workflows/build-openchamber-image.yaml"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: build/openchamber
+          file: build/openchamber/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/openchamber-web:1.23.1
+            ghcr.io/${{ github.repository_owner }}/openchamber-web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
