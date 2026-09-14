@@ -22,6 +22,9 @@ spec:
         app.kubernetes.io/name: openchamber
         app.kubernetes.io/component: worker
     spec:
+      # Service links would inject OPENCHAMBER_PORT (and OPENCHAMBER_SERVICE_*)
+      # from the Service named "openchamber", clobbering the app's own vars.
+      enableServiceLinks: false
       nodeSelector:
         kubernetes.io/hostname: t460
       securityContext:
@@ -67,6 +70,8 @@ spec:
           env:
             - name: OPENCHAMBER_HOST
               value: "0.0.0.0"
+            - name: OPENCHAMBER_PORT
+              value: "3000"
             - name: OPENCHAMBER_DATA_DIR
               value: /storage/openchamber
             - name: OPENCODE_DATA_DIR
