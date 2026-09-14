@@ -16,3 +16,8 @@ spec:
       path: /api/metrics
       interval: 15s
       scrapeTimeout: 10s
+      # Karakeep requires Bearer auth on /api/metrics (PROMETHEUS_AUTH_TOKEN).
+      # Token lives in the same SOPS secret mounted envFrom by the app.
+      bearerTokenSecret:
+        name: karakeep-app-secrets
+        key: PROMETHEUS_AUTH_TOKEN
