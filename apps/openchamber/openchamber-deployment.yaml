@@ -59,7 +59,7 @@ spec:
               readOnly: true
       containers:
         - name: openchamber
-          image: ghcr.io/gulasz101/openchamber-web:1.23.1
+          image: ghcr.io/gulasz101/openchamber-web:1.23.1-r2
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
