@@ -1,6 +1,13 @@
 ---
 # OpenChamber worker — Ubuntu image with Node, the OpenCode CLI and the
 # OpenChamber web server. Pinned to t460, the idle 4c/7.6G k3s worker.
+#
+# Storage split:
+#   * /storage            -> OMV NFS (durable): OpenChamber settings/device
+#                            tokens, seeded OpenCode config, workspace clones.
+#   * /var/lib/openchamber -> t460 local NVMe: the OpenCode SQLite session DB.
+#                            SQLite WAL needs shared memory and is not safe on
+#                            NFS; durability for it comes from the S3 backup job.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -39,9 +46,8 @@ spec:
             - -c
             - |
               set -eu
-              mkdir -p /storage/openchamber /storage/opencode-data \
-                       /storage/opencode-state \
-                       /storage/opencode-config /storage/workspaces
+              # Durable share (OMV NFS).
+              mkdir -p /storage/openchamber /storage/opencode-config /storage/workspaces
               if [ ! -f /storage/opencode-config/opencode.json ]; then
                 cp /config-seed/opencode.json /storage/opencode-config/opencode.json
                 echo "[prepare] seeded opencode.json"
@@ -50,10 +56,14 @@ spec:
                 git clone --depth 1 https://github.com/gulasz101/homelab-2nd.git \
                   /storage/workspaces/homelab-2nd || true
               fi
-              chown -R 1000:1000 /storage
+              # Local NVMe (SQLite session DB + state).
+              mkdir -p /local/opencode-data /local/opencode-state
+              chown -R 1000:1000 /storage /local
           volumeMounts:
-            - name: storage
+            - name: data
               mountPath: /storage
+            - name: local
+              mountPath: /local
             - name: config-seed
               mountPath: /config-seed
               readOnly: true
@@ -75,10 +85,10 @@ spec:
               value: "3000"
             - name: OPENCHAMBER_DATA_DIR
               value: /storage/openchamber
-            - name: OPENCODE_DATA_DIR
-              value: /storage/opencode-data
             - name: OPENCODE_CONFIG_DIR
               value: /storage/opencode-config
+            - name: OPENCODE_DATA_DIR
+              value: /var/lib/openchamber/opencode-data
             - name: OPENCODE_PORT
               value: "4096"
             - name: OPENCHAMBER_OPENCODE_HOSTNAME
@@ -120,15 +130,16 @@ spec:
             - name: GIT_COMMITTER_EMAIL
               value: gulasz101@gmail.com
           volumeMounts:
-            - name: storage
+            - name: data
               mountPath: /storage
-            # OpenCode stores its sessions in SQLite under XDG data/state paths.
-            # These are subPath mounts of the SAME PVC so sessions survive pod
-            # restarts; OPENCODE_DATA_DIR is not honoured for the DB location.
-            - name: storage
+            - name: local
+              mountPath: /var/lib/openchamber
+            # OpenCode stores its sessions in SQLite under XDG data/state paths;
+            # these are subPath mounts of the local NVMe PVC.
+            - name: local
               mountPath: /home/openchamber/.local/share/opencode
               subPath: opencode-data
-            - name: storage
+            - name: local
               mountPath: /home/openchamber/.local/state/opencode
               subPath: opencode-state
           readinessProbe:
@@ -163,7 +174,10 @@ spec:
               cpu: "2"
               memory: 3Gi
       volumes:
-        - name: storage
+        - name: data
+          persistentVolumeClaim:
+            claimName: openchamber-data
+        - name: local
           persistentVolumeClaim:
             claimName: openchamber-storage
         - name: config-seed

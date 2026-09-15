@@ -2,11 +2,11 @@
 # Daily OpenChamber backup to OMV MinIO (s3://cnpg-backups/openchamber/).
 #
 # What is backed up (everything OpenChamber/OpenCode need to be restored):
-#   * /storage/openchamber       — OpenChamber settings, prefs, device tokens
-#   * /storage/opencode-config   — the seeded OpenCode config (node_modules excluded)
-#   * /storage/opencode-data     — OpenCode SQLite DB (sessions/messages) + snapshots
-#   * /storage/opencode-state    — OpenCode locks/state
-#   * /storage/workspaces        — the checked-out homelab-2nd repo (uncommitted work)
+#   * /data/openchamber        — OpenChamber settings, prefs, device tokens   (OMV NFS)
+#   * /data/opencode-config    — seeded OpenCode config (node_modules excluded) (OMV NFS)
+#   * /data/workspaces         — checked-out homelab-2nd repo + uncommitted work (OMV NFS)
+#   * /local/opencode-data     — OpenCode SQLite DB (sessions/messages) + snapshots (t460 NVMe)
+#   * /local/opencode-state    — OpenCode locks/state                       (t460 NVMe)
 #
 # The SQLite DB is snapshotted with Python's online-backup API (WAL-safe) rather
 # than a raw file copy, so a backup taken while OpenChamber is running is
@@ -56,7 +56,6 @@ spec:
                   service = 's3'
                   access_key = os.environ['OPENCHAMBER_MINIO_ACCESS_KEY']
                   secret_key = os.environ['OPENCHAMBER_MINIO_SECRET_KEY']
-                  src = '/data'
                   retention_days = 14
 
                   def sha256(data):
@@ -155,11 +154,13 @@ spec:
 
                   stage = tempfile.mkdtemp()
                   total = 0
-                  total += copy_tree(os.path.join(src, 'openchamber'), os.path.join(stage, 'openchamber'))
-                  total += copy_tree(os.path.join(src, 'opencode-config'), os.path.join(stage, 'opencode-config'), skip=('node_modules',))
-                  total += copy_tree(os.path.join(src, 'opencode-state'), os.path.join(stage, 'opencode-state'))
-                  total += copy_tree(os.path.join(src, 'opencode-data'), os.path.join(stage, 'opencode-data'))
-                  total += copy_tree(os.path.join(src, 'workspaces'), os.path.join(stage, 'workspaces'))
+                  # Durable share (OMV NFS).
+                  total += copy_tree('/data/openchamber', os.path.join(stage, 'openchamber'))
+                  total += copy_tree('/data/opencode-config', os.path.join(stage, 'opencode-config'), skip=('node_modules',))
+                  total += copy_tree('/data/workspaces', os.path.join(stage, 'workspaces'))
+                  # Local NVMe (SQLite session DB + state).
+                  total += copy_tree('/local/opencode-data', os.path.join(stage, 'opencode-data'))
+                  total += copy_tree('/local/opencode-state', os.path.join(stage, 'opencode-state'))
                   print(f'staged {total} files')
 
                   ts = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')
@@ -215,6 +216,9 @@ spec:
                 - name: data
                   mountPath: /data
                   readOnly: true
+                - name: local
+                  mountPath: /local
+                  readOnly: true
               resources:
                 requests:
                   cpu: 50m
@@ -224,6 +228,10 @@ spec:
                   memory: 512Mi
           volumes:
             - name: data
+              persistentVolumeClaim:
+                claimName: openchamber-data
+                readOnly: true
+            - name: local
               persistentVolumeClaim:
                 claimName: openchamber-storage
                 readOnly: true
