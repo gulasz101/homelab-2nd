@@ -37,9 +37,10 @@ Constraints:
    - Rationale: SQLite runs in **WAL mode**, which needs shared memory (`-shm`) and is explicitly
      unsupported on NFS. The homelab guardrail already says "live DBs → local NVMe; durability →
      MinIO", so this split applies the guardrail rather than fighting it.
-3. **Durability for the local NVMe data is a CronJob** (every 6h) that snapshots everything — NFS
-   *and* local volumes — to `s3://cnpg-backups/openchamber/` with 14-day retention, using SQLite's
-   online-backup API (WAL-safe).
+3. **Durability for the local NVMe data is a CronJob** (hourly, minute 20) that snapshots
+   everything — NFS *and* local volumes — to `s3://cnpg-backups/openchamber/` with 14-day
+   retention, using SQLite's online-backup API (WAL-safe). The archive is under 1 MB and the run
+   takes seconds, so an hourly cadence costs nothing and keeps the worst-case loss small.
 4. **Persist OpenCode's data/state on the PVC.** OpenCode stores sessions in SQLite under
    `~/.local/share/opencode` and **ignores `OPENCODE_DATA_DIR`**; by default that path lives in the
    container filesystem and is lost on every restart. It is mounted from the local NVMe PVC via
@@ -76,7 +77,7 @@ Constraints:
 
 - `/storage` now depends on OMV NFS: if OMV/NFS is unavailable the pod cannot start (a new failure
   mode). This is the price of durability and matches the rest of the homelab.
-- Live session data still has a backup RPO of up to 6 hours (it is local NVMe by design).
+- Live session data is local NVMe by design; the hourly backup bounds its loss to **1 hour**.
 - `oauth2-proxy` is a new in-cluster component and a new pattern (the homelab otherwise does
   app-native OIDC).
 - `forward_client_headers_to_llm_api` is a **global** LiteLLM setting.
@@ -108,7 +109,8 @@ and is recorded here and in the tracking note. Any future node added to the clus
 
 ## When to revisit
 
-- If the 6-hour RPO is too loose → shorten the CronJob; the archive is under 1 MB.
+- If the 1-hour RPO is still too loose → consider replicating the SQLite DB continuously, or accept
+  the NFS/WAL trade-off differently.
 - If OMV NFS becomes a reliability problem → consider a ReadWriteOnce NFS PV with `nconnect`, or
   fall back to local NVMe + more frequent backups.
 - If LiteLLM gains per-model-group header forwarding → scope `forward_client_headers_to_llm_api`.

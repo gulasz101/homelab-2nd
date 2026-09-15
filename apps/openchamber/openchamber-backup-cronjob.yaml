@@ -1,6 +1,7 @@
 ---
-# Daily OpenChamber backup to OMV MinIO (s3://cnpg-backups/openchamber/).
-#
+# Hourly OpenChamber backup to OMV MinIO (s3://cnpg-backups/openchamber/).
+# The archive is well under 1 MB and the run takes seconds, so an hourly cadence
+# keeps the worst-case loss of session history small.
 # What is backed up (everything OpenChamber/OpenCode need to be restored):
 #   * /data/openchamber        — OpenChamber settings, prefs, device tokens   (OMV NFS)
 #   * /data/opencode-config    — seeded OpenCode config (node_modules excluded) (OMV NFS)
@@ -21,7 +22,7 @@ metadata:
     app.kubernetes.io/name: openchamber-backup
     app.kubernetes.io/component: backup
 spec:
-  schedule: "0 */6 * * *"
+  schedule: "20 * * * *"
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   concurrencyPolicy: Forbid
