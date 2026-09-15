@@ -12,6 +12,7 @@ resources:
   - openchamber-minio-backup-creds.sops.yaml
   # Storage + config
   - openchamber-storage-pvc.yaml
+  - openchamber-data-pv.yaml
   - openchamber-config-configmap.yaml
   # OpenChamber worker (t460)
   - openchamber-deployment.yaml
