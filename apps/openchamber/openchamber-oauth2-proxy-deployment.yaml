@@ -43,7 +43,10 @@ spec:
             - --cookie-refresh=1h
             - --whitelist-domain=.voitech.dev
             - --skip-provider-button=true
-            - --scope=openid email profile
+            - --scope=openid email profile offline_access
+            # Per-request CSRF cookies: several concurrent login tabs on the same browser
+            # must not clobber each other's handshake (CSRF token mismatch 403s, 2026-09-15).
+            - --cookie-csrf-per-request=true
           env:
             - name: OAUTH2_PROXY_CLIENT_ID
               valueFrom:
