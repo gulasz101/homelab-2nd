@@ -6,7 +6,13 @@
 #   1. logs into OpenChamber and mints a long-lived client token,
 #   2. creates a session in the managed OpenCode server (so it shows in the UI),
 #   3. sends the task prompt,
-#   4. waits for the session to go idle, then prints the assistant's final text.
+#   4. waits for the session to go idle, then prints the assistant's final text,
+#   5. posts the deliverable (or, on failure, the failure reason) back to the
+#      source Itsaplan issue as a comment, using the runner's own
+#      ITSAPLAN_API_KEY and the per-claim ITSAPLAN_ISSUE_ID (ADR-019).
+#
+# Comment posting is best-effort: it never changes the run outcome, and
+# stdout -> run-result behaviour is unchanged.
 #
 # No npm dependencies — Node 22+ global fetch only.
 apiVersion: v1
@@ -16,7 +22,8 @@ metadata:
   namespace: openchamber
 data:
   bridge.js: |
-    // Itsaplan -> OpenChamber bridge. Task on stdin, final answer on stdout.
+    // Itsaplan -> OpenChamber bridge. Task on stdin, final answer on stdout,
+    // result fed back to the Itsaplan issue as a comment (ADR-019, 2026-09-15).
     const BASE = process.env.OPENCHAMBER_URL || 'http://openchamber.openchamber.svc.cluster.local:3000';
     const PASSWORD = process.env.OPENCHAMBER_UI_PASSWORD || '';
     const DIRECTORY = process.env.OPENCHAMBER_WORKDIR || '/storage/workspaces/homelab-2nd';
@@ -26,10 +33,36 @@ data:
     const TIMEOUT_MS = Number(process.env.OPENCHAMBER_TASK_TIMEOUT_MS || 1800000);
     const POLL_MS = Number(process.env.OPENCHAMBER_POLL_MS || 5000);
 
-    const log = (...a) => console.error('[bridge]', ...a);
-    const die = (msg, code = 1) => { console.error('[bridge] ERROR:', msg); process.exit(code); };
+    // Itsaplan feedback channel. ISSUE_ID/RUN_ID/TRIGGER are injected per claim
+    // by @itsaplan/runner; ITSAPLAN_URL/ITSAPLAN_API_KEY come from the
+    // deployment env (the OpenChamber agent's own key — no new credentials).
+    const ITSAPLAN_BASE = (process.env.ITSAPLAN_URL || '').replace(/\/+$/, '');
+    const ITSAPLAN_API_KEY = process.env.ITSAPLAN_API_KEY || '';
+    const ISSUE_ID = process.env.ITSAPLAN_ISSUE_ID || '';
+    const RUN_ID = process.env.ITSAPLAN_RUN_ID || '';
+    const TRIGGER = process.env.ITSAPLAN_TRIGGER || '';
+    // Wait-loop budget. The runner does NOT export ITSAPLAN_TIMEOUT_MS to the
+    // command child (verified in @itsaplan/runner taskOf(), v0.5.0), so the
+    // margin is provided by the deployment env itself:
+    // OPENCHAMBER_TASK_TIMEOUT_MS = runner timeoutMs (14400000) - 5 min.
+    // Finishing inside the lease lets the failure comment post BEFORE the
+    // runner reaps this process on a true timeout.
+    const RUNNER_BUDGET_MS = Number(process.env.ITSAPLAN_TIMEOUT_MS || 0);
+    const BUDGET_MS = RUNNER_BUDGET_MS > 0 ? Math.max(60000, RUNNER_BUDGET_MS - 300000) : TIMEOUT_MS;
 
+    const log = (...a) => console.error('[bridge]', ...a);
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const truncate = (s, n = 12000) => (s.length <= n ? s : `${s.slice(0, n)}\n\n\u2026(truncated, ${s.length - n} more chars)`);
+    // NEVER post a literal @openchamber/@andrzej handle in a comment: mention
+    // triggers fire on ANY comment (verified on H2-19) and would re-spawn this
+    // very runner — an infinite loop. Zero-width space breaks the mention.
+    const neutraliseHandles = (s) => s.replace(/@(openchamber|andrzej)\b/gi, '@\u200b$1');
+
+    function fail(msg, code = 1) {
+      const e = new Error(msg);
+      e.code = code;
+      throw e;
+    }
 
     async function api(path, opts = {}, token) {
       const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
@@ -42,6 +75,31 @@ data:
       return body;
     }
 
+    async function itsaplanComment(text) {
+      if (!ITSAPLAN_BASE || !ITSAPLAN_API_KEY || !ISSUE_ID) {
+        log('itsaplan feedback skipped (ITSAPLAN_URL/ITSAPLAN_API_KEY/ITSAPLAN_ISSUE_ID not all set)');
+        return false;
+      }
+      try {
+        const res = await fetch(`${ITSAPLAN_BASE}/issues/${ISSUE_ID}/comments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': ITSAPLAN_API_KEY },
+          body: JSON.stringify({ body: neutraliseHandles(text) }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const t = await res.text();
+        if (!res.ok) {
+          log(`itsaplan comment failed: ${res.status} ${t.slice(0, 200)}`);
+          return false;
+        }
+        log(`itsaplan comment posted to issue ${ISSUE_ID}`);
+        return true;
+      } catch (e) {
+        log('itsaplan comment error:', (e && e.message) || String(e));
+        return false;
+      }
+    }
+
     async function login() {
       const r = await api('/auth/session', {
         method: 'POST',
@@ -52,7 +110,7 @@ data:
           clientKind: 'service',
         }),
       });
-      if (!r || !r.clientToken) die('login returned no clientToken (is OPENCHAMBER_UI_PASSWORD set?)');
+      if (!r || !r.clientToken) fail('login returned no clientToken (is OPENCHAMBER_UI_PASSWORD set?)');
       return r.clientToken;
     }
 
@@ -72,7 +130,7 @@ data:
       const chunks = [];
       for await (const c of process.stdin) chunks.push(c);
       const task = Buffer.concat(chunks).toString('utf8').trim();
-      if (!task) die('empty task on stdin', 2);
+      if (!task) fail('empty task on stdin', 2);
 
       const token = await login();
       const title = task.split('\n')[0].slice(0, 70) || 'Itsaplan task';
@@ -81,7 +139,7 @@ data:
         body: JSON.stringify({ directory: DIRECTORY, title: `[itsaplan] ${title}` }),
       }, token);
       const sessionId = created.sessionId || created.id;
-      if (!sessionId) die(`session create returned no id: ${JSON.stringify(created).slice(0, 200)}`);
+      if (!sessionId) fail(`session create returned no id: ${JSON.stringify(created).slice(0, 200)}`);
       log(`session ${sessionId} in ${DIRECTORY}`);
 
       await api(`/api/openchamber/sessions/${sessionId}/send`, {
@@ -94,9 +152,9 @@ data:
           agent: AGENT,
         }),
       }, token);
-      log(`prompt dispatched, waiting (timeout ${TIMEOUT_MS}ms)`);
+      log(`prompt dispatched, waiting (budget ${BUDGET_MS}ms)`);
 
-      const deadline = Date.now() + TIMEOUT_MS;
+      const deadline = Date.now() + BUDGET_MS;
       await sleep(3000);
       for (;;) {
         let status = 'busy';
@@ -105,7 +163,7 @@ data:
           status = (s && s.status) || 'idle';
         } catch (e) { log('status poll failed:', e.message); }
         if (status !== 'busy' && status !== 'retry') break;
-        if (Date.now() > deadline) die(`timed out waiting for session ${sessionId}`, 3);
+        if (Date.now() > deadline) fail(`timed out waiting for session ${sessionId}`, 3);
         await sleep(POLL_MS);
       }
 
@@ -114,8 +172,21 @@ data:
         {}, token,
       );
       const answer = assistantText(messages);
-      if (!answer) die(`session ${sessionId} produced no assistant text`, 4);
+      if (!answer) fail(`session ${sessionId} produced no assistant text`, 4);
+
+      const header = `@admin Deliverable \u2014 OpenChamber session \`${sessionId}\` (trigger: ${TRIGGER || 'unknown'}, run: ${RUN_ID || 'unknown'}):`;
+      await itsaplanComment(`${header}\n\n${truncate(answer)}`);
+
       process.stdout.write(`OpenChamber session ${sessionId}\n\n${answer}\n`);
     }
 
-    main().catch((e) => die(e && e.stack ? e.stack : String(e)));
+    main().catch(async (e) => {
+      const msg = e && e.stack ? e.stack : String(e);
+      const code = (e && e.code) || 1;
+      console.error('[bridge] ERROR:', msg);
+      const reason = msg.split('\n').slice(0, 4).join('\n').slice(0, 800);
+      await itsaplanComment(
+        `@admin Task FAILED \u2014 OpenChamber bridge (trigger: ${TRIGGER || 'unknown'}, run: ${RUN_ID || 'unknown'}):\n\n\`\`\`\n${reason}\n\`\`\``,
+      );
+      process.exit(code);
+    });

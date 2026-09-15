@@ -52,8 +52,12 @@ spec:
               value: itsaplan-worker
             # Bridge wait-loop budget: delegated tasks may run up to 4 hours
             # (2026-09-15: research tasks stalled past the previous 30-min default).
+            # 14100000 = runner lease (14400000) minus a 5-min margin so the
+            # bridge itself times out first and can post a failure comment to
+            # the Itsaplan issue before @itsaplan/runner reaps the process.
+            # (ITSAPLAN_TIMEOUT_MS is NOT exported to the command child env.)
             - name: OPENCHAMBER_TASK_TIMEOUT_MS
-              value: "14400000"
+              value: "14100000"
             - name: OPENCHAMBER_UI_PASSWORD
               valueFrom:
                 secretKeyRef:
