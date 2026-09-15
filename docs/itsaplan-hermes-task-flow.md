@@ -76,16 +76,28 @@ runner then reports that stdout through `POST /agent-runs/{runId}/result` (deleg
 the answer that lands on the issue.
 
 Unlike Mac Hermes, this worker has **no Itsaplan MCP credentials or tools**, so it cannot call
-`add_comment` itself; its replies are delivered only by the runner reporting the session's final
-assistant text (2026-09-15).
+`add_comment` itself. Since commit `8a1cb93` + [ADR-019](./adr/adr-019-itsaplan-agent-results-post-back-via-bridge.md)
+the **bridge posts the run outcome back to the issue itself**:
+- on success: `@admin Deliverable — OpenChamber session <id>` + the final assistant text
+  (truncated at 12 000 chars), via `POST /issues/{ITSAPLAN_ISSUE_ID}/comments`
+  with the `x-api-key` header (the runner pod's own `ITSAPLAN_API_KEY`);
+- on failure/timeout: the error head (first 4 lines / 800 chars) as a comment;
+- agent handles (`@openchamber`, `@andrzej`) are neutralised with a zero-width space —
+  mention triggers fire on bot-authored comments too (verified on H2-19), so a literal
+  handle in a comment would re-spawn the runner in an infinite loop;
+- the stdout → `POST /agent-runs/{runId}/result` channel is unchanged; comments are additive.
+Verified live on 2026-09-15 (issues H2-20/21/22): comments landed authored by **OpenChamber**,
+not Administrator.
 
 ## Operational note
 
 `timeoutMs` is enforced by the runner **and** independently by `bridge.js`
-(`OPENCHAMBER_TASK_TIMEOUT_MS`). Both are **14400000** (4 h) since 2026-09-15: run #4 exceeded
-the old 1800000 (30 min) budget and was reported failed while the session was still working
-(commit `ec9e9df`). A timed-out run leaves the session running; raise both together if longer
-tasks are expected.
+(`OPENCHAMBER_TASK_TIMEOUT_MS`). Since commit `8a1cb93` (ADR-019) the bridge budget is
+**14100000** — the runner's 14400000 lease **minus a 5-minute margin** — so the bridge times
+out first and its failure comment lands **before** the runner reaps the process.
+(`ITSAPLAN_TIMEOUT_MS` is **not** exported to the command child env by `@itsaplan/runner`
+v0.5.0, so the margin must be set in the deployment env, not derived in-script.)
+A timed-out run leaves the session running; raise both together if longer tasks are expected.
 
 ## Provenance
 
