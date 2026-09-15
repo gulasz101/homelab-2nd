@@ -14,6 +14,6 @@ data:
       "cwd": "/tmp",
       "concurrency": 1,
       "pollIntervalMs": 5000,
-      "timeoutMs": 1800000,
+      "timeoutMs": 14400000,
       "outputFormat": "text"
     }

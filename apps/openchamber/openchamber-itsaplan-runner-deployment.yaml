@@ -50,6 +50,10 @@ spec:
               value: deepseek-v4.1-flash
             - name: OPENCHAMBER_AGENT
               value: itsaplan-worker
+            # Bridge wait-loop budget: delegated tasks may run up to 4 hours
+            # (2026-09-15: research tasks stalled past the previous 30-min default).
+            - name: OPENCHAMBER_TASK_TIMEOUT_MS
+              value: "14400000"
             - name: OPENCHAMBER_UI_PASSWORD
               valueFrom:
                 secretKeyRef:
