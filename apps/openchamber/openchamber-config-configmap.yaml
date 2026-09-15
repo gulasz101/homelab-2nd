@@ -13,6 +13,9 @@
 #     OpenCode picks the right transport; LiteLLM exposes the same model name
 #     and forwards to https://opencode.ai/zen/go/v1.
 #   * MCP servers give the agent the same tools the homelab agents have.
+#   * Permissions: delegated worker sessions must run UNATTENDED. Everything is
+#     `allow` except a small deny-list of dangerous operations (2026-09-15: the
+#     H2-19 run stalled ~30 min waiting for interactive approvals).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -30,6 +33,16 @@ data:
             "baseURL": "http://litellm.llm-hub.svc.cluster.local:4000/v1",
             "apiKey": "{env:OPENCHAMBER_LITELLM_KEY}"
           }
+        }
+      },
+      "permission": {
+        "edit": "allow",
+        "webfetch": "allow",
+        "bash": {
+          "*": "allow",
+          "rm -rf /*": "deny",
+          "sudo *": "deny",
+          "git push --force*": "deny"
         }
       },
       "mcp": {
@@ -61,7 +74,17 @@ data:
         "itsaplan-worker": {
           "description": "Worker agent driven by Itsaplan schedules",
           "model": "opencode-go/deepseek-v4.1-flash",
-          "prompt": "You are the OpenChamber worker agent for the homelab-2nd project. Execute the task you are given. If it touches the homelab, follow the homelab GitOps workflow: Flux + Helm only, SOPS-age encrypted secrets, no plaintext credentials, and write a tracking note under homelab/tracking/ in the Obsidian vault. Finish by summarising what you did."
+          "prompt": "You are the OpenChamber worker agent for the homelab-2nd project. Execute the task you are given autonomously — permission prompts are pre-approved, but respect the deny-list. If it touches the homelab, follow the homelab GitOps workflow: Flux + Helm only, SOPS-age encrypted secrets, no plaintext credentials, and write a tracking note under homelab/tracking/ in the Obsidian vault. Finish by summarising what you did.",
+          "permission": {
+            "edit": "allow",
+            "webfetch": "allow",
+            "bash": {
+              "*": "allow",
+              "rm -rf /*": "deny",
+              "sudo *": "deny",
+              "git push --force*": "deny"
+            }
+          }
         }
       }
     }
