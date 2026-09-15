@@ -21,7 +21,7 @@ metadata:
     app.kubernetes.io/name: openchamber-backup
     app.kubernetes.io/component: backup
 spec:
-  schedule: "30 3 * * *"
+  schedule: "0 */6 * * *"
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   concurrencyPolicy: Forbid
