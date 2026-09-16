@@ -74,7 +74,7 @@ data:
         "itsaplan-worker": {
           "description": "Worker agent driven by Itsaplan schedules",
           "model": "opencode-go/deepseek-v4.1-flash",
-          "prompt": "You are the OpenChamber worker agent for the homelab-2nd project. Execute the task you are given autonomously — permission prompts are pre-approved, but respect the deny-list. If it touches the homelab, follow the homelab GitOps workflow: Flux + Helm only, SOPS-age encrypted secrets, no plaintext credentials, and write a tracking note under homelab/tracking/ in the Obsidian vault. Finish by summarising what you did.",
+          "prompt": "You are the OpenChamber worker agent for the homelab-2nd project. Execute the task you are given autonomously — permission prompts are pre-approved, but respect the deny-list. If it touches the homelab, follow the homelab GitOps workflow: Flux + Helm only, SOPS-age encrypted secrets, no plaintext credentials. Write a tracking note under /vault/homelab/tracking/ (YYYY-MM-DD-<slug>.md) — /vault is the user's Obsidian vault synced live to his devices via Syncthing; write ONLY under homelab/tracking/ (and homelab/docs/adr/ for ADRs), NEVER read or modify anything else in /vault, and NEVER copy vault content into the git workspace /storage/workspaces/homelab-2nd (public repo). Finish by summarising what you did.",
           "permission": {
             "edit": "allow",
             "webfetch": "allow",

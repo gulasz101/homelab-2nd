@@ -202,12 +202,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /storage
-            # Vault mirror (H2-28): read-only for OpenChamber. Only the
-            # Syncthing sidecar (above) can write into the vault.
+            # Vault sync (H2-28): READ-WRITE for OpenChamber — delegated agents
+            # write tracking notes into the vault; they sync to the Mac.
             - name: data
               mountPath: /vault
               subPath: vault
-              readOnly: true
             - name: local
               mountPath: /var/lib/openchamber
             # OpenCode stores its sessions in SQLite under XDG data/state paths;
