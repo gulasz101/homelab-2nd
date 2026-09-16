@@ -142,6 +142,21 @@ data:
       if (!sessionId) fail(`session create returned no id: ${JSON.stringify(created).slice(0, 200)}`);
       log(`session ${sessionId} in ${DIRECTORY}`);
 
+      // Arm OpenChamber's per-session permission auto-accept BEFORE dispatching
+      // the prompt. Without this the openchamber layer (separate from opencode's
+      // config permissions) holds every permission.asked for a human click and
+      // delegated tasks hang until timeout. Fail-soft: if the route is missing
+      // (openchamber downgrade) log and continue rather than killing the task.
+      try {
+        await api(`/api/permission-auto-accept/sessions/${sessionId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ enabled: true, directory: DIRECTORY }),
+        }, token);
+        log(`auto-accept enabled for ${sessionId}`);
+      } catch (e) {
+        log(`WARN auto-accept enable failed (continuing): ${e.message}`);
+      }
+
       await api(`/api/openchamber/sessions/${sessionId}/send`, {
         method: 'POST',
         body: JSON.stringify({
