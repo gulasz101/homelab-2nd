@@ -1,0 +1,31 @@
+# Syncthing TLS identity for the OpenChamber vault-sync sidecar (H2-28).
+# Device ID is derived from cert.pem. NEVER commit plaintext of this file:
+# SOPS-encrypted (age), decrypted in-cluster by Flux. Identity rotation =
+# new device ID = re-pair on the Mac side.
+apiVersion: v1
+kind: Secret
+metadata:
+    name: openchamber-syncthing-identity
+    namespace: openchamber
+    labels:
+        app.kubernetes.io/name: openchamber
+        app.kubernetes.io/component: vault-sync
+type: Opaque
+stringData:
+    cert.pem: ENC[AES256_GCM,data:gXbGsgvtQ6hM8hh8dKRuqxXWnJ5Y8jAZcKESxQbTYkN9w+R05vp8I55Vph0T5ambre0umnTwDIqhC1b5BgnX0REAfxTGMupatqCKft+fb4l4rjWogzzf0XzhHLGDeJACzuJJ0trOMPZYyBQXiCobOjTD+MMzvFOmArNNrAm9OU32vMfuVsrl4DtesmrGOLF5njMsEXbjhgdbHtxUr7Q4HSU++ts5mkfarX1Ax5e6vl4U22YH2q/RKkVN/3XJrS4m7E7t8t0LFGCk1O0Ro+S5XPb5okN7gbNE/0fBJGke1C4JEGhuWR1YJC/oPNogNihc2sg6T80qzm2J1PiJ9PpyhJDpe/8qJCbRGgF49LzBe7zL/K0QBLpzFelSqiCf9spVMBtQTRpXFJxdHc1nZzlLBT9PqWUjjIdO6uqtPJfeNbjyca2dNGzhmrHioq0hZfnp03sGbOM8eIhOH/AfNF86nrkNlFdVCYTKbC/oy4MIWkxJk9Uay+QyBc9m/dUfaiuKso8dSHcnT30kr3qFdAwlNMcy/w+7rRU6+eEGNl/dw7mKMeK93uqndj27+E6MNY13rLbT0nt4/pYeIOf58rlxVuuEzFMs878tIsydmOtOetrphg9RTVIqTPzb1UtEvYfnQ6oBBsuSAPjbpseZHdLGBW5T+bjIZYtPfMtyqTzxyyrooRj6qCwCOi0fQfNdPEubbppYe5bHet85rUY5MpgD0Y/Lp5wBcPVUCWutfn9N+XG2UdHC4oV1PYDdP3zi6353+oVieFwBQ8Wbz840iCCptwniQwCI+lnC+sJ/M50ahX6ZalenBwnuWrZVk/Uva4Q=,iv:3esbUffmW0STEGValij+6INgb6s0yEDvjmjFANw0XUI=,tag:6/+RFv6v7yNcdmOH6LFF1Q==,type:str]
+    key.pem: ENC[AES256_GCM,data:ZrYW92cGMZGmy3M3dTAO9PT1WaZ0ZjFEUevX1uOmEggJ3dH61a75C9QBrDbiISVo64q3PZf0L0tqTS5/sCu5/TSyw9vyn99rGDGpuakTnfjZaf1CmWY3yF3euHBH4gOXAvkAfaCJW5c9+p9URaCw1MknUv2gw7I=,iv:l688yR+vbdzanwiJeZdcRQTeV2HKBY20qSdiKZnanaE=,tag:LtcafGepk2RlRKxqoyUXMg==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBpanF1T0lOV0FtdmVBTHdj
+            SlZkaUVCRFFrSEdXVWZ4ZlN3NWV0R0N4cUUwCnM0OWU3Wk9EQmJOcUJkak03bDEz
+            Q0hoeW9nQ2JrL3FybFB2aG80eEo3N0UKLS0tIHB1Yk9TeDBsM1FZbms2RGFrWlgw
+            b2ZDU3BFUTdiYkhyMUplMGtkc1hhZXMK/KBD9Ivd76GX13y0WKWf6isyT20OKIvC
+            i/GGY3RYDfyGZUfldozO5Q45A9qb/KsAcxLxzeemJnUIJoGW9IfOqQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-16T19:27:56Z"
+    mac: ENC[AES256_GCM,data:KiZtpCyAwe+aqKKee+4Bh1XRsPv6mWakE9ALWt34JakQaqPJoF8I74T+dHkoHR2J95I+VPXj2s7J4hub0kZiebbStMewli7aQcQkyHU4gX0oOff3LaDtjZpZcVXbQoxSuDgkHhZE3lPaLXc99IcPzcChK/zH2H/81JIkB181F6M=,iv:2Jmp3Tfe7T1ELyv03xidmJKHg0qk8meStozgcbSa8zg=,tag:phI+zKG3WwB/rc6CufbsPQ==,type:str]
+    version: 3.13.1

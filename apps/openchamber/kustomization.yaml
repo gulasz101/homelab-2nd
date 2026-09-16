@@ -10,10 +10,12 @@ resources:
   - openchamber-itsaplan-agent-key.sops.yaml
   - openchamber-github.sops.yaml
   - openchamber-minio-backup-creds.sops.yaml
+  - openchamber-syncthing-identity.sops.yaml
   # Storage + config
   - openchamber-storage-pvc.yaml
   - openchamber-data-pv.yaml
   - openchamber-config-configmap.yaml
+  - openchamber-syncthing-configmap.yaml
   # OpenChamber worker (t460)
   - openchamber-deployment.yaml
   - openchamber-service.yaml
@@ -23,9 +25,13 @@ resources:
   # Cloudflare Tunnel for openchamber.voitech.dev
   - cloudflared-openchamber-deployment.yaml
   - openchamber-tunnel-ingress-configmap.yaml
+  # Syncthing vault-sync sidecar (H2-28)
+  - openchamber-syncthing-service.yaml
   # Itsaplan external-agent runner -> OpenChamber bridge
   - openchamber-itsaplan-bridge-configmap.yaml
   - openchamber-itsaplan-runner-configmap.yaml
   - openchamber-itsaplan-runner-deployment.yaml
   # Daily session/data backup to OMV MinIO
   - openchamber-backup-cronjob.yaml
+  # Observability (H2-28): namespace pod/health alerts
+  - openchamber-prometheus-rules.yaml
