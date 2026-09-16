@@ -28,7 +28,7 @@ metadata:
     app.kubernetes.io/component: vault-sync
 data:
   config.xml: |
-    <configuration version="57">
+    <configuration version="52">
       <folder id="jtpyv-hjzfc" label="wojtek.second.brain.obsidian.vault" path="/vault" type="sendreceive" rescanIntervalS="3600" fsWatcherEnabled="true" fsWatcherDelayS="10" ignorePerms="true" autoNormalize="true" markPeerNewer="false" pauseWhenOffline="false">
         <device id="LNJYHYO-4DX4VJA-Y4UCAZQ-NEJPCAR-5QFZJTX-D26CJLH-RSAB5ZL-2YIVRQI" introducedBy="">
           <address>dynamic</address>
@@ -80,14 +80,7 @@ data:
       </gui>
       <ldap enabled="false"></ldap>
       <options>
-        <listenAddress>
-          <address>tcp://0.0.0.0:22000</address>
-          <enabled>true</enabled>
-        </listenAddress>
-        <listenAddress>
-          <address>quic://0.0.0.0:22020</address>
-          <enabled>false</enabled>
-        </listenAddress>
+        <listenAddress>tcp://0.0.0.0:22000</listenAddress>
         <globalAnnounceEnabled>false</globalAnnounceEnabled>
         <localAnnounceEnabled>false</localAnnounceEnabled>
         <relayEnabled>false</relayEnabled>
