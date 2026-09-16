@@ -56,6 +56,10 @@ spec:
                 git clone --depth 1 https://github.com/gulasz101/homelab-2nd.git \
                   /storage/workspaces/homelab-2nd || true
               fi
+              # Vault mirror dir (H2-28) — Syncthing sidecar's receive-only target.
+              # Syncthing (uid 1000) must own it; it lives on the same OMV NFS PV.
+              mkdir -p /storage/vault
+              chown -R 1000:1000 /storage/vault
               # Local NVMe (SQLite session DB + state).
               mkdir -p /local/opencode-data /local/opencode-state
               chown -R 1000:1000 /storage /local
@@ -67,7 +71,73 @@ spec:
             - name: config-seed
               mountPath: /config-seed
               readOnly: true
+            # Syncthing TLS identity (SOPS-decrypted by Flux) — only readable
+            # by the init/sidecar pair, never by the main container.
+            - name: syncthing-identity
+              mountPath: /identity
+        # Builds the Syncthing sidecar's home dir: TLS identity from the SOPS
+        # secret + config.xml from the ConfigMap, merged onto a writable
+        # emptyDir (identity files made read-only; index db lands next to
+        # them, on local NVMe, since the home is a real PVC-backed dir).
+        - name: syncthing-identity-init
+          image: alpine/git:2.45.2
+          securityContext:
+            runAsUser: 0
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /staging
+              cp /identity-src/cert.pem /identity-src/key.pem /staging/
+              cp /config-src/config.xml /staging/
+              chmod 400 /staging/cert.pem /staging/key.pem
+              chown -R 1000:1000 /staging
+              echo "[syncthing-init] staged identity + config"
+          volumeMounts:
+            - name: syncthing-identity
+              mountPath: /identity-src
+              readOnly: true
+            - name: syncthing-config
+              mountPath: /config-src
+              readOnly: true
+            - name: syncthing-home
+              mountPath: /staging
       containers:
+        # Vault-sync sidecar (H2-28): Syncthing in receive-only mode, mirroring
+        # the vault from the M1 Max. Identity from the SOPS secret, config from
+        # the ConfigMap, home dir on local NVMe (Syncthing's index db is
+        # sqlite, not NFS-safe). Image pinned by amd64 manifest digest of
+        # syncthing/syncthing:2.1.2.
+        - name: syncthing
+          image: syncthing/syncthing@sha256:d4a6dca9676da9054964e275e9d77f671bd261ae2a9e10b335059ef30f7d46bc
+          imagePullPolicy: IfNotPresent
+          args: ["serve", "--home", "/var/lib/syncthing", "--no-browser"]
+          ports:
+            - name: syncthing
+              containerPort: 22000
+              protocol: TCP
+          env:
+            - name: HOME
+              value: /var/lib/syncthing
+            - name: STNOUPGRADE
+              value: "1"
+          volumeMounts:
+            # Read-only inputs: TLS identity (from the SOPS secret) and the
+            # config.xml (from the ConfigMap), merged in by the init container.
+            - name: syncthing-home
+              mountPath: /var/lib/syncthing
+            # The vault mirror itself (receive-only target), on OMV NFS.
+            - name: data
+              mountPath: /vault
+              subPath: vault
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
         - name: openchamber
           image: ghcr.io/gulasz101/openchamber-web:1.23.1-r3
           imagePullPolicy: IfNotPresent
@@ -132,6 +202,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /storage
+            # Vault mirror (H2-28): read-only for OpenChamber. Only the
+            # Syncthing sidecar (above) can write into the vault.
+            - name: data
+              mountPath: /vault
+              subPath: vault
+              readOnly: true
             - name: local
               mountPath: /var/lib/openchamber
             # OpenCode stores its sessions in SQLite under XDG data/state paths;
@@ -183,3 +259,15 @@ spec:
         - name: config-seed
           configMap:
             name: openchamber-opencode-config
+        # Vault-sync sidecar volumes (H2-28).
+        # syncthing-home: writable home (index db + staged identity/config).
+        # emptyDir = local NVMe scratch, wiped on pod restart (index rebuilds
+        # from scratch, harmless for a receive-only mirror).
+        - name: syncthing-home
+          emptyDir: {}
+        - name: syncthing-identity
+          secret:
+            secretName: openchamber-syncthing-identity
+        - name: syncthing-config
+          configMap:
+            name: openchamber-syncthing-config

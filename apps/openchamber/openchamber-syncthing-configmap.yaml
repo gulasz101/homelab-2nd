@@ -1,0 +1,127 @@
+---
+# Syncthing sidecar configuration for the OpenChamber pod's vault mirror.
+#
+# SECURITY POSTURE (H2-28):
+#   - GUI/REST is bound to 127.0.0.1 inside the sidecar only. It is NOT exposed via
+#     the Service, not even cluster-internally. Ops happen via config + kubectl logs.
+#   - Global discovery, relays and NAT traversal are DISABLED: the pod dials exactly
+#     one peer — the M1 Max at 192.168.1.148:22000 — over the LAN. No traffic leaves
+#     the LAN, no third-party relay ever sees vault bytes.
+#   - The vault folder is "receiveonly": this pod can never push changes back to the
+#     Mac. The Mac is the single source of truth for the vault.
+#   - The device ID of this instance is derived from the TLS cert in
+#     openchamber-syncthing-identity (SOPS). Current ID:
+#     LNJYHYO-4DX4VJA-Y4UCAZQ-NEJPCAR-5QFZJTX-D26CJLH-RSAB5ZL-2YIVRQI
+#
+# The M1 Max side pairs with this device ID, static address tcp://192.168.1.111:30195.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openchamber-syncthing-config
+  namespace: openchamber
+  labels:
+    app.kubernetes.io/name: openchamber
+    app.kubernetes.io/component: vault-sync
+data:
+  config.xml: |
+    <configuration version="57">
+      <folder id="jtpyv-hjzfc" label="wojtek.second.brain.obsidian.vault" path="/vault" type="receiveonly" rescanIntervalS="3600" fsWatcherEnabled="true" fsWatcherDelayS="10" ignorePerms="true" autoNormalize="true" markPeerNewer="false" pauseWhenOffline="false">
+        <device id="LNJYHYO-4DX4VJA-Y4UCAZQ-NEJPCAR-5QFZJTX-D26CJLH-RSAB5ZL-2YIVRQI" introducedBy="">
+          <address>dynamic</address>
+        </device>
+        <device id="I7WWMCK-LJ3WRS3-MZB4PK4-XPCPVUY-7FSFCJD-AVUIMBF-BKSE7CA-L77QDAE" introducedBy="">
+          <address>tcp://192.168.1.148:22000</address>
+        </device>
+        <minDiskFree unit="%">1</minDiskFree>
+        <versioning type="trashcan">
+          <param key="cleanoutDays" val="7" />
+        </versioning>
+        <copiers>0</copiers>
+        <pullerMaxPendingKiB>0</pullerMaxPendingKiB>
+        <hashers>0</hashers>
+        <order>random</order>
+        <ignoreInvalid>false</ignoreInvalid>
+        <scanProgressIntervalS>0</scanProgressIntervalS>
+        <markerName>.stfolder</markerName>
+        <allowSparseFiles>true</allowSparseFiles>
+        <ownershipEnabledEnabled>false</ownershipEnabledEnabled>
+        <ownershipEnabled>false</ownershipEnabled>
+        <xattrFilter enabled="false">
+          <maxSingleEntrySize>1024</maxSingleEntrySize>
+          <maxTotalEntries>0</maxTotalEntries>
+        </xattrFilter>
+      </folder>
+      <device id="LNJYHYO-4DX4VJA-Y4UCAZQ-NEJPCAR-5QFZJTX-D26CJLH-RSAB5ZL-2YIVRQI" name="openchamber-vault-sync" compression="metadata" introducer="false" skipIntroductionRemovals="false" introducedBy="">
+        <address>dynamic</address>
+        <paused>false</paused>
+        <autoAcceptFolders>false</autoAcceptFolders>
+        <maxSendKbps>0</maxSendKbps>
+        <maxRecvKbps>0</maxRecvKbps>
+      </device>
+      <device id="I7WWMCK-LJ3WRS3-MZB4PK4-XPCPVUY-7FSFCJD-AVUIMBF-BKSE7CA-L77QDAE" name="wojciechs-macbook-pro" compression="metadata" introducer="false" skipIntroductionRemovals="false" introducedBy="">
+        <address>tcp://192.168.1.148:22000</address>
+        <paused>false</paused>
+        <autoAcceptFolders>false</autoAcceptFolders>
+        <maxSendKbps>0</maxSendKbps>
+        <maxRecvKbps>0</maxRecvKbps>
+        <maxRequestKiB>0</maxRequestKiB>
+        <untrusted>false</untrusted>
+        <remoteGUIPortNumber>0</remoteGUIPortNumber>
+        <numConnections>0</numConnections>
+      </device>
+      <gui enabled="false" tls="false">
+        <address>127.0.0.1:8384</address>
+        <apikey>-</apikey>
+        <theme>default</theme>
+      </gui>
+      <ldap enabled="false"></ldap>
+      <options>
+        <listenAddress>
+          <address>tcp://0.0.0.0:22000</address>
+          <enabled>true</enabled>
+        </listenAddress>
+        <listenAddress>
+          <address>quic://0.0.0.0:22020</address>
+          <enabled>false</enabled>
+        </listenAddress>
+        <globalAnnounceEnabled>false</globalAnnounceEnabled>
+        <localAnnounceEnabled>false</localAnnounceEnabled>
+        <relayEnabled>false</relayEnabled>
+        <natEnabled>false</natEnabled>
+        <startBrowser>false</startBrowser>
+        <urAccepted>-1</urAccepted>
+        <urSeen>3</urSeen>
+        <urUniqueID></urUniqueID>
+        <maxSendKbps>0</maxSendKbps>
+        <maxRecvKbps>0</maxRecvKbps>
+        <reconnectionIntervalS>60</reconnectionIntervalS>
+        <networkChangeDetection>true</networkChangeDetection>
+        <maxConnsPerDevice>3</maxConnsPerDevice>
+        <limitsMinFreeDiskStandard>0</limitsMinFreeDiskStandard>
+        <announceLANAddresses>true</announceLANAddresses>
+        <sendFullIndexes>false</sendFullIndexes>
+        <slowAcceptFallbackS>0</slowAcceptFallbackS>
+        <weakHashEnabled>false</weakHashEnabled>
+        <connectionLimitEnough>0</connectionLimitEnough>
+        <trafficClass></trafficClass>
+        <progressEmitIntervalS>5</progressEmitIntervalS>
+        <limitBandwidthInLan>false</limitBandwidthInLan>
+        <minHomeDiskFree unit="%">1</minHomeDiskFree>
+        <maxFolderConcurrency>0</maxFolderConcurrency>
+        <crashReportingEnabled>false</crashReportingEnabled>
+        <databaseType>sqlite</databaseType>
+        <defaultFolderPath></defaultFolderPath>
+        <deviceName>openchamber-vault-sync</deviceName>
+        <defaulter>
+          <folder>
+            <rescanIntervalS>3600</rescanIntervalS>
+            <fsWatcherDelayS>10</fsWatcherDelayS>
+            <fsWatcherTimeoutS>0</fsWatcherTimeoutS>
+            <ignorePerms>true</ignorePerms>
+            <autoNormalize>true</autoNormalize>
+            <minDiskFree unit="%">1</minDiskFree>
+            <maxConflicts>0</maxConflicts>
+          </folder>
+        </defaulter>
+      </options>
+    </configuration>

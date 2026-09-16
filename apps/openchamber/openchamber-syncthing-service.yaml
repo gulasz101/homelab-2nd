@@ -1,0 +1,27 @@
+---
+# Syncthing sidecar for the OpenChamber pod — syncs the Obsidian vault from the
+# M1 Max over the LAN (H2-28).
+#
+# Traffic shape:
+#   Mac (192.168.1.148:22000) <—LAN— t460 NodePort 30195 → sidecar :22000
+# NodePort exists so the Mac can dial the pod directly by node IP; the pod dials
+# the Mac by its static address. No LB, no ingress, no tunnel, never public.
+apiVersion: v1
+kind: Service
+metadata:
+  name: openchamber-syncthing
+  namespace: openchamber
+  labels:
+    app.kubernetes.io/name: openchamber
+    app.kubernetes.io/component: vault-sync
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: openchamber
+    app.kubernetes.io/component: worker
+  ports:
+    - name: syncthing-tcp
+      port: 22000
+      targetPort: syncthing
+      nodePort: 30195
+      protocol: TCP
