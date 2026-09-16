@@ -134,12 +134,14 @@ spec:
               mountPath: /vault
               subPath: vault
           resources:
+            # Initial bulk sync (2.3G over NFS) pegged a 500m limit — hashing
+            # + TLS + NFS latency need headroom. Steady-state usage is tiny.
             requests:
-              cpu: 50m
-              memory: 128Mi
+              cpu: 250m
+              memory: 256Mi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: "2"
+              memory: 1Gi
         - name: openchamber
           image: ghcr.io/gulasz101/openchamber-web:1.23.1-r3
           imagePullPolicy: IfNotPresent
