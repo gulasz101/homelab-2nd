@@ -58,7 +58,9 @@ spec:
               fi
               # Vault mirror dir (H2-28) — Syncthing sidecar's receive-only target.
               # Syncthing (uid 1000) must own it; it lives on the same OMV NFS PV.
-              mkdir -p /storage/vault
+              # .stfolder marker is REQUIRED: syncthing refuses an empty folder
+              # with "folder marker missing (potential data loss)".
+              mkdir -p /storage/vault/.stfolder
               chown -R 1000:1000 /storage/vault
               # Local NVMe (SQLite session DB + state).
               mkdir -p /local/opencode-data /local/opencode-state

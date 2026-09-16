@@ -80,14 +80,7 @@ data:
       </gui>
       <ldap enabled="false"></ldap>
       <options>
-        <listenAddress>
-          <address>tcp://0.0.0.0:22000</address>
-          <enabled>true</enabled>
-        </listenAddress>
-        <listenAddress>
-          <address>quic://0.0.0.0:22020</address>
-          <enabled>false</enabled>
-        </listenAddress>
+        <listenAddress>tcp://0.0.0.0:22000</listenAddress>
         <globalAnnounceEnabled>false</globalAnnounceEnabled>
         <localAnnounceEnabled>false</localAnnounceEnabled>
         <relayEnabled>false</relayEnabled>
