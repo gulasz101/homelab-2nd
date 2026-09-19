@@ -8,7 +8,7 @@
 #     via the Service, not even cluster-internally. Ops happen via config +
 #     kubectl logs/exec.
 #   - Global discovery, relays and NAT traversal are DISABLED: the pod dials
-#     exactly one peer — the M1 Max at 192.168.1.148:22000 — over the LAN. No
+#     exactly one peer — the M1 Max at 192.168.1.129:22000 — over the LAN. No
 #     traffic leaves the LAN, no third-party relay ever sees vault bytes.
 #   - Vault corruption protection: trashcan versioning keeps 7 days of deleted/
 #     overwritten files on the pod side (agent-writes sync back to the Mac, so
