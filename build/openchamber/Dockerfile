@@ -36,6 +36,41 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends nodejs gh \
     && rm -rf /var/lib/apt/lists/*
 
+# GitOps validation tooling. The itsaplan-tasks skill renders and validates
+# manifests before commit (kubectl/kustomize/helm/kubeconform), decrypts and
+# smoke-checks SOPS secrets, and scans for leaked secrets (gitleaks). Versions
+# are pinned for reproducible builds; bump an ARG to upgrade.
+ARG KUBECTL_VERSION=v1.31.1
+ARG HELM_VERSION=v3.16.2
+ARG KUSTOMIZE_VERSION=v5.5.0
+ARG KUBECONFORM_VERSION=v0.6.7
+ARG SOPS_VERSION=v3.9.1
+ARG GITLEAKS_VERSION=v8.21.2
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "${arch}" in \
+      amd64) k8s_arch=amd64; helm_arch=amd64; gitleaks_arch=x64;; \
+      arm64) k8s_arch=arm64; helm_arch=arm64; gitleaks_arch=arm64;; \
+      *) echo "unsupported arch ${arch}" >&2; exit 1;; \
+    esac; \
+    curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${k8s_arch}/kubectl"; \
+    chmod 0755 /usr/local/bin/kubectl; \
+    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${helm_arch}.tar.gz" -o /tmp/helm.tgz; \
+    tar -xzf /tmp/helm.tgz -C /tmp; \
+    install -m 0755 "/tmp/linux-${helm_arch}/helm" /usr/local/bin/helm; \
+    curl -fsSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_${k8s_arch}.tar.gz" -o /tmp/kustomize.tgz; \
+    tar -xzf /tmp/kustomize.tgz -C /usr/local/bin kustomize; \
+    chmod 0755 /usr/local/bin/kustomize; \
+    curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-${k8s_arch}.tar.gz" -o /tmp/kubeconform.tgz; \
+    tar -xzf /tmp/kubeconform.tgz -C /usr/local/bin kubeconform; \
+    chmod 0755 /usr/local/bin/kubeconform; \
+    curl -fsSL "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.${k8s_arch}" -o /usr/local/bin/sops; \
+    chmod 0755 /usr/local/bin/sops; \
+    curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_${gitleaks_arch}.tar.gz" -o /tmp/gitleaks.tgz; \
+    tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks; \
+    chmod 0755 /usr/local/bin/gitleaks; \
+    rm -rf /tmp/helm.tgz /tmp/kustomize.tgz /tmp/kubeconform.tgz /tmp/gitleaks.tgz /tmp/linux-${helm_arch}
+
 # OpenChamber + OpenCode, installed globally as the openchamber user's prefix.
 RUN npm config set prefix /home/openchamber/.npm-global \
     && mkdir -p /home/openchamber/.npm-global \

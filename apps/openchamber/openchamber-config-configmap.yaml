@@ -1,8 +1,9 @@
 ---
 # Seed OpenCode configuration for the OpenChamber worker.
 #
-# Copied once into <OPENCODE_CONFIG_DIR>/opencode.json by the prepare init
-# container (only if absent), so the UI can still edit and persist changes.
+# Seeded into <OPENCODE_CONFIG_DIR>/opencode.json by the prepare init container
+# and re-copied only when `seed-version` changes, so the UI can still edit and
+# persist changes between config releases.
 #
 # Key design points:
 #   * Provider is the native `opencode-go` provider — NOT a custom
@@ -22,11 +23,19 @@ metadata:
   name: openchamber-opencode-config
   namespace: openchamber
 data:
+  # Bump when opencode.json below changes: the prepare init container re-copies
+  # the seed into /storage/opencode-config only when this differs from the
+  # version recorded in /storage/opencode-config/.seed-version, so UI edits
+  # between bumps survive.
+  seed-version: "2"
   opencode.json: |
     {
       "$schema": "https://opencode.ai/config.json",
       "autoupdate": false,
       "model": "opencode-go/deepseek-v4.1-flash",
+      "skills": {
+        "paths": ["/storage/opencode-config/skill"]
+      },
       "provider": {
         "opencode-go": {
           "options": {
@@ -68,13 +77,21 @@ data:
             "FIRECRAWL_API_KEY": "self-hosted",
             "FIRECRAWL_RETRY_MAX_ATTEMPTS": "3"
           }
+        },
+        "itsaplan": {
+          "type": "remote",
+          "url": "https://plan-api.voitech.dev/mcp",
+          "enabled": true,
+          "headers": {
+            "Authorization": "Bearer {env:ITSAPLAN_API_KEY}"
+          }
         }
       },
       "agent": {
         "itsaplan-worker": {
           "description": "Worker agent driven by Itsaplan schedules",
           "model": "opencode-go/deepseek-v4.1-flash",
-          "prompt": "You are the OpenChamber worker agent for the homelab-2nd project. Execute the task you are given autonomously — permission prompts are pre-approved, but respect the deny-list. If it touches the homelab, follow the homelab GitOps workflow: Flux + Helm only, SOPS-age encrypted secrets, no plaintext credentials. Write a tracking note under /vault/homelab/tracking/ (YYYY-MM-DD-<slug>.md) — /vault is the user's Obsidian vault synced live to his devices via Syncthing; write ONLY under homelab/tracking/ (and homelab/docs/adr/ for ADRs), NEVER read or modify anything else in /vault, and NEVER copy vault content into the git workspace /storage/workspaces/homelab-2nd (public repo). Finish by summarising what you did.",
+          "prompt": "You are the OpenChamber worker agent for the homelab-2nd project. A delegated Itsaplan issue is your job: load the `itsaplan-tasks` skill and follow it end to end. Work autonomously — permissions are pre-approved, respect the deny-list, and never call the question tool; decide and record a ruling instead. Acceptance criteria are the contract: decompose the issue into real H2 subtasks with parentId, drive them Todo -> In Progress -> Done, and prove every criterion with evidence before closing. If it touches the homelab, follow the GitOps workflow: Flux + Helm only, SOPS-age encrypted secrets, no plaintext credentials. Write a tracking note under /vault/homelab/tracking/ (YYYY-MM-DD-<slug>.md) — /vault is the user's Obsidian vault synced live to his devices via Syncthing; write ONLY under homelab/tracking/ (and homelab/docs/adr/ for ADRs), NEVER read or modify anything else in /vault, and NEVER copy vault content into the git workspace /storage/workspaces/homelab-2nd (public repo). Your final message is the deliverable posted to the issue — make it complete and evidence-based.",
           "permission": {
             "edit": "allow",
             "webfetch": "allow",

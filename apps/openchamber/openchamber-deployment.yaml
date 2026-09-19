@@ -48,9 +48,14 @@ spec:
               set -eu
               # Durable share (OMV NFS).
               mkdir -p /storage/openchamber /storage/opencode-config /storage/workspaces
-              if [ ! -f /storage/opencode-config/opencode.json ]; then
+              # Re-seed the OpenCode config only when the ConfigMap's seed-version
+              # changes, so deliberate UI edits survive between config releases.
+              seed_version="$(cat /config-seed/seed-version 2>/dev/null || echo 0)"
+              current_version="$(cat /storage/opencode-config/.seed-version 2>/dev/null || echo 0)"
+              if [ ! -f /storage/opencode-config/opencode.json ] || [ "${seed_version}" != "${current_version}" ]; then
                 cp /config-seed/opencode.json /storage/opencode-config/opencode.json
-                echo "[prepare] seeded opencode.json"
+                printf '%s\n' "${seed_version}" > /storage/opencode-config/.seed-version
+                echo "[prepare] seeded opencode.json (seed-version ${seed_version})"
               fi
               if [ ! -d /storage/workspaces/homelab-2nd/.git ]; then
                 git clone --depth 1 https://github.com/gulasz101/homelab-2nd.git \
@@ -143,7 +148,7 @@ spec:
               cpu: "2"
               memory: 1Gi
         - name: openchamber
-          image: ghcr.io/gulasz101/openchamber-web:1.23.1-r3
+          image: ghcr.io/gulasz101/openchamber-web:1.23.1-r4
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -189,6 +194,15 @@ spec:
                 secretKeyRef:
                   name: openchamber-secrets
                   key: OPENVIKING_API_KEY
+            # The OpenChamber agent's own Itsaplan key. Gives worker sessions
+            # board autonomy (decompose, link, move, assign) through the
+            # `itsaplan` MCP server. See ADR-022; injected process-wide, so it
+            # is visible to any session in this pod (single-tenant homelab).
+            - name: ITSAPLAN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-itsaplan-agent-key
+                  key: ITSAPLAN_API_KEY
             # GitHub access — token from SOPS, never written to disk.
             - name: GITHUB_TOKEN
               valueFrom:
@@ -221,6 +235,10 @@ spec:
             - name: local
               mountPath: /home/openchamber/.local/state/opencode
               subPath: opencode-state
+            # The itsaplan-tasks skill, loaded from the config dir (the repo's
+            # /.opencode/ is git-ignored, so skills ship as ConfigMaps).
+            - name: itsaplan-skill
+              mountPath: /storage/opencode-config/skill/itsaplan-tasks
           readinessProbe:
             httpGet:
               path: /health
@@ -262,6 +280,10 @@ spec:
         - name: config-seed
           configMap:
             name: openchamber-opencode-config
+        - name: itsaplan-skill
+          configMap:
+            name: openchamber-itsaplan-skill
+            defaultMode: 0644
         # Vault-sync sidecar volumes (H2-28).
         # syncthing-home: writable home (index db + staged identity/config).
         # emptyDir = local NVMe scratch, wiped on pod restart (index rebuilds

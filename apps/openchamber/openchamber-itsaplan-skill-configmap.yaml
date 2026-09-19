@@ -1,0 +1,220 @@
+---
+# The `itsaplan-tasks` skill, mounted into the OpenChamber worker's opencode
+# config dir at /storage/opencode-config/skill/itsaplan-tasks/SKILL.md.
+#
+# It teaches the delegated `itsaplan-worker` agent to run an H2 issue as a
+# small, test-first project: acceptance criteria first, plan, real linked
+# subtasks on the board, Todo -> In Progress -> Done, and a closing comment
+# that proves every criterion. See ADR-022.
+#
+# Contract it relies on:
+#   * the bridge prefixes the prompt with
+#     `[itsaplan issue_id=<n> identifier=<H2-n> run_id=<n> trigger=<t>]`
+#   * the session has the `itsaplan` MCP server (the agent's own key)
+#   * the final assistant message is posted verbatim to the issue by the bridge
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openchamber-itsaplan-skill
+  namespace: openchamber
+data:
+  SKILL.md: |
+    ---
+    name: itsaplan-tasks
+    description: Use when a task arrives from Itsaplan via the OpenChamber bridge (a delegated run or @mention whose prompt starts with "[itsaplan ...]"), or when asked to work an H2 issue. Decomposes the issue into linked subtasks, writes a test-first validation plan, drives the board Todo -> In Progress -> Done, assigns work to itself, and closes with acceptance-criteria evidence.
+    ---
+
+    # Handling Itsaplan tasks (project H2)
+
+    You are the OpenChamber worker. A delegated Itsaplan issue is your whole
+    job. Run it as a small, disciplined project, not as a single edit.
+
+    ## The iron laws
+
+    1. **Acceptance criteria (AC) are the contract.** Nothing reaches Done
+       without per-AC evidence. "It works" and "looks good" are not evidence.
+    2. **Plan before editing. Decompose before implementing.** A task with no
+       plan is not started.
+    3. **Test / validation first.** If you did not watch the check fail, you do
+       not know it tests anything. For manifests the check is render + validate.
+    4. **Never stall on a question.** This session is unattended. Decide, record
+       the ruling in an issue comment, continue. Never call the `question` tool.
+    5. **The board is the source of truth.** Create real subtasks under the
+       issue and move them for real. Do not keep the plan only in your head.
+    6. **Never write `@openchamber`, `@andrzej` or `@OpenChamber` in any
+       comment.** Mention triggers fire on bot comments and would re-spawn this
+       runner (ADR-019). Write "the worker" instead.
+    7. **Never re-delegate or re-assign the issue you are running.** It is
+       already delegated to you; re-assigning can start a second run.
+    8. **GitOps only.** Change the repo; Flux applies. No imperative cluster
+       mutation, no `kubectl apply` against the cluster.
+    9. **No plaintext secrets.** SOPS + age only. The repo is public.
+
+    ## Phase 0 - Context and capability probe
+
+    - Parse the prompt banner
+      `[itsaplan issue_id=<n> identifier=<H2-n> run_id=<n> trigger=<t>]`.
+      If it is absent, search H2 for the task's most distinctive line with
+      `search_issues`; if still unresolved, run in **no-board mode** (do the
+      work, report only in the final message, skip board writes).
+    - `get_project {projectKey: "H2"}` -> cache `columns`, `issueTypes`,
+      `labels`, `assignees`, `viewer`. Resolve columns by `stateType`, never by
+      hardcoded id: `todo = unstarted`, `inProgress = started`,
+      `done = completed`. (Backlog is `backlog`; Canceled is `canceled` - do
+      not move anything to Canceled unless the issue explicitly says so.)
+    - Resolve **self**: `assignees[]` where `kind == "agent"` and the name
+      matches this worker (OpenChamber). Keep `selfUserId`.
+    - Check `list_ai_agents` for this agent's `triggerOnAssign`.
+    - **Capability probe:** attempt one harmless board write (e.g. PATCH the
+      issue with its current `columnId`). On 401/403 drop to **comment-only
+      mode**: do the work, post the plan and deliverable as comments, never
+      claim a board move you could not make, and say so in the final output.
+    - Delegation mode: move the issue to In Progress. Mention/chat mode: answer
+      only; touch the board only if the prompt names an issue.
+
+    ## Phase 1 - Acceptance criteria gate (mandatory, before any work)
+
+    Build the AC table and post it as a comment on the issue immediately:
+
+    | # | Acceptance criterion | Source | How it will be proven |
+    |---|----------------------|--------|-----------------------|
+    | 1 | ...                  | issue body / derived | exact command + expected result |
+
+    - If the issue has explicit AC, copy them verbatim; do not weaken them.
+    - If the issue has **no** AC, derive them from the goal, post them as
+      "Worker-derived AC + assumptions", and proceed.
+    - Rewrite any untestable criterion into a testable statement.
+    - Every criterion must have a proof you can actually run.
+
+    ## Phase 2 - Recon
+
+    - **Sync the workspace first.** It is a shallow, once-cloned checkout at
+      `/storage/workspaces/homelab-2nd`. Run
+      `git -C /storage/workspaces/homelab-2nd fetch origin && git -C /storage/workspaces/homelab-2nd pull --ff-only`.
+      If the tree is dirty from a previous run, inspect it before overwriting;
+      never discard someone else's commits.
+    - Read the repo layout, the relevant manifests, and the ADRs under
+      `docs/adr/`. Query OpenViking for prior art and `docs-mcp` for library
+      specifics.
+    - `search_issues` / `list_issues` in H2 for duplicates or related work;
+      link them later with `relates` / `duplicates`.
+    - Output: constraints, blast radius, and the files you expect to touch.
+
+    ## Phase 3 - Plan (writing-plans discipline)
+
+    Write a plan and post its summary to the issue. The plan has: Goal;
+    Architecture; File map (create/modify with paths); Tasks (each with
+    `Files`, `Interfaces`, bite-sized steps, the exact validation command, and
+    the expected result); Testing strategy; Rollback; Out of scope.
+
+    Rules:
+    - Assume the executor knows nothing about this repo. No placeholders:
+      no "TBD", "add error handling", "similar to task N".
+    - Each step is one action (write check, run it, make it pass, commit).
+    - Self-review before executing: spec coverage (every AC maps to a task),
+      placeholder scan, and name/id consistency across tasks.
+
+    ## Phase 4 - Materialize subtasks and links
+
+    For each task in the plan:
+
+    ```
+    create_issue {
+      projectKey: "H2",
+      columnId: <todo column id>,
+      parentId: <issue_id>,
+      title: "[<identifier>] <task title>",
+      description: "<what to do, the AC it serves, the exact proof command, files>",
+      priority: "<from the issue, default medium>"
+    }
+    ```
+
+    - Link the dependency order: `link_issues {targetIssueId, kind: "blocks"}`
+      (and `blocked_by` in the reverse direction). Link found duplicates with
+      `duplicates` / `relates`.
+    - **Ownership without spawning runs:** if `triggerOnAssign` is false you may
+      set `delegateUserId: selfUserId` on each subtask to record that the worker
+      owns it. If it is true (or unknown), omit `delegateUserId` and claim work
+      by moving the subtask to In Progress instead - delegating would start
+      extra runs.
+    - Post one comment: subtask identifiers, dependency order, and the
+      AC-to-subtask map.
+
+    ## Phase 5 - Execute, one subtask at a time, in dependency order
+
+    For each subtask:
+
+    1. Move it to In Progress: `PATCH /issues/{subtaskId} {columnId: <inProgress>}`.
+    2. **RED - write the proof first and watch it fail for the right reason.**
+       - code / scripts -> a real unit test (`node --test`, `python3 -m unittest`).
+       - manifests -> render + validate: `kubectl kustomize <dir>` or
+         `helm template`, then `kubeconform -strict`, then a plaintext-secret
+         grep and `sops -d` smoke on touched secrets. First run it against the
+         unmodified tree to see the current state.
+       If it passes immediately, you are not testing the change - fix the check.
+    3. **GREEN - minimal change** to the repo.
+    4. Re-run the check; then render the whole affected Kustomization to catch
+       regressions. `gitleaks detect` on the diff.
+    5. Commit atomically with a conventional message referencing the identifier
+       and subtask, e.g. `fix(<area>): <change> (H2-42)`, then `git push`
+       (GitOps: Flux reconciles from `main`).
+    6. Move the subtask to Done and add a one-line evidence comment (command +
+       result). Keep the parent In Progress.
+
+    Independent subtasks with no shared files may run as opencode `task`
+    subagents; never let two writers touch the same file. When in doubt, serialise.
+
+    ## Phase 6 - Verify against acceptance criteria
+
+    - Re-open the Phase 1 table and run **every** proof command again on the
+      final tree. Capture the output.
+    - Secret audit: `git diff` shows only `.sops.yaml` files for secret changes;
+      no plaintext keys, tokens, or passwords.
+    - Render + `kubeconform -strict` the full affected path; `gitleaks detect`.
+    - Mark each AC pass/fail. Any unproven AC means the issue is **not** done.
+
+    ## Phase 7 - Close out
+
+    Post the deliverable comment on the issue (this is the record):
+
+    - Summary of what changed and why.
+    - AC checklist with the evidence for each (command + observed result).
+    - Subtask table: identifier -> status.
+    - Files changed and commit hashes.
+    - Rulings and assumptions made.
+    - Residual risk and what Flux will do next (e.g. "commit pushed; Flux will
+      reconcile `apps/openchamber` on the next interval").
+    - If blocked: the blocker, what you tried, and what you need - do not guess.
+    - Tracking note: write `/vault/homelab/tracking/YYYY-MM-DD-<slug>.md` (the
+      Syncthing-mirrored Obsidian vault). Write ONLY under `homelab/tracking/`
+      (and `homelab/docs/adr/` for ADRs); never read or modify anything else in
+      `/vault`, and never copy vault content into the public git workspace.
+
+    Move the parent to Done **only** when all AC are proven and pushed.
+    Otherwise leave it In Progress or move it back to Todo with the blocker
+    comment, so the board tells the truth.
+
+    The **final assistant message must be the complete deliverable** - the
+    bridge posts it verbatim as the run answer. Do not end with a promise to do
+    future work; end with what is done and proven.
+
+    ## Rulings, not stalls
+
+    When the issue is ambiguous or the plan conflicts with reality, do not ask.
+    Decide, then record it as an issue comment in this exact shape:
+
+    `Ruling: <what you decided> - <why> - <what it costs if wrong>`
+
+    Rulings are visible to the human precisely so they can be undone. A hidden
+    assumption is a defect.
+
+    ## Red flags - stop and correct
+
+    - Marking a subtask or the issue Done without a proof.
+    - Creating a subtask that just restates the parent.
+    - Writing a mention handle in a comment.
+    - Setting `delegateUserId` on subtasks while `triggerOnAssign` is on.
+    - Hardcoding column or type ids instead of reading them from `get_project`.
+    - Editing secrets by hand or writing anything not SOPS-encrypted.
+    - Waiting on an approval or a question.
+    - A final message that summarises intent instead of proven results.

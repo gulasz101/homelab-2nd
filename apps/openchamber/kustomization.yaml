@@ -15,6 +15,8 @@ resources:
   - openchamber-storage-pvc.yaml
   - openchamber-data-pv.yaml
   - openchamber-config-configmap.yaml
+  # itsaplan-tasks skill for the delegated worker (ADR-022)
+  - openchamber-itsaplan-skill-configmap.yaml
   - openchamber-syncthing-configmap.yaml
   # OpenChamber worker (t460)
   - openchamber-deployment.yaml

@@ -37,7 +37,7 @@ jobs:
           file: build/openchamber/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/openchamber-web:1.23.1-r3
+            ghcr.io/${{ github.repository_owner }}/openchamber-web:1.23.1-r4
             ghcr.io/${{ github.repository_owner }}/openchamber-web:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

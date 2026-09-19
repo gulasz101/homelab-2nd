@@ -39,6 +39,7 @@ data:
     const ITSAPLAN_BASE = (process.env.ITSAPLAN_URL || '').replace(/\/+$/, '');
     const ITSAPLAN_API_KEY = process.env.ITSAPLAN_API_KEY || '';
     const ISSUE_ID = process.env.ITSAPLAN_ISSUE_ID || '';
+    const ISSUE_KEY = process.env.ITSAPLAN_ISSUE || '';
     const RUN_ID = process.env.ITSAPLAN_RUN_ID || '';
     const TRIGGER = process.env.ITSAPLAN_TRIGGER || '';
     // Wait-loop budget. The runner does NOT export ITSAPLAN_TIMEOUT_MS to the
@@ -133,7 +134,12 @@ data:
       if (!task) fail('empty task on stdin', 2);
 
       const token = await login();
-      const title = task.split('\n')[0].slice(0, 70) || 'Itsaplan task';
+      // Give the worker session the issue context the itsaplan-tasks skill
+      // needs (issue id/key/run/trigger) without polluting the visible title.
+      const banner = `[itsaplan issue_id=${ISSUE_ID || 'unknown'} identifier=${ISSUE_KEY || 'unknown'} run_id=${RUN_ID || 'unknown'} trigger=${TRIGGER || 'unknown'}]`;
+      const prompt = `${banner}\n\n${task}`;
+      const firstLine = task.split('\n')[0].slice(0, 70) || 'Itsaplan task';
+      const title = `${ISSUE_KEY ? `${ISSUE_KEY} ` : ''}${firstLine}`.slice(0, 70);
       const created = await api('/api/openchamber/sessions', {
         method: 'POST',
         body: JSON.stringify({ directory: DIRECTORY, title: `[itsaplan] ${title}` }),
@@ -161,7 +167,7 @@ data:
         method: 'POST',
         body: JSON.stringify({
           directory: DIRECTORY,
-          prompt: task,
+          prompt: prompt,
           providerID: PROVIDER,
           modelID: MODEL,
           agent: AGENT,

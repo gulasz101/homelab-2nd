@@ -75,9 +75,20 @@ runner then reports that stdout through `POST /agent-runs/{runId}/result` (deleg
 `/agent-chats/{messageId}/events` + `/result` pair (mentions), so the final assistant text is
 the answer that lands on the issue.
 
-Unlike Mac Hermes, this worker has **no Itsaplan MCP credentials or tools**, so it cannot call
-`add_comment` itself. Since commit `8a1cb93` + [ADR-019](./adr/adr-019-itsaplan-agent-results-post-back-via-bridge.md)
-the **bridge posts the run outcome back to the issue itself**:
+Unlike Mac Hermes, this worker historically had no Itsaplan credentials. Since
+ADR-022 (vault `homelab/docs/adr/`) the `itsaplan-worker`
+session runs with the OpenChamber agent's own key through a remote **`itsaplan`
+MCP server** (`https://plan-api.voitech.dev/mcp`, `Authorization: Bearer`), and
+loads the **`itsaplan-tasks` skill** (ConfigMap `openchamber-itsaplan-skill`,
+`/storage/opencode-config/skill/itsaplan-tasks/SKILL.md`). The skill makes the
+worker: extract acceptance criteria, plan, create real H2 subtasks with
+`parentId`, link dependencies via `link_issues`, drive them Todo -> In Progress ->
+Done, keep the board truthful on failure, and close with per-criterion evidence.
+The bridge prefixes the session prompt with
+`[itsaplan issue_id=<n> identifier=<H2-n> run_id=<n> trigger=<t>]` so the skill
+knows which issue it runs.
+
+The bridge still posts the run outcome back to the issue itself:
 - on success: `@admin Deliverable — OpenChamber session <id>` + the final assistant text
   (truncated at 12 000 chars), via `POST /issues/{ITSAPLAN_ISSUE_ID}/comments`
   with the `x-api-key` header (the runner pod's own `ITSAPLAN_API_KEY`);
@@ -112,5 +123,10 @@ A timed-out run leaves the session running; raise both together if longer tasks 
   `apps/openchamber/openchamber-itsaplan-runner-deployment.yaml`).
 - OpenChamber twin: `apps/openchamber/openchamber-itsaplan-bridge-configmap.yaml`,
   `apps/openchamber/openchamber-itsaplan-runner-configmap.yaml`.
-- Not readable from the worker: the Mac Hermes skill source itself and the H2-19 issue body,
-  because the OpenChamber worker has no Itsaplan MCP key or issue-tracker tool (2026-09-15).
+- Board autonomy: ADR-022 (vault `homelab/docs/adr/`),
+  skill `apps/openchamber/openchamber-itsaplan-skill-configmap.yaml`, MCP +
+  `skills.paths` in `apps/openchamber/openchamber-config-configmap.yaml`,
+  key injection in `apps/openchamber/openchamber-deployment.yaml`.
+- Not readable from the worker: the Mac Hermes skill source itself. (Before
+  ADR-022 the OpenChamber worker also had no Itsaplan key/tools; it now has the
+  agent's own key scoped by its H2 role.)
