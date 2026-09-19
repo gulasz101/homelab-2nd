@@ -23,6 +23,10 @@ resources:
   - mattermost/cloudflared-chat-deployment.yaml
   # Pre-SSO on-demand CNPG backup (audit trail)
   - mattermost/mattermost-on-demand-backup.yaml
+  # H2-24: one-time purge of dead FCM device sessions. Kept active on purpose:
+  # the DELETE is idempotent, so re-applying on a rebuild is harmless, and a
+  # completed Job is not re-executed by Flux.
+  - mattermost/purge-dead-push-sessions-job.yaml
   # One-off Job to configure Mattermost GitLab SSO via Authentik.
   # Kept in repo as a recipe, but not reconciled continuously: it disables
   # email/username sign-in, which is now intentionally enabled for native apps.
