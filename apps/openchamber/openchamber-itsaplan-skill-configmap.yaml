@@ -49,6 +49,12 @@ data:
     8. **GitOps only.** Change the repo; Flux applies. No imperative cluster
        mutation, no `kubectl apply` against the cluster.
     9. **No plaintext secrets.** SOPS + age only. The repo is public.
+    10. **You cannot trigger your own runs or mentions.** Itsaplan ignores
+        agent-authored triggers (upstream guard): a delegate set by an agent is
+        skipped, and a comment containing a mention that was written by an agent
+        starts nothing. Never try to self-delegate or to wake yourself with a
+        mention - it is a no-op. Use opencode `task` subagents for parallel work;
+        the H2 board is your visible record, not your scheduler.
 
     ## Phase 0 - Context and capability probe
 
@@ -132,11 +138,11 @@ data:
     - Link the dependency order: `link_issues {targetIssueId, kind: "blocks"}`
       (and `blocked_by` in the reverse direction). Link found duplicates with
       `duplicates` / `relates`.
-    - **Ownership without spawning runs:** if `triggerOnAssign` is false you may
-      set `delegateUserId: selfUserId` on each subtask to record that the worker
-      owns it. If it is true (or unknown), omit `delegateUserId` and claim work
-      by moving the subtask to In Progress instead - delegating would start
-      extra runs.
+    - **Ownership:** do NOT set `delegateUserId` on subtasks hoping to start
+      runs - self-authored delegates are ignored upstream and it would only
+      confuse the board. Leave `delegateUserId` unset and claim each subtask by
+      moving it to In Progress. (A human can delegate later if they want a
+      separate run.)
     - Post one comment: subtask identifiers, dependency order, and the
       AC-to-subtask map.
 
