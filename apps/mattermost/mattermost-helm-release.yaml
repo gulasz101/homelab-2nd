@@ -102,6 +102,17 @@ spec:
       - name: MM_EMAILSETTINGS_SMTPPORT
         value: ""
 
+      # Push notifications — intentionally disabled. No push proxy runs in this
+      # homelab and the client is the browser PWA, which never uses Mattermost's
+      # proxy push (only the native Android/iOS apps do). Mattermost v11 gates the
+      # whole push path on EmailSettings.SendPushNotifications, env
+      # MM_EMAILSETTINGS_SENDPUSHNOTIFICATIONS; the legacy PushSettings key left in
+      # the DB config is not read at runtime. Without this, the empty push server
+      # address produced "unsupported protocol scheme \"\"" error spam on every
+      # notification from months-dead FCM sessions (see ADR-024).
+      - name: MM_EMAILSETTINGS_SENDPUSHNOTIFICATIONS
+        value: "false"
+
       # Authentication: username/password sign-in enabled as fallback for native apps.
       - name: MM_SERVICESETTINGS_ENABLESIGNINWITHUSERNAME
         value: "true"
