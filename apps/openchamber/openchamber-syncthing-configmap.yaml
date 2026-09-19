@@ -34,7 +34,7 @@ data:
           <address>dynamic</address>
         </device>
         <device id="I7WWMCK-LJ3WRS3-MZB4PK4-XPCPVUY-7FSFCJD-AVUIMBF-BKSE7CA-L77QDAE" introducedBy="">
-          <address>tcp://192.168.1.148:22000</address>
+          <address>tcp://192.168.1.129:22000</address>
         </device>
         <minDiskFree unit="%">1</minDiskFree>
         <versioning type="trashcan">
@@ -63,7 +63,7 @@ data:
         <maxRecvKbps>0</maxRecvKbps>
       </device>
       <device id="I7WWMCK-LJ3WRS3-MZB4PK4-XPCPVUY-7FSFCJD-AVUIMBF-BKSE7CA-L77QDAE" name="wojciechs-macbook-pro" compression="metadata" introducer="false" skipIntroductionRemovals="false" introducedBy="">
-        <address>tcp://192.168.1.148:22000</address>
+        <address>tcp://192.168.1.129:22000</address>
         <paused>false</paused>
         <autoAcceptFolders>false</autoAcceptFolders>
         <maxSendKbps>0</maxSendKbps>

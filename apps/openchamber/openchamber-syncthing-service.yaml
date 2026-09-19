@@ -3,9 +3,12 @@
 # M1 Max over the LAN (H2-28).
 #
 # Traffic shape:
-#   Mac (192.168.1.148:22000) <—LAN— t460 NodePort 30195 → sidecar :22000
-# NodePort exists so the Mac can dial the pod directly by node IP; the pod dials
-# the Mac by its static address. No LB, no ingress, no tunnel, never public.
+#   Mac (192.168.1.129:22000) <—LAN— t460 NodePort 30195 → sidecar :22000
+# NodePort exists so the Mac can dial the pod directly by node IP; the pod
+# also dials the Mac's address (NOTE: DHCP lease moved .148 → .129 on
+# 2026-09-19; sync still works because the Mac dials inbound, but keep this
+# pinned address current). Set a static DHCP reservation on OPNsense.
+# No LB, no ingress, no tunnel, never public.
 apiVersion: v1
 kind: Service
 metadata:

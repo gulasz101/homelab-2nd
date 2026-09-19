@@ -71,4 +71,4 @@ spec:
             namespace: karakeep
           annotations:
             summary: "Karakeep AI inference is failing"
-            description: "LiteLLM is recording repeated failures for gemma-4-12b-uncensored (Karakeep tagging/summarization). Check LM Studio on the M1 Max is running and that its LAN IP still matches the litellm api_base (currently 192.168.1.148:1234)."
+            description: "LiteLLM is recording repeated failures for gemma-4-12b-uncensored (Karakeep tagging/summarization). Check LM Studio on the M1 Max is running and that its LAN IP still matches the litellm api_base (currently 192.168.1.129:1234; lease moved from .148 on 2026-09-19)."
