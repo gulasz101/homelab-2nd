@@ -1,0 +1,3 @@
+# scope-probe: verifies GITHUB_TOKEN can write workflows (deleted after test)
+on:
+  workflow_dispatch:
