@@ -1,0 +1,92 @@
+---
+# H2-24 one-time data hygiene: purge the dead FCM device sessions that kept the
+# Mattermost server trying (and failing) to push on every notification.
+#
+# Why this is needed even though push is disabled in the HelmRelease:
+#   Mattermost v11 gates *message* and *test* pushes on
+#   EmailSettings.SendPushNotifications, but the "clear" push path
+#   (clearPushNotificationSync -> sendPushNotificationToAllSessions) and the
+#   plugin API SendPushNotification call the session fan-out directly, with NO
+#   config check. Verified live 2026-09-19: the server reports
+#   CanReceiveNotifications=false (push disabled) yet still logs
+#   push_proxy_send_error for push_type=clear, 100% of them to these two dead
+#   device sessions.
+#
+# This is a data migration, not configuration: it deletes stale device sessions
+# so the server has no push targets at all.
+#
+# Credentials: the mattermost-db-credentials Secret holds a DSN without a URL
+# scheme (user:pass@host:port/db?params). It is parsed into libpq PG* env vars
+# in-shell and never passed as an argv to psql, so a parse error cannot echo the
+# password into logs.
+#
+# Name is "-gen2": Kubernetes Jobs are immutable, so a fixed Job had to be
+# replaced rather than edited. To re-run after a DB restore that reintroduces
+# old sessions, bump the name again and remove the old one.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mattermost-purge-dead-push-sessions-gen2
+  namespace: mattermost
+  labels:
+    app.kubernetes.io/part-of: mattermost
+    homelab.voitech.dev/one-time: H2-24
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: mattermost
+        homelab.voitech.dev/one-time: H2-24
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: psql
+          image: ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie
+          env:
+            - name: PGCONN
+              valueFrom:
+                secretKeyRef:
+                  name: mattermost-db-credentials
+                  key: externalConnectionString
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              PSQL="$(command -v psql || true)"
+              if [ -z "$PSQL" ]; then
+                PSQL="$(ls /usr/lib/postgresql/*/bin/psql /usr/local/bin/psql 2>/dev/null | head -1)"
+              fi
+
+              # Normalise a scheme-less DSN, then split it into PG* variables so
+              # the password never appears in an argument or an error message.
+              DSN="$PGCONN"
+              case "$DSN" in
+                postgres://*) DSN="${DSN#postgres://}" ;;
+                postgresql://*) DSN="${DSN#postgresql://}" ;;
+              esac
+              creds="${DSN%%@*}"
+              rest="${DSN#*@}"
+              PGUSER="${creds%%:*}"
+              PGPASSWORD="${creds#*:}"
+              hostport="${rest%%/*}"
+              PGHOST="${hostport%%:*}"
+              PGPORT="${hostport##*:}"
+              dbq="${rest#*/}"
+              PGDATABASE="${dbq%%\?*}"
+              export PGUSER PGPASSWORD PGHOST PGPORT PGDATABASE
+              if [ "$dbq" != "$PGDATABASE" ]; then
+                sslmode="$(printf '%s' "${dbq#*\?}" | tr '&' '\n' | sed -n 's/^sslmode=//p')"
+                [ -n "$sslmode" ] && export PGSSLMODE="$sslmode"
+              fi
+              unset DSN creds rest hostport dbq PGCONN
+
+              echo "connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}"
+              echo "device sessions before:"
+              "$PSQL" -Atc "SELECT count(*) FROM sessions WHERE deviceid <> '';"
+              echo "deleting known dead sessions:"
+              "$PSQL" -Atc "DELETE FROM sessions WHERE id IN ('be9n4hqgtbnzdfwye6aypg113o','4r4ceckxzidfbfewbp4oy9h41o') RETURNING id;"
+              echo "device sessions after:"
+              "$PSQL" -Atc "SELECT count(*) FROM sessions WHERE deviceid <> '';"
+              echo "done"

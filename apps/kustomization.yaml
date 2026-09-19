@@ -25,8 +25,9 @@ resources:
   - mattermost/mattermost-on-demand-backup.yaml
   # H2-24: one-time purge of dead FCM device sessions. Kept active on purpose:
   # the DELETE is idempotent, so re-applying on a rebuild is harmless, and a
-  # completed Job is not re-executed by Flux.
-  - mattermost/purge-dead-push-sessions-job.yaml
+  # completed Job is not re-executed by Flux. "-gen2" because Jobs are immutable;
+  # bump the name if it ever needs to run again.
+  - mattermost/purge-dead-push-sessions-job-gen2.yaml
   # One-off Job to configure Mattermost GitLab SSO via Authentik.
   # Kept in repo as a recipe, but not reconciled continuously: it disables
   # email/username sign-in, which is now intentionally enabled for native apps.
