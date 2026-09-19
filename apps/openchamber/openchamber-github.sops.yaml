@@ -5,7 +5,7 @@ metadata:
     namespace: openchamber
 type: Opaque
 stringData:
-    GITHUB_TOKEN: ENC[AES256_GCM,data:BFS9JloTGz6T1Dp2XhXKE4x4jX5Obod5yJXQsuimAlIJADAh+6i6YA==,iv:AdZwb5fMTiH66Ez38hamrJk16yt9QDVET8slIsKmRSY=,tag:lpchzZdYBDsN3neCUCiFvw==,type:str]
+    GITHUB_TOKEN: ENC[AES256_GCM,data:+n9unabXZiw+ir0dycDfRdhBFd26WaudksZnBwt5wHWjzgX63lqaUA==,iv:PyWoXVzMfkBhY4r+t851Q0wy1gKoaZK+Wr7QXQzfNHc=,tag:45nJ1NDv51ilU3+ebU3Xgw==,type:str]
 sops:
     age:
         - enc: |
@@ -18,6 +18,6 @@ sops:
             -----END AGE ENCRYPTED FILE-----
           recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-09-14T21:33:46Z"
-    mac: ENC[AES256_GCM,data:x23z2C5kw8+fAKrYsqnYfOzf6koAmWLRCPRks5o8IaK/QCKrvlj7yLTlxwk7TiaP2dt5/gMV/pZ1wvuqpz9ypRjzMDN8FNLrDzZ9Dw1RrXTwcaTsWSwpcHHLRr1J2DnCjllQAEi7r6h+N9/5+x/1YknkacVuwYXzo9FwpHepIe0=,iv:U7wtEY99kV5qPhOLTumZChuk5P7GK/VjXk3B/y9fJ7U=,tag:q2ALaZBS3yDY9ChOyv/6yg==,type:str]
+    lastmodified: "2026-09-19T14:23:58Z"
+    mac: ENC[AES256_GCM,data:igMDBnCzfjC9e3PYwWoBPh/sSsJiH8TiPIRNV1JcEJZFZhwMx9m4lkbkqzQl3glZV5kEIHyfedTWeyi+IhHqouG/JT/WO+pCantMya1rpUa9xRb6R3RHicIwRR7HaQbH+hl0QIXhNbU2yCK1V+X/bGVI6ehLpxPVX3JKViakXrg=,iv:tMjDISX3Jj2AApQEW7rl3VWEnwTmSTU0BOYy5HOqF98=,tag:j5KA01hGdX+pMIFskO+rTw==,type:str]
     version: 3.13.3
