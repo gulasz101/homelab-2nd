@@ -271,12 +271,15 @@ spec:
         - model_name: gemma-4-12b-uncensored
           litellm_params:
             # LM Studio on the M1 Max, reached over the LAN (NOT NetBird).
-            # The Mac's address is a static lease on OPNsense (m1max.local);
+            # The Mac's address comes from an OPNsense DHCP lease (m1max.local);
             # K8s pods cannot resolve `.local`, so pin the LAN IP here. If the
             # address ever changes it must be updated in ONE place: this line.
+            # NOTE 2026-09-19: the lease is NOT truly static — it moved .148 → .129
+            # and broke this route (connection refused). Set a static DHCP
+            # reservation on OPNsense to stop this recurring.
             # Reachable from homelab-2nd; no real API key required.
             model: openai/gemma4-12b-qat-uncensored-hauhaucs-balanced
-            api_base: "http://192.168.1.148:1234/v1"
+            api_base: "http://192.168.1.129:1234/v1"
             api_key: "os.environ/DUMMY_API_KEY"
 
         # ── OpenCode Go subscription models (all with -go suffix) ──────
