@@ -47,6 +47,14 @@ spec:
             # Per-request CSRF cookies: several concurrent login tabs on the same browser
             # must not clobber each other's handshake (CSRF token mismatch 403s, 2026-09-15).
             - --cookie-csrf-per-request=true
+            # Disable upstream keep-alive pooling. OpenChamber (Node) closes idle keepalive
+            # connections at Node's default server.keepAliveTimeout = 5s, while oauth2-proxy
+            # pools connections for 90s (Go http.Transport IdleConnTimeout). A request that
+            # lands on a pooled-but-already-closed connection dies mid-body
+            # ("connection reset by peer") -> 502 at the CF edge. Reproduced 2026-09-19:
+            # 3s idle reuse OK, 6s idle reuse DEAD. Fresh connection per request removes
+            # the race; LAN handshake cost is negligible.
+            - --disable-keep-alives
           env:
             - name: OAUTH2_PROXY_CLIENT_ID
               valueFrom:
