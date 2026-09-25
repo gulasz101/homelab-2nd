@@ -4,24 +4,25 @@ metadata:
     name: litellm-provider-keys
     namespace: llm-hub
 stringData:
-    GLM_API_KEY: ENC[AES256_GCM,data:KGrGOWRbq7iPVmGaKxe1Ei4NVwSjyKHwmENgumCMT0HIlkHACKSLLFPKAUvP+ETE5w==,iv:1xbrYsBkdIwIVA5MpZmjlQLODgE6mDbCCs87Z85xBzE=,tag:1/fY63bri/YQEJrfmHZtjQ==,type:str]
-    MISTRAL_API_KEY: ENC[AES256_GCM,data:7M6xaWooE0eggEnhAVF5q0/cwW9r/2Aw4MSEL+3BBK4=,iv:mqLQnaqubG9qX3OpSALHDbFuvJ1QpfWCRcSRgOcQMJk=,tag:NPwgUbUKVTNg+dWK6Gh9jg==,type:str]
-    OLLAMA_API_KEY: ENC[AES256_GCM,data:siscqFU/pFkWAgBfb+53MmPajU3QFPEHg3M037T80BVtqGw1ewx+RT6bNWuzQSqX+FvWZDROPa/x,iv:Shm72KcjiFBweTmNrllNqF1wQaPhLWN5B62G/Tdq5GU=,tag:GFuFGBm2N4Cx59TU475ZQg==,type:str]
-    OPENCODE_GO_SUBSCRIPTION_API_KEY: ENC[AES256_GCM,data:L26qsJhyP0gDnqbMhK9pbOyklpiiKwv3ZHSKrlOp/mmiAkauQTUqNxi1ilJrUqkz/YKGJ9hdgryuuTKwkj/DisZhJA==,iv:x32ZzfUx+RyYjp/gpi822Oqcej06BnezNp2JL7gm2DU=,tag:L61TUE8yHhKXRm81Y26bxg==,type:str]
-    OPENROUTER_API_KEY: ENC[AES256_GCM,data:Ww/TjssaPo9rLDLvRoOs7d4nk55LFBMTKd52s5WSs7ZzpCMJJcchlvnyovdEbLEnbkkqeIoBeoDTKblQMaFXbP6wRoR/tQSLeg==,iv:IKAJHJehQJwKH3o/YoCzvWvXfJARP5OCEOvFzT3WjVs=,tag:yiSmiyga14DqKgejz6ttKA==,type:str]
+    GLM_API_KEY: ENC[AES256_GCM,data:QXvCObqTUp2a0vjgKMoCZqSqh8uHSHNs0HjNiYhTJKQzHSRfoWndy+8srtpT9Mlhzg==,iv:NA4AUWgm4v1Z689dg0x8O2q/jZ+N5aSrnvsp/x2e9PM=,tag:xge6wb29KG4+srGssYkDLA==,type:str]
+    MISTRAL_API_KEY: ENC[AES256_GCM,data:1Flu2fgjYMTe2BUweohZxff/hs+ntLOP2RpURjnaWI4=,iv:43kBapnh3tpDX0ku55QiOMX74aaJJ23giEmpPaqx5r8=,tag:KiAgPxSaq80QzX2zuSpfUg==,type:str]
+    OLLAMA_API_KEY: ENC[AES256_GCM,data:FSRH3+4mLPGA75rZIXNOxk2fwdCJ6b+XUON3NYZyOoeP2ypfGWcJ5xT+kN0JjGXEe6F0Uar/iGQF,iv:XxYMFstm0oLTgwC/Av+XveK9206RWtNuek+VRKcthYE=,tag:xvZh6LTzWABDPrIaeZ775A==,type:str]
+    OPENCODE_GO_SUBSCRIPTION_API_KEY: ENC[AES256_GCM,data:AzIsNt9yhzSpN4h+VXlPcMkSehMcg4h/r+iTWlzYmKr+YC8QIuzq/qszpHTZd/f0ti9zR25AchSJoiCteUwON6z3Pw==,iv:YCT+Oa7DXaFutaNZbO+HcdDqODeQVMHq6hXJecbrdkM=,tag:8U8QwHtQbku4w80hCt+xHw==,type:str]
+    GEMINI_API_KEY: ENC[AES256_GCM,data:qQVSTy+qyc8MGSokQgKHfPCIfThMZW+oPATRALvcK0VJq41Bs6Dd80KBb64PV4oyp8yP7mk=,iv:fhifxBnKXcrCrq00MGoyQemfkPSB9nGTGG2XwEuPzmk=,tag:iyjBmQxZeIWrdpnEqXHG9w==,type:str]
+    OPENROUTER_API_KEY: ENC[AES256_GCM,data:4FbWDW7Yo7CzSerQBnj//5hKUwrfK1ztqUhaSekpTCB5X0z64NeGjjZWiI5gWJkHXs1HRaWZus+zu06WTXCrAWYGFqfgqUdLUA==,iv:93+ivP0NstWuaD8QbtZct+P5lR7gFidREFaZOaveb+g=,tag:ho/wSfyQrRJNbp2ICGMt+g==,type:str]
 type: Opaque
 sops:
     age:
         - enc: |
             -----BEGIN AGE ENCRYPTED FILE-----
-            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBIRlZWSmJnV2pNZXVoYTlQ
-            WlhoT3NvYTd1MVdUa29oQUs5Tnk2TlBoZVZVCjN6ODNFSDZRNis0QWUxWlVqRFYw
-            clEyb3ltVVNlY2RkN1crV3k0d1hOZmMKLS0tIFRMSFRua0ZpTWZwNXBEd3BESGRP
-            dXV1bTF6Z1FGYWlwUWhuQ2N0cko1RVkKS5x0FaoXF3DC5VwjWSZ9SRXo+tXFddVV
-            msBcErJ8v0pIkI6CtDe13YeZa69X3fCcuRGDfVoupnauBZrcMd0jbw==
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBNalhuSTMxTUJHNnc5cUx4
+            ZjBVd2NGSFVjei9YeWZJcS9Hckh2TUtBQkVzCjAxUENwaEIwdUVNaTc5WERoSWQ1
+            akg2UnFpSGFEd2Y1bXJwdGNpUG8zV00KLS0tIDFEdnlEOU5pdlFseEs4Y1h6OHJs
+            WVU4Q1BwUzFqRk43UUJiekVxRTB1RlEKYLqXxzXFlIsRz6xK0jiS0U+hjDd7iG4l
+            oDki9ULvtP7dQqwOhsPS3ku82EauND+mUMnCbq5chq8nB1JeFrkz0A==
             -----END AGE ENCRYPTED FILE-----
           recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-08-23T13:01:18Z"
-    mac: ENC[AES256_GCM,data:XyCyWimGN9EPCVf3SUfFCBgrlcs5TTTrGvRl146E+mWwYaC1gPSGW5W4Z0x8iqb9HmGgnoxPb2/vUtSdfAP25D2N9A4U3D+lHJn1T8VikH9kjWgQnXZ3AHuw2ty/jaAOS4OtsRpflZRB+skX3iZUjGkjm1toMsjcoEgynd3sB9c=,iv:ePaxpEL64zufO3vBn1OS3PBQOmDwzHoqtiBDq/N6YQQ=,tag:DCRCbaSfoV0lo25Eas+rqQ==,type:str]
+    lastmodified: "2026-09-25T15:46:23Z"
+    mac: ENC[AES256_GCM,data:08yaOIrmf36m8Qgh5NujbDEVJqiGE0yrO/xWazWEaKRReIS6kHQ7Fc/sHqRZsomiEYBNuECz0czLl9FUEdlwgREUgMFTq/lmMEZQ4OCh2TvVZIvAU6lfK/gw3uaOwF9jCD7LliUh46Awb1NWUUJa1sS2L2tiR6PZJc6ncHWF7EE=,iv:IYlmipcoycW9fqP3nY+4xndgThzVCgw8DBKuzwssZMI=,tag:KozJYUI9ZLBw0lIdwfIklA==,type:str]
     version: 3.13.1

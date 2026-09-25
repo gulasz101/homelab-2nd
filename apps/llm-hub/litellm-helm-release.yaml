@@ -88,6 +88,12 @@ spec:
           secretKeyRef:
             name: litellm-provider-keys
             key: OPENCODE_GO_SUBSCRIPTION_API_KEY
+      # Google Gemini (AI Pro subscription key) — native gemini/ provider
+      - name: GEMINI_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: litellm-provider-keys
+            key: GEMINI_API_KEY
       # Local LM Studio model does not need a real API key; LiteLLM still
       # sends an Authorization header so give it a non-empty placeholder
       - name: DUMMY_API_KEY
@@ -266,6 +272,61 @@ spec:
             # Tencent Hybrid 3 (MoE) via OpenRouter free tier
             model: openrouter/tencent/hy3:free
             api_key: "os.environ/OPENROUTER_API_KEY"
+
+        # ── Google Gemini via AI Pro subscription key (GEMINI_API_KEY) ──
+        # Probe-verified 2026-09-25: legacy gemini-2.5-* models are gated off
+        # ("no longer available to new users"); image/TTS/music endpoints are
+        # not chat models. 3.5/3.7/3.8-flash returned 503 "high demand" on
+        # launch day — routed anyway, expected to recover Google-side.
+        - model_name: gemini-3.1-flash-lite
+          litellm_params:
+            model: gemini/gemini-3.1-flash-lite
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-3.5-flash-lite
+          litellm_params:
+            model: gemini/gemini-3.5-flash-lite
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-3.6-flash
+          litellm_params:
+            model: gemini/gemini-3.6-flash
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-3.7-flash
+          litellm_params:
+            # thinking model; allow large max_tokens client-side
+            model: gemini/gemini-3.7-flash
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-3.8-flash
+          litellm_params:
+            model: gemini/gemini-3.8-flash
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-3.8-flash-lite-tts
+          litellm_params:
+            # TTS-capable but also serves generateContent
+            model: gemini/gemini-3.8-flash-lite-tts
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-flash-latest
+          litellm_params:
+            # Google-managed rolling alias — always points at newest flash
+            model: gemini/gemini-flash-latest
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-pro-latest
+          litellm_params:
+            # Pro-tier quota is tight (429s observed 2026-09-25); keep for fallback
+            model: gemini/gemini-pro-latest
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-3.1-pro-preview
+          litellm_params:
+            model: gemini/gemini-3.1-pro-preview
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-3.1-pro-preview-customtools
+          litellm_params:
+            model: gemini/gemini-3.1-pro-preview-customtools
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemma-4-26b-a4b-it
+          litellm_params:
+            # open-weight Gemma served through the Gemini API
+            model: gemini/gemma-4-26b-a4b-it
+            api_key: "os.environ/GEMINI_API_KEY"
 
         # ── Local LM Studio model on the Hermes M1 Max (same LAN as the cluster) ──
         - model_name: gemma-4-12b-uncensored
