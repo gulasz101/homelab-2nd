@@ -8,8 +8,8 @@
 # to /dev/nvidia* devices and the host nvidia-smi / libnvidia-ml.so stack. On
 # this single-node homelab with a Maxwell GTX 970M there is no DCGM support, so
 # we accept the upstream hostPath volumes and privileged container as required
-# for accurate GPU metrics. We keep the mounts readOnly: true and document the
-# exception here rather than hiding it from the scanner.
+# for accurate GPU metrics. The exception is documented here and in the
+# security-scan exclusions rather than being hidden from the scanner.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -17,7 +17,6 @@ metadata:
   namespace: observability
 spec:
   interval: 1h
-  suspend: true
   chart:
     spec:
       chart: nvidia-gpu-exporter
@@ -55,29 +54,18 @@ spec:
         drop:
           - ALL
 
-    # Mount host /usr/bin so the exporter can find nvidia-smi.
-    # Also mount /usr/lib to resolve libnvidia-ml.so.
-    extraVolumeMounts:
-      - name: host-usr-bin
-        mountPath: /usr/bin/nvidia-smi
-        readOnly: true
-      - name: host-usr-lib
-        mountPath: /usr/lib/x86_64-linux-gnu
-        readOnly: true
-
-    extraVolumes:
-      - name: host-usr-bin
-        hostPath:
-          path: /usr/bin/nvidia-smi
-          type: File
-      - name: host-usr-lib
-        hostPath:
-          path: /usr/lib/x86_64-linux-gnu
-          type: Directory
+    # Host volumes are deliberately NOT configured here: chart 0.3.0 already
+    # ships the correct defaults (nvidiactl, nvidia0, nvidia-smi,
+    # libnvidia-ml.so, libnvidia-ml.so.1). Older revisions of this file used
+    # `extraVolumes` / `extraVolumeMounts`, which this chart does not read at
+    # all, so those keys did nothing — removed so the config stops misleading
+    # the next reader.
 
     serviceMonitor:
       enabled: true
-      labels:
+      # Chart 0.3.0 reads `additionalLabels`, not `labels`; this label is what
+      # ties the ServiceMonitor to the kube-prometheus-stack instance.
+      additionalLabels:
         release: prometheus-stack
 
     resources:
