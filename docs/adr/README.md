@@ -21,6 +21,9 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-015 | Authentik SSO providers are declared in a Blueprint, never created imperatively | Accepted | 2026-09-13 |
 | ADR-016 | Karakeep state is reconstructed from vault manifests + Hermes history; back up before the thing you want to protect | Accepted | 2026-09-13 |
 | ADR-017 | Itsaplan H2 is reconstructed through its own API with historical ids; API keys are re-seeded by hash | Accepted | 2026-09-13 |
+| ADR-018 | OpenChamber worker — t460 container, split local/durable storage | Accepted | 2026-09-14 |
+| ADR-019 | Itsaplan agent results post back as issue comments via the bridge | Accepted | 2026-09-15 |
+| ADR-020 | Open WebUI gets cluster-internal MCP tool servers via `TOOL_SERVER_CONNECTIONS` (additive to Firecrawl) | Accepted | 2026-09-26 |
 
 ## Writing an ADR
 
