@@ -228,6 +228,34 @@ spec:
             key: FIRECRAWL_API_KEY
       - name: FIRECRAWL_TIMEOUT
         value: "60000"
+      # Native MCP tool server: the homelab docs-mcp-server over Streamable HTTP.
+      # ADDITIVE to Firecrawl web search — no existing search behaviour changes.
+      # Only the four read-only query tools are exposed to the model; the server
+      # also advertises destructive tools (remove_docs, cancel_job, scrape_docs)
+      # which are deliberately filtered out by function_name_filter_list.
+      # In-cluster, unauthenticated: auth_type "none" (Bearer without a key would
+      # send an empty Authorization header and be rejected). access_grants: []
+      # keeps the connection admin-only, which is Open WebUI's own default.
+      - name: TOOL_SERVER_CONNECTIONS
+        value: |
+          [
+            {
+              "type": "mcp",
+              "url": "http://docs-mcp-server.docs-mcp.svc.cluster.local:6280/mcp",
+              "auth_type": "none",
+              "key": "",
+              "config": {
+                "enable": true,
+                "function_name_filter_list": "search_docs,list_libraries,fetch_url,find_version",
+                "access_grants": []
+              },
+              "info": {
+                "id": "docs-mcp-server",
+                "name": "docs-mcp-server",
+                "description": "Homelab indexed documentation over MCP (Streamable HTTP)."
+              }
+            }
+          ]
       # Structured JSON logs for Loki
       - name: GLOBAL_LOG_LEVEL
         value: "INFO"
