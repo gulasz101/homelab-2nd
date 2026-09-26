@@ -299,28 +299,19 @@ spec:
           litellm_params:
             model: gemini/gemini-3.8-flash
             api_key: "os.environ/GEMINI_API_KEY"
-        - model_name: gemini-3.8-flash-lite-tts
-          litellm_params:
-            # TTS-capable but also serves generateContent
-            model: gemini/gemini-3.8-flash-lite-tts
-            api_key: "os.environ/GEMINI_API_KEY"
+        # ── removed 2026-09-26 after 48h of every-call failures ──
+        # gemini-pro-latest, gemini-3.1-pro-preview, gemini-3.1-pro-preview-customtools:
+        #   429 "You exceeded your current quota" from Google on EVERY call, even
+        #   hours after the Pacific-midnight quota reset. The AI Pro subscription
+        #   key has no usable Pro-tier API allowance. Verified 2026-09-26 via
+        #   master-key smoke test + /spend/logs (0 quota consumed). Do not
+        #   re-add unless Google changes subscription API entitlements.
+        # gemini-3.8-flash-lite-tts: returns HTTP 200 with EMPTY text in chat
+        #   (TTS endpoint wired as chat). Dead weight in the dropdown.
         - model_name: gemini-flash-latest
           litellm_params:
             # Google-managed rolling alias — always points at newest flash
             model: gemini/gemini-flash-latest
-            api_key: "os.environ/GEMINI_API_KEY"
-        - model_name: gemini-pro-latest
-          litellm_params:
-            # Pro-tier quota is tight (429s observed 2026-09-25); keep for fallback
-            model: gemini/gemini-pro-latest
-            api_key: "os.environ/GEMINI_API_KEY"
-        - model_name: gemini-3.1-pro-preview
-          litellm_params:
-            model: gemini/gemini-3.1-pro-preview
-            api_key: "os.environ/GEMINI_API_KEY"
-        - model_name: gemini-3.1-pro-preview-customtools
-          litellm_params:
-            model: gemini/gemini-3.1-pro-preview-customtools
             api_key: "os.environ/GEMINI_API_KEY"
         - model_name: gemma-4-26b-a4b-it
           litellm_params:

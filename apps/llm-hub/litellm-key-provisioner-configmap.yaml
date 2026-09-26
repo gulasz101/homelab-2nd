@@ -48,16 +48,17 @@ data:
         "mistral-3.5-middle",
         "hy3-free",
         # Google Gemini (AI Pro subscription key)
+        # NOTE 2026-09-26: removed gemini-pro-latest, gemini-3.1-pro-preview,
+        # gemini-3.1-pro-preview-customtools (429 quota on every call — AI Pro
+        # key has no Pro-tier API allowance) and gemini-3.8-flash-lite-tts
+        # (TTS model, empty chat replies). Stale whitelist entries on existing
+        # virtual keys are harmless — routes no longer exist in model_list.
         "gemini-3.1-flash-lite",
         "gemini-3.5-flash-lite",
         "gemini-3.6-flash",
         "gemini-3.7-flash",
         "gemini-3.8-flash",
-        "gemini-3.8-flash-lite-tts",
         "gemini-flash-latest",
-        "gemini-pro-latest",
-        "gemini-3.1-pro-preview",
-        "gemini-3.1-pro-preview-customtools",
         "gemma-4-26b-a4b-it",
         # Local LM Studio model on Hermes host
         "gemma-4-12b-uncensored",
