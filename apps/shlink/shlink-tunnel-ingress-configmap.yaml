@@ -10,3 +10,17 @@ data:
     # shlink.voitech.dev -> http://shlink-backend.shlink.svc.cluster.local:8080
     # The Cloudflare Tunnel hostname rule uses this internal service URL.
     # Add the rule in Cloudflare Zero Trust -> Networks -> Tunnels -> shlink.
+
+    # Shlink web client (H2-49), optional public exposure:
+    #   shlink-web.voitech.dev -> http://shlink-web.shlink.svc.cluster.local:8080
+    #
+    # The tunnel is remotely managed (token), so ingress rules live in the
+    # Cloudflare Zero Trust dashboard, NOT here -- this ConfigMap is only a
+    # reminder. No second tunnel and no new token are needed: the existing
+    # single cloudflared-shlink connector can reach any in-cluster Service, so
+    # adding the public hostname + DNS record above is the only step.
+    # Until then the UI is reachable on the LAN at http://192.168.1.179:30530.
+    #
+    # If it is published, put a Cloudflare Access application in front of it
+    # (wired to Authentik OIDC) before use: the shlink admin API key is entered
+    # in the browser and grants full create/delete rights.
