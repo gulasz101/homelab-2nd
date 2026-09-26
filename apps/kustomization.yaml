@@ -298,6 +298,11 @@ resources:
   - shlink/scheduled-backup.yaml
   # Shlink HelmRelease
   - shlink/shlink-helm-release.yaml
+  # Shlink web client (official React SPA; no Helm chart exists -> Kustomize by design).
+  # No server/API key is pre-configured: the image serves servers.json as a static
+  # file, so a preconfigured key would leak to anyone who can reach the Service.
+  - shlink/shlink-web-deployment.yaml
+  - shlink/shlink-web-service.yaml
   # Cloudflare Tunnel for shlink.voitech.dev
   - shlink/cloudflared-shlink-deployment.yaml
   - shlink/shlink-tunnel-ingress-configmap.yaml

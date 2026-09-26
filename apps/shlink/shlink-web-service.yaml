@@ -1,0 +1,28 @@
+---
+# LAN-only NodePort Service for the Shlink web client.
+# Reachable inside the network on http://192.168.1.179:30530.
+#
+# Exposure ruling (H2-49): LAN-only for now. Publishing it publicly needs a
+# public-hostname rule on the existing shlink Cloudflare Tunnel, which is a
+# Zero Trust dashboard action (remotely-managed tunnel), not a Git change — see
+# shlink-tunnel-ingress-configmap.yaml. Because a NodePort Service also gets a
+# ClusterIP + DNS name, turning on public access later is a single dashboard
+# rule pointing at http://shlink-web.shlink.svc.cluster.local:8080, with zero
+# manifest changes.
+apiVersion: v1
+kind: Service
+metadata:
+  name: shlink-web
+  namespace: shlink
+  labels:
+    app.kubernetes.io/name: shlink-web
+    app.kubernetes.io/component: frontend
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: shlink-web
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30530

@@ -1,0 +1,79 @@
+---
+# Shlink web client (shlinkio/shlink-web-client) — official React SPA served by
+# nginx. It is a pure client-side app: it talks straight from the browser to the
+# Shlink REST API of https://shlink.voitech.dev (CORS is open on the backend).
+#
+# Why plain manifests and not a HelmRelease: there is no official or community
+# Helm chart for shlink-web-client (ArtifactHub has no package for it). Raw
+# Kustomize is therefore the documented last resort under guardrail 2.
+#
+# Why NO pre-configured server / API key: the image's entrypoint writes a
+# servers.json into the web root when SHLINK_SERVER_URL + SHLINK_SERVER_API_KEY
+# are set, and that file is then downloadable by anyone who can reach the
+# Service. Upstream explicitly warns this can expose API keys. The Supreme Leader
+# instead adds https://shlink.voitech.dev + his API key once in the browser; the
+# key is kept in the browser's localStorage and never touches our infrastructure
+# or this public repo.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shlink-web
+  namespace: shlink
+  labels:
+    app.kubernetes.io/name: shlink-web
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: shlink-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: shlink-web
+        app.kubernetes.io/component: frontend
+    spec:
+      securityContext:
+        # Upstream image is nginxinc/nginx-unprivileged and already runs as UID 101.
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: shlink-web
+          image: shlinkio/shlink-web-client:4.8.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
