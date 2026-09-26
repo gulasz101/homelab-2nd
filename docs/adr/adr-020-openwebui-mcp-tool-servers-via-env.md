@@ -63,7 +63,7 @@ Negative / limits:
 - All tool server connections live in one environment value; adding or editing one
   produces a single new pod revision and one rollout.
 - `function_name_filter_list` is now maintained by hand and must be updated when
-  the upstream server's tool set changes (it went from 4 to 11 tools between
+  the upstream server's tool set changes (it went from 4 to 10 tools between
   planning and execution).
 - `access_grants: []` means non-admin users do **not** see the docs tools; widening
   it is a deliberate follow-up, not an accident.
