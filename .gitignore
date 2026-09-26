@@ -11,3 +11,7 @@
 
 # Local agent tooling (opencode skills/config) — never committed
 /.opencode/
+
+# Python bytecode from the repo's scripts (the archive manifest tool excludes it too)
+__pycache__/
+*.pyc
