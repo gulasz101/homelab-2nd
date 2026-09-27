@@ -1,0 +1,64 @@
+---
+# PrometheusRule for the pihole namespace.
+# Pi-hole down == home offline, so pod-down is critical by design.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pihole-resource-alerts
+  namespace: pihole
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: pihole.availability
+      interval: 1m
+      rules:
+        - alert: PiholePodNotReady
+          expr: |
+            kube_pod_status_ready{namespace="pihole", condition="true"} == 0
+          for: 5m
+          labels:
+            severity: critical
+            namespace: pihole
+          annotations:
+            summary: "pihole pod not ready — home DNS may be down"
+            description: "The Pi-hole pod in namespace pihole has been not-ready for 5m. OPNsense :53 redirect points at this pod; if it stays down, flip the break-glass runbook (H2-74)."
+
+        - alert: PiholeMetricsTargetDown
+          expr: |
+            up{namespace="pihole", container="exporter"} == 0
+          for: 10m
+          labels:
+            severity: warning
+            namespace: pihole
+          annotations:
+            summary: "pihole exporter target down"
+            description: "Prometheus cannot scrape the Pi-hole exporter for 10m."
+
+        - alert: PiholeMemoryAbove80PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="pihole", container!=""}
+            )
+            /
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="pihole", resource="memory", container!=""}
+            ) > 80
+          for: 15m
+          labels:
+            severity: warning
+            namespace: pihole
+          annotations:
+            summary: "pihole/{{ $labels.pod }} memory above 80% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 80% of its limit for more than 15 minutes."
+
+        - alert: PiholeRestartStorm
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="pihole"}[1h]) > 3
+          for: 5m
+          labels:
+            severity: critical
+            namespace: pihole
+          annotations:
+            summary: "pihole container restart storm"
+            description: "{{ $labels.pod }}/{{ $labels.container }} restarted >3 times in the last hour."

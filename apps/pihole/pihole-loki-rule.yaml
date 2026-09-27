@@ -1,0 +1,32 @@
+---
+# Loki Ruler rules for pihole. Lives in observability namespace,
+# auto-discovered by the Loki sidecar via the loki_rule label.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pihole-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  pihole-errors.yaml: |
+    groups:
+      - name: pihole.errors
+        interval: 1m
+        rules:
+          - alert: PiholeFtlErrors
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {k8s_namespace_name="pihole"}
+                    |~ "(?i)(FATAL|fatal|panic|Traceback)"
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: pihole
+            annotations:
+              summary: "pihole logged fatal errors"
+              description: "{{ $labels.pod }} in namespace {{ $labels.namespace }} logged fatal-level lines within the last 5 minutes."

@@ -383,3 +383,25 @@ resources:
 
   # OpenChamber worker namespace (Ubuntu OpenCode/OpenChamber agent on t460)
   - openchamber/
+
+  # ============================================================
+  # Pi-hole Family Shield (H2-73) — network DNS discipline
+  # Design: vault tracking note 2026-09-27-pihole-family-shield-planning.md
+  # ADR-021: docs/adr/adr-021-pihole-dns-shield-on-k3s.md
+  # ============================================================
+  - pihole/namespace.yaml
+  # SOPS-encrypted secrets
+  - pihole/pihole-app-secrets.sops.yaml
+  - pihole/pihole-oauth2-proxy.sops.yaml
+  - pihole/pihole-mattermost-webhook-url.sops.yaml
+  # Helm repository + release
+  - pihole/pihole-helm-repository.yaml
+  - pihole/pihole-helm-release.yaml
+  # Authentik SSO gate (oauth2-proxy) — LAN-only NodePort 30810
+  - pihole/pihole-oauth2-proxy-deployment.yaml
+  - pihole/pihole-oauth2-proxy-service.yaml
+  # Observability
+  - pihole/pihole-prometheus-rules.yaml
+  - pihole/pihole-alertmanager-config.yaml
+  - pihole/pihole-loki-rule.yaml
+  - pihole/pihole-dashboard-configmap.yaml

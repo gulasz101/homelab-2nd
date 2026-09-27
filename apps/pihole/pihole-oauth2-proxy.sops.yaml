@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: pihole-oauth2-proxy
+    namespace: pihole
+type: Opaque
+stringData:
+    client-id: ENC[AES256_GCM,data:aMR6vJR/d8d2jsrlCwngn3bFKvrngxKT4AryaB5rOB0DFpC+pyzdLUIsa1htf73v,iv:i+M6OK57ttgZ5JInVIgzaY1kQ1U2uDW6+htIoWr+R3c=,tag:jIg0s/h6mtxKHXCbrVsXrA==,type:str]
+    client-secret: ENC[AES256_GCM,data:nG6APCYCGIPXI25RPggsXKiOzEtN2d3yVWyI9qdQOAs=,iv:o0kiVjkobx9eibPGpdXSmuHuYwnOkEBa/Q2ifMnmO2U=,tag:fTR7bYRxVzC57tXsbfv4Ew==,type:str]
+    cookie-secret: ENC[AES256_GCM,data:3DticD5VzeVB926zgKQ3AXGJlHNWm+wrLfYZxgeCWV1tgdNsO5jKxu/F7Q==,iv:ZLbDgCwLhiqsEO6bsKnKFrohW2tvZ/3DVuyJ1nC90tI=,tag:DUq1aNIlZKsA9f7pH3IQww==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBRSGgxR0Q5MGdvZmNWcGdW
+            QXU1NktGK1FRbXpWMFdJVGlsSXo4eFErZWlBCmtzcnNXSHZreGQwL3d6bVJ1ZGtP
+            U2JiOWUyaTd3ZVh1Yit4cmtSR2lQNnMKLS0tIEdKdFRsMy9lSHUwd0s5SjJRbjF0
+            MkN0TkVzZDQ1VUtzWlRWWmhXNUNRdFkKfoZYhvmBrGUk3DgySaVshwh2kF34NlBO
+            S80gq9QZXppUheuyk4undmWh9Gql0HElxz97xL3CXGHYAmT0uO1ToQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-27T15:02:06Z"
+    mac: ENC[AES256_GCM,data:+kmi/gHv6lfjAL2VaK77PqYs+ZzcQID6Y7kXLCHdaZdwgiMPoCRKO5UKlM7tGe3IjDiEQiCq6XhV6Uf4KQsTEO9zG1ngFZ2WOo7pY+lGB9VoE076xwnFlIijEilji9vkOWu1ax+7K3eQug+J4b2hq+fzEJOp/GR+ICOO5oFnQHU=,iv:WCiSKnfN7gSldseq/XGkORgL5Dy7twwpciVee028J3w=,tag:ZvCvjpchCa4FKOgegnW87g==,type:str]
+    version: 3.13.1
