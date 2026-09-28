@@ -1,8 +1,10 @@
 ---
-# Pi-hole Family Shield — network-wide DNS discipline (H2-73).
+# Pi-hole Family Shield — network-wide DNS discipline (H2-73 + H2-74).
 # Chart 2.38.0 / Pi-hole core 2026.07.2 (FTL v6).
-# DNS: single mixedService NodePort 30053 (UDP+TCP), externalTrafficPolicy Local
-#      so Pi-hole sees real client IPs (per-device group identity depends on it).
+# DNS: hostNetwork so the pod binds homelab-2nd :53 directly (UDP+TCP).
+# This eliminates the NodePort 30053 reply-source asymmetry that broke Android clients.
+# serviceDns becomes an in-cluster ClusterIP for internal consumers; LAN clients reach
+# 192.168.1.179:53 directly, with real client IPs preserved (no NAT).
 # DHCP service disabled: OPNsense stays the DHCP server (H2-74).
 # Web UI stays ClusterIP — reachable only through oauth2-proxy (Authentik SSO).
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -39,10 +41,23 @@ spec:
     nodeSelector:
       kubernetes.io/hostname: homelab-2nd
 
+    # DNS: hostNetwork so the pod binds the node's real :53 directly.
+    # This eliminates the NodePort 30053 reply-source asymmetry that broke Android clients.
+    # serviceDns stays as an in-cluster ClusterIP for internal consumers; clients reach
+    # 192.168.1.179:53 on the node.
+    hostNetwork: "true"
+    privileged: "true"
+
+    podDnsConfig:
+      enabled: true
+      policy: "ClusterFirstWithHostNet"
+      nameservers:
+        - 127.0.0.1
+        - 8.8.8.8
+
     serviceDns:
-      type: NodePort
+      type: ClusterIP
       port: 53
-      nodePort: 30053
       mixedService: true
       externalTrafficPolicy: Local
 
