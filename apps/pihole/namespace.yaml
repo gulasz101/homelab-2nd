@@ -5,6 +5,8 @@ metadata:
   name: pihole
   labels:
     app.kubernetes.io/name: pihole
-    pod-security.kubernetes.io/enforce: baseline
-    pod-security.kubernetes.io/audit: baseline
+    # Pi-hole needs hostNetwork + privileged to bind the node's :53 for LAN DNS.
+    # This is an intentional exception: the pod is the homelab's recursive DNS daemon.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
     pod-security.kubernetes.io/warn: baseline
