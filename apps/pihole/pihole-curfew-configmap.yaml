@@ -11,8 +11,8 @@ data:
     #!/usr/bin/env python3
     """Pi-hole S-group curfew reconciler (H2-75).
 
-    Converges the group membership of all "W/S block" deny-exact domains to the
-    desired state, then refreshes gravity + restarts DNS.
+    Converges the group membership of ALL "W/S block" deny entries — both exact
+    and regex kinds — to the desired state, then refreshes gravity + restarts DNS.
 
     Usage: pihole_curfew.py enable|disable
       enable  (21:00): social blocks apply to S group (10) too -> groups [9,10]
@@ -34,6 +34,9 @@ data:
     MARKER = "W/S block"
     GROUP_W = 9
     GROUP_S = 10
+    # Both kinds are curfew-managed: exact (legacy, still highest precedence)
+    # and regex (subdomain/CDN coverage, added 2026-09-29 after the Xperia leak).
+    KINDS = ("exact", "regex")
     WANTED = {"enable": [GROUP_W, GROUP_S], "disable": [GROUP_W]}
 
     class Pihole:
@@ -80,29 +83,32 @@ data:
         pihole.reauth()
         print(f"[curfew] mode={mode} desired groups={wanted}")
 
-        st, raw = pihole.call("GET", "/domains/deny/exact")
-        if st != 200:
-            print(f"FATAL: list deny domains HTTP {st}: {raw[:200]}", file=sys.stderr)
-            return 1
-        domains = json.loads(raw)["domains"]
-        managed = [d for d in domains if (d.get("comment") or "") == MARKER]
-        print(f"[curfew] {len(domains)} deny-exact, {len(managed)} curfew-managed")
-
         changed = 0
-        for d in managed:
-            if sorted(d["groups"]) == sorted(wanted):
-                continue
-            key = urllib.parse.quote(d["domain"], safe="")
-            st, raw = pihole.call(
-                "PUT", f"/domains/deny/exact/{key}",
-                {"domain": d["domain"], "comment": d.get("comment"),
-                 "groups": wanted, "enabled": d.get("enabled", True)},
-            )
+        total_managed = 0
+        for kind in KINDS:
+            st, raw = pihole.call("GET", f"/domains/deny/{kind}")
             if st != 200:
-                print(f"FATAL: PUT {d['domain']} HTTP {st}: {raw[:200]}", file=sys.stderr)
+                print(f"FATAL: list deny/{kind} HTTP {st}: {raw[:200]}", file=sys.stderr)
                 return 1
-            changed += 1
-            print(f"[curfew]   {d['domain']}: {d['groups']} -> {wanted}")
+            domains = json.loads(raw)["domains"]
+            managed = [d for d in domains if (d.get("comment") or "") == MARKER]
+            total_managed += len(managed)
+            print(f"[curfew] deny/{kind}: {len(domains)} entries, {len(managed)} curfew-managed")
+
+            for d in managed:
+                if sorted(d["groups"]) == sorted(wanted):
+                    continue
+                key = urllib.parse.quote(d["domain"], safe="")
+                st, raw = pihole.call(
+                    "PUT", f"/domains/deny/{kind}/{key}",
+                    {"domain": d["domain"], "comment": d.get("comment"),
+                     "groups": wanted, "enabled": d.get("enabled", True)},
+                )
+                if st != 200:
+                    print(f"FATAL: PUT {kind} {d['domain']!r} HTTP {st}: {raw[:200]}", file=sys.stderr)
+                    return 1
+                changed += 1
+                print(f"[curfew]   [{kind}] {d['domain']}: {d['groups']} -> {wanted}")
 
         if changed:
             st, raw = pihole.call("POST", "/action/gravity", {})
@@ -118,18 +124,21 @@ data:
         else:
             print("[curfew] nothing to change — already converged")
 
-        st, raw = pihole.call("GET", "/domains/deny/exact")
-        if st == 200:
-            domains = json.loads(raw)["domains"]
-            managed = [d for d in domains if (d.get("comment") or "") == MARKER]
-            bad = [d["domain"] for d in managed if sorted(d["groups"]) != sorted(wanted)]
-            if bad:
-                print(f"FATAL: verification failed: {bad}", file=sys.stderr)
-                return 1
-            print(f"[curfew] verified: {len(managed)} entries at {wanted}")
-        else:
-            print(f"WARN: verify read-back HTTP {st}", file=sys.stderr)
-
+        # verify both kinds read back at the desired state
+        bad = []
+        for kind in KINDS:
+            st, raw = pihole.call("GET", f"/domains/deny/{kind}")
+            if st != 200:
+                print(f"WARN: verify read-back deny/{kind} HTTP {st}", file=sys.stderr)
+                continue
+            managed = [d for d in json.loads(raw)["domains"]
+                       if (d.get("comment") or "") == MARKER]
+            bad += [f"{kind}:{d['domain']}" for d in managed
+                    if sorted(d["groups"]) != sorted(wanted)]
+        if bad:
+            print(f"FATAL: verification failed: {bad}", file=sys.stderr)
+            return 1
+        print(f"[curfew] verified: {total_managed} managed entries at {wanted}")
         print(f"[curfew] done ({mode}): {changed} changed")
         return 0
 
