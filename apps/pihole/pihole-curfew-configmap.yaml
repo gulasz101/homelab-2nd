@@ -1,6 +1,9 @@
 ---
-# Pi-hole S-group curfew reconciler script (H2-75).
-# Mounted into the pihole-curfew-* CronJobs. See pihole-curfew-cronjob.yaml.
+# Pi-hole curfew reconciler script (H2-75).
+# Mounted into the pihole-curfew-* and pihole-ig-experiment-* CronJobs.
+# Env-driven so one script serves the main curfew AND one-shot experiments:
+#   PIHOLE_MARKER    comment marker selecting managed entries (default "W/S block")
+#   RESTORE_MARKER   if set (disable mode): rename entries back to this marker
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,14 +12,14 @@ metadata:
 data:
   pihole_curfew.py: |
     #!/usr/bin/env python3
-    """Pi-hole S-group curfew reconciler (H2-75).
+    """Pi-hole curfew reconciler (H2-75) — main curfew + one-shot experiments.
 
-    Converges the group membership of ALL "W/S block" deny entries — both exact
-    and regex kinds — to the desired state, then refreshes gravity + restarts DNS.
+    Converges the group membership of ALL deny entries (exact+regex) carrying
+    the marker comment to the desired state, then gravity + restartdns + read-back.
 
     Usage: pihole_curfew.py enable|disable
-      enable  (21:00): social blocks apply to S group (10) too -> groups [9,10]
-      disable (07:00): social blocks leave the S group        -> groups [9]
+      enable  (21:00): marker entries -> groups [9,10]  (S group gets the blocks)
+      disable (07:00): marker entries -> groups [9]     (S group released)
 
     Desired-state, not toggle: idempotent, drift-healing, safe to re-run.
     Exits 0 on success (incl. "nothing to do"), non-zero on failure so the
@@ -31,11 +34,10 @@ data:
 
     API = os.environ.get("PIHOLE_API", "http://192.168.1.179:80/api")
     PASSWORD = os.environ["PIHOLE_PASSWORD"]
-    MARKER = "W/S block"
+    MARKER = os.environ.get("PIHOLE_MARKER", "W/S block")
+    RESTORE_MARKER = os.environ.get("RESTORE_MARKER", "")
     GROUP_W = 9
     GROUP_S = 10
-    # Both kinds are curfew-managed: exact (legacy, still highest precedence)
-    # and regex (subdomain/CDN coverage, added 2026-09-29 after the Xperia leak).
     KINDS = ("exact", "regex")
     WANTED = {"enable": [GROUP_W, GROUP_S], "disable": [GROUP_W]}
 
@@ -78,13 +80,14 @@ data:
             print("FATAL: mode must be enable|disable", file=sys.stderr)
             return 2
         wanted = WANTED[mode]
+        restore = RESTORE_MARKER if (RESTORE_MARKER and mode == "disable") else None
 
         pihole = Pihole()
         pihole.reauth()
-        print(f"[curfew] mode={mode} desired groups={wanted}")
+        print(f"[curfew] mode={mode} marker={MARKER!r} desired={wanted} restore={restore!r}")
 
+        touched = []
         changed = 0
-        total_managed = 0
         for kind in KINDS:
             st, raw = pihole.call("GET", f"/domains/deny/{kind}")
             if st != 200:
@@ -92,16 +95,16 @@ data:
                 return 1
             domains = json.loads(raw)["domains"]
             managed = [d for d in domains if (d.get("comment") or "") == MARKER]
-            total_managed += len(managed)
-            print(f"[curfew] deny/{kind}: {len(domains)} entries, {len(managed)} curfew-managed")
-
+            print(f"[curfew] deny/{kind}: {len(domains)} entries, {len(managed)} managed")
             for d in managed:
-                if sorted(d["groups"]) == sorted(wanted):
+                touched.append((kind, d["domain"]))
+                target_comment = restore if restore else d.get("comment")
+                if sorted(d["groups"]) == sorted(wanted) and (d.get("comment") or "") == (target_comment or ""):
                     continue
                 key = urllib.parse.quote(d["domain"], safe="")
                 st, raw = pihole.call(
                     "PUT", f"/domains/deny/{kind}/{key}",
-                    {"domain": d["domain"], "comment": d.get("comment"),
+                    {"domain": d["domain"], "comment": target_comment,
                      "groups": wanted, "enabled": d.get("enabled", True)},
                 )
                 if st != 200:
@@ -110,35 +113,47 @@ data:
                 changed += 1
                 print(f"[curfew]   [{kind}] {d['domain']}: {d['groups']} -> {wanted}")
 
+        if not touched and mode == "enable":
+            # Arming with zero managed entries is a silent no-op failure —
+            # abort loudly instead (protects one-shot experiments).
+            print(f"FATAL: no entries with marker {MARKER!r} found — refusing to arm nothing", file=sys.stderr)
+            return 1
+        if not touched:
+            print(f"[curfew] no {MARKER!r} entries (already released) — nothing to do")
+            return 0
+
         if changed:
             st, raw = pihole.call("POST", "/action/gravity", {})
-            print(f"[curfew] gravity HTTP {st}")
             if st != 200:
                 print(f"FATAL: gravity {raw[:200]}", file=sys.stderr)
                 return 1
             st, raw = pihole.call("POST", "/action/restartdns", {})
-            print(f"[curfew] restartdns HTTP {st}")
             if st != 200:
                 print(f"FATAL: restartdns {raw[:200]}", file=sys.stderr)
                 return 1
-        else:
-            print("[curfew] nothing to change — already converged")
+        print(f"[curfew] gravity+restartdns done, {changed} changed")
 
-        # verify both kinds read back at the desired state
+        # verify read-back on every touched entry
+        check_marker = restore or MARKER
         bad = []
         for kind in KINDS:
             st, raw = pihole.call("GET", f"/domains/deny/{kind}")
             if st != 200:
                 print(f"WARN: verify read-back deny/{kind} HTTP {st}", file=sys.stderr)
                 continue
-            managed = [d for d in json.loads(raw)["domains"]
-                       if (d.get("comment") or "") == MARKER]
-            bad += [f"{kind}:{d['domain']}" for d in managed
-                    if sorted(d["groups"]) != sorted(wanted)]
+            by_dom = {d["domain"]: d for d in json.loads(raw)["domains"]}
+            for k2, dom in touched:
+                if k2 != kind:
+                    continue
+                d = by_dom.get(dom)
+                if d is None:
+                    bad.append(f"{kind}:{dom}:missing")
+                elif sorted(d["groups"]) != sorted(wanted) or (d.get("comment") or "") != (check_marker or ""):
+                    bad.append(f"{kind}:{dom}:{d['groups']}:{d.get('comment')}")
         if bad:
             print(f"FATAL: verification failed: {bad}", file=sys.stderr)
             return 1
-        print(f"[curfew] verified: {total_managed} managed entries at {wanted}")
+        print(f"[curfew] verified: {len(touched)} entries at {wanted} marker={check_marker!r}")
         print(f"[curfew] done ({mode}): {changed} changed")
         return 0
 

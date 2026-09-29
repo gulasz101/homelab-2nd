@@ -1,22 +1,25 @@
 ---
-# Pi-hole S-group curfew CronJobs (H2-75).
-# Sylwia's devices (group 10) get the social blocks 21:00–07:00 Europe/Warsaw.
-# The script is a desired-state reconciler: 21:00 -> groups [9,10], 07:00 -> [9].
-# Secret: pihole-app-secrets key "password" (same SOPS secret as the web UI).
-# Image pinned by digest (python:3.13-alpine multi-arch -> amd64 manifest).
+# Pi-hole Instagram experiment for Sylwia's Pixel (H2-76 shadow-mode step 1).
+# One-shot pair: cut IG for the S group tonight only, restore at 08:00 tomorrow.
+# - 2026-09-29 21:00 Europe/Warsaw: enable  (IG entries -> groups [9,10])
+# - 2026-09-30 08:00 Europe/Warsaw: disable (IG entries -> [9], marker renamed
+#   back to "W/S block" via RESTORE_MARKER -> the main curfew re-adopts them)
+# Day-of-month restricted schedules = these never fire again.
+# The disable job is idempotent; if it fires again next year with no
+# "S-experiment-IG" entries it exits 0 ("nothing to do").
+# Entries are seeded by the deployer with comment "S-experiment-IG" BEFORE 21:00.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: pihole-curfew-enable
+  name: pihole-ig-experiment-enable
   namespace: pihole
   labels:
     app.kubernetes.io/name: pihole-curfew
     app.kubernetes.io/part-of: pihole-family-shield
 spec:
-  suspend: true
-  schedule: "0 21 * * *"
+  schedule: "0 21 29 9 *"
   timeZone: Europe/Warsaw
-  successfulJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   concurrencyPolicy: Forbid
   jobTemplate:
@@ -28,13 +31,15 @@ spec:
         spec:
           restartPolicy: OnFailure
           containers:
-            - name: curfew-enable
+            - name: ig-enable
               image: python@sha256:f3ebba2ace255c93267a0278da88c7f1044432991abc4e6ad20d22e34dd0f8ee
               imagePullPolicy: IfNotPresent
               command: ["python3", "/scripts/pihole_curfew.py", "enable"]
               env:
                 - name: PIHOLE_API
                   value: "http://192.168.1.179:80/api"
+                - name: PIHOLE_MARKER
+                  value: "S-experiment-IG"
                 - name: PIHOLE_PASSWORD
                   valueFrom:
                     secretKeyRef:
@@ -58,16 +63,15 @@ spec:
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: pihole-curfew-disable
+  name: pihole-ig-experiment-disable
   namespace: pihole
   labels:
     app.kubernetes.io/name: pihole-curfew
     app.kubernetes.io/part-of: pihole-family-shield
 spec:
-  suspend: true
-  schedule: "0 7 * * *"
+  schedule: "0 8 30 9 *"
   timeZone: Europe/Warsaw
-  successfulJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   concurrencyPolicy: Forbid
   jobTemplate:
@@ -79,13 +83,17 @@ spec:
         spec:
           restartPolicy: OnFailure
           containers:
-            - name: curfew-disable
+            - name: ig-disable
               image: python@sha256:f3ebba2ace255c93267a0278da88c7f1044432991abc4e6ad20d22e34dd0f8ee
               imagePullPolicy: IfNotPresent
               command: ["python3", "/scripts/pihole_curfew.py", "disable"]
               env:
                 - name: PIHOLE_API
                   value: "http://192.168.1.179:80/api"
+                - name: PIHOLE_MARKER
+                  value: "S-experiment-IG"
+                - name: RESTORE_MARKER
+                  value: "W/S block"
                 - name: PIHOLE_PASSWORD
                   valueFrom:
                     secretKeyRef:

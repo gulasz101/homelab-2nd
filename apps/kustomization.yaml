@@ -408,3 +408,5 @@ resources:
   # H2-75: S-group curfew (21:00 enable / 07:00 disable, Europe/Warsaw)
   - pihole/pihole-curfew-configmap.yaml
   - pihole/pihole-curfew-cronjob.yaml
+  # H2-76: one-shot IG experiment (2026-09-29 21:00 -> 09-30 08:00, S group)
+  - pihole/pihole-ig-experiment-cronjob.yaml
