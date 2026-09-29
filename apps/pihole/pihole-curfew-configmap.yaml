@@ -1,0 +1,137 @@
+---
+# Pi-hole S-group curfew reconciler script (H2-75).
+# Mounted into the pihole-curfew-* CronJobs. See pihole-curfew-cronjob.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pihole-curfew-script
+  namespace: pihole
+data:
+  pihole_curfew.py: |
+    #!/usr/bin/env python3
+    """Pi-hole S-group curfew reconciler (H2-75).
+
+    Converges the group membership of all "W/S block" deny-exact domains to the
+    desired state, then refreshes gravity + restarts DNS.
+
+    Usage: pihole_curfew.py enable|disable
+      enable  (21:00): social blocks apply to S group (10) too -> groups [9,10]
+      disable (07:00): social blocks leave the S group        -> groups [9]
+
+    Desired-state, not toggle: idempotent, drift-healing, safe to re-run.
+    Exits 0 on success (incl. "nothing to do"), non-zero on failure so the
+    PiholeCurfewJobFailed alert fires.
+    """
+    import json
+    import os
+    import sys
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    API = os.environ.get("PIHOLE_API", "http://192.168.1.179:80/api")
+    PASSWORD = os.environ["PIHOLE_PASSWORD"]
+    MARKER = "W/S block"
+    GROUP_W = 9
+    GROUP_S = 10
+    WANTED = {"enable": [GROUP_W, GROUP_S], "disable": [GROUP_W]}
+
+    class Pihole:
+        def __init__(self):
+            self.headers = {"Content-Type": "application/json"}
+
+        def reauth(self):
+            req = urllib.request.Request(
+                API + "/auth",
+                data=json.dumps({"password": PASSWORD}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                session = json.loads(resp.read())["session"]
+            self.headers = {
+                "Content-Type": "application/json",
+                "X-FTL-SID": session["sid"],
+                "X-CSRFToken": session["csrf"],
+            }
+
+        def call(self, method, path, body=None, timeout=180, _depth=0):
+            data = json.dumps(body).encode() if body is not None else None
+            req = urllib.request.Request(
+                API + path, data=data, headers=dict(self.headers), method=method
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    return resp.status, resp.read().decode(errors="replace")
+            except urllib.error.HTTPError as e:
+                if e.code == 401 and _depth < 3:
+                    self.reauth()
+                    return self.call(method, path, body, timeout, _depth + 1)
+                return e.code, e.read().decode(errors="replace")
+
+    def main():
+        mode = sys.argv[1] if len(sys.argv) > 1 else ""
+        if mode not in WANTED:
+            print("FATAL: mode must be enable|disable", file=sys.stderr)
+            return 2
+        wanted = WANTED[mode]
+
+        pihole = Pihole()
+        pihole.reauth()
+        print(f"[curfew] mode={mode} desired groups={wanted}")
+
+        st, raw = pihole.call("GET", "/domains/deny/exact")
+        if st != 200:
+            print(f"FATAL: list deny domains HTTP {st}: {raw[:200]}", file=sys.stderr)
+            return 1
+        domains = json.loads(raw)["domains"]
+        managed = [d for d in domains if (d.get("comment") or "") == MARKER]
+        print(f"[curfew] {len(domains)} deny-exact, {len(managed)} curfew-managed")
+
+        changed = 0
+        for d in managed:
+            if sorted(d["groups"]) == sorted(wanted):
+                continue
+            key = urllib.parse.quote(d["domain"], safe="")
+            st, raw = pihole.call(
+                "PUT", f"/domains/deny/exact/{key}",
+                {"domain": d["domain"], "comment": d.get("comment"),
+                 "groups": wanted, "enabled": d.get("enabled", True)},
+            )
+            if st != 200:
+                print(f"FATAL: PUT {d['domain']} HTTP {st}: {raw[:200]}", file=sys.stderr)
+                return 1
+            changed += 1
+            print(f"[curfew]   {d['domain']}: {d['groups']} -> {wanted}")
+
+        if changed:
+            st, raw = pihole.call("POST", "/action/gravity", {})
+            print(f"[curfew] gravity HTTP {st}")
+            if st != 200:
+                print(f"FATAL: gravity {raw[:200]}", file=sys.stderr)
+                return 1
+            st, raw = pihole.call("POST", "/action/restartdns", {})
+            print(f"[curfew] restartdns HTTP {st}")
+            if st != 200:
+                print(f"FATAL: restartdns {raw[:200]}", file=sys.stderr)
+                return 1
+        else:
+            print("[curfew] nothing to change — already converged")
+
+        st, raw = pihole.call("GET", "/domains/deny/exact")
+        if st == 200:
+            domains = json.loads(raw)["domains"]
+            managed = [d for d in domains if (d.get("comment") or "") == MARKER]
+            bad = [d["domain"] for d in managed if sorted(d["groups"]) != sorted(wanted)]
+            if bad:
+                print(f"FATAL: verification failed: {bad}", file=sys.stderr)
+                return 1
+            print(f"[curfew] verified: {len(managed)} entries at {wanted}")
+        else:
+            print(f"WARN: verify read-back HTTP {st}", file=sys.stderr)
+
+        print(f"[curfew] done ({mode}): {changed} changed")
+        return 0
+
+    if __name__ == "__main__":
+        sys.exit(main())

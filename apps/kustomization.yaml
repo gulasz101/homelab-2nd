@@ -405,3 +405,6 @@ resources:
   - pihole/pihole-alertmanager-config.yaml
   - pihole/pihole-loki-rule.yaml
   - pihole/pihole-dashboard-configmap.yaml
+  # H2-75: S-group curfew (21:00 enable / 07:00 disable, Europe/Warsaw)
+  - pihole/pihole-curfew-configmap.yaml
+  - pihole/pihole-curfew-cronjob.yaml

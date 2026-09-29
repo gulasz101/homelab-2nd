@@ -62,3 +62,17 @@ spec:
           annotations:
             summary: "pihole container restart storm"
             description: "{{ $labels.pod }}/{{ $labels.container }} restarted >3 times in the last hour."
+
+        # H2-75: curfew CronJobs (pihole-curfew-enable 21:00 / pihole-curfew-disable 07:00).
+        # A failed job means Sylwia's devices either stay blocked in the morning or stay
+        # unfiltered at night — both are design violations. kube metrics label job_name.
+        - alert: PiholeCurfewJobFailed
+          expr: |
+            kube_job_status_failed{namespace="pihole", job_name=~"pihole-curfew-(enable|disable)-.*"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            namespace: pihole
+          annotations:
+            summary: "Pi-hole curfew job {{ $labels.job_name }} failed"
+            description: "The S-group curfew CronJob {{ $labels.job_name }} failed. Check the job pod logs (FTL API auth, group PUT, gravity). Sylwia's devices are on the wrong blocking schedule until it succeeds. Manual re-run: kubectl -n pihole create job --from=cronjob/<pihole-curfew-enable|pihole-curfew-disable> manual-curfew"

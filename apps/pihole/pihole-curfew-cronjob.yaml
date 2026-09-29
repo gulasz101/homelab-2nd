@@ -1,0 +1,105 @@
+---
+# Pi-hole S-group curfew CronJobs (H2-75).
+# Sylwia's devices (group 10) get the social blocks 21:00–07:00 Europe/Warsaw.
+# The script is a desired-state reconciler: 21:00 -> groups [9,10], 07:00 -> [9].
+# Secret: pihole-app-secrets key "password" (same SOPS secret as the web UI).
+# Image pinned by digest (python:3.13-alpine multi-arch -> amd64 manifest).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pihole-curfew-enable
+  namespace: pihole
+  labels:
+    app.kubernetes.io/name: pihole-curfew
+    app.kubernetes.io/part-of: pihole-family-shield
+spec:
+  schedule: "0 21 * * *"
+  timeZone: Europe/Warsaw
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: pihole-curfew
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curfew-enable
+              image: python@sha256:f3ebba2ace255c93267a0278da88c7f1044432991abc4e6ad20d22e34dd0f8ee
+              imagePullPolicy: IfNotPresent
+              command: ["python3", "/scripts/pihole_curfew.py", "enable"]
+              env:
+                - name: PIHOLE_API
+                  value: "http://192.168.1.179:80/api"
+                - name: PIHOLE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: pihole-app-secrets
+                      key: password
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+          volumes:
+            - name: script
+              configMap:
+                name: pihole-curfew-script
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pihole-curfew-disable
+  namespace: pihole
+  labels:
+    app.kubernetes.io/name: pihole-curfew
+    app.kubernetes.io/part-of: pihole-family-shield
+spec:
+  schedule: "0 7 * * *"
+  timeZone: Europe/Warsaw
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: pihole-curfew
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curfew-disable
+              image: python@sha256:f3ebba2ace255c93267a0278da88c7f1044432991abc4e6ad20d22e34dd0f8ee
+              imagePullPolicy: IfNotPresent
+              command: ["python3", "/scripts/pihole_curfew.py", "disable"]
+              env:
+                - name: PIHOLE_API
+                  value: "http://192.168.1.179:80/api"
+                - name: PIHOLE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: pihole-app-secrets
+                      key: password
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+          volumes:
+            - name: script
+              configMap:
+                name: pihole-curfew-script
