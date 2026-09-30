@@ -46,10 +46,10 @@ git config --global --add safe.directory '*' || true
 echo "[entrypoint] starting openchamber on ${OPENCHAMBER_HOST}:${OPENCHAMBER_PORT} (opencode :${OPENCODE_PORT})"
 
 # --foreground keeps the server attached so tini/containerd manage it as PID 1's child.
+# The UI password comes from the OPENCHAMBER_UI_PASSWORD environment variable (set
+# from the SOPS secret). It is deliberately NOT passed as --ui-password, which would
+# expose it on the process command line (H2-36).
 set -- openchamber --host "${OPENCHAMBER_HOST}" --port "${OPENCHAMBER_PORT}" --foreground
-if [ -n "${OPENCHAMBER_UI_PASSWORD:-}" ]; then
-  set -- "$@" --ui-password "${OPENCHAMBER_UI_PASSWORD}"
-fi
 if [ "${OPENCHAMBER_API_ONLY:-false}" = "true" ]; then
   set -- "$@" --api-only
 fi

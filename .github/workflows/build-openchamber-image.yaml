@@ -1,7 +1,7 @@
 name: build-openchamber-image
 
-# Builds the Ubuntu + Node + OpenCode + OpenChamber worker image and pushes it to
-# GHCR. The k3s Deployment in apps/openchamber references the pushed tag.
+# Builds the Ubuntu + Node + Bun + OpenCode 2 + OpenChamber 2 worker image and
+# pushes it to GHCR. The k3s Deployment in apps/openchamber references the tag.
 on:
   workflow_dispatch:
   push:
@@ -37,7 +37,7 @@ jobs:
           file: build/openchamber/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/openchamber-web:1.23.1-r4
+            ghcr.io/${{ github.repository_owner }}/openchamber-web:2.0.4-r1
             ghcr.io/${{ github.repository_owner }}/openchamber-web:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

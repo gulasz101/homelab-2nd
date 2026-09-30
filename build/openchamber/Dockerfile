@@ -1,14 +1,15 @@
 # syntax=docker/dockerfile:1
 #
-# OpenChamber worker image — Ubuntu 24.04 + Node 22 + OpenCode CLI + OpenChamber web.
+# OpenChamber worker image — Ubuntu 24.04 + Node 22 + Bun + OpenCode 2 CLI + OpenChamber web.
 #
 # Built by .github/workflows/build-openchamber-image.yaml and pushed to
 # ghcr.io/gulasz101/openchamber-web. Pinned npm versions keep the image
 # reproducible; bump the ARGs to upgrade.
 FROM ubuntu:24.04
 
-ARG OPENCHAMBER_VERSION=1.23.1
-ARG OPENCODE_VERSION=1.18.30
+ARG OPENCHAMBER_VERSION=2.0.4
+ARG OPENCODE_CLI_VERSION=2.0.20
+ARG BUN_VERSION=1.4.2
 ARG NODE_MAJOR=22
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -71,12 +72,16 @@ RUN set -eux; \
     chmod 0755 /usr/local/bin/gitleaks; \
     rm -rf /tmp/helm.tgz /tmp/kustomize.tgz /tmp/kubeconform.tgz /tmp/gitleaks.tgz /tmp/linux-${helm_arch}
 
-# OpenChamber + OpenCode, installed globally as the openchamber user's prefix.
+# OpenChamber 2 + the OpenCode 2 CLI + Bun, installed globally as the
+# openchamber user's prefix. OpenCode 2 ships as `@opencode/cli` (a compiled
+# Bun binary), NOT `opencode-ai`, which stops at the 1.x line. OpenChamber 2
+# requires OpenCode >= 2.0.15.
 RUN npm config set prefix /home/openchamber/.npm-global \
     && mkdir -p /home/openchamber/.npm-global \
     && npm install -g \
         "@openchamber/web@${OPENCHAMBER_VERSION}" \
-        "opencode-ai@${OPENCODE_VERSION}" \
+        "@opencode/cli@${OPENCODE_CLI_VERSION}" \
+        "bun@${BUN_VERSION}" \
     && npm cache clean --force
 
 # UID/GID 1000 so bind-mounted volumes and PVCs line up predictably.
