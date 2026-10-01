@@ -63,7 +63,7 @@ Recovery inputs from outside the database:
 **Positive**
 
 - The Mac↔Itsaplan bridge is alive end-to-end: delegate → runner claims → HMAC webhook to
-  `192.168.1.148:8644` → Mac Hermes runs → comment + column move. Verified on H2-13
+  `192.168.1.129:8644` → Mac Hermes runs → comment + column move. Verified on H2-13
   (`agent_run.id=1 status=success`, webhook `{"status":"accepted","route":"itsaplan-andrzej"}`).
 - The Mac's MCP token survives untouched; only the k3s-side runner key changed (SOPS).
 - Historical ids are preserved where they matter (columns 7/8/9), so the Mac prompt, the
