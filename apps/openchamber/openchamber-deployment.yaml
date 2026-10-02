@@ -217,6 +217,12 @@ spec:
               value: gulasz101@gmail.com
             - name: GIT_COMMITTER_EMAIL
               value: gulasz101@gmail.com
+            # Node 22's default max HTTP header size (~16 KiB) is too small for
+            # the Authentik SSO headers oauth2-proxy forwards (X-Auth-Request-*
+            # plus groups). Without this, the app returns 431 and Cloudflare
+            # Tunnel reports 503. See ADR-023.
+            - name: NODE_OPTIONS
+              value: "--max-http-header-size=65536"
           volumeMounts:
             - name: data
               mountPath: /storage
