@@ -148,7 +148,7 @@ spec:
               cpu: "2"
               memory: 1Gi
         - name: openchamber
-          image: ghcr.io/gulasz101/openchamber-web:2.1.0-r2
+          image: ghcr.io/gulasz101/openchamber-web:2.1.0-r3
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
