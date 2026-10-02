@@ -84,6 +84,42 @@ RUN npm config set prefix /home/openchamber/.npm-global \
         "bun@${BUN_VERSION}" \
     && npm cache clean --force
 
+# H2-100 / ADR-027: strip browser SSO headers before the internal hop to the
+# managed OpenCode server (:4096).
+#
+# WHY: OpenChamber proxies /api/* to OpenCode, which is a compiled Bun binary
+# (Bun 1.4.2). Bun's HTTP parser enforces its own ~16 KiB total header limit and
+# IGNORES Node's --max-http-header-size, so NODE_OPTIONS on the app process does
+# NOT protect this hop. The auth cookie and X-Auth-Request-* headers forwarded by
+# oauth2-proxy grew past that limit, and OpenCode answered 431 -> the UI reported
+# "agent.list failed (431)" and Cloudflare surfaced 503. ADR-025 (the 64 KiB
+# NODE_OPTIONS fix) only raised the limit on the app hop and did not stop the
+# oversized header block from reaching OpenCode.
+#
+# WHAT: (a) extend the upstream strip-list with `cookie`, and (b) drop the
+# Set.has() membership test to a prefix check so every `x-auth-request-*` header
+# is stripped, not just the ones enumerated today. OpenCode needs none of them -
+# the proxy injects its own auth headers via getOpenCodeAuthHeaders().
+#
+# WHY A BUILD-TIME PATCH RATHER THAN A CONFIG FLAG: OpenChamber 2.1.0 exposes no
+# env var or setting for this strip-list. It is a module-level Set literal, so it
+# must be patched in the image we own.
+#
+# The patch is a standalone Node script (patch-proxy-headers.mjs) rather than an
+# inline sed: it asserts both upstream anchors exist exactly once, applies two
+# anchored replacements, re-verifies the output, and refuses to run against a file
+# it does not recognise. A future OpenChamber release that reshapes
+# proxy-headers.js therefore fails the BUILD instead of silently shipping an
+# unpatched image. It is idempotent, so repeated builds are safe.
+COPY patch-proxy-headers.mjs /tmp/patch-proxy-headers.mjs
+RUN set -eux; \
+    PH="/home/openchamber/.npm-global/lib/node_modules/@openchamber/web/server/proxy-headers.js"; \
+    test -f "$PH"; \
+    node /tmp/patch-proxy-headers.mjs "$PH"; \
+    node --input-type=module -e "import('file://$PH').then(()=>process.exit(0)).catch(e=>{console.error(e.message);process.exit(1)})"; \
+    rm -f /tmp/patch-proxy-headers.mjs; \
+    echo "ADR-027 patch verified: module parses and strip-list guard is present"
+
 # UID/GID 1000 so bind-mounted volumes and PVCs line up predictably.
 # Ubuntu 24.04 ships an 'ubuntu' user already holding uid/gid 1000 — drop it first.
 RUN userdel -r ubuntu 2>/dev/null || true \
