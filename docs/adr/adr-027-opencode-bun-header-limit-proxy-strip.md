@@ -62,6 +62,60 @@ Measured on the partially-fixed image: with a fat cookie, `/api/session` returne
 200 while `/api/agent` still returned 431 — which is precisely the reported
 symptom. Patching only the collector looked correct and fixed nothing visible.
 
+### The second trap: `proxyReq.headers` is an EMPTY object
+
+Even with both files patched, `/api/agent` still returned 431. `http-proxy-middleware`
+hands the `proxyReq` hook a request object whose header **accessors** work
+(`setHeader`, `getHeader`, `removeHeader` — upstream uses those itself) but whose
+`.headers` **property is an empty object**. A loop over `Object.keys(proxyReq.headers)`
+therefore iterates nothing and strips nothing — no error, no warning, nothing in the logs.
+
+Measured directly in the pod:
+
+```
+keysOfHeaders:    []                                <- empty
+getHeadersSample: [connection, host, x-other,
+                   x-auth-request-groups, cookie]    <- populated
+```
+
+The loop must iterate `proxyReq.getHeaders()` (with a `.headers` fallback):
+
+```js
+for (const headerName of Object.keys(proxyReq.getHeaders ? proxyReq.getHeaders() : proxyReq.headers || {})) {
+  const lower = headerName.toLowerCase();
+  if (lower === 'cookie' || lower.startsWith('x-auth-request-')) {
+    proxyReq.removeHeader(headerName);
+  }
+}
+```
+
+This also explains why the *specialised* routes were never affected: they read
+`req.headers` off the real Express request, not `proxyReq.headers`.
+
+**Both traps were invisible to text-based tests.** The patch script's assertions
+(text present, no duplicates, module parses) passed on both broken versions. Only
+a test that pushes a real request through a real `http-proxy-middleware` and
+inspects what arrived upstream can catch either one.
+
+### Build-time proof: `test-proxy-strip.mjs`
+
+`build/openchamber/test-proxy-strip.mjs` runs inside the image build. It extracts
+the injected loop **verbatim** from the patched `proxy.js` (brace-matched, so it
+cannot drift from what ships), executes it against a real `proxyReq`, sends a real
+request through a real proxy to a real upstream, and asserts what arrived:
+
+```
+PASS  SSO cookie stripped  (got: null)
+PASS  x-auth-request-groups stripped  (got: null)
+PASS  x-auth-request-email stripped  (got: null)
+PASS  non-SSO header preserved  (got: must-survive)
+PASS  routing header preserved  (got: /home/openchamber/workspace)
+PASS  proxy-injected auth preserved  (got: PRESENT)
+```
+
+If the strip regresses — including reverting to `.headers` — the **image build
+fails** rather than shipping a silently broken proxy.
+
 OpenCode needs none of these headers: the proxy injects its own auth headers via
 `getOpenCodeAuthHeaders()`, and the patch's functional test asserts `Authorization`,
 `accept`, and `x-opencode-directory` still arrive.

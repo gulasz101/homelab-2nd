@@ -126,7 +126,12 @@ const HOOK_REPLACEMENT = `${HOOK_ANCHOR}
         // that NODE_OPTIONS cannot raise, so the browser's SSO cookie and
         // X-Auth-Request-* headers must not reach it. OpenCode authenticates via
         // the Authorization header injected above.
-        for (const headerName of Object.keys(proxyReq.headers || {})) {
+        //
+        // NOTE: http-proxy-middleware's proxyReq exposes working header
+        // accessors (setHeader/getHeader/removeHeader - upstream uses them
+        // above) but its .headers PROPERTY IS EMPTY. Iterating .headers is
+        // a silent no-op; getHeaders() is the populated map. We measured this.
+        for (const headerName of Object.keys(proxyReq.getHeaders ? proxyReq.getHeaders() : proxyReq.headers || {})) {
           const lower = headerName.toLowerCase();
           if (lower === 'cookie' || lower.startsWith('x-auth-request-')) {
             proxyReq.removeHeader(headerName);

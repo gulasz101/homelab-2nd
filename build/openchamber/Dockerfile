@@ -111,7 +111,7 @@ RUN npm config set prefix /home/openchamber/.npm-global \
 # it does not recognise. A future OpenChamber release that reshapes
 # proxy-headers.js therefore fails the BUILD instead of silently shipping an
 # unpatched image. It is idempotent, so repeated builds are safe.
-COPY patch-proxy-headers.mjs /tmp/patch-proxy-headers.mjs
+COPY patch-proxy-headers.mjs test-proxy-strip.mjs /tmp/
 RUN set -eux; \
     SRV="/home/openchamber/.npm-global/lib/node_modules/@openchamber/web/server"; \
     PH="$SRV/proxy-headers.js"; \
@@ -120,8 +120,9 @@ RUN set -eux; \
     node /tmp/patch-proxy-headers.mjs "$PH" "$PX"; \
     node --input-type=module -e "import('file://$PH').then(()=>process.exit(0)).catch(e=>{console.error(e.message);process.exit(1)})"; \
     node --check "$PX"; \
-    rm -f /tmp/patch-proxy-headers.mjs; \
-    echo "ADR-027 patch verified: proxy-headers.js + catch-all proxy.js both patched and parsing"
+    node /tmp/test-proxy-strip.mjs "$PX"; \
+    rm -f /tmp/patch-proxy-headers.mjs /tmp/test-proxy-strip.mjs; \
+    echo "ADR-027 patch verified: proxy-headers.js + catch-all proxy.js both patched, parsing, and PROVEN to strip on the wire"
 
 # UID/GID 1000 so bind-mounted volumes and PVCs line up predictably.
 # Ubuntu 24.04 ships an 'ubuntu' user already holding uid/gid 1000 — drop it first.
