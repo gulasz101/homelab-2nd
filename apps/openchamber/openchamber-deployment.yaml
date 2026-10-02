@@ -223,6 +223,13 @@ spec:
             # Tunnel reports 503. See ADR-025 (H2-97).
             - name: NODE_OPTIONS
               value: "--max-http-header-size=65536"
+            # The OpenCode 2 binary honours this ("1" or "true") and skips its
+            # own update check. Experimental: the seeded opencode.json already
+            # sets "autoupdate": false and the pod drifted 2.0.20 -> 2.0.22
+            # anyway, so this likely does NOT stop an explicit `opencode
+            # upgrade`. See H2-93 / H2-96.
+            - name: OPENCODE_DISABLE_AUTOUPDATE
+              value: "1"
           volumeMounts:
             - name: data
               mountPath: /storage
