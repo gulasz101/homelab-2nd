@@ -4,6 +4,14 @@
 
 Accepted — 2026-09-30 · amends ADR-018 (same worker, new runtime)
 
+**Amended by [ADR-024](adr-024-openchamber-2.1.0-upgrade.md)** (2026-10-02). The
+decision to run the worker on OpenCode 2 stands. Two things in this ADR are
+corrected or refined there: the claim in §5 and in *When to revisit* that the
+worker "is pinned and does not self-update" turned out to be **false** — an
+in-pod `POST /api/opencode/upgrade` moved `@opencode/cli` 2.0.20 → 2.0.22 on
+2026-10-02 — and the Dockerfile pin is now treated as a floor rather than a
+ceiling.
+
 ## Context
 
 The t460 OpenChamber worker (ADR-018) ran `@openchamber/web@1.23.1` on the
