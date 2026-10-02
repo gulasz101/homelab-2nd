@@ -113,12 +113,15 @@ RUN npm config set prefix /home/openchamber/.npm-global \
 # unpatched image. It is idempotent, so repeated builds are safe.
 COPY patch-proxy-headers.mjs /tmp/patch-proxy-headers.mjs
 RUN set -eux; \
-    PH="/home/openchamber/.npm-global/lib/node_modules/@openchamber/web/server/proxy-headers.js"; \
-    test -f "$PH"; \
-    node /tmp/patch-proxy-headers.mjs "$PH"; \
+    SRV="/home/openchamber/.npm-global/lib/node_modules/@openchamber/web/server"; \
+    PH="$SRV/proxy-headers.js"; \
+    PX="$SRV/lib/opencode/proxy.js"; \
+    test -f "$PH"; test -f "$PX"; \
+    node /tmp/patch-proxy-headers.mjs "$PH" "$PX"; \
     node --input-type=module -e "import('file://$PH').then(()=>process.exit(0)).catch(e=>{console.error(e.message);process.exit(1)})"; \
+    node --check "$PX"; \
     rm -f /tmp/patch-proxy-headers.mjs; \
-    echo "ADR-027 patch verified: module parses and strip-list guard is present"
+    echo "ADR-027 patch verified: proxy-headers.js + catch-all proxy.js both patched and parsing"
 
 # UID/GID 1000 so bind-mounted volumes and PVCs line up predictably.
 # Ubuntu 24.04 ships an 'ubuntu' user already holding uid/gid 1000 — drop it first.

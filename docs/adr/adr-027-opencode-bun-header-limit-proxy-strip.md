@@ -42,22 +42,38 @@ once the header block passed ~16 KiB.
 ## Decision
 
 Patch OpenChamber's proxy header filter **in the image we build**
-(`build/openchamber/patch-proxy-headers.mjs`, applied by the Dockerfile):
+(`build/openchamber/patch-proxy-headers.mjs`, applied by the Dockerfile).
+Two files are patched, and **both are required** — this was found the hard way,
+after the first patch shipped in `2.1.0-r2` and still returned 431:
 
-1. Add `cookie` to `filteredRequestHeaders`.
-2. Strip every `x-auth-request-*` header by **prefix**, not by enumeration, so a
-   future oauth2-proxy header name cannot slip past a fixed list.
+1. **`server/proxy-headers.js`** — add `cookie` to `filteredRequestHeaders` and
+   strip every `x-auth-request-*` header by **prefix**, not by enumeration, so a
+   future oauth2-proxy header name cannot slip past a fixed list. This covers the
+   specialised routes (`/api/session`, the SSE streams).
+
+2. **`server/lib/opencode/proxy.js`** — the catch-all `/api` proxy, which is the
+   one that actually serves `agent.list`, is a plain `http-proxy-middleware`
+   instance whose `proxyReq` hook forwards **every** browser header verbatim and
+   never calls `collectForwardProxyHeaders`. A header-removal loop is injected
+   next to the existing `accept-encoding` line so `cookie` and `x-auth-request-*`
+   are dropped there too.
+
+Measured on the partially-fixed image: with a fat cookie, `/api/session` returned
+200 while `/api/agent` still returned 431 — which is precisely the reported
+symptom. Patching only the collector looked correct and fixed nothing visible.
 
 OpenCode needs none of these headers: the proxy injects its own auth headers via
-`getOpenCodeAuthHeaders()`, and the script's functional test asserts that
-`Authorization` still arrives.
+`getOpenCodeAuthHeaders()`, and the patch's functional test asserts `Authorization`,
+`accept`, and `x-opencode-directory` still arrive.
 
-The patch is intentionally strict. It asserts both upstream anchors occur exactly
+The patch is intentionally strict. It asserts each upstream anchor occurs exactly
 once, applies anchored replacements, re-verifies its own output, and exits
-non-zero if anything does not match — an OpenChamber upgrade that reshapes this
+non-zero if anything does not match — an OpenChamber upgrade that reshapes either
 file **fails the build** rather than shipping an unpatched image. It is
-idempotent. ADR-025's `NODE_OPTIONS=--max-http-header-size=65536` stays: it
-correctly protects the public hop and is the right first line of defence.
+idempotent per file, and converges on a partially-patched image (patching file A
+does not skip file B). ADR-025's `NODE_OPTIONS=--max-http-header-size=65536`
+stays: it correctly protects the public hop and is the right first line of
+defence.
 
 ## Consequences
 

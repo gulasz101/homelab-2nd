@@ -14,11 +14,18 @@
 //   2. strip every x-auth-request-* header by prefix (not just an enumeration,
 //      so a future oauth2-proxy header name cannot slip through)
 //
-// OpenCode needs none of them: the proxy injects its own auth headers through
-// getOpenCodeAuthHeaders(). This script is idempotent - re-running it is a
-// no-op and still exits 0, so it is safe to layer onto repeated builds.
+// A THIRD change is required in server/lib/opencode/proxy.js. The routes above
+// (session list, SSE) go through collectForwardProxyHeaders, but the catch-all
+// that serves agent.list is a plain http-proxy-middleware instance whose proxyReq
+// hook forwards every browser header verbatim - it never calls the collector.
+// Patching only proxy-headers.js therefore fixed /api/session but left
+// /api/agent returning 431. Measured on the patched image: with a fat cookie,
+// /api/session = 200 but /api/agent = 431.
 //
-// Usage: node patch-proxy-headers.mjs <path-to-proxy-headers.js>
+// OpenCode needs none of these headers: the proxy injects its own auth headers
+// through getOpenCodeAuthHeaders().
+//
+// Usage: node patch-proxy-headers.mjs <path-to-proxy-headers.js> [path-to-proxy.js>
 // Exits non-zero (loudly) if the upstream shape changed and no patch can apply,
 // so an OpenChamber upgrade that reshapes this file fails the build instead of
 // silently shipping an unpatched image.
@@ -39,10 +46,14 @@ const PREFIX_GUARD = "    if (normalizedKey.startsWith('x-auth-request-')) conti
 
 let source = readFileSync(target, 'utf8');
 
-if (source.includes(MARKER)) {
-  console.log(`[${MARKER}] already patched, nothing to do`);
-  process.exit(0);
-}
+// Patch 1 target state. Note we deliberately do NOT exit early when
+// proxy-headers.js is already patched: patch 2 lives in a different file and
+// must still be applied (a re-run over a partially-patched image must converge).
+const headersPatched = source.includes(MARKER);
+
+if (headersPatched) {
+  console.log(`[${MARKER}] proxy-headers.js already patched`);
+} else {
 
 // Preconditions: both anchors must be present exactly once, or we refuse to
 // guess at a reshaped upstream file.
@@ -88,3 +99,59 @@ for (const [ok, why] of checks) {
 
 writeFileSync(target, source, 'utf8');
 console.log(`[${MARKER}] proxy-headers.js patched and verified: cookie + x-auth-request-* stripped`);
+} // end patch-1 (skipped when headers already patched)
+
+// ---------------------------------------------------------------------------
+// Patch 2: the catch-all /api proxy (server/lib/opencode/proxy.js).
+// It forwards browser headers verbatim and never calls the collector, so it is
+// the hop that actually serves agent.list.
+// ---------------------------------------------------------------------------
+const proxyPath = process.argv[3];
+if (!proxyPath) {
+  console.log(`[${MARKER}] proxy.js path not supplied, skipping catch-all patch`);
+  process.exit(0);
+}
+
+let proxySrc = readFileSync(proxyPath, 'utf8');
+if (proxySrc.includes(MARKER)) {
+  console.log(`[${MARKER}] proxy.js already patched, nothing to do`);
+  process.exit(0);
+}
+
+const HOOK_ANCHOR = `        proxyReq.setHeader('accept-encoding', 'identity');`;
+const HOOK_REPLACEMENT = `${HOOK_ANCHOR}
+
+        // ${MARKER}: the catch-all /api proxy forwards every browser header
+        // verbatim. OpenCode is a Bun binary with a ~16 KiB TOTAL header limit
+        // that NODE_OPTIONS cannot raise, so the browser's SSO cookie and
+        // X-Auth-Request-* headers must not reach it. OpenCode authenticates via
+        // the Authorization header injected above.
+        for (const headerName of Object.keys(proxyReq.headers || {})) {
+          const lower = headerName.toLowerCase();
+          if (lower === 'cookie' || lower.startsWith('x-auth-request-')) {
+            proxyReq.removeHeader(headerName);
+          }
+        }`;
+
+const hookCount = proxySrc.split(HOOK_ANCHOR).length - 1;
+if (hookCount !== 1) {
+  console.error(`[${MARKER}] expected exactly one accept-encoding hook anchor in proxy.js, found ${hookCount}`);
+  process.exit(1);
+}
+
+proxySrc = proxySrc.replace(HOOK_ANCHOR, HOOK_REPLACEMENT);
+
+const proxyChecks = [
+  [proxySrc.includes(MARKER), 'proxy.js marker missing'],
+  [proxySrc.split("proxyReq.removeHeader(headerName)").length - 1 === 1, 'removeHeader loop missing or duplicated'],
+  [proxySrc.includes(HOOK_ANCHOR), 'original accept-encoding hook lost'],
+];
+for (const [ok, why] of proxyChecks) {
+  if (!ok) {
+    console.error(`[${MARKER}] proxy.js post-patch verification failed: ${why}`);
+    process.exit(1);
+  }
+}
+
+writeFileSync(proxyPath, proxySrc, 'utf8');
+console.log(`[${MARKER}] proxy.js patched and verified: catch-all /api strips cookie + x-auth-request-*`);
