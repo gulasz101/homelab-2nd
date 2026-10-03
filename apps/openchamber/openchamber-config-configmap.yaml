@@ -27,7 +27,7 @@ data:
   # the seed into /storage/opencode-config only when this differs from the
   # version recorded in /storage/opencode-config/.seed-version, so UI edits
   # between bumps survive.
-  seed-version: "2"
+  seed-version: "3"
   opencode.json: |
     {
       "$schema": "https://opencode.ai/config.json",
@@ -65,7 +65,7 @@ data:
         },
         "docs-mcp": {
           "type": "remote",
-          "url": "http://docs-mcp-server.docs-mcp.svc.cluster.local:6280/sse",
+          "url": "http://docs-mcp-server.docs-mcp.svc.cluster.local:6280/mcp",
           "enabled": true
         },
         "firecrawl": {

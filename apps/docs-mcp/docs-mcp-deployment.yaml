@@ -4,6 +4,14 @@
 # - SQLite store on /data, config on /config (both local-path PVCs).
 # - Embeddings via in-cluster Ollama (nomic-embed-text).
 # - LAN access via hostPort 6280 on the node (no Cloudflare Tunnel).
+# - Image tag PINNED (H2-95): with :latest + IfNotPresent the node kept serving a
+#   stale local digest (v3.1.0) while remote :latest moved on, and hand-patches of
+#   the live pod were reverted by Flux, wedging the hostPort rollout. Bump this
+#   tag deliberately on upgrade; never re-pin to :latest.
+# - strategy Recreate (H2-95): a hostPort pod can NEVER surge-start alongside its
+#   own predecessor (port collision -> FailedScheduling "no free ports"), so
+#   RollingUpdate deadlocks every template change. Recreate takes the short
+#   outage and always converges.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,6 +21,8 @@ metadata:
     app.kubernetes.io/name: docs-mcp-server
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: docs-mcp-server
@@ -25,7 +35,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: server
-          image: ghcr.io/arabold/docs-mcp-server:latest
+          image: ghcr.io/arabold/docs-mcp-server:3.2.1
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

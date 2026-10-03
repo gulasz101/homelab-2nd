@@ -28,6 +28,12 @@ spec:
       labels:
         app.kubernetes.io/name: openchamber
         app.kubernetes.io/component: worker
+      annotations:
+        # MUST match openchamber-opencode-config's `seed-version`. Changing the
+        # seed ConfigMap alone does not roll the pod; this marker makes the
+        # rollout declarative (the prepare init container re-seeds on version
+        # mismatch). H2-95: docs-mcp URL moved /sse -> /mcp (seed v3).
+        homelab.voitech.dev/opencode-seed-version: "3"
     spec:
       # Service links would inject OPENCHAMBER_PORT (and OPENCHAMBER_SERVICE_*)
       # from the Service named "openchamber", clobbering the app's own vars.
