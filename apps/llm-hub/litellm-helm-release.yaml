@@ -132,6 +132,26 @@ spec:
       # Auto-redirect the UI login page straight to SSO (hides classic form)
       - name: AUTO_REDIRECT_UI_LOGIN_TO_SSO
         value: "true"
+      # Make the mounted pre-call hook importable (see volumes below).
+      - name: PYTHONPATH
+        value: "/app"
+      # Log the resolved session id and its source. Set to "0" to quiet it
+      # once the wiring is proven; useful evidence during rollout.
+      - name: OPENCODE_HOOK_DEBUG
+        value: "1"
+
+    # Pre-call hook that normalizes the OpenCode Go session header (ADR-029).
+    # Mounted as a single file at /app/custom_callbacks.py and registered via
+    # litellm_settings.callbacks; /app is the LiteLLM working dir and is put on
+    # PYTHONPATH above.
+    volumes:
+      - name: litellm-session-callbacks
+        configMap:
+          name: litellm-session-callbacks
+    volumeMounts:
+      - name: litellm-session-callbacks
+        mountPath: /app/custom_callbacks.py
+        subPath: custom_callbacks.py
 
     # proxy_config is rendered into a ConfigMap and mounted as /app/config/config.yaml
     proxy_config:
@@ -350,266 +370,171 @@ spec:
         #   kimi-k2.5-go, glm-5-go, qwen3.5-plus-go, mimo-v2-pro-go,
         #   mimo-v2-omni-go, grok-4.5-go, hy3-preview-go (renamed hy3-go).
         #
-        # SESSION-HEADER FALLBACK (2026-10-02): the Go gateway enforces a
-        # stable `x-opencode-session` header on every chat request. Our
-        # generic clients (OpenWebUI, Hermes <= v0.21.0) never send it, so
-        # those requests 400 with "Request is missing x-opencode-session".
-        # general_settings.forward_client_headers_to_llm_api forwards any
-        # session header a client DOES send. These per-route extra_headers are
-        # the fallback for clients that send none. Merge order in LiteLLM
-        # (verified against v1.85.7 source, litellm/main.py): forwarded client
-        # headers first, then config extra_headers ON TOP — so this fallback
-        # WOULD mask a genuine client session header on -go routes. Accepted:
-        # OpenWebUI/Hermes<=v0.21.0 send nothing (they 400 without this fix),
-        # and updated Hermes clients that do send a real header should use the
-        # unsuffixed native route instead. A pre-call hook injecting the header
-        # only when absent is the cleaner long-term pattern — documented in
-        # ADR-026.
-        # Static fallback id is non-secret and shared: acceptable trade-off
-        # for a homelab; revisit with a per-request injecting callback if the
-        # vendor ever complains about routing quality.
-        # Every -go route below carries:
-        #   extra_headers:
-        #     x-opencode-session: "h2-litellm-fallback-session"
+        # SESSION-HEADER NORMALIZATION (2026-10-03, supersedes ADR-026):
+        # the Go gateway enforces a stable per-conversation
+        # `x-opencode-session` header on every chat request. LiteLLM does not
+        # emit one and clients vary in what they send. A pre-call hook
+        # (custom_callbacks.opencode_go_session_normalizer, mounted from the
+        # litellm-session-callbacks ConfigMap) now resolves ONE session id per
+        # conversation from whatever the client provides and injects it ONLY
+        # when the client did not send the header itself. The previous static
+        # fallback ("h2-litellm-fallback-session") was removed because config
+        # extra_headers merge AFTER forwarded client headers and therefore
+        # masked every real per-session id. See
+        # docs/adr/adr-029-litellm-opencode-go-session-normalizer.md.
         - model_name: deepseek-flash-go
           litellm_params:
             model: openai/deepseek-flash
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: deepseek-v4-flash-go
           litellm_params:
             model: openai/deepseek-v4-flash
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: deepseek-v4-flash-vision-exp-go
           litellm_params:
             model: openai/deepseek-v4-flash-vision-exp
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: deepseek-v4-pro-go
           litellm_params:
             model: openai/deepseek-v4-pro
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: deepseek-v4.1-flash-go
           litellm_params:
             model: openai/deepseek-v4.1-flash
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: glm-5.1-go
           litellm_params:
             model: openai/glm-5.1
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: glm-5.2-go
           litellm_params:
             model: openai/glm-5.2
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: glm-5.3-go
           litellm_params:
             model: openai/glm-5.3
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: glm-5.3-flash-go
           litellm_params:
             model: openai/glm-5.3-flash
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: hy3-go
           litellm_params:
             model: openai/hy3
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: hy4-preview-go
           litellm_params:
             model: openai/hy4-preview
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: kimi-k2.6-go
           litellm_params:
             model: openai/kimi-k2.6
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: kimi-k2.7-code-go
           litellm_params:
             model: openai/kimi-k2.7-code
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: kimi-k3-go
           litellm_params:
             model: openai/kimi-k3
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: longcat-2.0-go
           litellm_params:
             model: openai/longcat-2.0
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: longcat-2.5-preview-free-go
           litellm_params:
             model: openai/longcat-2.5-preview-free
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: mimo-v2.5-go
           litellm_params:
             model: openai/mimo-v2.5
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: mimo-v2.5-pro-go
           litellm_params:
             model: openai/mimo-v2.5-pro
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: mimo-v2.6-flash-go
           litellm_params:
             model: openai/mimo-v2.6-flash
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: mimo-v2.6-pro-go
           litellm_params:
             model: openai/mimo-v2.6-pro
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: minimax-m2.5-go
           litellm_params:
             model: openai/minimax-m2.5
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: minimax-m3-go
           litellm_params:
             model: openai/minimax-m3
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: omen-alpha-go
           litellm_params:
             model: openai/omen-alpha
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: qwen3.6-plus-go
           litellm_params:
             model: openai/qwen3.6-plus
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: qwen3.7-max-go
           litellm_params:
             model: openai/qwen3.7-max
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: qwen3.7-plus-go
           litellm_params:
             model: openai/qwen3.7-plus
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: qwen3.8-flash-go
           litellm_params:
             model: openai/qwen3.8-flash
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: qwen3.8-max-go
           litellm_params:
             model: openai/qwen3.8-max
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         - model_name: space-bunny-free-go
           litellm_params:
             model: openai/space-bunny-free
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
-            # fallback session header; forwarded client header wins when sent
-            extra_headers:
-              x-opencode-session: "h2-litellm-fallback-session"
         # OpenChamber worker model. Named WITHOUT the -go suffix on purpose:
-        # OpenChamber's OpenCode uses the NATIVE `opencode-go` provider (the only
-        # one that emits the `x-opencode-session` header the Go gateway requires),
-        # and that provider sends the native model id. general_settings below
-        # forwards the client's x-opencode-session header to the Go endpoint.
-        # NO extra_headers fallback here - it would clobber the client's real
-        # per-session header (config extras are merged last).
+        # OpenChamber's OpenCode uses the NATIVE `opencode-go` provider, which
+        # emits the real per-conversation `x-opencode-session` header. The
+        # pre-call hook passes an existing header through untouched (it only
+        # injects when the header is absent), and scoped forwarding in
+        # litellm_settings.model_group_settings carries it to the Go endpoint.
+        # NO config extra_headers here - they would clobber the client's real
+        # per-session header (config extras merge last).
         - model_name: deepseek-v4.1-flash
           litellm_params:
             model: openai/deepseek-v4.1-flash
@@ -619,17 +544,32 @@ spec:
       litellm_settings:
         callbacks:
           - "prometheus"
+          # Pre-call hook that normalizes the OpenCode Go session header.
+          # Mounted from the litellm-session-callbacks ConfigMap; must be
+          # importable (PYTHONPATH=/app, file at /app/custom_callbacks.py).
+          - "custom_callbacks.opencode_go_session_normalizer"
         require_auth_for_metrics_endpoint: false
+        # Forward the client's own session headers upstream ONLY for models
+        # routed to OpenCode Go (the only provider that needs them). `*-go`
+        # matches every standard Go route; the bare name is the OpenChamber
+        # worker's unsuffixed native route. Replaces the global
+        # general_settings.forward_client_headers_to_llm_api flag (closes the
+        # ADR-018 "when to revisit" item; see ADR-029).
+        model_group_settings:
+          forward_client_headers_to_llm_api:
+            - "*-go"
+            - "deepseek-v4.1-flash"
 
       general_settings:
         # master_key is also supplied via env var from the secret
         master_key: "os.environ/PROXY_MASTER_KEY"
         database_url: "os.environ/DATABASE_URL"
-        # Forward client request headers (x-opencode-session, user-agent, ...)
-        # to the upstream provider. Required by the OpenCode Go gateway, which
-        # rejects requests that do not carry a stable per-conversation
-        # `x-opencode-session` header (vendor-enforced since 2026-09-06).
-        forward_client_headers_to_llm_api: true
+        # Client x-* header forwarding for the OpenCode Go routes is scoped in
+        # litellm_settings.model_group_settings above, NOT global: client
+        # headers must not leak to unrelated providers (Ollama/Gemini/Z.AI).
+        # The pre-call hook is the primary source of the `x-opencode-session`
+        # value; scoped forwarding is the belt-and-braces path for clients
+        # that already send a real header (see ADR-029).
         # Restrict UI to admins only; combined with no UI_USERNAME/UI_PASSWORD
         # this hides the local login form, leaving only the SSO button
         ui_access_mode: "admin_only"

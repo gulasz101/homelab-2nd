@@ -68,6 +68,8 @@ resources:
   # LiteLLM virtual-key model-whitelist reconciler
   - llm-hub/litellm-key-provisioner-configmap.yaml
   - llm-hub/litellm-key-provisioner-cronjob.yaml
+  # LiteLLM OpenCode Go session-header normalizer (pre-call hook, ADR-029)
+  - llm-hub/litellm-session-callbacks-configmap.yaml
   # CNPG clusters for LiteLLM and Open WebUI
   - llm-hub/litellm-db-postgres-cluster.yaml
   - llm-hub/openwebui-db-postgres-cluster.yaml

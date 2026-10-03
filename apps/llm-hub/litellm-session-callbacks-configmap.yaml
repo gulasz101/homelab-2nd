@@ -1,0 +1,220 @@
+---
+# LiteLLM pre-call hook: OpenCode Go session-header normalizer.
+#
+# OpenCode Go (https://opencode.ai/zen/go/v1) requires a stable
+# per-conversation `x-opencode-session` header on every chat request. LiteLLM
+# does not emit one (upstream BerriAI/litellm#39503; the fix PR #39549 is still
+# open) and clients vary in what they send, so without help the gateway pins
+# every homelab conversation to a single upstream session — which is what the
+# previous static fallback ("h2-litellm-fallback-session") effectively did.
+#
+# This hook resolves ONE session id per conversation from whatever the client
+# provides and injects it as `x-opencode-session` on the outbound call, but
+# ONLY for models routed to OpenCode Go and ONLY when the client did not
+# already send the header (so a real per-session header is never clobbered).
+#
+# Mounted by the litellm HelmRelease at /app/custom_callbacks.py and registered
+# via proxy_config.litellm_settings.callbacks. Decision record:
+# docs/adr/adr-029-litellm-opencode-go-session-normalizer.md
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-session-callbacks
+  namespace: llm-hub
+data:
+  custom_callbacks.py: |
+    """
+    custom_callbacks.py — OpenCode Go session-header normalizer for LiteLLM.
+
+    The hook is deliberately defensive: any failure logs a warning and lets the
+    request proceed unchanged, so a bug here can never take down inference.
+    """
+
+    from __future__ import annotations
+
+    import hashlib
+    import json
+    import logging
+    import os
+    import re
+    import uuid
+    from typing import Any, Dict, Optional, Tuple
+
+    from litellm.integrations.custom_logger import CustomLogger
+
+    log = logging.getLogger("opencode_go_session_hook")
+
+    SESSION_HEADER = "x-opencode-session"
+    USER_AGENT_HEADER = "user-agent"
+    DEFAULT_USER_AGENT = os.environ.get("OPENCODE_GO_USER_AGENT", "homelab-litellm/1.0")
+
+    # Models routed to OpenCode Go that do NOT carry the -go suffix. Keep this
+    # in sync with proxy_config.model_list (the only such route today is the
+    # OpenChamber worker's native deepseek-v4.1-flash).
+    OPENCODE_GO_UNSUFFIXED = {"deepseek-v4.1-flash"}
+
+    # Explicit LiteLLM session headers (LiteLLM's own resolution order).
+    EXPLICIT_SESSION_HEADERS = ("x-litellm-trace-id", "x-litellm-session-id")
+    # Generic vendor session header, e.g. x-claude-code-session-id.
+    VENDOR_SESSION_RE = re.compile(r"^x-.+-session-id$")
+    # OpenCode sends these on generic OpenAI-compatible calls.
+    OPENCODE_BARE_SESSION_HEADERS = ("x-session-id", "x-session-affinity")
+    # Open WebUI sends this on every chat-completion request.
+    OPENWEBUI_CHAT_ID_HEADER = "x-openwebui-chat-id"
+
+
+    def _is_opencode_go_model(model: str) -> bool:
+        m = (model or "").strip().lower()
+        return m.endswith("-go") or m in OPENCODE_GO_UNSUFFIXED
+
+
+    def _get_header(headers: Optional[Dict[str, Any]], name: str) -> Optional[str]:
+        target = name.lower()
+        for key, value in (headers or {}).items():
+            if str(key).lower() == target and value:
+                return str(value).strip()
+        return None
+
+
+    class OpenCodeGoSessionNormalizer(CustomLogger):
+        """Injects a resolved x-opencode-session header for OpenCode Go routes."""
+
+        async def async_pre_call_hook(
+            self,
+            user_api_key_dict: Any,
+            cache: Any,
+            data: dict,
+            call_type: str,
+            **kwargs: Any,
+        ):
+            try:
+                return self._run(data, call_type)
+            except Exception as exc:  # never break a request because of this hook
+                log.warning(
+                    "opencode-go session hook failed, passing request through: %s",
+                    exc,
+                )
+                return data
+
+        def _run(self, data: dict, call_type: str) -> dict:
+            model = data.get("model") or ""
+            if not _is_opencode_go_model(model):
+                return data
+
+            request_headers = (data.get("proxy_server_request") or {}).get("headers") or {}
+            extra_headers = dict(data.get("extra_headers") or {})
+
+            session_id, source = self._resolve_session_id(
+                data, request_headers, extra_headers
+            )
+
+            # Never clobber a header the client already sent (carried by scoped
+            # forward_client_headers_to_llm_api) or one a prior hook injected.
+            existing = _get_header(extra_headers, SESSION_HEADER) or _get_header(
+                request_headers, SESSION_HEADER
+            )
+            if not existing:
+                extra_headers[SESSION_HEADER] = session_id
+
+            if not _get_header(extra_headers, USER_AGENT_HEADER):
+                extra_headers[USER_AGENT_HEADER] = DEFAULT_USER_AGENT
+
+            data["extra_headers"] = extra_headers
+
+            if not data.get("litellm_session_id"):
+                data["litellm_session_id"] = session_id
+            metadata = data.get("metadata")
+            if isinstance(metadata, dict):
+                metadata.setdefault("session_id", session_id)
+
+            if os.environ.get("OPENCODE_HOOK_DEBUG"):
+                log.info(
+                    "opencode-go session: model=%s session=%s source=%s call_type=%s",
+                    model,
+                    session_id,
+                    source,
+                    call_type,
+                )
+            return data
+
+        def _resolve_session_id(
+            self,
+            data: dict,
+            request_headers: Dict[str, Any],
+            extra_headers: Dict[str, Any],
+        ) -> Tuple[str, str]:
+            sources = (request_headers, extra_headers)
+
+            # 1. Canonical header (OpenChamber/native OpenCode, updated Hermes).
+            for headers in sources:
+                v = _get_header(headers, SESSION_HEADER)
+                if v:
+                    return v, "x-opencode-session"
+
+            # 2. Explicit LiteLLM session headers.
+            for name in EXPLICIT_SESSION_HEADERS:
+                for headers in sources:
+                    v = _get_header(headers, name)
+                    if v:
+                        return v, name
+
+            # 3. Generic x-<vendor>-session-id.
+            for headers in sources:
+                for key, value in (headers or {}).items():
+                    if value and VENDOR_SESSION_RE.match(str(key).lower()):
+                        return str(value).strip(), str(key)
+
+            # 4. OpenCode bare session headers (generic OpenAI-compatible path).
+            for name in OPENCODE_BARE_SESSION_HEADERS:
+                for headers in sources:
+                    v = _get_header(headers, name)
+                    if v:
+                        return v, name
+
+            # 5. Open WebUI chat id.
+            for headers in sources:
+                v = _get_header(headers, OPENWEBUI_CHAT_ID_HEADER)
+                if v:
+                    return v, OPENWEBUI_CHAT_ID_HEADER
+
+            # 6. Body / metadata session id.
+            for container in (data.get("metadata"), data.get("litellm_metadata")):
+                if isinstance(container, dict):
+                    v = container.get("session_id") or container.get("litellm_session_id")
+                    if v:
+                        return str(v).strip(), "metadata.session_id"
+
+            # 7. Stable hash of the first user message. The first user message
+            # stays constant across a conversation's turns, so this pins the
+            # session for clients that send nothing at all.
+            digest = self._first_user_message_hash(data)
+            if digest:
+                return digest, "first-user-message-hash"
+
+            # 8. Last resort.
+            return str(uuid.uuid4()), "random-uuid"
+
+        @staticmethod
+        def _first_user_message_hash(data: dict) -> Optional[str]:
+            for message in data.get("messages") or []:
+                if not isinstance(message, dict) or message.get("role") != "user":
+                    continue
+                content = message.get("content")
+                if not content:
+                    continue
+                if isinstance(content, str):
+                    normalized = content.strip()
+                else:
+                    normalized = json.dumps(
+                        content,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                if normalized:
+                    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
+            return None
+
+
+    opencode_go_session_normalizer = OpenCodeGoSessionNormalizer()
