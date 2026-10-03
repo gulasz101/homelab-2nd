@@ -152,9 +152,10 @@ data:
             print(f"Skipping {svc}: source empty")
             continue
         tar_path = f"/tmp/arr-backups/{svc}-{timestamp}.tar.gz"
-        # GNU tar: --exclude must precede the operands to apply to them.
+        # GNU tar: with leading long options (--exclude), the operation bundle
+        # must carry its dash. Unify on -czf for all services.
         cmd = ["tar"] + [f"--exclude={p}" for p in tar_excludes.get(svc, [])]
-        cmd += ["czf", tar_path, "-C", src, "."]
+        cmd += ["-czf", tar_path, "-C", src, "."]
         subprocess.run(cmd, check=True)
         upload(svc, tar_path)
         cleanup(svc)
