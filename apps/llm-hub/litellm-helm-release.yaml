@@ -367,7 +367,7 @@ spec:
         # NOTE: reasoning model — emits reasoning_content; test prompts need
         # generous max_tokens or content comes back empty (reasoning burn).
         # ⚠ DEPRECATED 2026-10-03: lineage runaway-think trap (9B-Distill has no
-        # documented enable_thinking path). Prefer qwen3.8-27b-mlx-nothink.
+        # documented enable_thinking path). Prefer qwen3.8-27b-mlx.
         - model_name: qwen3.8-9b-heretic-uncensored
           litellm_params:
             model: openai/qwen3.8-9b-heretic-uncensored-mtplx
@@ -380,9 +380,13 @@ spec:
         # (chat_template_kwargs.enable_thinking=false pre-emits an empty
         # think block) — verified live on 2026-10-03: loop-trap with 4000
         # max_tokens completed clean, finish=stop, no runaway deliberation.
-        # Two aliases: passthrough (client controls thinking) + nothink
-        # (kills thinking route-side if LiteLLM forwards the kwargs — probe
-        # after deploy; remove alias if it doesn't).
+        # Two aliases WERE planned: passthrough + nothink (route-side kill
+        # switch). PROBE 2026-10-03 after deploy: chat_template_kwargs is
+        # DROPPED on the way — LiteLLM does not forward it, and even a direct
+        # curl to LM Studio's /v1 with enable_thinking=false still returns
+        # reasoning_content. The kill switch only works inside the LM Studio
+        # UI/engine, not via its OpenAI-compatible API. Aliases removed;
+        # disable thinking from the LM Studio UI if you want it off globally.
         # Sampling note: never greedy-decode this family (documented
         # repetition loops): temp 0.7, top_p 0.8, top_k 20, presence 1.5.
         - model_name: qwen3.8-27b-mlx
@@ -390,14 +394,6 @@ spec:
             model: openai/qwen3.8-27b-mlx
             api_base: "http://192.168.1.119:1234/v1"
             api_key: "os.environ/DUMMY_API_KEY"
-        - model_name: qwen3.8-27b-mlx-nothink
-          litellm_params:
-            model: openai/qwen3.8-27b-mlx
-            api_base: "http://192.168.1.119:1234/v1"
-            api_key: "os.environ/DUMMY_API_KEY"
-            chat_template_kwargs:
-              enable_thinking: false
-              preserve_thinking: false
 
         # ── OpenCode Go subscription models (all with -go suffix) ──────
         # Line-up refreshed 2026-10-02 against the LIVE endpoint

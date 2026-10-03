@@ -40,19 +40,25 @@ open. On 32 GB of unified memory, the 4-bit MLX quant of the 27B lands at
 
 Host `lmstudio-community/Qwen3.8-27B-MLX-4bit` (official weights, 4.2M
 downloads, apache-2.0) in LM Studio on the M1 Max and expose it through
-LiteLLM as **two aliases**:
+LiteLLM as **one alias**:
 
-- `qwen3.8-27b-mlx` — passthrough; clients that send their own
-  `chat_template_kwargs` control thinking per request.
-- `qwen3.8-27b-mlx-nothink` — route-side default
-  `chat_template_kwargs: {enable_thinking: false, preserve_thinking: false}`
-  for clients (Open WebUI, agents, humans) that don't think about kwargs.
+- `qwen3.8-27b-mlx` — passthrough to the LM Studio OpenAI-compatible API.
+
+A planned second alias, `qwen3.8-27b-mlx-nothink` (route-side
+`chat_template_kwargs: {enable_thinking: false}`), was probed post-deploy on
+2026-10-03 and **removed**: LiteLLM does not forward `chat_template_kwargs`
+to an `openai/` backend, and even a direct `curl` to LM Studio's `/v1` with
+`enable_thinking: false` (nested *and* top-level) still returns
+`reasoning_content`. The template kill switch is only honoured by the LM
+Studio engine/UI, not its API. Thinking-off must be set in the LM Studio UI
+if wanted globally.
 
 The heretic alias is marked deprecated in the HelmRelease comment (kept routed
 for now — no dangling clients). Sampling rule for this family: never
 greedy-decode (documented repetition loops); temp 0.7, top_p 0.8, top_k 20,
 presence_penalty 1.5. Keep the LiteLLM→LM Studio hop on the direct LAN
-(pf-forward to `192.168.1.129:1234`), never through the Cloudflare edge, whose
+(pf-forward to `192.168.1.119:1234`; DHCP lease drift history .148 → .129
+→ .119, the last drift caught and repinned on 2026-10-03), never through the Cloudflare edge, whose
 ~100 s timeout will 524 a 27B cold load.
 
 ## Consequences
@@ -90,8 +96,9 @@ presence_penalty 1.5. Keep the LiteLLM→LM Studio hop on the direct LAN
 
 - We add a GPU box or a 64 GB+ Mac — bigger/faster local serving changes the
   size calculus.
-- LM Studio adds first-class thinking-control config for this family (then the
-  nothink alias kwargs can be replaced by an engine-level setting).
+- LM Studio adds first-class thinking-control config exposed via its OpenAI
+  API (today the engine honours `enable_thinking` only in the UI, so the
+  removed nothink alias could come back as a working route-side default).
 - The 27B proves too slow for the workloads we actually run it for → retarget
   the alias to a GGUF or a smaller official model that *does* document a
   non-thinking mode.
