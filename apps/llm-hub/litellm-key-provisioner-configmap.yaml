@@ -63,6 +63,8 @@ data:
         # Local LM Studio model on Hermes host
         "gemma-4-12b-uncensored",
         "qwen3.8-9b-heretic-uncensored",
+        "qwen3.8-27b-mlx",
+        "qwen3.8-27b-mlx-nothink",
         # Honcho deriver/summary/dream/dialectic models
         "nemotron-3-nano-30b-ollama",
         "openai/nemotron-3-nano-30b-ollama",
