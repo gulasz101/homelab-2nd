@@ -362,6 +362,16 @@ spec:
             api_base: "http://192.168.1.129:1234/v1"
             api_key: "os.environ/DUMMY_API_KEY"
 
+        # Qwen3.8-9B heretic-uncensored (MLX 4-bit) — LM Studio on the M1 Max,
+        # same LAN route/caveats as the gemma entry above (pinned DHCP IP).
+        # NOTE: reasoning model — emits reasoning_content; test prompts need
+        # generous max_tokens or content comes back empty (reasoning burn).
+        - model_name: qwen3.8-9b-heretic-uncensored
+          litellm_params:
+            model: openai/qwen3.8-9b-heretic-uncensored-mtplx
+            api_base: "http://192.168.1.129:1234/v1"
+            api_key: "os.environ/DUMMY_API_KEY"
+
         # ── OpenCode Go subscription models (all with -go suffix) ──────
         # Line-up refreshed 2026-10-02 against the LIVE endpoint
         # (GET https://opencode.ai/zen/go/v1/models -> 36 ids), then every id
