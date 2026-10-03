@@ -38,6 +38,7 @@ data:
     import logging
     import os
     import re
+    import sys
     import uuid
     from typing import Any, Dict, Optional, Tuple
 
@@ -129,12 +130,14 @@ data:
                 metadata.setdefault("session_id", session_id)
 
             if os.environ.get("OPENCODE_HOOK_DEBUG"):
-                log.info(
-                    "opencode-go session: model=%s session=%s source=%s call_type=%s",
-                    model,
-                    session_id,
-                    source,
-                    call_type,
+                # print() to stderr, NOT log.info(): this must be visible
+                # regardless of the proxy's configured log level (the default
+                # level suppresses INFO). stderr is captured into Loki.
+                print(
+                    "opencode-go session: model=%s session=%s source=%s call_type=%s"
+                    % (model, session_id, source, call_type),
+                    file=sys.stderr,
+                    flush=True,
                 )
             return data
 
