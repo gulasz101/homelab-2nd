@@ -24,6 +24,17 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-018 | OpenChamber worker — t460 container, split local/durable storage | Accepted | 2026-09-14 |
 | ADR-019 | Itsaplan agent results post back as issue comments via the bridge | Accepted | 2026-09-15 |
 | ADR-020 | Open WebUI gets cluster-internal MCP tool servers via `TOOL_SERVER_CONNECTIONS` (additive to Firecrawl) | Accepted | 2026-09-26 |
+| ADR-021 | Pi-hole DNS shield on k3s (family discipline layer) | Accepted | 2026-09-27 |
+| ADR-022 | Pi-hole Family Shield enforcement layer — group topology, whole-home noporn, curfew-by-CronJob | Accepted | 2026-09-29 |
+| ADR-023 | OpenChamber worker on OpenChamber 2 / OpenCode 2 (amends ADR-018) | Accepted | 2026-09-30 |
+| ADR-024 | OpenChamber 2.1.0 and the in-pod OpenCode CLI self-upgrade (amends ADR-023) | Accepted | 2026-10-02 |
+| ADR-025 | OpenChamber Node.js HTTP header size limit | Accepted | 2026-10-02 |
+| ADR-026 | OpenCode Go session header — LiteLLM fallback strategy | Superseded by ADR-029 | 2026-10-02 |
+| ADR-027 | Strip browser SSO headers before the internal OpenCode hop | Accepted | 2026-10-02 |
+| ADR-028 | docs-mcp-server on streamable HTTP `/mcp`, pinned image, Recreate strategy | Accepted | 2026-10-03 |
+| ADR-029 | OpenCode Go session header — per-request normalization in LiteLLM (supersedes ADR-026) | Accepted | 2026-10-03 |
+| ADR-030 | Nightly config backups exclude re-derivable media metadata | Accepted | 2026-10-03 |
+| ADR-031 | Qwen3.8-27B MLX 4-bit replaces the ≤12B local-model cap | Accepted | 2026-10-03 |
 
 ## Writing an ADR
 
