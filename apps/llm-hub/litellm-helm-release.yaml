@@ -137,6 +137,15 @@ spec:
       - name: OPENCODE_HOOK_DEBUG
         value: "1"
 
+    # Pod template annotation used ONLY to force a rollout when the
+    # litellm-session-callbacks ConfigMap changes. The callback module is
+    # imported at LiteLLM startup, and the chart mounts it via subPath (which
+    # does not update in place), so a ConfigMap-only change neither reloads the
+    # module nor restarts the pod. BUMP THIS VALUE whenever custom_callbacks.py
+    # changes, or the change will not take effect.
+    podAnnotations:
+      litellm.session-callbacks-revision: "2"
+
     # Pre-call hook that normalizes the OpenCode Go session header (ADR-029).
     # LiteLLM loads a callback named in litellm_settings.callbacks by file path
     # RELATIVE TO THE CONFIG FILE (get_instance_fn: dirname(config)/module.py),
