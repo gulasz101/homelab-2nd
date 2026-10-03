@@ -142,13 +142,20 @@ data:
     
     
     os.makedirs("/tmp/arr-backups", exist_ok=True)
+    # Jellyfin's data/metadata is re-scrapable and had ballooned to 1.5G
+    # (2026-10-03 OOM incident); the DBs + plugins on the same PVC are the
+    # parts that must survive a restore.
+    tar_excludes = {"jellyfin": ["./data/metadata", "./data/cache"]}
     for svc in services:
         src = f"/configs/{svc}"
         if not os.path.isdir(src) or not os.listdir(src):
             print(f"Skipping {svc}: source empty")
             continue
         tar_path = f"/tmp/arr-backups/{svc}-{timestamp}.tar.gz"
-        subprocess.run(["tar", "czf", tar_path, "-C", src, "."], check=True)
+        # GNU tar: --exclude must precede the operands to apply to them.
+        cmd = ["tar"] + [f"--exclude={p}" for p in tar_excludes.get(svc, [])]
+        cmd += ["czf", tar_path, "-C", src, "."]
+        subprocess.run(cmd, check=True)
         upload(svc, tar_path)
         cleanup(svc)
     

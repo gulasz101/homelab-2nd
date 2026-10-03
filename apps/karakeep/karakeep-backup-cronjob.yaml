@@ -60,13 +60,14 @@ spec:
                       k_service = sign(k_region, service)
                       return sign(k_service, 'aws4_request')
 
-                  def signed_request(method, path, payload=b'', query=''):
+                  def signed_request(method, path, payload=b'', query='', payload_hash=None, content_length=None):
                       t = datetime.datetime.now(datetime.timezone.utc)
                       date_stamp = t.strftime('%Y%m%d')
                       amz_date = t.strftime('%Y%m%dT%H%M%SZ')
                       if isinstance(payload, str):
                           payload = payload.encode('utf-8')
-                      payload_hash = sha256(payload)
+                      if payload_hash is None:
+                          payload_hash = sha256(payload)
                       host = 'openmediavault.local:9000'
                       headers = {
                           'host': host,
@@ -74,7 +75,9 @@ spec:
                           'x-amz-date': amz_date,
                       }
                       if method in ('PUT', 'POST'):
-                          headers['content-length'] = str(len(payload))
+                          if content_length is None:
+                              content_length = len(payload)
+                          headers['content-length'] = str(content_length)
                       header_keys = sorted(headers.keys())
                       signed_headers = ';'.join(header_keys)
                       canonical_request = '\n'.join([
@@ -139,11 +142,18 @@ spec:
                           shutil.copy2(snap, out)
                           print(f'Fell back to raw copy for {name}')
                       key = prefix + f'{name[:-3]}-{ts}.db'
-                      data = open(out, 'rb').read()
+                      size = os.path.getsize(out)
+                      h = hashlib.sha256()
+                      with open(out, 'rb') as f:
+                          for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                              h.update(chunk)
+                      file_hash = h.hexdigest()
                       for attempt in range(3):
                           try:
-                              resp = signed_request('PUT', f'/{bucket}/{urllib.parse.quote(key, safe="/")}', data)
-                              print(f'Uploaded {name} -> {bucket}/{key} ({len(data)} bytes, HTTP {resp.status})')
+                              with open(out, 'rb') as f:
+                                  resp = signed_request('PUT', f'/{bucket}/{urllib.parse.quote(key, safe="/")}', f,
+                                                        payload_hash=file_hash, content_length=size)
+                              print(f'Uploaded {name} -> {bucket}/{key} ({size} bytes, HTTP {resp.status})')
                               break
                           except Exception as e:
                               print(f'Upload attempt {attempt + 1} for {name} failed: {e}')

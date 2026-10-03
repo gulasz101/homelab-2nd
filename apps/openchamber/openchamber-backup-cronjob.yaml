@@ -71,20 +71,23 @@ spec:
                       k_service = sign(k_region, service)
                       return sign(k_service, 'aws4_request')
 
-                  def signed_request(method, path, payload=b'', query=''):
+                  def signed_request(method, path, payload=b'', query='', payload_hash=None, content_length=None):
                       t = datetime.datetime.now(datetime.timezone.utc)
                       date_stamp = t.strftime('%Y%m%d')
                       amz_date = t.strftime('%Y%m%dT%H%M%SZ')
                       if isinstance(payload, str):
                           payload = payload.encode('utf-8')
-                      payload_hash = sha256(payload)
+                      if payload_hash is None:
+                          payload_hash = sha256(payload)
                       headers = {
                           'host': host,
                           'x-amz-content-sha256': payload_hash,
                           'x-amz-date': amz_date,
                       }
                       if method in ('PUT', 'POST'):
-                          headers['content-length'] = str(len(payload))
+                          if content_length is None:
+                              content_length = len(payload)
+                          headers['content-length'] = str(content_length)
                       header_keys = sorted(headers.keys())
                       signed_headers = ';'.join(header_keys)
                       canonical_request = '\n'.join([
@@ -170,10 +173,16 @@ spec:
                       t.add(stage, arcname='.')
                   size = os.path.getsize(arch)
                   key = f'openchamber/openchamber-{ts}.tar.gz'
-                  data = open(arch, 'rb').read()
+                  h = hashlib.sha256()
+                  with open(arch, 'rb') as f:
+                      for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                          h.update(chunk)
+                  file_hash = h.hexdigest()
                   for attempt in range(3):
                       try:
-                          resp = signed_request('PUT', f'/{bucket}/{urllib.parse.quote(key, safe="/")}', data)
+                          with open(arch, 'rb') as f:
+                              resp = signed_request('PUT', f'/{bucket}/{urllib.parse.quote(key, safe="/")}', f,
+                                                    payload_hash=file_hash, content_length=size)
                           print(f'Uploaded {key} ({size} bytes, HTTP {resp.status})')
                           break
                       except Exception as e:

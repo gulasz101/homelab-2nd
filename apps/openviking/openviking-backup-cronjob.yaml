@@ -89,13 +89,14 @@ spec:
                       k_service = sign(k_region, service)
                       return sign(k_service, 'aws4_request')
 
-                  def signed_request(method, path, payload=b'', query=''):
+                  def signed_request(method, path, payload=b'', query='', payload_hash=None, content_length=None):
                       t = datetime.datetime.now(datetime.timezone.utc)
                       date_stamp = t.strftime('%Y%m%d')
                       amz_date = t.strftime('%Y%m%dT%H%M%SZ')
                       if isinstance(payload, str):
                           payload = payload.encode('utf-8')
-                      payload_hash = sha256(payload)
+                      if payload_hash is None:
+                          payload_hash = sha256(payload)
                       host = 'openmediavault.local:9000'
                       headers = {
                           'host': host,
@@ -103,7 +104,9 @@ spec:
                           'x-amz-date': amz_date,
                       }
                       if method in ('PUT', 'POST'):
-                          headers['content-length'] = str(len(payload))
+                          if content_length is None:
+                              content_length = len(payload)
+                          headers['content-length'] = str(content_length)
                       header_keys = sorted(headers.keys())
                       signed_headers = ';'.join(header_keys)
                       canonical_request = '\n'.join([
@@ -132,12 +135,20 @@ spec:
                       return urllib.request.urlopen(req, timeout=120)
 
                   object_key = prefix + os.path.basename(local_path)
-                  data = open(local_path, 'rb').read()
+                  size = os.path.getsize(local_path)
+                  # Stream: chunked SHA-256 + file-object body (no whole-file slurp).
+                  h = hashlib.sha256()
+                  with open(local_path, 'rb') as f:
+                      for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                          h.update(chunk)
+                  file_hash = h.hexdigest()
                   encoded_key = urllib.parse.quote(object_key, safe='/')
 
                   for attempt in range(3):
                       try:
-                          resp = signed_request('PUT', f'/{bucket}/{encoded_key}', data)
+                          with open(local_path, 'rb') as f:
+                              resp = signed_request('PUT', f'/{bucket}/{encoded_key}', f,
+                                                    payload_hash=file_hash, content_length=size)
                           print(f'Uploaded {local_path} -> {bucket}/{object_key} (HTTP {resp.status})')
                           break
                       except Exception as e:
@@ -169,6 +180,13 @@ spec:
                   print(f'Retention cleanup complete, removed {removed} objects')
                   PY
                   echo "Backup complete: ${PACK}"
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
               env:
                 - name: OPENVIKING_CLI_CONFIG_FILE
                   value: /root/.openviking/ovcli.conf
