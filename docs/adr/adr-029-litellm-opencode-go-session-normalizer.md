@@ -55,8 +55,8 @@ the outbound call. Delivered via GitOps in `apps/llm-hub/`:
 
 1. **New ConfigMap** `litellm-session-callbacks` holds `custom_callbacks.py`
    (`OpenCodeGoSessionNormalizer`). The litellm HelmRelease mounts it at
-   `/app/custom_callbacks.py` (chart `volumes`/`volumeMounts`), sets `PYTHONPATH=/app`,
-   and registers it:
+   **`/etc/litellm/custom_callbacks.py`** (chart `volumes`/`volumeMounts`) and
+   registers it:
 
    ```yaml
    litellm_settings:
@@ -64,6 +64,14 @@ the outbound call. Delivered via GitOps in `apps/llm-hub/`:
        - "prometheus"
        - "custom_callbacks.opencode_go_session_normalizer"
    ```
+
+   **Gotcha:** LiteLLM resolves a callback named `pkg.attr` by loading
+   `dirname(config_file)/pkg.py` (`get_instance_fn` in
+   `litellm/proxy/types_utils/utils.py`), and the chart mounts the proxy config at
+   `/etc/litellm/config.yaml`. The module must therefore sit **next to the config
+   file** — `/etc/litellm/custom_callbacks.py`. Mounting it under `/app` and setting
+   `PYTHONPATH=/app` does *not* work: that loader reads the file path directly and
+   raised `ImportError: Could not find module file /etc/litellm/custom_callbacks.py`.
 
 2. **Resolution order** (first hit wins) inside the hook:
    1. inbound `x-opencode-session` — pass-through, never clobbered

@@ -13,8 +13,9 @@
 # ONLY for models routed to OpenCode Go and ONLY when the client did not
 # already send the header (so a real per-session header is never clobbered).
 #
-# Mounted by the litellm HelmRelease at /app/custom_callbacks.py and registered
-# via proxy_config.litellm_settings.callbacks. Decision record:
+# Mounted by the litellm HelmRelease at /etc/litellm/custom_callbacks.py (next to
+# the proxy config, which LiteLLM's callback loader reads relative to) and
+# registered via proxy_config.litellm_settings.callbacks. Decision record:
 # docs/adr/adr-029-litellm-opencode-go-session-normalizer.md
 apiVersion: v1
 kind: ConfigMap

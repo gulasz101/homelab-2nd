@@ -132,28 +132,27 @@ spec:
       # Auto-redirect the UI login page straight to SSO (hides classic form)
       - name: AUTO_REDIRECT_UI_LOGIN_TO_SSO
         value: "true"
-      # Make the mounted pre-call hook importable (see volumes below).
-      - name: PYTHONPATH
-        value: "/app"
       # Log the resolved session id and its source. Set to "0" to quiet it
       # once the wiring is proven; useful evidence during rollout.
       - name: OPENCODE_HOOK_DEBUG
         value: "1"
 
     # Pre-call hook that normalizes the OpenCode Go session header (ADR-029).
-    # Mounted as a single file at /app/custom_callbacks.py and registered via
-    # litellm_settings.callbacks; /app is the LiteLLM working dir and is put on
-    # PYTHONPATH above.
+    # LiteLLM loads a callback named in litellm_settings.callbacks by file path
+    # RELATIVE TO THE CONFIG FILE (get_instance_fn: dirname(config)/module.py),
+    # and the chart mounts the config at /etc/litellm/config.yaml — so the
+    # module MUST live at /etc/litellm/custom_callbacks.py. (PYTHONPATH does
+    # not help here; the loader reads the file directly.)
     volumes:
       - name: litellm-session-callbacks
         configMap:
           name: litellm-session-callbacks
     volumeMounts:
       - name: litellm-session-callbacks
-        mountPath: /app/custom_callbacks.py
+        mountPath: /etc/litellm/custom_callbacks.py
         subPath: custom_callbacks.py
 
-    # proxy_config is rendered into a ConfigMap and mounted as /app/config/config.yaml
+    # proxy_config is rendered into a ConfigMap and mounted as /etc/litellm/config.yaml
     proxy_config:
       model_list:
         - model_name: kimi-k2.7-code
@@ -545,8 +544,9 @@ spec:
         callbacks:
           - "prometheus"
           # Pre-call hook that normalizes the OpenCode Go session header.
-          # Mounted from the litellm-session-callbacks ConfigMap; must be
-          # importable (PYTHONPATH=/app, file at /app/custom_callbacks.py).
+          # Mounted from the litellm-session-callbacks ConfigMap at
+          # /etc/litellm/custom_callbacks.py (loaded relative to the config
+          # file by get_instance_fn).
           - "custom_callbacks.opencode_go_session_normalizer"
         require_auth_for_metrics_endpoint: false
         # Forward the client's own session headers upstream ONLY for models
