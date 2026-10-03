@@ -43,13 +43,14 @@ data:
         return sign(k_service, "aws4_request")
     
     
-    def request(method, path, payload=b"", query=""):
+    def request(method, path, payload=b"", query="", payload_hash=None, content_length=None):
         t = datetime.datetime.now(datetime.timezone.utc)
         date_stamp = t.strftime("%Y%m%d")
         amz_date = t.strftime("%Y%m%dT%H%M%SZ")
         if isinstance(payload, str):
             payload = payload.encode("utf-8")
-        payload_hash = sha256(payload)
+        if payload_hash is None:
+            payload_hash = sha256(payload)
         host = urllib.parse.urlparse(endpoint).netloc
         headers = {
             "host": host,
@@ -57,7 +58,9 @@ data:
             "x-amz-date": amz_date,
         }
         if method in ("PUT", "POST"):
-            headers["content-length"] = str(len(payload))
+            if content_length is None:
+                content_length = len(payload)
+            headers["content-length"] = str(content_length)
         if method == "PUT":
             headers["content-type"] = "application/gzip"
         header_keys = sorted(headers.keys())
@@ -93,11 +96,18 @@ data:
     def upload(service, local_path):
         key = f"configs/{service}/{timestamp}.tar.gz"
         encoded = urllib.parse.quote(f"/{bucket}/{key}", safe="/")
-        data = open(local_path, "rb").read()
+        size = os.path.getsize(local_path)
+        # SHA-256 pass: read in 1 MiB chunks, never the whole file into RAM.
+        h = hashlib.sha256()
+        with open(local_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        file_hash = h.hexdigest()
         for attempt in range(3):
             try:
-                resp = request("PUT", encoded, data)
-                print(f"Uploaded {service} -> {bucket}/{key} (HTTP {resp.status})")
+                with open(local_path, "rb") as f:
+                    resp = request("PUT", encoded, f, payload_hash=file_hash, content_length=size)
+                print(f"Uploaded {service} -> {bucket}/{key} ({size} bytes, HTTP {resp.status})")
                 return
             except Exception as e:
                 print(f"Upload {service} attempt {attempt + 1} failed: {e}")

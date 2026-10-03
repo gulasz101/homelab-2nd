@@ -36,6 +36,13 @@ spec:
                   SECRET_KEY=${MINIO_SECRET_KEY}
 
                   python3 /scripts/minio-s3-upload.py --bucket "${BUCKET}" --endpoint "${ENDPOINT}" --region "${REGION}" --access-key "${ACCESS_KEY}" --secret-key "${SECRET_KEY}" --timestamp "${TS}"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
               env:
                 - name: MINIO_ACCESS_KEY
                   valueFrom:
