@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted — 2026-10-02
+**Superseded by [ADR-029](adr-029-litellm-opencode-go-session-normalizer.md)** —
+2026-10-03. Accepted — 2026-10-02. The static fallback this ADR shipped turned out to
+mask every real per-session header and was replaced by a per-request pre-call hook
+(ADR-029). Kept for the decision history; do not act on the "Decision" below.
 
 ## Context
 
