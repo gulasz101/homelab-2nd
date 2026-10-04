@@ -412,3 +412,19 @@ resources:
   - pihole/pihole-curfew-cronjob.yaml
   # H2-76: one-shot IG experiment (2026-09-29 21:00 -> 09-30 08:00, S group)
   - pihole/pihole-ig-experiment-cronjob.yaml
+
+  # ============================================================
+  # openGym family fitness tracker (H2-106) — gym.voitech.dev
+  # Design: ADR-032. Upstream ships plain Kustomize (no Helm chart) — raw
+  # manifests via Flux is the sanctioned last resort (guardrail 2).
+  # cloudflared-fitness + fitness-tunnel-token land in H2-108 once the
+  # tunnel token exists; the secret-less app deploys first, LAN-quiet.
+  # ============================================================
+  - fitness/namespace.yaml
+  # SOPS-encrypted secrets
+  - fitness/fitness-minio-backup-creds.sops.yaml
+  - fitness/fitness-mattermost-webhook-url.sops.yaml
+  # PVCs (local-path, node-pinned) + workload
+  - fitness/opengym-pvcs.yaml
+  - fitness/opengym-deployment.yaml
+  - fitness/opengym-service.yaml

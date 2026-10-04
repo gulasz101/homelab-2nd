@@ -1,0 +1,37 @@
+---
+# openGym stores everything as plain JSON files on the data PVC (db.json +
+# state-<uid>.json per user + uploads). This PVC IS the gym history:
+# homelab-2nd is rebuildable, so durability comes from the daily tar backup
+# to OMV MinIO (fitness-data-backup CronJob), not from the disk itself.
+# local-path is deliberately chosen over OMV NFS: whole-history PUTs are
+# latency-sensitive and homelab-2nd NVMe is fast (ADR-032).
+# Pinned pods: local-path volumes are node-local, so BOTH the app deployment
+# and the backup job select homelab-2nd — otherwise the RWO volume could land
+# on a node the backup pod can never mount.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: opengym-data
+  namespace: fitness
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+# Exercise images/GIFs (~140 MB, fetched once by the media-download
+# initContainer from hasaneyldrm/exercises-dataset, © GymVisual, used under
+# the dataset's terms and fetched from upstream — see upstream NOTICE.md).
+# Re-derivable: lose it, the initContainer re-clones. Not a backup target.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: opengym-media
+  namespace: fitness
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi

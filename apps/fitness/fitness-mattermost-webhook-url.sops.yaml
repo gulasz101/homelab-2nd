@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: fitness-mattermost-webhook-url
+    namespace: fitness
+type: Opaque
+stringData:
+    url: ENC[AES256_GCM,data:nVT+Jdi0uy8qSJ/zA+X325evb3KGxvPOwdkKWBzuo4pQasyR52jZIROLicVPorKyYdtMC9KThmpA,iv:PrJJlgI9pQXxgTs8+YeKrN944VhO0WH1l6aCt3HDAIc=,tag:10jgwb1QC7Ly7Emb8CmJ0A==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA3NEN2d3JldWxvZzNGRXh4
+            RXU0c2RMWHlYSGdVY1daOHVnZzl2enZwU3pVCnNLbktGWVMrSy9nMVY5dHlOa2Zl
+            ZUNDWlJ0ZEFxbHpCbHcraW1OOVF1a0kKLS0tIHYvT25vc1BFallsV2tUNjdqaWpj
+            dlhWc3FnRUV0MnBSQys1cThzOG5XU3MKJFnqM0mNZiKN/U/qZUzocEf5UjD8jAcn
+            mPcZ/CKNb8OB0tzEBU/K5i5cDxjTbNkdNc8oTRHqs8OZjx7Ku38xlQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-04T18:38:11Z"
+    mac: ENC[AES256_GCM,data:SHi9vjU8Igy8WXfOr06kLGeluOtL8hmi+C3Xw5Y/q1aZpEEUBN306/pb59TiSGithz1N+CFuhqx4LJ84O5q3r0aK5Ul8hL32Y10gPTVZb3h59UoymcNR2YH+PBOjzfLQo1rVl54F4UUATtW+Dsy7N01K8jHCIN5LE0iuA0nDEYg=,iv:sLKtOx49rkKAxr2zS1gRFIgtvSjEZKP1vZ4lfa4dB2M=,tag:kuksS6ZXz7Kqvkcz9/903Q==,type:str]
+    version: 3.13.1

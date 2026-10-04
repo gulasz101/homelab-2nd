@@ -1,0 +1,161 @@
+---
+# openGym v1.3.9 — self-hosted gym tracker (DuarteSantos8/openGym).
+# Based on upstream kubernetes/deployment.yaml with homelab overrides.
+# No Helm chart exists upstream — raw manifests via Flux are the sanctioned
+# last resort (guardrail 2), justified in the tracking note + ADR-032.
+#
+# Pin API and web images to the SAME version and move them together: :latest
+# would let a restarted pod come back on a version nobody chose.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opengym
+  namespace: fitness
+  labels:
+    app: opengym
+    app.kubernetes.io/name: opengym
+    app.kubernetes.io/part-of: fitness
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # JSON files on a RWO PVC — two API processes must never write at once
+  selector:
+    matchLabels:
+      app: opengym
+  template:
+    metadata:
+      labels:
+        app: opengym
+    spec:
+      # local-path volumes are node-local; pin so the backup CronJob (same
+      # selector) can always mount the data PVC.
+      nodeSelector:
+        kubernetes.io/hostname: homelab-2nd
+      initContainers:
+        # Exercise images and GIFs, one time (~140 MB). Idempotent: only
+        # clones when the media dir is empty. © GymVisual, fetched from
+        # upstream, not redistributed (upstream NOTICE.md).
+        - name: media-download
+          image: alpine/git:2.52.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              mkdir -p /out/img /out/gif
+              if [ -z "$(ls -A /out/img 2>/dev/null)" ]; then
+                git clone --depth 1 https://github.com/hasaneyldrm/exercises-dataset /tmp/ds
+                cp /tmp/ds/images/*.jpg /out/img/ && cp /tmp/ds/videos/*.gif /out/gif/
+              fi
+          volumeMounts:
+            - name: opengym-media
+              mountPath: /out
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+      containers:
+        - name: api
+          image: ghcr.io/duartesantos8/opengym-api:1.3.9
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PORT
+              value: "3000"
+            - name: DATA_DIR
+              value: /data
+            # Passkeys are bound to the exact hostname over HTTPS (WebAuthn
+            # RP_ID/ORIGIN). Cloudflare Tunnel terminates TLS at the edge.
+            - name: RP_ID
+              value: gym.voitech.dev
+            - name: ORIGIN
+              value: https://gym.voitech.dev
+            - name: RP_NAME
+              value: openGym
+            # Two-person family gym: invite codes only, no guest front door,
+            # password fallback for browsers that can't do passkeys + recovery.
+            - name: INVITE_ONLY
+              value: "1"
+            - name: ALLOW_GUEST
+              value: "0"
+            - name: PASSWORD_LOGIN
+              value: "1"
+            # Real visitor IPs in the sign-in throttle + activity log: the
+            # cloudflared edge sets CF-Connecting-IP (unforgeable, Cloudflare
+            # overwrites anything the client sent) and the web container
+            # passes it through below.
+            - name: TRUST_PROXY
+              value: "1"
+          ports:
+            - containerPort: 3000
+              name: http
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+          volumeMounts:
+            - name: opengym-data
+              mountPath: /data
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+        - name: web
+          image: ghcr.io/duartesantos8/opengym-web:1.3.9
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NGINX_PORT
+              value: "80"
+            # Both containers share the pod network: nginx proxies /api to
+            # localhost. An IP/hostname here keeps nginx off service DNS.
+            - name: BACKEND
+              value: 127.0.0.1
+            - name: PORT
+              value: "3000"
+            # THE k3s gotcha: nginx's ${RESOLVER} defaults to Docker's
+            # embedded DNS, which answers nothing outside Docker — every /api
+            # request would hang until timeout. Point at kube-dns (10.43.0.10
+            # verified on this cluster).
+            - name: RESOLVER
+              value: 10.43.0.10
+            # Upstream-sanctioned Cloudflare passthrough: nginx re-sets
+            # CF-Connecting-IP from the real header (empty = dropped).
+            - name: CF_CONNECTING_IP
+              value: $http_cf_connecting_ip
+          ports:
+            - containerPort: 80
+              name: web
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 30
+          volumeMounts:
+            - name: opengym-media
+              mountPath: /usr/share/nginx/html/img
+              subPath: img
+            - name: opengym-media
+              mountPath: /usr/share/nginx/html/gif
+              subPath: gif
+          resources:
+            requests:
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: opengym-data
+          persistentVolumeClaim:
+            claimName: opengym-data
+        - name: opengym-media
+          persistentVolumeClaim:
+            claimName: opengym-media

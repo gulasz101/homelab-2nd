@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: fitness-minio-backup-creds
+    namespace: fitness
+type: Opaque
+stringData:
+    ACCESS_KEY_ID: ENC[AES256_GCM,data:inivGjEB3bSy4dXW2MiA,iv:hFa6KOBAjiPC6m9IcDcVN8tPDmN2NknDePQ+PwBchvk=,tag:iIGUWORqFNGWSXorkitqwg==,type:str]
+    ACCESS_SECRET_KEY: ENC[AES256_GCM,data:/AlLdzlO1Y9garDyu7K1ydb3ebo=,iv:qkxx02wA4AZk5sLNA3aZ6qafJP3C2LY0y7lNWyh3P2s=,tag:7ajLHpEzrF4m2WJZQA1q0Q==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBGL3BWU0lQWW9xUGx6Uk5M
+            UWEzbGNidWpjY2hyL1FXRE5qT1A4Wm15V2prCnlTcURKczgxME1SL0E3aUp2Q1p5
+            K1VZV05pdGtITjk2L1NJMzFXVXNITVUKLS0tIHVqQjgvUElTK1BWMlg0VnFpS05X
+            MS9aTWJJN05nSnVxckU5WjFtTWJ5ZlUKn8n/M8GfbSZzI72jSrGNgnT6NYZcqL5/
+            rIqWcoPIiDH/NkML/eFpW47sAd9M0msoOd6fF7eOy2KrQEsMxO7/4w==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-04T18:38:10Z"
+    mac: ENC[AES256_GCM,data:XaeuU/ameXEGEBUf8Dn+Qtg/TfJfgFfVYMKdKctwnEkm56knIz3ySgCIZLUuThZidHPwug7012tnq15JeNR/pt7EzKGHoPoHD+2fT5vGkuIA8s8fP9NVG17C1TBWxEUWP8lQBIzjEwG536iyajmOCrVvikSkjtCGaoX3xNiCDSc=,iv:LDthlBXXjMjahyoaFjs3XEKJWA0xCQNRI2NLiYTrZYs=,tag:nNAyL3EIw3YLtf+wVOtV4w==,type:str]
+    version: 3.13.1
