@@ -112,6 +112,17 @@ responses the bridge reads. Re-verified live and fixed in `bridge.js`:
    `agent.updated`. The rejection is side-effect-free, so the bridge now probes
    `/api/agent?directory=…` (forcing the boot) and retries the send within
    `OPENCHAMBER_SEND_RETRY_MS` (default 60 s).
+3. **A bridge-only change does not reach the running runner.** The runner mounts
+   `bridge.js` via `subPath`, and Kubernetes does not propagate ConfigMap updates
+   through a subPath mount. The runner pod template had not changed since
+   2026-09-15, so the pod was still executing the 2026-09-16 `bridge.js`; neither
+   the 2026-09-19 skill change nor this fix reached it (observed live on H2-21 —
+   a correct worker answer was still reported as "produced no assistant text",
+   and the trace line numbers matched the 2026-09-16 revision). Fixed by adding
+   the `openchamber.dev/itsaplan-bridge-revision` pod-template annotation, bumped
+   whenever `bridge.js` changes — the same pattern as the litellm session
+   callbacks (`9e3e3a7`).
 
-Route existence was not enough; the payloads had moved. Commit `2bd5180`;
-tracking note `homelab/tracking/2026-10-04-itsaplan-bridge-v2-shape-and-cold-location.md`.
+Route existence was not enough; the payloads had moved. Commit `2bd5180`
+(parser + retry) and `b9c8c8a` (rollout); tracking note
+`homelab/tracking/2026-10-04-itsaplan-bridge-v2-shape-and-cold-location.md`.
