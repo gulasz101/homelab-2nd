@@ -88,3 +88,30 @@ Negative:
   env can be dropped in favour of deriving it in-script.
 - If mention-trigger semantics change to exclude bot-authored comments, the
   handle-neutralisation can be dropped.
+
+## Update 2026-10-04 (H2-20): the 2.x payload shapes
+
+The 2.x upgrade kept every route in this ADR but changed the shape of two
+responses the bridge reads. Re-verified live and fixed in `bridge.js`:
+
+1. **`GET /api/session/:id/message` now returns a page of flat records.**
+   2.x answers `{ data: [...], cursor }`, each record
+   `{ type: 'assistant', time: { created|completed }, content: [{ type: 'text', text }] }`.
+   1.x answered a plain array of `{ info: { role, time }, parts: [{ type: 'text', text }] }`.
+   `assistantText()` parsed only the 1.x shape and the raw array, so it returned
+   `''` for every run and the bridge reported "produced no assistant text" —
+   even though the worker had answered. It now unwraps `{ data }` (or a plain
+   array), reads both record shapes, and returns the **newest** assistant text by
+   `time.completed || time.created` (the 2.x page is newest-first, so the old
+   oldest-first walk would have returned a mid-run aside).
+2. **The first `send` to an idle-evicted location can 400.** OpenCode v2 boots
+   "location services" per directory and evicts them when idle; a config-defined
+   agent (`itsaplan-worker`) is registered only after the boot completes. The
+   first `/send` after an eviction was rejected with
+   `400 Unknown agent '<AGENT>' for <DIRECTORY>` ~1.5 s before the matching
+   `agent.updated`. The rejection is side-effect-free, so the bridge now probes
+   `/api/agent?directory=…` (forcing the boot) and retries the send within
+   `OPENCHAMBER_SEND_RETRY_MS` (default 60 s).
+
+Route existence was not enough; the payloads had moved. Commit `2bd5180`;
+tracking note `homelab/tracking/2026-10-04-itsaplan-bridge-v2-shape-and-cold-location.md`.
