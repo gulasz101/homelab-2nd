@@ -26,7 +26,11 @@
 
 set -euo pipefail
 
-OMV_HOST="${OMV_HOST:-omv.local}"
+# Defaults match the operator's M1 Max: `openmediavault` is the Host alias in
+# ~/.ssh/config. macOS mDNS (.local) resolution is flaky under bulk rsync load
+# (seen mid-run 2026-10-04: transient Errno 8 from urllib); if MinIO via
+# openmediavault.local fails to resolve, pass MINIO_ENDPOINT=http://<LAN-IP>:9000.
+OMV_HOST="${OMV_HOST:-openmediavault}"
 OMV_DEST="${OMV_DEST:-/srv/dev-disk-by-uuid-cda9bf6e-0ed1-4e61-b063-1cbab7351886/openchamber/data/agent-session-archive}"
 MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://openmediavault.local:9000}"
 MINIO_BUCKET="${MINIO_BUCKET:-agent-session-archive}"
