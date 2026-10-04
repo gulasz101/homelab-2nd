@@ -1,0 +1,52 @@
+---
+# Loki Ruler rule for Excalidraw/nginx failures (H2-50, guardrail 9).
+# Matched on failure indicators only — the nginx access log carries the status
+# field, and nginx error lines are prefixed "[error]". No bare feature keywords
+# (homelab log-ingestion lesson: status-digit regexes page on timings).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: whiteboard-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  whiteboard-errors.yaml: |
+    groups:
+      - name: whiteboard.http-errors
+        interval: 1m
+        rules:
+          - alert: ExcalidrawServerErrorResponses
+            expr: |
+              sum by (pod, k8s_namespace_name) (
+                count_over_time(
+                  {k8s_namespace_name="apps-whiteboard", k8s_container_name="excalidraw"}
+                    |~ "\" [5][0-9][0-9] "
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: apps-whiteboard
+              alertgroup: whiteboard
+            annotations:
+              summary: "Excalidraw nginx returned 5xx responses"
+              description: "{{ $labels.pod }} served HTTP 5xx within the last 5 minutes (nginx access-log status field)."
+          - alert: ExcalidrawLogErrors
+            expr: |
+              sum by (pod, k8s_namespace_name) (
+                count_over_time(
+                  {k8s_namespace_name="apps-whiteboard", k8s_container_name="excalidraw"}
+                    |~ "error|emerg|crit|panic|fatal"
+                  [5m]
+                )
+              ) > 3
+            for: 2m
+            labels:
+              severity: warning
+              namespace: apps-whiteboard
+              alertgroup: whiteboard
+            annotations:
+              summary: "Excalidraw nginx logging errors"
+              description: "{{ $labels.pod }} logged more than 3 error-type lines in 5 minutes."

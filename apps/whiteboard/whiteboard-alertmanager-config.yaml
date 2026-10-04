@@ -1,0 +1,40 @@
+---
+# AlertmanagerConfig: route whiteboard alerts to the existing Mattermost webhook
+# via the kube-prometheus-stack Alertmanager, formatted as Slack messages so
+# Mattermost renders them nicely.
+#
+# Reuses the homelab-node-mattermost-webhook-url Secret already present in the
+# observability namespace (the Prometheus Operator resolves urlSecret in the
+# AlertmanagerConfig's own namespace). The worker cannot mint a dedicated
+# Mattermost webhook — that needs Mattermost admin rights — so the homelab
+# alerts channel is reused; swap the Secret name for a dedicated whiteboard
+# webhook later if the noise becomes a problem.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: whiteboard-mattermost-alerts
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: whiteboard-mattermost
+    matchers:
+      - name: alertgroup
+        value: whiteboard
+        matchType: "="
+  receivers:
+    - name: whiteboard-mattermost
+      slackConfigs:
+        - apiURL:
+            name: homelab-node-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.namespace }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.namespace }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

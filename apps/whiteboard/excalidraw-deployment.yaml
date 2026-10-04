@@ -1,0 +1,64 @@
+---
+# Excalidraw — self-hosted whiteboard for white-board.voitech.dev (H2-50).
+#
+# Upstream ships no Helm chart, only the official Docker image, so raw manifests
+# via Flux are the sanctioned last resort (guardrail 2) — justified in the
+# tracking note and ADR-033.
+#
+# The image is stateless: drawings live in the browser's localStorage, so there
+# is no database (no CNPG Cluster) and no PVC. Upstream publishes no semver tags
+# for this image (only :latest plus 2021-era commit tags), so we pin the exact
+# multi-arch manifest digest instead — a pod restart must never silently pull a
+# version nobody chose. Bump the digest deliberately.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: excalidraw
+  namespace: apps-whiteboard
+  labels:
+    app: excalidraw
+    app.kubernetes.io/name: excalidraw
+    app.kubernetes.io/part-of: whiteboard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: excalidraw
+  template:
+    metadata:
+      labels:
+        app: excalidraw
+        app.kubernetes.io/name: excalidraw
+    spec:
+      containers:
+        - name: excalidraw
+          # excalidraw/excalidraw:latest as of 2026-05-06 (multi-arch index).
+          image: excalidraw/excalidraw@sha256:f7ee194addd607bf831d2af0f0a34463dd4225e426cf35199ef0b12a803398e9
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault

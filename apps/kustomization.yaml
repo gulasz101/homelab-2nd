@@ -108,23 +108,29 @@ resources:
   - docs-mcp/docs-mcp-service.yaml
   # Provisioned Grafana dashboard for docs-mcp
   - docs-mcp/docs-mcp-dashboard-configmap.yaml
-#################################
-# temp removed to release CPU 
-#################################
-  # # tldraw namespace
-  # - tldraw/namespace.yaml
-  # # SOPS-encrypted secrets
-  # - tldraw/tldraw-db-credentials.sops.yaml
-  # - tldraw/tldraw-minio-backup-creds.sops.yaml
-  # - tldraw/tldraw-oidc-client.sops.yaml
-  # - tldraw/tldraw-tunnel-token.sops.yaml
-  # # CNPG cluster + backups for tldraw
-  # - tldraw/objectstore.yaml
-  # - tldraw/postgres-cluster.yaml
-  # - tldraw/scheduled-backup.yaml
-  # # Cloudflare Tunnel for white-board.voitech.dev
-  # - tldraw/cloudflared-tldraw-deployment.yaml
-  # - tldraw/tldraw-tunnel-ingress-configmap.yaml
+  # ============================================================
+  # Whiteboard (Excalidraw) — white-board.voitech.dev (H2-50)
+  # Upstream ships no Helm chart, only the official Docker image, so raw
+  # manifests via Flux are the sanctioned last resort (guardrail 2); justified
+  # in the tracking note + ADR-033. The app lives in namespace `apps-whiteboard`;
+  # the dedicated cloudflared tunnel and its legacy origin alias stay in
+  # namespace `apps-tldraw` because the externally-owned Cloudflare route is
+  # hard-coded to tldraw-server.apps-tldraw.svc.cluster.local:80.
+  # ============================================================
+  - whiteboard/namespace.yaml
+  - whiteboard/excalidraw-deployment.yaml
+  - whiteboard/excalidraw-service.yaml
+  # Dedicated Cloudflare Tunnel for white-board.voitech.dev (+ legacy origin alias)
+  - whiteboard/tunnel-namespace.yaml
+  - whiteboard/tldraw-tunnel-token.sops.yaml
+  - whiteboard/tldraw-server-alias-service.yaml
+  - whiteboard/cloudflared-whiteboard-deployment.yaml
+  - whiteboard/whiteboard-tunnel-ingress-configmap.yaml
+  # Observability (guardrail 9)
+  - whiteboard/whiteboard-prometheus-rules.yaml
+  - whiteboard/whiteboard-loki-rule.yaml
+  - whiteboard/whiteboard-alertmanager-config.yaml
+  - whiteboard/whiteboard-dashboard-configmap.yaml
   # GPU-accelerated embedding platform service (Ollama - the chosen backend).
   # H2-48: the dead TEI manifests were removed from the repo. Prebuilt TEI images do
   # not support Maxwell sm_52 and the CPU image cannot parse the nomic model config,

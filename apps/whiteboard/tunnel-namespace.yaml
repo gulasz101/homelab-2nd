@@ -1,0 +1,17 @@
+---
+# Legacy namespace, kept ONLY because the externally-configured Cloudflare
+# tunnel for white-board.voitech.dev has its origin hard-coded to
+#   http://tldraw-server.apps-tldraw.svc.cluster.local:80
+# (guardrail 8: the hostname rule + DNS live in Cloudflare Zero Trust, owned by
+# the human). The worker has no Cloudflare credentials, so the origin cannot be
+# renamed from Git — instead the `tldraw-server` Service in this directory
+# forwards that legacy name to the Excalidraw Service. Once the CF route is
+# repointed to excalidraw.apps-whiteboard, this namespace and the alias Service
+# can be deleted.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: apps-tldraw
+  labels:
+    app.kubernetes.io/name: whiteboard-tunnel
+    app.kubernetes.io/part-of: homelab

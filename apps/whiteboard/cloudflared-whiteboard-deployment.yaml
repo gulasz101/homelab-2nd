@@ -1,0 +1,54 @@
+---
+# Dedicated Cloudflare Tunnel for white-board.voitech.dev -> Excalidraw (H2-50).
+#
+# The tunnel, its hostname rule and the DNS record already exist on the
+# Cloudflare side (guardrail 8), configured as:
+#   white-board.voitech.dev -> http://tldraw-server.apps-tldraw.svc.cluster.local:80
+# The `tldraw-server` ExternalName Service in this directory preserves that
+# legacy origin, so no Cloudflare change is needed to ship Excalidraw.
+#
+# Why the pod runs in namespace `apps-tldraw` with the legacy Secret name
+# `tldraw-tunnel-token`: that Secret is SOPS-encrypted and the worker has no age
+# private key, so its metadata cannot be changed (the SOPS MAC covers plaintext
+# values; renaming the object or its namespace would make Flux fail to decrypt).
+# Moving the file is safe, rewriting its name/namespace is not. See ADR-033.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-whiteboard
+  namespace: apps-tldraw
+  labels:
+    app.kubernetes.io/name: cloudflared-whiteboard
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-whiteboard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-whiteboard
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tldraw-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

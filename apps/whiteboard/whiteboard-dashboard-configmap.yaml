@@ -1,0 +1,107 @@
+---
+# Provisioned Grafana dashboard for the whiteboard namespace (H2-50, guardrail 9).
+# Datasource UIDs are the homelab's provisioned Prometheus/Loki datasources,
+# copied from the fitness dashboard.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: whiteboard-dashboard
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana.folder: whiteboard
+data:
+  whiteboard-dashboard.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["homelab", "whiteboard"],
+      "templating": {"list": []},
+      "time": {"from": "now-30m", "to": "now"},
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Whiteboard (Excalidraw)",
+      "uid": "whiteboard-overview",
+      "version": 1,
+      "panels": [
+        {
+          "id": 1000,
+          "type": "text",
+          "title": "Overview",
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "options": {"mode": "markdown", "content": "Per-namespace dashboard for **whiteboard**: the Excalidraw app (`apps-whiteboard`) and its dedicated cloudflared tunnel (`apps-tldraw`), served at `white-board.voitech.dev`."},
+          "gridPos": {"h": 3, "w": 24, "x": 0, "y": 0}
+        },
+        {
+          "id": 1001,
+          "type": "stat",
+          "title": "Excalidraw available replicas",
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "targets": [{"refId": "A", "expr": "kube_deployment_status_replicas_available{namespace=\"apps-whiteboard\", deployment=\"excalidraw\"}", "instant": true, "legendFormat": "excalidraw"}],
+          "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+          "options": {"colorMode": "background", "graphMode": "none", "textMode": "auto"},
+          "gridPos": {"h": 4, "w": 8, "x": 0, "y": 3}
+        },
+        {
+          "id": 1002,
+          "type": "stat",
+          "title": "Tunnel connectors available",
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "targets": [{"refId": "A", "expr": "kube_deployment_status_replicas_available{namespace=\"apps-tldraw\", deployment=\"cloudflared-whiteboard\"}", "instant": true, "legendFormat": "cloudflared"}],
+          "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+          "options": {"colorMode": "background", "graphMode": "none", "textMode": "auto"},
+          "gridPos": {"h": 4, "w": 8, "x": 8, "y": 3}
+        },
+        {
+          "id": 1003,
+          "type": "stat",
+          "title": "Excalidraw memory",
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "targets": [
+            {"refId": "A", "expr": "sum(container_memory_working_set_bytes{namespace=\"apps-whiteboard\", container=\"excalidraw\"})", "instant": true, "legendFormat": "usage"},
+            {"refId": "B", "expr": "sum(kube_pod_container_resource_limits{namespace=\"apps-whiteboard\", resource=\"memory\", container=\"excalidraw\"})", "instant": true, "legendFormat": "limit"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+          "options": {"colorMode": "value", "graphMode": "area", "textMode": "auto"},
+          "gridPos": {"h": 4, "w": 8, "x": 16, "y": 3}
+        },
+        {
+          "id": 1004,
+          "type": "timeseries",
+          "title": "Excalidraw CPU usage",
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "targets": [{"refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"apps-whiteboard\", container=\"excalidraw\"}[5m]))", "legendFormat": "{{pod}}"}],
+          "fieldConfig": {"defaults": {"unit": "cores", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 20, "showPoints": "never"}}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "multi", "sort": "none"}},
+          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 7}
+        },
+        {
+          "id": 1005,
+          "type": "timeseries",
+          "title": "Excalidraw memory usage",
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "targets": [{"refId": "A", "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"apps-whiteboard\", container=\"excalidraw\"})", "legendFormat": "{{pod}}"}],
+          "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 20, "showPoints": "never"}}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "multi", "sort": "none"}},
+          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 7}
+        },
+        {
+          "id": 1006,
+          "type": "logs",
+          "title": "whiteboard logs",
+          "datasource": {"type": "loki", "uid": "P8E80F9AEF21F6940"},
+          "targets": [
+            {"refId": "A", "expr": "{k8s_namespace_name=\"apps-whiteboard\"}", "queryType": "range", "legendFormat": ""},
+            {"refId": "B", "expr": "{k8s_namespace_name=\"apps-whiteboard\"} |=~ \"(?i)error|warn|fatal|panic\"", "queryType": "range", "legendFormat": ""}
+          ],
+          "options": {"showTime": true, "showLabels": true, "showCommonLabels": true, "wrapLogMessage": true, "prettifyLogMessage": true, "sortOrder": "Descending", "dedupStrategy": "none", "showControls": true},
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 14}
+        }
+      ]
+    }

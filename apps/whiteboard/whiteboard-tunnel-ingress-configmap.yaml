@@ -1,0 +1,12 @@
+---
+# Reminder of the public hostname rule. The real rule lives in Cloudflare
+# Zero Trust and is owned by the human (guardrail 8); Flux never sets it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: whiteboard-tunnel-ingress
+  namespace: apps-tldraw
+data:
+  note: |
+    # white-board.voitech.dev -> http://tldraw-server.apps-tldraw.svc.cluster.local:80
+    # tldraw-server is an ExternalName Service alias -> excalidraw.apps-whiteboard.svc.cluster.local:80

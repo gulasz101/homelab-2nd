@@ -1,0 +1,18 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: excalidraw
+  namespace: apps-whiteboard
+  labels:
+    app: excalidraw
+    app.kubernetes.io/name: excalidraw
+    app.kubernetes.io/part-of: whiteboard
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  selector:
+    app: excalidraw

@@ -1,0 +1,66 @@
+---
+# Excalidraw availability + resource alerts (H2-50, guardrail 9).
+# The PrometheusRule selector label is 'prometheus-stack' (NOT
+# 'kube-prometheus-stack' — the rules vs AlertmanagerConfig selectors differ,
+# verified gotcha). All alerts carry alertgroup=whiteboard so the
+# AlertmanagerConfig in the observability namespace routes them to Mattermost.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: whiteboard-prometheus-alerts
+  namespace: apps-whiteboard
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: whiteboard.availability
+      interval: 30s
+      rules:
+        - alert: ExcalidrawDeploymentUnavailable
+          expr: |
+            kube_deployment_status_replicas_available{namespace="apps-whiteboard", deployment="excalidraw"} < 1
+          for: 5m
+          labels:
+            severity: critical
+            namespace: apps-whiteboard
+            alertgroup: whiteboard
+          annotations:
+            summary: "Excalidraw has no available replicas"
+            description: "apps-whiteboard/excalidraw has had no available replica for 5 minutes — white-board.voitech.dev is down or a rollout is stuck."
+        - alert: ExcalidrawRestartLoop
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="apps-whiteboard", container="excalidraw"}[15m]) > 2
+          for: 0m
+          labels:
+            severity: critical
+            namespace: apps-whiteboard
+            alertgroup: whiteboard
+          annotations:
+            summary: "Excalidraw restart loop"
+            description: "The excalidraw container restarted more than twice in 15 minutes."
+        - alert: ExcalidrawTunnelUnavailable
+          expr: |
+            kube_deployment_status_replicas_available{namespace="apps-tldraw", deployment="cloudflared-whiteboard"} < 1
+          for: 5m
+          labels:
+            severity: critical
+            namespace: apps-tldraw
+            alertgroup: whiteboard
+          annotations:
+            summary: "Whiteboard tunnel has no available connectors"
+            description: "apps-tldraw/cloudflared-whiteboard has had no available replica for 5 minutes — the public hostname cannot reach the cluster (cf error 1033)."
+        - alert: ExcalidrawMemoryAbove85PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="apps-whiteboard", container="excalidraw"}
+            ) / sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="apps-whiteboard", resource="memory", container="excalidraw"}
+            ) > 85
+          for: 5m
+          labels:
+            severity: warning
+            namespace: apps-whiteboard
+            alertgroup: whiteboard
+          annotations:
+            summary: "apps-whiteboard/{{ $labels.pod }} memory above 85% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} is above 85% of its 128Mi limit for more than 5 minutes."
