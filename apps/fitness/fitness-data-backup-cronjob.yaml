@@ -116,9 +116,13 @@ spec:
                       req = urllib.request.Request(url, data=payload, method=method, headers=headers)
                       return urllib.request.urlopen(req, timeout=120)
 
-                  # Sanity: the data dir must exist and hold the user store.
-                  if not os.path.exists(os.path.join(src_dir, 'db.json')):
-                      raise SystemExit('No db.json under /data — wrong PVC or empty install; refusing to back up nothing')
+                  # Sanity: refuse to back up a genuinely empty volume. Note a
+                  # fresh install holds the generated 'secret' (session signing
+                  # key) + vapid.json but no db.json until the first user
+                  # registers — that IS worth backing up (lose it = everyone
+                  # signed out), so do not require db.json here.
+                  if not any(os.scandir(src_dir)):
+                      raise SystemExit('/data is empty — wrong PVC or unformatted volume; refusing to back up nothing')
 
                   tmp = tempfile.mkdtemp()
                   ts = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')
