@@ -32,6 +32,9 @@ data:
     const AGENT = process.env.OPENCHAMBER_AGENT || 'itsaplan-worker';
     const TIMEOUT_MS = Number(process.env.OPENCHAMBER_TASK_TIMEOUT_MS || 1800000);
     const POLL_MS = Number(process.env.OPENCHAMBER_POLL_MS || 5000);
+    // How long to keep retrying a send rejected for a cold directory (see the
+    // dispatch comment in main()). Bounded so a genuine config error still fails.
+    const SEND_RETRY_MS = Number(process.env.OPENCHAMBER_SEND_RETRY_MS || 60000);
 
     // Itsaplan feedback channel. ISSUE_ID/RUN_ID/TRIGGER are injected per claim
     // by @itsaplan/runner; ITSAPLAN_URL/ITSAPLAN_API_KEY come from the
@@ -115,16 +118,45 @@ data:
       return r.clientToken;
     }
 
-    function assistantText(messages) {
-      if (!Array.isArray(messages)) return '';
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const m = messages[i];
-        if (!m || !m.info || m.info.role !== 'assistant') continue;
-        const parts = (m.parts || []).filter((p) => p && p.type === 'text' && typeof p.text === 'string');
-        const joined = parts.map((p) => p.text.trim()).filter(Boolean).join('\n\n');
-        if (joined) return joined;
-      }
+    // The session-messages call answers, on OpenChamber/OpenCode 2.x, as a page
+    // `{ data: [...], cursor }` whose records are FLAT and newest-first:
+    //   { type: 'assistant', time: { created }, content: [{ type: 'text', text }] }
+    // OpenChamber 1.x / OpenCode 1.x used a plain array of
+    //   { info: { role, time }, parts: [{ type: 'text', text }] }.
+    // Both shapes are handled here; the newest assistant text wins, so a
+    // multi-step run returns its final answer, not an intermediate aside.
+    // (Regression fixed 2026-10-04, H2-20: the 2.x upgrade changed the shape and
+    // every delegated run failed with "produced no assistant text".)
+    const messageList = (response) => {
+      if (Array.isArray(response)) return response;
+      if (response && Array.isArray(response.data)) return response.data;
+      return [];
+    };
+    const textOfParts = (parts) => (parts || [])
+      .filter((p) => p && p.type === 'text' && typeof p.text === 'string')
+      .map((p) => p.text.trim())
+      .filter(Boolean)
+      .join('\n\n');
+    const assistantTextOf = (m) => {
+      if (!m) return '';
+      if (m.type === 'assistant') return textOfParts(m.content);          // v2 flat record
+      if (m.info && m.info.role === 'assistant') return textOfParts(m.parts); // v1 record
       return '';
+    };
+    const messageTimeOf = (m) => {
+      const t = (m && m.time) || (m && m.info && m.info.time) || {};
+      return Number(t.completed || t.created || 0);
+    };
+    function assistantText(response) {
+      let answer = '';
+      let answerAt = -1;
+      for (const m of messageList(response)) {
+        const text = assistantTextOf(m);
+        if (!text) continue;
+        const at = messageTimeOf(m);
+        if (answerAt === -1 || at >= answerAt) { answer = text; answerAt = at; }
+      }
+      return answer;
     }
 
     async function main() {
@@ -163,16 +195,39 @@ data:
         log(`WARN auto-accept enable failed (continuing): ${e.message}`);
       }
 
-      await api(`/api/openchamber/sessions/${sessionId}/send`, {
-        method: 'POST',
-        body: JSON.stringify({
-          directory: DIRECTORY,
-          prompt: prompt,
-          providerID: PROVIDER,
-          modelID: MODEL,
-          agent: AGENT,
-        }),
-      }, token);
+      // OpenCode v2 boots "location services" lazily per directory and evicts
+      // them while idle. The FIRST send to a cold directory can be rejected with
+      //   400 {"error":"Unknown agent '<AGENT>' for <DIRECTORY>"}
+      // because the config-defined agent is registered only after the location
+      // finishes booting (seen on H2-20, 2026-10-04: rejected ~1.5 s before the
+      // matching agent.updated event, after an idle "location services evicted").
+      // The rejection happens before any session/worktree side effect, so retry:
+      // probe the agent list to force the boot, then resend, within SEND_RETRY_MS.
+      const sendBody = JSON.stringify({
+        directory: DIRECTORY,
+        prompt: prompt,
+        providerID: PROVIDER,
+        modelID: MODEL,
+        agent: AGENT,
+      });
+      const sendDeadline = Date.now() + SEND_RETRY_MS;
+      for (;;) {
+        try {
+          await api(`/api/openchamber/sessions/${sessionId}/send`, { method: 'POST', body: sendBody }, token);
+          break;
+        } catch (e) {
+          const msg = (e && e.message) || String(e);
+          const cold = msg.includes('Unknown agent') && msg.includes(DIRECTORY);
+          if (!cold || Date.now() > sendDeadline) throw e;
+          log(`cold location (${msg}) — warming and retrying`);
+          try {
+            await api(`/api/agent?directory=${encodeURIComponent(DIRECTORY)}`, {}, token);
+          } catch (warmErr) {
+            log(`warm probe failed (continuing): ${(warmErr && warmErr.message) || String(warmErr)}`);
+          }
+          await sleep(3000);
+        }
+      }
       log(`prompt dispatched, waiting (budget ${BUDGET_MS}ms)`);
 
       const deadline = Date.now() + BUDGET_MS;
