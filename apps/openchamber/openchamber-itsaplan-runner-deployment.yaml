@@ -14,6 +14,16 @@ spec:
       app.kubernetes.io/name: openchamber-itsaplan-runner
   template:
     metadata:
+      # Pod-template annotation used ONLY to force a rollout when the
+      # openchamber-itsaplan-bridge ConfigMap changes. The runner mounts
+      # bridge.js via subPath, and Kubernetes does NOT propagate ConfigMap
+      # updates through a subPath mount — so a ConfigMap-only change neither
+      # updates the file nor restarts the pod. Left unbumped, the runner keeps
+      # executing a stale bridge.js indefinitely (observed 2026-10-04: the pod
+      # was still running the 2026-09-16 revision after two later bridge
+      # commits). BUMP THIS VALUE whenever bridge.js changes.
+      annotations:
+        openchamber.dev/itsaplan-bridge-revision: "2"   # bridge.js @ 2bd5180 (2.x shape + cold-location retry)
       labels:
         app.kubernetes.io/name: openchamber-itsaplan-runner
         app.kubernetes.io/component: agent-runner
