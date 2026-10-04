@@ -35,6 +35,11 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-029 | OpenCode Go session header — per-request normalization in LiteLLM (supersedes ADR-026) | Accepted | 2026-10-03 |
 | ADR-030 | Nightly config backups exclude re-derivable media metadata | Accepted | 2026-10-03 |
 | ADR-031 | Qwen3.8-27B MLX 4-bit replaces the ≤12B local-model cap | Accepted | 2026-10-03 |
+| ADR-033 | `apps/base` + `apps/overlays` restructure deferred to a per-service migration campaign | Accepted | 2026-10-04 |
+
+> Note: `ADR-032` is referenced by the fitness (openGym) manifests but no file
+> is present in this directory — a pre-existing gap, left as-is so the number is
+> not reused.
 
 ## Writing an ADR
 
