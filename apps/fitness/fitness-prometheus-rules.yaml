@@ -1,0 +1,101 @@
+---
+# openGym resource + availability alerts (H2-110, guardrail 9).
+# PrometheusRule selector label is 'prometheus-stack' (NOT
+# 'kube-prometheus-stack' — the rules vs AlertmanagerConfig selectors
+# differ, verified gotcha).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fitness-resource-alerts
+  namespace: fitness
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: fitness.resources
+      interval: 30s
+      rules:
+        - alert: OpenGymMemoryAbove85PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="fitness", container!=""}
+            ) / sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="fitness", resource="memory", container!=""}
+            ) > 85
+          for: 5m
+          labels:
+            severity: warning
+            namespace: fitness
+          annotations:
+            summary: "fitness/{{ $labels.pod }} memory above 85% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 85% of its limit for more than 5 minutes. The API holds the whole workout history in RAM during a sync PUT — sustained pressure means the JSON store is outgrowing the 512Mi limit."
+        - alert: OpenGymMemoryAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="fitness", container!=""}
+            ) / sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="fitness", resource="memory", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: fitness
+          annotations:
+            summary: "fitness/{{ $labels.pod }} memory above 90% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} is about to be OOM-killed mid-sync."
+        - alert: OpenGymPodNotRunning
+          expr: |
+            kube_pod_status_phase{namespace="fitness", pod=~"opengym-.*", phase!="Running"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            namespace: fitness
+          annotations:
+            summary: "fitness/opengym pod not Running"
+            description: "The openGym pod (single replica, Recreate) has not been Running for 5 minutes — gym.voitech.dev is down or deploying is stuck."
+        - alert: OpenGymRestartLoop
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="fitness", pod=~"opengym-.*"}[15m]) > 2
+          for: 0m
+          labels:
+            severity: critical
+            namespace: fitness
+          annotations:
+            summary: "fitness/opengym restart loop"
+            description: "opengym container restarted more than twice in 15 minutes."
+    - name: fitness.backup
+      interval: 60s
+      rules:
+        - alert: OpenGymBackupStale
+          # kube_cronjob_status_last_successful_time is the epoch of the last
+          # successful run. Schedule is 03:45 daily; 30h gives a day of slack.
+          expr: |
+            (time() - kube_cronjob_status_last_successful_time{cronjob="fitness-data-backup"} > 30 * 3600)
+          for: 1h
+          labels:
+            severity: warning
+            namespace: fitness
+          annotations:
+            summary: "openGym backup has not succeeded recently"
+            description: "No successful fitness-data-backup run in the last 30 hours (schedule 03:45 daily). The gym history JSON store has no fresh recovery copy in MinIO."
+        - alert: OpenGymBackupJobFailed
+          expr: |
+            kube_job_status_failed{job_name=~"fitness-data-backup-.+"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            namespace: fitness
+          annotations:
+            summary: "openGym backup job failed"
+            description: "openGym data backup job {{ $labels.job_name }} has failed pods — the MinIO upload did not complete."
+        - alert: OpenGymBackupCronJobMissing
+          # Catches a deleted/renamed/suspended CronJob (no metric at all).
+          expr: |
+            absent(kube_cronjob_status_last_successful_time{cronjob="fitness-data-backup"})
+          for: 1h
+          labels:
+            severity: warning
+            namespace: fitness
+          annotations:
+            summary: "openGym backup CronJob not reporting"
+            description: "The fitness-data-backup CronJob metric is absent — it may have been deleted, renamed, or suspended."

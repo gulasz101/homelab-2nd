@@ -428,3 +428,10 @@ resources:
   - fitness/opengym-pvcs.yaml
   - fitness/opengym-deployment.yaml
   - fitness/opengym-service.yaml
+  # Daily data backup -> OMV MinIO (H2-111)
+  - fitness/fitness-data-backup-cronjob.yaml
+  # Observability (H2-110, guardrail 9)
+  - fitness/fitness-prometheus-rules.yaml
+  - fitness/fitness-alertmanager-config.yaml
+  - fitness/fitness-loki-rule.yaml
+  - fitness/fitness-dashboard-configmap.yaml

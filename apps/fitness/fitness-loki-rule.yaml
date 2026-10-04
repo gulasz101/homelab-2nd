@@ -1,0 +1,51 @@
+---
+# Loki Ruler rule for openGym failures (H2-110).
+# Matched on failure indicators only — never bare feature keywords
+# (homelab-log-ingestion lesson: status-digit regexes page on timings).
+# nginx access lines carry the explicit status field; API errors carry
+# Error/Exception words. OTel-shipped logs use k8s_namespace_name labels.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fitness-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  fitness-errors.yaml: |
+    groups:
+      - name: fitness.http-errors
+        interval: 1m
+        rules:
+          - alert: OpenGymServerErrorResponses
+            expr: |
+              sum by (pod, k8s_namespace_name) (
+                count_over_time(
+                  {k8s_namespace_name="fitness", k8s_container_name="web"}
+                    |~ "\" [5][0-9][0-9] "
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: fitness
+            annotations:
+              summary: "openGym web returned 5xx responses"
+              description: "{{ $labels.pod }} served HTTP 5xx responses within the last 5 minutes (nginx access log status field, anchored to the log format)."
+          - alert: OpenGymApiErrors
+            expr: |
+              sum by (pod, k8s_namespace_name) (
+                count_over_time(
+                  {k8s_namespace_name="fitness", k8s_container_name="api"}
+                    |~ "Error|Exception|FATAL|Traceback|EADDRINUSE|ENOENT|EPERM"
+                  [5m]
+                )
+              ) > 3
+            for: 2m
+            labels:
+              severity: warning
+              namespace: fitness
+            annotations:
+              summary: "openGym API logging errors"
+              description: "{{ $labels.pod }} API container logged more than 3 error-type lines in 5 minutes."

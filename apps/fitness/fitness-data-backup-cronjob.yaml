@@ -1,0 +1,195 @@
+---
+# Daily openGym data backup to OMV MinIO (s3://fitness-backups/opengym/).
+# openGym keeps the entire gym history as plain JSON files on the local-path
+# PVC opengym-data (db.json + state-<uid>.json + api/media uploads). The PVC
+# is mounted read-only and tar-gzipped; upload uses AWS SigV4 from the stdlib
+# (same no-external-binary pattern as the karakeep backup).
+#
+# Documented trade-off (H2-111): tarring live JSON files can theoretically
+# catch the API mid-PUT (the app writes the whole history in one request).
+# Worst case a backup copy holds a torn sync — no PITR here, acceptable for a
+# two-person gym log; daily cadence bounds the loss. Revisit if the app ever
+# moves to a real database (then CNPG, per guardrail 3).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: fitness-data-backup
+  namespace: fitness
+spec:
+  schedule: "45 3 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            job_name: fitness-data-backup
+        spec:
+          restartPolicy: OnFailure
+          # opengym-data is a local-path volume, node-local by definition;
+          # the app deployment carries the same selector (H2-107).
+          nodeSelector:
+            kubernetes.io/hostname: homelab-2nd
+          containers:
+            - name: backup
+              image: python:3.13-alpine
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  echo "Starting openGym data backup"
+                  python3 - <<'PY'
+                  import os, datetime, time, tempfile, shutil, subprocess
+                  import urllib.request, urllib.parse, hashlib, hmac
+                  import xml.etree.ElementTree as ET
+
+                  bucket = 'fitness-backups'
+                  prefix = 'opengym/'
+                  endpoint = 'http://openmediavault.local:9000'
+                  region = 'us-east-1'
+                  service = 's3'
+                  access_key = os.environ['FITNESS_MINIO_ACCESS_KEY']
+                  secret_key = os.environ['FITNESS_MINIO_SECRET_KEY']
+                  src_dir = '/data'
+                  retention_days = 30
+
+                  def sha256(data):
+                      return hashlib.sha256(data if isinstance(data, bytes) else data.encode('utf-8')).hexdigest()
+
+                  def sign(key, msg):
+                      return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+
+                  def get_signature_key(secret, date_stamp, region, service):
+                      k_date = sign(('AWS4' + secret).encode('utf-8'), date_stamp)
+                      k_region = sign(k_date, region)
+                      k_service = sign(k_region, service)
+                      return sign(k_service, 'aws4_request')
+
+                  def signed_request(method, path, payload=b'', query='', payload_hash=None, content_length=None):
+                      t = datetime.datetime.now(datetime.timezone.utc)
+                      date_stamp = t.strftime('%Y%m%d')
+                      amz_date = t.strftime('%Y%m%dT%H%M%SZ')
+                      if isinstance(payload, str):
+                          payload = payload.encode('utf-8')
+                      if payload_hash is None:
+                          payload_hash = sha256(payload)
+                      host = 'openmediavault.local:9000'
+                      headers = {
+                          'host': host,
+                          'x-amz-content-sha256': payload_hash,
+                          'x-amz-date': amz_date,
+                      }
+                      if method in ('PUT', 'POST'):
+                          if content_length is None:
+                              content_length = len(payload)
+                          headers['content-length'] = str(content_length)
+                      header_keys = sorted(headers.keys())
+                      signed_headers = ';'.join(header_keys)
+                      canonical_request = '\n'.join([
+                          method,
+                          urllib.parse.quote(path, safe='/'),
+                          query,
+                          ''.join(f'{k}:{headers[k]}\n' for k in header_keys),
+                          signed_headers,
+                          payload_hash,
+                      ])
+                      credential_scope = f'{date_stamp}/{region}/{service}/aws4_request'
+                      string_to_sign = '\n'.join([
+                          'AWS4-HMAC-SHA256',
+                          amz_date,
+                          credential_scope,
+                          sha256(canonical_request.encode('utf-8')),
+                      ])
+                      signing_key = get_signature_key(secret_key, date_stamp, region, service)
+                      signature = hmac.new(signing_key, string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+                      headers['Authorization'] = (
+                          f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, '
+                          f'SignedHeaders={signed_headers}, Signature={signature}'
+                      )
+                      url = f'{endpoint}{path}'
+                      if query:
+                          url = f'{url}?{query}'
+                      req = urllib.request.Request(url, data=payload, method=method, headers=headers)
+                      return urllib.request.urlopen(req, timeout=120)
+
+                  # Sanity: the data dir must exist and hold the user store.
+                  if not os.path.exists(os.path.join(src_dir, 'db.json')):
+                      raise SystemExit('No db.json under /data — wrong PVC or empty install; refusing to back up nothing')
+
+                  tmp = tempfile.mkdtemp()
+                  ts = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')
+                  out = os.path.join(tmp, f'data-{ts}.tar.gz')
+                  # -czf before the leading --exclude options (b80b26f lesson).
+                  subprocess.run(['tar', '-czf', out, '-C', src_dir, '.'], check=True)
+                  size = os.path.getsize(out)
+                  h = hashlib.sha256()
+                  with open(out, 'rb') as f:
+                      for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                          h.update(chunk)
+                  file_hash = h.hexdigest()
+                  key = prefix + f'data-{ts}.tar.gz'
+                  for attempt in range(3):
+                      try:
+                          with open(out, 'rb') as f:
+                              resp = signed_request('PUT', f'/{bucket}/{urllib.parse.quote(key, safe="/")}', f,
+                                                    payload_hash=file_hash, content_length=size)
+                          print(f'Uploaded -> {bucket}/{key} ({size} bytes, HTTP {resp.status})')
+                          break
+                      except Exception as e:
+                          print(f'Upload attempt {attempt + 1} failed: {e}')
+                          if attempt == 2:
+                              raise
+                          time.sleep(2 ** attempt)
+                  shutil.rmtree(tmp, ignore_errors=True)
+
+                  # Retention: delete objects older than retention_days.
+                  list_query = urllib.parse.urlencode({'list-type': '2', 'prefix': prefix}, quote_via=urllib.parse.quote)
+                  list_resp = signed_request('GET', f'/{bucket}', b'', list_query)
+                  root = ET.fromstring(list_resp.read())
+                  ns = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+                  cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=retention_days)
+                  removed = 0
+                  for contents in root.findall('s3:Contents', ns):
+                      key_el = contents.find('s3:Key', ns)
+                      if key_el is None:
+                          continue
+                      k = key_el.text
+                      last_mod = datetime.datetime.fromisoformat(contents.find('s3:LastModified', ns).text.replace('Z', '+00:00'))
+                      if last_mod < cutoff:
+                          signed_request('DELETE', f'/{bucket}/{urllib.parse.quote(k, safe="/")}')
+                          removed += 1
+                          print(f'Removed old backup: {k}')
+                  print(f'Retention cleanup complete, removed {removed} objects')
+                  PY
+                  echo "openGym backup complete"
+              env:
+                - name: FITNESS_MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: fitness-minio-backup-creds
+                      key: ACCESS_KEY_ID
+                - name: FITNESS_MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: fitness-minio-backup-creds
+                      key: ACCESS_SECRET_KEY
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 20m
+                  memory: 64Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: opengym-data
+                readOnly: true
