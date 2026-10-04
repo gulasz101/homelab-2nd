@@ -43,6 +43,10 @@ spec:
             - --skip-provider-button=true
             - --scope=openid email profile offline_access
             - --cookie-csrf-per-request=true
+            # Bound the per-request CSRF cookie pile (H2-102): uniquely-named 15-min
+            # cookies accumulate on polling clients and breach header-size limits
+            # (HTTP 431). Oldest beyond the limit are auto-cleared on each mint.
+            - --cookie-csrf-per-request-limit=3
             - --disable-keep-alives
           env:
             - name: OAUTH2_PROXY_CLIENT_ID

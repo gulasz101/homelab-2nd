@@ -47,6 +47,17 @@ spec:
             # Per-request CSRF cookies: several concurrent login tabs on the same browser
             # must not clobber each other's handshake (CSRF token mismatch 403s, 2026-09-15).
             - --cookie-csrf-per-request=true
+            # Bound the per-request CSRF pile (H2-102 root cause). Each unauthenticated
+            # request mints a uniquely-named cookie (~206 bytes, Max-Age=900s); unique
+            # names never replace each other, so a polling client accumulates a cookie
+            # pile that breaches the header-size limits downstream (Node 16/64 KiB, Bun
+            # ~16 KiB) and causes HTTP 431 — the exact mechanism behind the 2026-10-02
+            # outage (measured 1720-2787 mints/hour on the incident day). Upstream
+            # designed this flag for precisely this failure ("Useful if users end up
+            # with 431 Request headers too large status codes"): oldest cookies beyond
+            # the limit are auto-cleared on each new mint. 3 keeps concurrent-tab
+            # handshake protection while capping the pile at ~620 bytes.
+            - --cookie-csrf-per-request-limit=3
             # Disable upstream keep-alive pooling. OpenChamber (Node) closes idle keepalive
             # connections at Node's default server.keepAliveTimeout = 5s, while oauth2-proxy
             # pools connections for 90s (Go http.Transport IdleConnTimeout). A request that
