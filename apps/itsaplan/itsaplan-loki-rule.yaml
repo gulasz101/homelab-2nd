@@ -18,7 +18,7 @@ data:
               sum by (pod, namespace) (
                 count_over_time(
                   {namespace="itsaplan", pod=~"itsaplan-(api|web|worker)-.*"}
-                    |~ "status\\":\\s*[3-9]\\d{2}"
+                    |~ "status\":\\s*[3-9]\\d{2}"
                   [5m]
                 )
               ) > 0
