@@ -40,8 +40,20 @@ How a delegated issue in Itsaplan project **H2** reaches the Mac Hermes profile
 
 ## Results (Andrzej → Itsaplan)
 
-- Mac Hermes holds an `itp_…` personal MCP key (`MCP_ITSAPLAN_API_KEY`) and calls the
-  Itsaplan MCP endpoint `/mcp` with `Authorization: Bearer`.
+- Mac Hermes authenticates its MCP session with the **Andrzej agent key**
+  (`ITSAPLAN_ANDRZEJ_AGENT_API_KEY`, the same value as cluster SOPS secret
+  `itsaplan-andrzej-agent-key/ITSAPLAN_API_KEY`) and calls the Itsaplan MCP
+  endpoint `/mcp` with `Authorization: Bearer <agent key>`. Comments, card moves and
+  attachments author as the agent, matching Route B (ADR-034; previously the
+  header used a god-user personal key and everything landed as Wojciech Gula —
+  see ADR-017 decision #3).
+- Because write-backs are now agent-authored, the mention-loop guard applies by
+  design: the API drops mention triggers from agent-authored comments, so
+  `@admin` tags in result comments notify the human without re-triggering runs.
+- ROTATION WARNING: rotating the agent key means updating BOTH the cluster SOPS
+  secret and the Mac `.env` — a stale Mac copy degrades to `INVALID_API_KEY`
+  silently (verified 2026-10-04 during H2-127: the Mac copy was stale from the
+  ADR-017 rotation).
 - The REST primitives behind the MCP tools (the OpenAPI `x-mcp` field names each tool):
   - **add_comment:** `POST /issues/{issueId}/comments` body
     `{ "body": string, "replyToId"?: number }`. `replyToId` answers an existing comment of

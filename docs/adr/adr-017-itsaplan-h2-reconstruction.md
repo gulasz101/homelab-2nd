@@ -2,6 +2,10 @@
 
 **Status:** Accepted
 **Date:** 2026-09-13
+**Amended by:** ADR-034 (2026-10-04) — decision #3's god-user binding caused every
+Mac write-back to be authored as Wojciech Gula; the MCP header now uses the Andrzej
+agent key instead. The reconstruction decision itself stands (it was correct under
+recovery pressure); only the long-term identity wiring changed.
 
 ## Context
 
