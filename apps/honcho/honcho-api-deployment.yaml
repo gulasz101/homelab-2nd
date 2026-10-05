@@ -16,6 +16,10 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: honcho-api
+      annotations:
+        # Bump when honcho-config changes must reach the API (envFrom does
+        # not restart pods). Same convention as the deriver deployment.
+        homelab.voitech.dev/config-seed-version: "3"
     spec:
       securityContext:
         runAsNonRoot: true

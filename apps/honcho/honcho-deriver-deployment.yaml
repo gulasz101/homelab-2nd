@@ -20,8 +20,9 @@ spec:
         # ConfigMap consumed via envFrom does NOT trigger a pod restart on
         # change. Bump this marker whenever honcho-config changes matter
         # (ADR-028 seed-bump convention). 2026-10-05: nemotron max_output
-        # budget fix (H2 deriver ValidationException storm).
-        homelab.voitech.dev/config-seed-version: "2"
+        # budget fix (H2 deriver ValidationException storm) + summarizer
+        # short/long token budgets (v3).
+        homelab.voitech.dev/config-seed-version: "3"
     spec:
       securityContext:
         runAsNonRoot: true

@@ -64,5 +64,12 @@ data:
   LLM_DEFAULT_MAX_TOKENS: "8192"
   DERIVER_MODEL_CONFIG__MAX_OUTPUT_TOKENS: "8192"
   SUMMARY_MODEL_CONFIG__MAX_OUTPUT_TOKENS: "8192"
+  # The summarizer does NOT use MODEL_CONFIG.max_output_tokens - it passes
+  # SUMMARY.MAX_TOKENS_SHORT/LONG straight to the call (src/utils/summarizer.py
+  # :229/:267). Defaults 1000/4000 were fully consumed by nemotron reasoning,
+  # giving finish_reason=length and basic-summary fallbacks. Field caps are
+  # le=10000 / le=20000 respectively.
+  SUMMARY_MAX_TOKENS_SHORT: "8192"
+  SUMMARY_MAX_TOKENS_LONG: "16384"
   DREAM_DEDUCTION_MODEL_CONFIG__MAX_OUTPUT_TOKENS: "8192"
   DREAM_INDUCTION_MODEL_CONFIG__MAX_OUTPUT_TOKENS: "8192"
