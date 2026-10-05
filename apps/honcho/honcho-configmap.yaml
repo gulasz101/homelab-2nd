@@ -56,3 +56,13 @@ data:
   # Logging
   LOG_LEVEL: "INFO"
   PYTHONUNBUFFERED: "1"
+  # 2026-10-05: Ollama Cloud silently updated the nemotron-3-nano:30b alias;
+  # it now emits 1.6k-3.5k reasoning tokens per call. The old 2500-token
+  # default budget was consumed by thinking, leaving empty/truncated JSON
+  # content (ValidationException storm in the deriver queue). Give reasoning
+  # + answer proper headroom on every pipeline that uses nemotron.
+  LLM_DEFAULT_MAX_TOKENS: "8192"
+  DERIVER_MODEL_CONFIG__MAX_OUTPUT_TOKENS: "8192"
+  SUMMARY_MODEL_CONFIG__MAX_OUTPUT_TOKENS: "8192"
+  DREAM_DEDUCTION_MODEL_CONFIG__MAX_OUTPUT_TOKENS: "8192"
+  DREAM_INDUCTION_MODEL_CONFIG__MAX_OUTPUT_TOKENS: "8192"
