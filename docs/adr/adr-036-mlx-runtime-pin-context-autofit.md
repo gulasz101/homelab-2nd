@@ -55,6 +55,13 @@ On the M1 Max LM Studio host:
    cache quantization yet."*
 4. Treat **42,496** as the value to alarm on: if `lms ps` shows that CONTEXT,
    auto-fit is back (a runtime re-select or app update moved us off 1.8.5).
+5. **Advertise the window on the LiteLLM alias.** The `qwen3.8-27b-mlx` entry in
+   `apps/llm-hub/litellm-helm-release.yaml` gains
+   `model_info: {max_input_tokens: 262144, max_output_tokens: 32768}`. Without it,
+   LiteLLM omits `max_input_tokens` for an `openai/` passthrough and clients
+   (Hermes) fall back to a **131072** default — the second half of why the nightly
+   digest reported it "could not shrink" a ~28k session. The pin and the metadata
+   are one decision: the model must both *serve* and *advertise* 262k.
 
 ## Consequences
 
@@ -62,7 +69,11 @@ On the M1 Max LM Studio host:
 - `qwen3.8-27b-mlx` loads and JIT-loads at **262144** context — the ~28k-token
   karakeep job fits with room to spare. Verified end-to-end: a 24k-token prompt
   returned HTTP 200 (previously a hard failure).
-- The fix is a runtime pin + a config value, no model swap, no code change.
+- The whole chain agrees on the window: LM Studio serves 262144, LiteLLM
+  `/model/info` advertises `max_input_tokens=262144` (verified live after the
+  Helm rollout), so Hermes no longer falls back to 131072.
+- The fix is a runtime pin + a config value + two metadata lines, no model swap,
+  no code change.
 
 **Negative**
 - 262k is the *engine ceiling*, not a claim the box can hold 262k of live KV
