@@ -21,6 +21,12 @@ spec:
         app.kubernetes.io/name: firecrawl-api
         app.kubernetes.io/part-of: firecrawl
     spec:
+      # Firecrawl's node workers hold a multi-GB working set. arr-box (8 GB) is
+      # overcommitted and swap-thrashes when this pod lands on it (2026-10-06
+      # incident, see vault tracking note). Pin to the big node until t460 gets
+      # its RAM upgrade, then move the selector to t460 via a repo edit.
+      nodeSelector:
+        kubernetes.io/hostname: homelab-2nd
       containers:
         - name: api
           image: ghcr.io/firecrawl/firecrawl:latest
