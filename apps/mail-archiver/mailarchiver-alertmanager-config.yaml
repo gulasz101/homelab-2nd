@@ -1,0 +1,46 @@
+---
+# AlertmanagerConfig: route Mail-Archiver alerts to Mattermost.
+#
+# Why this lives in the *observability* namespace rather than mail-archiver:
+# the Prometheus Operator resolves an AlertmanagerConfig receiver's urlSecret in
+# the AlertmanagerConfig's OWN namespace. Mail-Archiver has no dedicated Mattermost
+# webhook secret, and one must not be invented — the URL is a secret that never
+# passes through chat or an agent, and this worker has no 1Password/age key. So we
+# reuse the existing SOPS-encrypted `homelab-node-mattermost-webhook-url` secret in
+# `observability`, exactly as `cnpg-backup-alertmanager-config.yaml` already does,
+# and route on the `alertgroup: mail-archiver` label (the infra-level house pattern;
+# a dedicated per-app channel can be added later by creating a mail-archiver webhook
+# secret and repointing this receiver).
+#
+# The selector label must be `release: kube-prometheus-stack` (the operator's
+# alertmanagerConfigSelector), NOT `release: prometheus-stack` — those two labels
+# are deliberately different in this stack.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: mailarchiver-mattermost-alerts
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: mailarchiver-mattermost
+    matchers:
+      - name: alertgroup
+        value: mail-archiver
+        matchType: "="
+  receivers:
+    - name: mailarchiver-mattermost
+      slackConfigs:
+        - apiURL:
+            name: homelab-node-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.namespace }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.namespace }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
