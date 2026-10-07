@@ -99,8 +99,12 @@ say "     (Loki: Grafana -> Explore -> {k8s_namespace_name=\"mail-archiver\"})"
 say "7. Login page serves 200 unauthenticated (no /health exists; this is the route)"
 kubectl -n "$NS" port-forward "svc/$DEPLOY" "$PF_PORT:5000" >/tmp/st4-pf.log 2>&1 &
 PF_PID=$!
-sleep 4
-CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $PUBLIC_HOST" "http://127.0.0.1:$PF_PORT/Auth/Login" 2>/dev/null)"
+CODE=""
+for _ in 1 2 3 4 5 6; do
+  sleep 2
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $PUBLIC_HOST" "http://127.0.0.1:$PF_PORT/Auth/Login" 2>/dev/null)"
+  [ -n "$CODE" ] && [ "$CODE" != "000" ] && break
+done
 kill "$PF_PID" 2>/dev/null; wait "$PF_PID" 2>/dev/null
 assert "GET /Auth/Login -> 200 with the public Host header" "[ \"$CODE\" = '200' ]"
 say "     http status: ${CODE:-none}"
