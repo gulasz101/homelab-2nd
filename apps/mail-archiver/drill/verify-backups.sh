@@ -74,7 +74,7 @@ printf '\n'
 # --- AC5: WAL archiving is actually shipping ------------------------------------
 printf '== 3. WAL archiving (expected: archived_count > 0, failed_count = 0, marker absent) ==\n'
 archiver=$(kubectl -n "$NS" exec "${CLUSTER}-1" -c postgres -- psql -U postgres -d postgres -tAc \
-  "select archived_count||' archived, '||failed_count||' failed, last='||coalesce(last_archived_wal,'none')||', '||coalesce(seconds_since_last_archival::text,'?')||'s ago' from pg_stat_archiver" \
+  "select archived_count||' archived, '||failed_count||' failed, last='||coalesce(last_archived_wal,'none')||', '||coalesce(extract(epoch from (now()-last_archived_time))::bigint::text,'?')||'s ago' from pg_stat_archiver" \
   2>/dev/null || true)
 note "pg_stat_archiver: ${archiver:-<query failed>}"
 archived_count=$(printf '%s' "$archiver" | awk '{print $1}')
