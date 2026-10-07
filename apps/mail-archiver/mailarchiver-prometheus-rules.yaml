@@ -1,0 +1,124 @@
+---
+# Mail-Archiver alerts (H2-145 / ST6, guardrail 9 — honest partial).
+#
+# Upstream Mail-Archiver ships NO /metrics endpoint (source-verified: no Prometheus
+# library anywhere in the tree), so this rule covers exactly what the shared LGTM
+# stack can actually see for this namespace: Deployment availability, the CNPG
+# cluster's health, base-backup freshness, and the two persistent volumes. Member
+# app metrics are not faked.
+#
+# Selector label is 'release: prometheus-stack' (NOT 'kube-prometheus-stack'): the
+# Prometheus Operator's ruleSelector and the AlertmanagerConfig selector are
+# different labels in this stack, and a wrong one silently yields no rules at all.
+#
+# Every expr below was parsed against the cluster's own Prometheus before commit
+# (a parse error returns HTTP 400 — see H2-114 for why that pre-flight matters).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mail-archiver-alerts
+  namespace: mail-archiver
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: mail-archiver.availability
+      interval: 30s
+      rules:
+        - alert: MailArchiverNoAvailableReplica
+          # Deployment-level, so it covers both "pod exists but not Ready" (the
+          # common Recreate/rollout and login-probe-failure case) and "pod gone".
+          expr: |
+            kube_deployment_status_replicas_available{namespace="mail-archiver", deployment="mail-archiver"} < 1
+          for: 5m
+          labels:
+            severity: critical
+            alertgroup: mail-archiver
+            namespace: mail-archiver
+          annotations:
+            summary: "mail-archiver has no available replica"
+            description: "The single-replica, Recreate-strategy mail-archiver Deployment has had no available replica for 5 minutes — mail-archive.voitech.dev is down, or a rollout is stuck (e.g. the /Auth/Login readiness probe failing)."
+        - alert: MailArchiverRestartLoop
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="mail-archiver", pod=~"mail-archiver-.*"}[15m]) > 2
+          for: 0m
+          labels:
+            severity: critical
+            alertgroup: mail-archiver
+            namespace: mail-archiver
+          annotations:
+            summary: "mail-archiver container restart loop"
+            description: "The mail-archiver container restarted more than twice in 15 minutes — a boot-time failure (EF migration, keyring mount, writable /app dirs) that the startupProbe's 300s budget keeps hidden."
+
+    - name: mail-archiver.cnpg
+      interval: 30s
+      rules:
+        - alert: MailArchiverPostgresDown
+          # CNPG exposes cnpg_collector_up, NOT a `pg_up` metric. It is 0 whenever
+          # the instance manager cannot reach PostgreSQL, i.e. the database is down.
+          expr: |
+            cnpg_collector_up{namespace="mail-archiver", cluster="mailarchiver-db"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            alertgroup: mail-archiver
+            namespace: mail-archiver
+          annotations:
+            summary: "mailarchiver-db PostgreSQL is down"
+            description: "The CloudNativePG collector reports the mailarchiver-db instance as down. The archive database — which also holds IMAP mailbox passwords in plaintext — is unreachable."
+        - alert: MailArchiverDatabaseNotReady
+          expr: |
+            kube_pod_status_ready{namespace="mail-archiver", pod=~"mailarchiver-db-.*", condition="true"} < 1
+          for: 5m
+          labels:
+            severity: critical
+            alertgroup: mail-archiver
+            namespace: mail-archiver
+          annotations:
+            summary: "mailarchiver-db instance pod not Ready"
+            description: "The mailarchiver-db CNPG instance pod has not been Ready for 5 minutes — the cluster is not healthy and backups/WAL archiving are at risk."
+        - alert: MailArchiverBaseBackupStale
+          # ScheduledBackup runs daily at 03:00, so 26h catches a missed run with
+          # ~2h of slack. last_available == 0 means "no successful base backup
+          # ever", which also fires — there is no recovery point at all.
+          expr: |
+            (time() - barman_cloud_cloudnative_pg_io_last_available_backup_timestamp{namespace="mail-archiver", cluster="mailarchiver-db"}) > 26 * 3600
+          for: 30m
+          labels:
+            severity: warning
+            alertgroup: mail-archiver
+            namespace: mail-archiver
+          annotations:
+            summary: "mailarchiver-db has no base backup in the last 26h"
+            description: "No successful CloudNativePG base backup for mailarchiver-db within 26 hours (schedule: daily 03:00). The crown-jewel database has no fresh recovery copy in OMV MinIO."
+
+    - name: mail-archiver.storage
+      interval: 60s
+      rules:
+        - alert: MailArchiverDbPvcAbove80Percent
+          expr: |
+            100 * kubelet_volume_stats_used_bytes{namespace="mail-archiver", persistentvolumeclaim=~"mailarchiver-db-.*"}
+              / kubelet_volume_stats_capacity_bytes{namespace="mail-archiver", persistentvolumeclaim=~"mailarchiver-db-.*"} > 80
+          for: 15m
+          labels:
+            severity: warning
+            alertgroup: mail-archiver
+            namespace: mail-archiver
+          annotations:
+            summary: "mailarchiver-db PVC above 80% used"
+            description: "The mailarchiver-db data volume on local-path is above 80% full. The Gmail archive (mail AND attachments in Postgres) is still growing — expand the 20Gi PVC or revisit retention."
+        - alert: MailArchiverKeysVolumeAbove80Percent
+          # The keys PV is a static OMV NFS mount. kubelet reports the underlying
+          # export filesystem, so this measures the OMV data disk that holds the
+          # keyring (and the rest of the durable store), not the 1Gi claim.
+          expr: |
+            100 * kubelet_volume_stats_used_bytes{namespace="mail-archiver", persistentvolumeclaim="mailarchiver-keys"}
+              / kubelet_volume_stats_capacity_bytes{namespace="mail-archiver", persistentvolumeclaim="mailarchiver-keys"} > 80
+          for: 15m
+          labels:
+            severity: warning
+            alertgroup: mail-archiver
+            namespace: mail-archiver
+          annotations:
+            summary: "OMV volume holding the mail-archiver keyring above 80% used"
+            description: "The OMV NFS filesystem behind the mailarchiver-keys PV is above 80% full. That filesystem holds the DataProtection keyring (losing it forces re-consenting every mailbox) plus the rest of the durable store — free space or grow it."
