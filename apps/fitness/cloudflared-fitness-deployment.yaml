@@ -1,0 +1,49 @@
+---
+# Dedicated Cloudflare Tunnel for gym.voitech.dev -> openGym (H2-108 / H2-173).
+# TLS terminates at the Cloudflare edge, so there is no Ingress and no
+# cert-manager here (guardrail 8). The tunnel is remotely managed
+# (config_src=cloudflare); the ingress rule lives in Cloudflare Zero Trust,
+# not in this repo. The --url flag below is cloudflared's origin for locally
+# managed tunnels and is superseded by the remote ingress rule.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-fitness
+  namespace: fitness
+  labels:
+    app.kubernetes.io/name: cloudflared-fitness
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-fitness
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-fitness
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+            - --url
+            - http://opengym.fitness.svc.cluster.local:80
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fitness-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 50m
+              memory: 128Mi

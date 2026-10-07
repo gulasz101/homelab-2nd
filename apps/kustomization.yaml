@@ -423,17 +423,22 @@ resources:
   # openGym family fitness tracker (H2-106) — gym.voitech.dev
   # Design: ADR-032. Upstream ships plain Kustomize (no Helm chart) — raw
   # manifests via Flux is the sanctioned last resort (guardrail 2).
-  # cloudflared-fitness + fitness-tunnel-token land in H2-108 once the
-  # tunnel token exists; the secret-less app deploys first, LAN-quiet.
+  # H2-173 added the Cloudflare Tunnel connector; the remote tunnel, ingress
+  # and DNS for gym.voitech.dev were created in H2-108 and are already live.
   # ============================================================
   - fitness/namespace.yaml
   # SOPS-encrypted secrets
   - fitness/fitness-minio-backup-creds.sops.yaml
   - fitness/fitness-mattermost-webhook-url.sops.yaml
+  # Cloudflare tunnel token, consumed by cloudflared-fitness (H2-108/H2-173)
+  - fitness/fitness-tunnel-token.sops.yaml
   # PVCs (local-path, node-pinned) + workload
   - fitness/opengym-pvcs.yaml
   - fitness/opengym-deployment.yaml
   - fitness/opengym-service.yaml
+  # Dedicated Cloudflare Tunnel for gym.voitech.dev (H2-173)
+  - fitness/cloudflared-fitness-deployment.yaml
+  - fitness/fitness-tunnel-ingress-configmap.yaml
   # Daily data backup -> OMV MinIO (H2-111)
   - fitness/fitness-data-backup-cronjob.yaml
   # Observability (H2-110, guardrail 9)

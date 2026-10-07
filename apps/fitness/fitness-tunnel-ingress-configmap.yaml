@@ -1,0 +1,30 @@
+---
+# Reminder of the public hostname rule for gym.voitech.dev (H2-108 / H2-173).
+# The real routing lives remotely in Cloudflare: this tunnel is created with
+# config_src=cloudflare (remotely-managed), so its ingress rules live in
+# Cloudflare Zero Trust -> Networks -> Tunnels -> fitness, NOT here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fitness-tunnel-ingress
+  namespace: fitness
+data:
+  note: |
+    # gym.voitech.dev -> http://opengym.fitness.svc.cluster.local:80
+    # The Cloudflare Tunnel hostname rule uses this internal Service URL.
+    # Add/modify it in Cloudflare Zero Trust -> Networks -> Tunnels -> fitness.
+    #
+    # The tunnel is remotely managed (config_src=cloudflare), so ingress rules
+    # live in the Cloudflare dashboard, NOT in this ConfigMap -- this file is
+    # only a human-readable reminder, so the mapping survives a rebuild.
+    #
+    # Because a remote ingress rule exists, cloudflared's --url flag on the
+    # Deployment is IGNORED at runtime: the remotely-managed configuration
+    # wins. Keep the two in sync by hand when the origin changes.
+    #
+    # No cert-manager and no Kubernetes Ingress are used: TLS terminates at the
+    # Cloudflare edge (guardrail 8). The internal hop is plain HTTP on the
+    # cluster network and never leaves it.
+    #
+    # DNS: CNAME gym.voitech.dev -> c876f33e-3f81-4545-956e-73bfaf8a62e8.cfargotunnel.com (proxied).
+    # Tunnel id: c876f33e-3f81-4545-956e-73bfaf8a62e8
