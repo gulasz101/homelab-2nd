@@ -40,6 +40,15 @@ spec:
         app.kubernetes.io/component: app
         app.kubernetes.io/part-of: mail-archiver
     spec:
+      # Pin to homelab-2nd. Two concrete reasons:
+      #  1. ST1's NFS export for the keyring is allowed to homelab-2nd and t460 only.
+      #     The first rollout (2026-10-07) landed on arr-box, whose mount of the keys
+      #     share never completed -> the pod sat in ContainerCreating and the Service
+      #     had no endpoints. Same house pattern as apps/fitness: a volume-backed
+      #     single-replica app selects its node instead of letting the scheduler gamble.
+      #  2. Architecture: workloads live on homelab-2nd.
+      nodeSelector:
+        kubernetes.io/hostname: homelab-2nd
       # The image has no USER directive (runs as root by default). We run it as
       # uid/gid 1000 to match the ST1 NFS export dir (uid 1000, mode 0770,
       # no_root_squash), so the app writes the DataProtection keyring directly and
