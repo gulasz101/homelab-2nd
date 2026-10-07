@@ -1,0 +1,68 @@
+---
+# Mail-Archiver Postgres cluster — single instance on local-path NVMe, backups to OMV MinIO.
+#
+# ⚠️ This database is the crown jewel of the deployment. Upstream Mail-Archiver stores
+# the IMAP mailbox passwords in PLAINTEXT in Postgres (verified: Models/MailAccount.cs
+# writes model.Password straight through, no value converter), and the OAuth refresh
+# tokens it keeps are sealed with the DataProtection keyring that lives on the app's
+# NFS PV. Losing this cluster means losing the archive; leaking it means leaking mail
+# credentials. Compensating controls: encrypted-at-rest backups in OMV MinIO, a tight
+# namespace networkpolicy (ST4) and a restore drill before anyone leans on it.
+#
+# Barman serverName generation convention: see
+# docs/cnpg-backup-servername-generations.md. A rebuilt cluster archives into
+# a fresh "<name>-genN" namespace while recovering from the previous one, so
+# the cnpg.io/skipEmptyWalArchiveCheck annotation is no longer needed.
+#
+# Bootstrap is deliberately `initdb` (the shlink shape): this is generation 1 and the
+# destination s3://cnpg-backups/mail-archiver/mailarchiver-db is empty, so a `recovery`
+# bootstrap would have nothing to restore from and the pod would sit in "Setting up
+# primary". When this cluster ever has to be re-created, follow the rebuild runbook in
+# docs/cnpg-backup-servername-generations.md — source = the previous generation,
+# target = a fresh "<name>-genN" — apps/mail-archiver/drill/README.md has the
+# copy-paste version of that switch, exercised by the restore drill.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: mailarchiver-db
+  namespace: mail-archiver
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
+
+  # Application database `mailarchiver` owned by `mailarchiver`; the password comes
+  # from the SOPS-encrypted mailarchiver-db-credentials secret (ST2).
+  bootstrap:
+    initdb:
+      database: mailarchiver
+      owner: mailarchiver
+      secret:
+        name: mailarchiver-db-credentials
+
+  # Live data on the homelab-2nd NVMe (fast, explicitly NOT durable — guardrail 4).
+  storage:
+    storageClass: local-path
+    size: 20Gi
+
+  # Barman Cloud CNPG-I plugin: continuous WAL archiving + base backups to the
+  # ObjectStore above. No in-tree backup.barmanObjectStore section — it is deprecated
+  # and mutually exclusive with the WAL archiver plugin.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: mailarchiver-db-backups
+        # Current generation (archiver target); bump to "<name>-genN" (fresh) on rebuild.
+        serverName: mailarchiver-db
+
+  # Retention only — the destination lives in the plugin ObjectStore.
+  backup:
+    retentionPolicy: "30d"
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
