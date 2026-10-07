@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: mailarchiver-tunnel-token
+    namespace: mail-archiver
+type: Opaque
+stringData:
+    token: ENC[AES256_GCM,data:yX6R2rVgtLCEJMCKlP4NhmKrA15uqW2c8myW7PARrtECyJd+XFGlaf6hBjCWqv6dM+fxLUrH+MgZO0z979UaKevZGGVeMFyNBHkptFYr19lScEHapHZt9b6wb6erPRpA26QQOmKcBWV4RLJmsWbovDCcV1ZGgkbjKkDH5v8f7s5ezyqDcxUZcX+2sr2xIC5H90n8SyAppY43W+rFzrE9+T8NGf5MZAdvtsB2mNz9bTkQ3zHa+xzuIV2qS+axd6/vv0TeZtV3HNHxFRMRypFbMX8XghSTEJJNsRIumxVvrYck63bzkzdr4aAcl+hmvlV1,iv:KEmsZaErYnZmuFxs1lZ/wBdeYuODII/sdsZFQNA1L/4=,tag:0ye0O5B3AgfbU8vGmT2Oog==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBvSjVCTlJqUUNEWjFHK1JE
+            anlzTmhFbFRzcFlMWXJ5OW9pdVlFanY3eW1RCmpKL0pPanRyaWl0S1VNaXhyVmMr
+            QkZsOVFpbFYyMkVpcnNGNkU2RFBFdjAKLS0tIEg4ODZOTmptaEYwS1prVDloRzBX
+            bWFZclRzaDJwMWJ3Ry9lY1J5em5peEkKEucckJBOIfUfdiHvQCNZ3Lypx60NIaC2
+            fozUyYukAuPrtgWIOyicc4kAjMcRmnBHz85LEIslGc2tzo2dMpHcUg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-07T18:25:29Z"
+    mac: ENC[AES256_GCM,data:FDim/95w+GiDp0dXFGlylSQhh3j1zcp1m4xKjBCXB5qkibdIVzL3i8LxaXPL9sjYAHdF4yK5Cn3yI0tOdVuQBoayyWsoi7hay4tbBYub6swCNkUz4LQT+xpwIH/jyVqNC8secvAEfoTqk2BzLLSpWlIEm0XQhMUwh9yZWecrHiI=,iv:uWQ+knDXu76mIhzXyhxA8S+r/UkP/mkgs7JTiP95usY=,tag:rOxbqlvfKn+rmqVUdWyPbw==,type:str]
+    version: 3.13.1
