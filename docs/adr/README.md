@@ -37,6 +37,12 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-031 | Qwen3.8-27B MLX 4-bit replaces the ≤12B local-model cap | Accepted | 2026-10-03 |
 | ADR-033 | `apps/base` + `apps/overlays` restructure deferred to a per-service migration campaign | Accepted | 2026-10-04 |
 | ADR-034 | Hermes MCP write-backs authenticate with the Andrzej agent key, not the god-user key | Accepted | 2026-10-04 |
+| ADR-035 | Bound oauth2-proxy per-request CSRF cookie pile (`--cookie-csrf-per-request-limit=3`) | Accepted | 2026-10-05 |
+| ADR-036 | Local MLX context — pin the MLX runtime to 1.8.5 (LM Studio auto-fit override) | Accepted | 2026-10-05 |
+| ADR-037 | Mail-Archive storage model — DB-resident archive, CNPG backups to OMV MinIO, DataProtection keyring on NFS | Accepted | 2026-10-07 |
+
+> Note: ADR-035 and ADR-036 existed as files but were missing from this index;
+> added alongside ADR-037 (same edit, 2026-10-07).
 
 > Note: `ADR-032` is referenced by the fitness (openGym) manifests but no file
 > is present in this directory — a pre-existing gap, left as-is so the number is
