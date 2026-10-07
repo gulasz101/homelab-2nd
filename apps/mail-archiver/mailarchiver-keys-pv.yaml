@@ -1,0 +1,61 @@
+---
+# Mail-Archiver DataProtection keyring — the one piece of this deployment that
+# cannot be rebuilt from git.
+#
+# ASP.NET Core Data Protection seals the OAuth refresh tokens of every archived
+# mailbox (and every auth cookie) with keys written to /app/DataProtection-Keys
+# (upstream source: Program.cs -> PersistKeysToFileSystem). Lose the keyring and
+# every mailbox has to be re-consented, and every session dies. So it does NOT
+# live on homelab-2nd's rebuildable NVMe (guardrail 4) — it lives on the OMV
+# durable NAS over NFS.
+#
+# Path and ownership come from ST1 / H2-146: the export directory is
+# /srv/.../mail-archiver/keys, created uid/gid 1000 mode 0770, and the OMV NFS
+# export uses no_root_squash. The Deployment therefore runs as uid/gid 1000 and
+# writes the keyring without leaning on root's DAC override.
+#
+# Reclaim policy Retain, deliberately: removing the Flux objects (rollback, or a
+# repo mistake) must never delete the keyring from the NAS.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mailarchiver-keys
+  namespace: mail-archiver
+  labels:
+    app.kubernetes.io/name: mail-archiver
+    app.kubernetes.io/component: keys
+    app.kubernetes.io/part-of: mail-archiver
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  nfs:
+    server: openmediavault.local
+    path: /srv/dev-disk-by-uuid-cda9bf6e-0ed1-4e61-b063-1cbab7351886/mail-archiver/keys
+  # Hand-provisioned NFS volume: empty storageClassName binds it statically to the
+  # PVC below instead of letting the default (local-path) provisioner claim it.
+  storageClassName: ""
+  persistentVolumeReclaimPolicy: Retain
+  mountOptions:
+    - hard
+    - intr
+    - nconnect=8
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mailarchiver-keys
+  namespace: mail-archiver
+  labels:
+    app.kubernetes.io/name: mail-archiver
+    app.kubernetes.io/component: keys
+    app.kubernetes.io/part-of: mail-archiver
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: ""
+  volumeName: mailarchiver-keys
