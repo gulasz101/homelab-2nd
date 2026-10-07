@@ -1,0 +1,194 @@
+---
+# Mail-Archiver 2609.1 (s1t5/mail-archiver) — the Gmail escape route's web app.
+#
+# Why plain manifests and not a HelmRelease: upstream ships an image and docs but
+# no chart, and ArtifactHub has no community package for it. Raw manifests
+# delivered by Flux are the sanctioned last resort under guardrail 2 (justification
+# in the tracking note + ADR-037).
+#
+# Pinned by DIGEST, with the tag kept in a comment for humans. The minio/mc
+# disappearance showed how fast an image can leave every registry; a tag is a
+# moving pointer, a digest is not. 2609.1 is a multi-arch index (amd64 + arm64).
+#
+# strategy Recreate, not RollingUpdate: the app runs EF migrations on boot and two
+# pods must never migrate concurrently. One writer, one pod.
+#
+# The DB is the crown jewel: upstream stores IMAP mailbox passwords in PLAINTEXT
+# in Postgres. The Cloudflare tunnel is the only ingress (see networkpolicy.yaml),
+# and the tunnel forwards the public Host header, which is why AllowedHosts can
+# stay strict.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mail-archiver
+  namespace: mail-archiver
+  labels:
+    app.kubernetes.io/name: mail-archiver
+    app.kubernetes.io/component: app
+    app.kubernetes.io/part-of: mail-archiver
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mail-archiver
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mail-archiver
+        app.kubernetes.io/component: app
+        app.kubernetes.io/part-of: mail-archiver
+    spec:
+      # The image has no USER directive (runs as root by default). We run it as
+      # uid/gid 1000 to match the ST1 NFS export dir (uid 1000, mode 0770,
+      # no_root_squash), so the app writes the DataProtection keyring directly and
+      # we never need root's DAC override.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mail-archiver
+          image: docker.io/s1t5/mailarchiver@sha256:8a05e3c99f63c03ab2599c04078c7de4ee5ecf1988e8adec8d233a457913ab44  # 2609.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 5000
+              protocol: TCP
+          # All app config lives in env vars (upstream convention, double-underscore
+          # for appsettings sections). Single envFrom: the ST2 secret already holds
+          # the two OAuth credentials, the break-glass admin seed and the DB
+          # connection string. Do NOT hand-write the connection string here.
+          envFrom:
+            - secretRef:
+                name: mailarchiver-app-secrets
+          env:
+            - name: TZ
+              value: Europe/Berlin
+            - name: AllowedHosts
+              value: mail-archive.voitech.dev
+            - name: TimeZone__DisplayTimeZoneId
+              value: Europe/Berlin
+            # Gmail's IMAP cap is ~2500 MB/day. BandwidthTracking pauses sync at the
+            # limit instead of getting throttled/banned; ~30 GB therefore soaks ~12 days.
+            - name: BandwidthTracking__Enabled
+              value: "true"
+            - name: BandwidthTracking__DailyLimitMb
+              value: "2500"
+            - name: MailSync__IntervalMinutes
+              value: "15"
+            # Privacy defaults: open plain text, and strip remote images/CSS/fonts
+            # from HTML views. Archived mail is stored unchanged either way.
+            - name: View__DefaultToPlainText
+              value: "true"
+            - name: View__BlockExternalResources
+              value: "true"
+            # REST API and MCP endpoint stay OFF at go-live; enabling them is a
+            # reviewed follow-up with API keys + netpol changes (epic decision).
+            - name: Api__Enabled
+              value: "false"
+            - name: Mcp__Enabled
+              value: "false"
+            # Deletion from the source mailbox is needed for the escape-Gmail endgame,
+            # but Gmail-side deletion stays GATED on a verified sync + restore drill.
+            - name: DeletionPolicy__DeletionAllowed
+              value: "true"
+            # --- OIDC SSO (Authentik), password login disabled ---
+            # Authority slug verified live: the Authentik discovery document under
+            # /application/o/mail-archiver/ returns 200 with this issuer. Redirect URI
+            # registered in the blueprint: https://mail-archive.voitech.dev/oidc-signin-completed
+            - name: OAuth__Enabled
+              value: "true"
+            - name: OAuth__Authority
+              value: https://auth.voitech.dev/application/o/mail-archiver/
+            - name: OAuth__DisplayName
+              value: Authentik
+            - name: OAuth__DisablePasswordLogin
+              value: "true"
+            # Keep AutoRedirect false: /Auth/Login must stay a 200 page rendering the
+            # SSO button (probes + a visible login page), not a blind 302.
+            - name: OAuth__AutoRedirect
+              value: "false"
+            # Authentik is the access gate: only users assigned the mail-archiver
+            # application can authenticate. AutoApprove makes that gate authoritative
+            # instead of locking the leader out on an email mismatch (see H2-149 ruling).
+            - name: OAuth__AutoApproveUsers
+              value: "true"
+            - name: OAuth__ClientScopes__0
+              value: openid
+            - name: OAuth__ClientScopes__1
+              value: profile
+            - name: OAuth__ClientScopes__2
+              value: email
+            # Emails that get provisioned as admin on first SSO login. The Authentik
+            # account is akadmin/admin@voitech.dev; wojtek@ and w.gula@ are the
+            # leader's other known identities, listed so whichever claim Authentik
+            # returns still provisions admin.
+            - name: OAuth__AdminEmails__0
+              value: admin@voitech.dev
+            - name: OAuth__AdminEmails__1
+              value: wojtek@voitech.dev
+            - name: OAuth__AdminEmails__2
+              value: w.gula@voitech.dev
+          volumeMounts:
+            - name: mailarchiver-keys
+              mountPath: /app/DataProtection-Keys
+          # Probes hit the unauthenticated login page (the app has no /health).
+          # Source-verified: AuthController.Login is an anonymous GET returning the
+          # login view with 200 because AutoRedirect is false.
+          #
+          # The Host header override is load-bearing: AllowedHosts is strict, so a
+          # default kubelet probe (Host = pod IP) gets 400 and the pod never becomes
+          # Ready. httpGet lets us send the real public Host.
+          startupProbe:
+            httpGet:
+              path: /Auth/Login
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: mail-archive.voitech.dev
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            # 30 x 10s = 300s budget: first boot runs EF migrations on the empty DB.
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /Auth/Login
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: mail-archive.voitech.dev
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /Auth/Login
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: mail-archive.voitech.dev
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 251m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: mailarchiver-keys
+          persistentVolumeClaim:
+            claimName: mailarchiver-keys
