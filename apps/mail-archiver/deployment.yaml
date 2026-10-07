@@ -146,6 +146,20 @@ spec:
           volumeMounts:
             - name: mailarchiver-keys
               mountPath: /app/DataProtection-Keys
+            # The app treats its content root (/app) as writable: at startup it
+            # creates uploads/mbox and uploads/eml for import staging and exports/
+            # for generated exports (source: MBoxImportService.cs:38,
+            # EmlImportService.cs:36, ExportService.cs:38,
+            # SelectedEmailsExportService.cs:38, AuditExportService.cs:52). The
+            # image's /app is root-owned, so a non-root container cannot create
+            # those directories — the first rollout crash-looped on exactly this
+            # ("Access to the path '/app/uploads' is denied"). Ephemeral staging is
+            # correct here: the archive lives in Postgres and exports are
+            # downloaded, not retained.
+            - name: uploads
+              mountPath: /app/uploads
+            - name: exports
+              mountPath: /app/exports
           # Probes hit the unauthenticated login page (the app has no /health).
           # Source-verified: AuthController.Login is an anonymous GET returning the
           # login view with 200 because AutoRedirect is false.
@@ -201,3 +215,9 @@ spec:
         - name: mailarchiver-keys
           persistentVolumeClaim:
             claimName: mailarchiver-keys
+        # Writable staging dirs for the non-root container (see volumeMounts).
+        # fsGroup 1000 above makes these group-writable for uid 1000.
+        - name: uploads
+          emptyDir: {}
+        - name: exports
+          emptyDir: {}
