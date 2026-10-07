@@ -1,0 +1,9 @@
+---
+# Mail-Archiver namespace (H2-145 / ST3).
+# Home of the Gmail escape route: s1t5/mail-archiver + its CNPG database.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mail-archiver
+  labels:
+    app.kubernetes.io/name: mail-archiver

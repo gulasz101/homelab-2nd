@@ -1,0 +1,32 @@
+---
+# ObjectStore for the Barman Cloud CNPG-I plugin — Mail-Archiver backups to OMV MinIO.
+#
+# This is the crown-jewel backup: upstream Mail-Archiver keeps the IMAP mailbox
+# passwords in plaintext inside the database (verified in Models/MailAccount.cs),
+# so the objects written here are as sensitive as mail credentials. OMV is the only
+# durable store in this homelab (guardrail 4) — never a homelab-2nd disk.
+#
+# destinationPath is enforced, not decorative: the MinIO principal behind
+# mailarchiver-minio-backup-creds is scoped to `cnpg-backups/mail-archiver/*` only
+# (prepared and verified with a sibling-prefix negative control in ST1/H2-146), so a
+# typo here fails loudly instead of silently writing into another service's tree.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: mailarchiver-db-backups
+  namespace: mail-archiver
+spec:
+  configuration:
+    destinationPath: s3://cnpg-backups/mail-archiver
+    endpointURL: http://openmediavault.local:9000
+    s3Credentials:
+      accessKeyId:
+        name: mailarchiver-minio-backup-creds
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: mailarchiver-minio-backup-creds
+        key: ACCESS_SECRET_KEY
+    data:
+      compression: gzip
+    wal:
+      compression: gzip
