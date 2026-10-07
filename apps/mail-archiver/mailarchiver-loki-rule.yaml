@@ -1,0 +1,86 @@
+---
+# Loki Ruler rule for Mail-Archiver failures (H2-145 / ST6). Lives in the
+# observability namespace (the Loki ruler's rule sidecar watches ConfigMaps
+# labelled loki_rule there).
+#
+# Labels: the OTel Collector relabels pod logs to k8s_namespace_name /
+# k8s_container_name / k8s_pod_name. The older `namespace`/`pod` labels never
+# match OTel-collected logs (lesson recorded 2026-07-13), so they are not used here.
+#
+# Filtering: only failure indicators, never bare feature keywords — the sync job
+# logs "Starting mail sync process...", "Found N active accounts to sync" and
+# "AlwaysForceFullSync is disabled" on every healthy tick, so a bare /sync/ match
+# would page constantly.
+#
+# Routing: lokiConfig.rulerConfig forwards to Alertmanager v2. The `alertgroup:
+# mail-archiver` label is what routes these to the mailarchiver-mattermost
+# receiver (same label the PrometheusRule uses). Without it the ruler's alerts
+# would fall to Alertmanager's default `null` receiver and be dropped.
+#
+# Every expr below was parsed against the live Loki API before commit (a parse
+# error returns HTTP 400 — the H2-114 method); each currently matches 0 lines on
+# the healthy app.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mailarchiver-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  mailarchiver-errors.yaml: |
+    groups:
+      - name: mailarchiver.app-errors
+        interval: 1m
+        rules:
+          - alert: MailArchiverAppErrors
+            expr: |
+              sum by (k8s_pod_name) (
+                count_over_time(
+                  {k8s_namespace_name="mail-archiver", k8s_container_name="mail-archiver"}
+                    |~ "(?i)fail:|unhandled exception|hosting failed|fatal"
+                  [5m]
+                )
+              ) > 3
+            for: 2m
+            labels:
+              severity: critical
+              alertgroup: mail-archiver
+              namespace: mail-archiver
+            annotations:
+              summary: "mail-archiver logging fatal errors"
+              description: "{{ $labels.k8s_pod_name }} logged more than 3 failure/exception lines in 5 minutes — the ASP.NET host failing to start (e.g. a keyring mount or writable-directory problem) looks exactly like this."
+          - alert: MailArchiverSyncFailures
+            expr: |
+              sum by (k8s_pod_name) (
+                count_over_time(
+                  {k8s_namespace_name="mail-archiver", k8s_container_name="mail-archiver"}
+                    |~ "(?i)(mailsync|imap|sync).*(fail|error|exception|could not)|(fail|error|exception).*(sync|imap)"
+                  [10m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              alertgroup: mail-archiver
+              namespace: mail-archiver
+            annotations:
+              summary: "mail-archiver mail sync failing"
+              description: "{{ $labels.k8s_pod_name }} logged a mail-sync failure in the last 10 minutes. Gmail throttling, an account password change, or the 2500 MB/day bandwidth cap can all present here — check the account before assuming a code fault."
+          - alert: MailArchiverLoginAnomalies
+            expr: |
+              sum by (k8s_pod_name) (
+                count_over_time(
+                  {k8s_namespace_name="mail-archiver", k8s_container_name="mail-archiver"}
+                    |~ "(?i)(login|signin|sign-in|authentication|oidc|oauth).*(fail|error|denied|invalid|unauthor)|(fail|error|denied|unauthor).*(login|auth)"
+                  [10m]
+                )
+              ) > 3
+            for: 2m
+            labels:
+              severity: warning
+              alertgroup: mail-archiver
+              namespace: mail-archiver
+            annotations:
+              summary: "mail-archiver login anomalies"
+              description: "{{ $labels.k8s_pod_name }} logged more than 3 authentication failures/OIDC errors in 10 minutes — a broken Authentik redirect, a mis-scoped client, or something probing the login endpoint."
