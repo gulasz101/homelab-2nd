@@ -1,0 +1,21 @@
+---
+# Daily scheduled base backups for the Mail-Archiver CNPG cluster.
+#
+# `immediate: true` fires the first base backup as soon as Flux applies this object, so
+# the recovery window opens the same day the cluster is created — deliberately not
+# waiting until 03:00 for the first recovery point. WAL archiving is continuous from
+# cluster init, so the RPO between base backups is one WAL segment.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: mailarchiver-db-daily
+  namespace: mail-archiver
+spec:
+  schedule: "0 0 3 * * *"  # 03:00 daily (6-field cron with seconds)
+  backupOwnerReference: self
+  cluster:
+    name: mailarchiver-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  immediate: true
