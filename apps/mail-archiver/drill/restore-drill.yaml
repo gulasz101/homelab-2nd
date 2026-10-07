@@ -1,0 +1,68 @@
+---
+# Mail-Archiver RESTORE DRILL cluster — a RECIPE, not desired state.
+#
+# ⚠️ This file is deliberately NOT listed in apps/kustomization.yaml, so Flux never
+# applies it. A drill is a transient object: reconciling a second PostgreSQL forever
+# would burn NVMe, collide with the primary's backup namespace and turn a one-off test
+# into permanent drift. Applying it by hand and deleting it afterwards is the
+# documented, intentional exception to guardrail 1 — the recipe lives in git, the
+# object never enters Flux.
+#
+# What it proves: the objects the Barman plugin wrote to OMV MinIO are a *restorable*
+# database, not just a plausible-looking pile of files. The drill
+#   * bootstraps by recovery from externalClusters `origin` -> serverName
+#     `mailarchiver-db` (the primary's real history: base backup + WAL replay),
+#   * archives into its own fresh, empty namespace via serverName
+#     `mailarchiver-db-drill`, so both Barman empty-archive guards pass naturally
+#     (docs/cnpg-backup-servername-generations.md) and the primary's tree is never touched,
+#   * is then compared with the primary by PostgreSQL system identifier: identical
+#     values prove a genuine physical restore rather than a silent initdb.
+#
+# Re-running the drill needs a fresh target: bump serverName to `mailarchiver-db-drill2`
+# (or delete the mailarchiver-db-drill tree in MinIO first), or the archiver refuses
+# with `Expected empty archive`. Full run order + cleanup: drill/README.md.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: mailarchiver-db-drill
+  namespace: mail-archiver
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
+
+  bootstrap:
+    recovery:
+      source: origin
+      database: mailarchiver
+      owner: mailarchiver
+      secret:
+        name: mailarchiver-db-credentials
+
+  externalClusters:
+    - name: origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: mailarchiver-db-backups
+          # Recovery source: the primary's history. Read-only.
+          serverName: mailarchiver-db
+
+  storage:
+    storageClass: local-path
+    size: 20Gi
+
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: mailarchiver-db-backups
+        # Fresh, empty drill target; bump the generation on every re-run.
+        serverName: mailarchiver-db-drill
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
