@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: fitness-tunnel-token
+    namespace: fitness
+type: Opaque
+stringData:
+    token: ENC[AES256_GCM,data:vlK0plBGz/pV6gn96V+vwebWPropAS/FIP/2mu7wyQMQzTjtNRsu75L0P4hwNXMfItKUcPWBfzWfFv/7SHfhkcPtrmF84J6+05yTESMxLujmn6TrWxmx2Hx3/97zAyrSmXA5gQLR0/aVX5MV9ThLEKMno7wx2VwOg1MRe4i//NhndbA8O9DlIPTXM/dG4S7hsoOreO5YmkjCdTiEUhmJ7jcNVZF4i8sDgVw8oITtDI2scGPgid5LbHidSgqQNIUU9ASrSwvyEO2HB8IzpdO2/32JTC1O8rVy/VIgIT60WnEQB+x+0ep8mU65Fb4V06D9,iv:TPSu77kY0B5GRgDt7Z7AhAiZFeHsDSqw/4RQv8aOhIQ=,tag:gQ7efkGNp7gbhv2D0rDXkw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBocU94NUVyLy9TcWcxaTht
+            TzB4b1loWnY4ZFY2TXI1VGt6YVZGalNiTUZrCkJZdlZyNS9LNXRCV3Y2ckJHQVVP
+            cEtYanVHMU9mdjN1YVFNSW51aHk3dk0KLS0tIEdkSWpVV1dUdlR6RWc3a3FLbExN
+            bFIwYmtuV241eDliazU4eDZWQXQrQm8KSFlgP5CEDPC39f0+nqntloXqiPHpEu9x
+            nLez4NCngfFKO8TurcQssy+UFiGr6cyRkVGxKFcpXIhjluUrvMFDvg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-07T18:19:20Z"
+    mac: ENC[AES256_GCM,data:6cm1h6l2QLo1hdiwZWDAw5P/umv1I5j1y4BckUP15aCRK3a8Lxvi1kKbWEfMybpq4LeExbFfySaoDl03O8qa7LRtlZ0qmYiYaIiUyoSk+ZWYVwwAT05qE4zTLnYwriectYo09rtt/DI3gk89fQSw80m8dn96DydYGeyLnPJwgyo=,iv:OUg/+W08VPk0Yhp0itCP5cgsvl1fM4z0Rj4T+pzEdig=,tag:pXf2jK7EiOlH9CP8GpDYag==,type:str]
+    version: 3.13.1
