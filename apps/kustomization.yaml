@@ -476,6 +476,15 @@ resources:
   - mail-archiver/deployment.yaml
   - mail-archiver/service.yaml
   - mail-archiver/networkpolicy.yaml
+  # Public ingress (ST5/H2-150): the dedicated Cloudflare Tunnel connector, the
+  # SOPS-encrypted tunnel token it consumes, and the human-readable ingress
+  # reminder (the real hostname rule lives remotely in Cloudflare Zero Trust).
+  # The token Secret is listed here together with its only consumer, the same
+  # ruling the app secrets follow above. TLS stays at the CF edge; no
+  # cert-manager, no router ports (guardrail 8).
+  - mail-archiver/mailarchiver-tunnel-token.sops.yaml
+  - mail-archiver/cloudflared-mail-archive-deployment.yaml
+  - mail-archiver/mailarchiver-tunnel-ingress-configmap.yaml
   # Observability package (ST6/H2-151, guardrail 9 — honest partial: upstream
   # ships no /metrics). The PrometheusRule lands in mail-archiver; the other three
   # deliberately target the observability namespace (the Loki rule sidecar and the
