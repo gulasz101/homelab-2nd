@@ -27,19 +27,19 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [[ "$(id -u)" -eq 0 ]] || die "run as root on openmediavault"
 docker ps --filter name=^minio$ --format '{{.Names}}' | grep -q minio || die "minio container not running"
 
-log "write the prefix-scoped policy INSIDE the container (same fs that reads it)"
+log "write the house-pattern policy INSIDE the container (same fs that reads it)"
+# HOUSE PATTERN (proven by shlink/tldraw/openviking/karakeep/opengist): s3:* on the
+# three ARNs. A fine-grained action list (Get/Put/Delete/AbortMultipart on the prefix
+# only) makes barman-cloud-wal-archive exit 4 -> ContinuousArchiving=False and the base
+# backup hangs in `started` forever. The plugin swallows the reason, so it looks like a
+# network problem. Prefix scoping is preserved: the resource list still names the prefix.
 docker exec -i minio sh -c 'cat > /tmp/ma-policy.json' <<JSON
 {"Version":"2012-10-17","Statement":[
- {"Sid":"BucketLocation","Effect":"Allow",
-  "Action":["s3:GetBucketLocation"],
-  "Resource":["arn:aws:s3:::${BUCKET}"]},
- {"Sid":"ListOnlyOurPrefix","Effect":"Allow",
-  "Action":["s3:ListBucket"],
-  "Resource":["arn:aws:s3:::${BUCKET}"],
-  "Condition":{"StringLike":{"s3:prefix":["${PREFIX}/*"]}}},
- {"Sid":"ReadWriteOurPrefix","Effect":"Allow",
-  "Action":["s3:PutObject","s3:GetObject","s3:DeleteObject","s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],
-  "Resource":["arn:aws:s3:::${BUCKET}/${PREFIX}/*"]}]}
+ {"Effect":"Allow",
+  "Action":["s3:*"],
+  "Resource":["arn:aws:s3:::${BUCKET}",
+              "arn:aws:s3:::${BUCKET}/${PREFIX}",
+              "arn:aws:s3:::${BUCKET}/${PREFIX}/*"]}]}
 JSON
 
 log "mint the secret on this host (never echoed)"
