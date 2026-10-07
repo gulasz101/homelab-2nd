@@ -1,8 +1,11 @@
 ---
-# openGym v1.3.9 — self-hosted gym tracker (DuarteSantos8/openGym).
+# openGym v1.3.10 — self-hosted gym tracker (DuarteSantos8/openGym).
 # Based on upstream kubernetes/deployment.yaml with homelab overrides.
 # No Helm chart exists upstream — raw manifests via Flux are the sanctioned
 # last resort (guardrail 2), justified in the tracking note + ADR-032.
+# v1.3.10 (2026-10-07) is required, not cosmetic: FIRST_USER_ADMIN only exists
+# from 1.3.10 (upstream PR #328). On 1.3.9 the variable below is a silent no-op
+# and the first profile would get no admin dashboard (H2-179).
 #
 # Pin API and web images to the SAME version and move them together: :latest
 # would let a restarted pod come back on a version nobody chose.
@@ -55,7 +58,7 @@ spec:
               memory: 256Mi
       containers:
         - name: api
-          image: ghcr.io/duartesantos8/opengym-api:1.3.9
+          image: ghcr.io/duartesantos8/opengym-api:1.3.10
           imagePullPolicy: IfNotPresent
           env:
             - name: PORT
@@ -70,10 +73,22 @@ spec:
               value: https://gym.voitech.dev
             - name: RP_NAME
               value: openGym
+            # BOOTSTRAP (H2-179): the API could not be reached by ANY new user
+            # because INVITE_ONLY=1 was set on an instance with zero profiles.
+            # FIRST_USER_ADMIN=1 (v1.3.10+) makes the first profile created on
+            # an empty instance its admin, so once Wojtek registers he gets the
+            # admin dashboard and can generate the invite code for profile #2.
+            - name: FIRST_USER_ADMIN
+              value: "1"
             # Two-person family gym: invite codes only, no guest front door,
             # password fallback for browsers that can't do passkeys + recovery.
+            # BOOTSTRAP ORDER (H2-179): must stay "0" until the instance has an
+            # admin. With "1" on an empty instance nobody can create the first
+            # profile, so nobody can mint the first code — a hard lock-out.
+            # Flip back to "1" once both family profiles exist; restore is
+            # tracked on H2-113.
             - name: INVITE_ONLY
-              value: "1"
+              value: "0"
             - name: ALLOW_GUEST
               value: "0"
             - name: PASSWORD_LOGIN
@@ -106,7 +121,7 @@ spec:
             limits:
               memory: 512Mi
         - name: web
-          image: ghcr.io/duartesantos8/opengym-web:1.3.9
+          image: ghcr.io/duartesantos8/opengym-web:1.3.10
           imagePullPolicy: IfNotPresent
           env:
             - name: NGINX_PORT
