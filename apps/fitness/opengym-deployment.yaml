@@ -2,7 +2,7 @@
 # openGym v1.3.10 — self-hosted gym tracker (DuarteSantos8/openGym).
 # Based on upstream kubernetes/deployment.yaml with homelab overrides.
 # No Helm chart exists upstream — raw manifests via Flux are the sanctioned
-# last resort (guardrail 2), justified in the tracking note + ADR-032.
+# last resort (guardrail 2), justified in the tracking note.
 # v1.3.10 (2026-10-07) is required, not cosmetic: FIRST_USER_ADMIN only exists
 # from 1.3.10 (upstream PR #328). On 1.3.9 the variable below is a silent no-op
 # and the first profile would get no admin dashboard (H2-179).

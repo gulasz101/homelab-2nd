@@ -421,8 +421,9 @@ resources:
 
   # ============================================================
   # openGym family fitness tracker (H2-106) — gym.voitech.dev
-  # Design: ADR-032. Upstream ships plain Kustomize (no Helm chart) — raw
-  # manifests via Flux is the sanctioned last resort (guardrail 2).
+  # Design: raw manifests — upstream ships plain Kustomize (no Helm chart),
+  # so Flux-applied manifests are the sanctioned last resort (guardrail 2);
+  # rationale in the H2-106 tracking note, no ADR for the design itself.
   # H2-173 added the Cloudflare Tunnel connector; the remote tunnel, ingress
   # and DNS for gym.voitech.dev were created in H2-108 and are already live.
   # ============================================================
