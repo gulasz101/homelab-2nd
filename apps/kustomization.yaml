@@ -471,3 +471,12 @@ resources:
   - mail-archiver/deployment.yaml
   - mail-archiver/service.yaml
   - mail-archiver/networkpolicy.yaml
+  # Observability package (ST6/H2-151, guardrail 9 — honest partial: upstream
+  # ships no /metrics). The PrometheusRule lands in mail-archiver; the other three
+  # deliberately target the observability namespace (the Loki rule sidecar and the
+  # Grafana sidecar watch ConfigMaps there, and an AlertmanagerConfig must live in
+  # the same namespace as its webhook secret).
+  - mail-archiver/mailarchiver-prometheus-rules.yaml
+  - mail-archiver/mailarchiver-alertmanager-config.yaml
+  - mail-archiver/mailarchiver-loki-rule.yaml
+  - mail-archiver/mailarchiver-dashboard-configmap.yaml
