@@ -1,0 +1,60 @@
+---
+# Dedicated Cloudflare Tunnel connector for mail-archive.voitech.dev -> Mail-Archiver
+# (H2-145 / ST5 / H2-150).
+#
+# TLS terminates at the Cloudflare edge, so there is no Ingress and no
+# cert-manager here (guardrail 8); the internal hop is plain HTTP on the cluster
+# network and never leaves it. The tunnel is remotely managed
+# (config_src=cloudflare), so the ingress rule lives in Cloudflare Zero Trust,
+# not in this repo — the --url flag of a locally-managed tunnel is not needed
+# (and would be ignored).
+#
+# THE POD LABEL IS LOAD-BEARING: the ST4 NetworkPolicy (networkpolicy.yaml) only
+# admits pods carrying app.kubernetes.io/name=cloudflared-mail-archive to the app
+# on port 5000. Renaming this label silently 502s every public request while the
+# tunnel still looks healthy. Keep the two in sync.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-mail-archive
+  namespace: mail-archiver
+  labels:
+    app.kubernetes.io/name: cloudflared-mail-archive
+    app.kubernetes.io/component: tunnel
+    app.kubernetes.io/part-of: mail-archiver
+spec:
+  # One replica on purpose: the node is CPU-saturated and a single connector is
+  # enough for a personal archive. Bump to 2 only if the node gets headroom.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-mail-archive
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-mail-archive
+        app.kubernetes.io/component: tunnel
+        app.kubernetes.io/part-of: mail-archiver
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mailarchiver-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 50m
+              memory: 128Mi

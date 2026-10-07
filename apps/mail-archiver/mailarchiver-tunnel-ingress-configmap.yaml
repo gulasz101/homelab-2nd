@@ -1,0 +1,36 @@
+---
+# Human-readable reminder of the public hostname rule for mail-archive.voitech.dev
+# (H2-145 / ST5 / H2-150).
+#
+# The real routing lives remotely in Cloudflare: the tunnel is created with
+# config_src=cloudflare (remotely managed), so its ingress rules live in
+# Cloudflare Zero Trust -> Networks -> Tunnels -> mail-archive, NOT here. This
+# ConfigMap only records the mapping so it survives a rebuild of the cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mailarchiver-tunnel-ingress
+  namespace: mail-archiver
+  labels:
+    app.kubernetes.io/name: cloudflared-mail-archive
+    app.kubernetes.io/component: tunnel
+    app.kubernetes.io/part-of: mail-archiver
+data:
+  note: |
+    # mail-archive.voitech.dev -> http://mail-archiver.mail-archiver.svc.cluster.local:5000
+    #
+    # The Service is `mail-archiver` (with a hyphen), NOT `mailarchiver`.
+    # The tunnel ingress in Cloudflare Zero Trust must use the Service DNS name
+    # above; a wrong origin produces a healthy-looking tunnel with every request
+    # 502'ing.
+    #
+    # Tunnel name : mail-archive
+    # Tunnel id   : 911d28cf-4e06-4de2-92b3-d89a7df08553
+    # DNS         : proxied CNAME mail-archive.voitech.dev ->
+    #               911d28cf-4e06-4de2-92b3-d89a7df08553.cfargotunnel.com
+    #
+    # No cert-manager and no Kubernetes Ingress are used: TLS terminates at the
+    # Cloudflare edge (guardrail 8).
+    #
+    # Because a remote ingress rule exists, the tunnel is remotely managed and
+    # the connector Deployment's args are simply `run --token $(TUNNEL_TOKEN)`.
