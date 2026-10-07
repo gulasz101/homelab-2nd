@@ -13,9 +13,13 @@
 # would page constantly.
 #
 # Routing: lokiConfig.rulerConfig forwards to Alertmanager v2. The `alertgroup:
-# mail-archiver` label is what routes these to the mailarchiver-mattermost
-# receiver (same label the PrometheusRule uses). Without it the ruler's alerts
-# would fall to Alertmanager's default `null` receiver and be dropped.
+# mail-archiver` label routes these to the mailarchiver-mattermost receiver (same
+# label the PrometheusRule uses). The `namespace: observability` label is also
+# required: the Prometheus Operator injects an AlertmanagerConfig's own namespace as
+# a route matcher, and this receiver lives in `observability` (H2-151 ruling — the
+# shared Mattermost webhook is the only one available without a plaintext secret).
+# Without both labels the ruler's alerts would fall to Alertmanager's default `null`
+# receiver and be dropped.
 #
 # Every expr below was parsed against the live Loki API before commit (a parse
 # error returns HTTP 400 — the H2-114 method); each currently matches 0 lines on
@@ -46,7 +50,7 @@ data:
             labels:
               severity: critical
               alertgroup: mail-archiver
-              namespace: mail-archiver
+              namespace: observability
             annotations:
               summary: "mail-archiver logging fatal errors"
               description: "{{ $labels.k8s_pod_name }} logged more than 3 failure/exception lines in 5 minutes — the ASP.NET host failing to start (e.g. a keyring mount or writable-directory problem) looks exactly like this."
@@ -63,7 +67,7 @@ data:
             labels:
               severity: warning
               alertgroup: mail-archiver
-              namespace: mail-archiver
+              namespace: observability
             annotations:
               summary: "mail-archiver mail sync failing"
               description: "{{ $labels.k8s_pod_name }} logged a mail-sync failure in the last 10 minutes. Gmail throttling, an account password change, or the 2500 MB/day bandwidth cap can all present here — check the account before assuming a code fault."
@@ -80,7 +84,7 @@ data:
             labels:
               severity: warning
               alertgroup: mail-archiver
-              namespace: mail-archiver
+              namespace: observability
             annotations:
               summary: "mail-archiver login anomalies"
               description: "{{ $labels.k8s_pod_name }} logged more than 3 authentication failures/OIDC errors in 10 minutes — a broken Authentik redirect, a mis-scoped client, or something probing the login endpoint."

@@ -11,13 +11,23 @@
 # Prometheus Operator's ruleSelector and the AlertmanagerConfig selector are
 # different labels in this stack, and a wrong one silently yields no rules at all.
 #
+# Why this rule lives in the observability namespace and its alerts carry
+# `namespace: observability` (ruling on H2-151): the Prometheus Operator injects an
+# AlertmanagerConfig's OWN namespace as an extra `namespace=` route matcher. A config
+# in `observability` can therefore only match alerts labelled namespace=observability.
+# Mail-Archiver has no dedicated Mattermost webhook secret (and one cannot be invented
+# without a plaintext URL), so it reuses the observability webhook and must live in
+# that namespace — the same shape as the existing cnpg-backup / homelab-node rules.
+# `alertgroup: mail-archiver` still identifies the service, and the receiver's title
+# is templated on alertgroup so notifications read "mail-archiver", not "observability".
+#
 # Every expr below was parsed against the cluster's own Prometheus before commit
 # (a parse error returns HTTP 400 — see H2-114 for why that pre-flight matters).
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: mail-archiver-alerts
-  namespace: mail-archiver
+  namespace: observability
   labels:
     release: prometheus-stack
 spec:
@@ -34,7 +44,7 @@ spec:
           labels:
             severity: critical
             alertgroup: mail-archiver
-            namespace: mail-archiver
+            namespace: observability
           annotations:
             summary: "mail-archiver has no available replica"
             description: "The single-replica, Recreate-strategy mail-archiver Deployment has had no available replica for 5 minutes — mail-archive.voitech.dev is down, or a rollout is stuck (e.g. the /Auth/Login readiness probe failing)."
@@ -45,7 +55,7 @@ spec:
           labels:
             severity: critical
             alertgroup: mail-archiver
-            namespace: mail-archiver
+            namespace: observability
           annotations:
             summary: "mail-archiver container restart loop"
             description: "The mail-archiver container restarted more than twice in 15 minutes — a boot-time failure (EF migration, keyring mount, writable /app dirs) that the startupProbe's 300s budget keeps hidden."
@@ -62,7 +72,7 @@ spec:
           labels:
             severity: critical
             alertgroup: mail-archiver
-            namespace: mail-archiver
+            namespace: observability
           annotations:
             summary: "mailarchiver-db PostgreSQL is down"
             description: "The CloudNativePG collector reports the mailarchiver-db instance as down. The archive database — which also holds IMAP mailbox passwords in plaintext — is unreachable."
@@ -73,7 +83,7 @@ spec:
           labels:
             severity: critical
             alertgroup: mail-archiver
-            namespace: mail-archiver
+            namespace: observability
           annotations:
             summary: "mailarchiver-db instance pod not Ready"
             description: "The mailarchiver-db CNPG instance pod has not been Ready for 5 minutes — the cluster is not healthy and backups/WAL archiving are at risk."
@@ -87,7 +97,7 @@ spec:
           labels:
             severity: warning
             alertgroup: mail-archiver
-            namespace: mail-archiver
+            namespace: observability
           annotations:
             summary: "mailarchiver-db has no base backup in the last 26h"
             description: "No successful CloudNativePG base backup for mailarchiver-db within 26 hours (schedule: daily 03:00). The crown-jewel database has no fresh recovery copy in OMV MinIO."
@@ -103,7 +113,7 @@ spec:
           labels:
             severity: warning
             alertgroup: mail-archiver
-            namespace: mail-archiver
+            namespace: observability
           annotations:
             summary: "mailarchiver-db PVC above 80% used"
             description: "The mailarchiver-db data volume on local-path is above 80% full. The Gmail archive (mail AND attachments in Postgres) is still growing — expand the 20Gi PVC or revisit retention."
@@ -118,7 +128,7 @@ spec:
           labels:
             severity: warning
             alertgroup: mail-archiver
-            namespace: mail-archiver
+            namespace: observability
           annotations:
             summary: "OMV volume holding the mail-archiver keyring above 80% used"
             description: "The OMV NFS filesystem behind the mailarchiver-keys PV is above 80% full. That filesystem holds the DataProtection keyring (losing it forces re-consenting every mailbox) plus the rest of the durable store — free space or grow it."
