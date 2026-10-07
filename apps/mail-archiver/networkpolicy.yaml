@@ -1,0 +1,81 @@
+---
+# NetworkPolicy for the Mail-Archiver app pod — the first policy in this
+# namespace, and the compensating control for a crown-jewel database.
+#
+# Why it matters: upstream stores mailbox passwords in PLAINTEXT in Postgres,
+# and the OAuth refresh tokens are sealed with the keyring on the NFS PV. The
+# only thing that should ever reach this app is the Cloudflare tunnel pod.
+#
+# Scope note: a NetworkPolicy only affects pods its podSelector matches, so this
+# changes nothing for CNPG or any other workload in the namespace. There is no
+# default-deny here — denial is implicit for the app pod only.
+#
+# kubelet probes are NOT affected: kube-router enforces policy on forwarded
+# (pod-to-pod) traffic, and node-originated probe traffic does not traverse the
+# FORWARD chain. The flux-system controllers are the in-repo proof — they carry
+# default-deny-with-allow policies and liveness/readiness probes, and they are
+# healthy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mail-archiver
+  namespace: mail-archiver
+  labels:
+    app.kubernetes.io/name: mail-archiver
+    app.kubernetes.io/component: app
+    app.kubernetes.io/part-of: mail-archiver
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mail-archiver
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only the dedicated Cloudflare tunnel pod may reach the app. The label is
+    # the contract ST5 (H2-150) must honour when it creates
+    # cloudflared-mail-archive in this namespace.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflared-mail-archive
+      ports:
+        - protocol: TCP
+          port: 5000
+  egress:
+    # Cluster DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The only in-cluster service the app talks to: its CNPG read-write service.
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: mailarchiver-db
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Mail sync: IMAPS/IMAP out to the providers (Gmail). Without this the app
+    # cannot archive a single message — see the egress ruling on H2-149.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 993
+        - protocol: TCP
+          port: 143
+    # OIDC: the token/userinfo exchange is server-side against
+    # https://auth.voitech.dev (Cloudflare-fronted), plus discovery + JWKS.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

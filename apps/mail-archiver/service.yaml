@@ -1,0 +1,26 @@
+---
+# ClusterIP Service for Mail-Archiver.
+#
+# The NAME IS LOAD-BEARING: ST5's Cloudflare Tunnel ingress points at
+# http://mail-archiver.mail-archiver.svc.cluster.local:5000, so the Service must
+# be called mail-archiver. No NodePort, no LoadBalancer — public access is
+# Cloudflare Tunnel only (guardrail 8), the internal hop is plain HTTP on the
+# cluster network.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mail-archiver
+  namespace: mail-archiver
+  labels:
+    app.kubernetes.io/name: mail-archiver
+    app.kubernetes.io/component: app
+    app.kubernetes.io/part-of: mail-archiver
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mail-archiver
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+      protocol: TCP
