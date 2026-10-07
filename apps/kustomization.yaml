@@ -443,17 +443,19 @@ resources:
   - fitness/fitness-dashboard-configmap.yaml
 
   # ============================================================
-  # Mail-Archiver (H2-145 / ST3) — mail-archive.voitech.dev
+  # Mail-Archiver (H2-145 / ST3+ST4) — mail-archive.voitech.dev
   # Upstream ships an image and docs, no Helm chart, so raw manifests delivered by
   # Flux are the sanctioned last resort (guardrail 2); justified in the tracking note
-  # and ADR-037. This group is the ST3 half of the package: namespace, CNPG cluster
-  # and its WAL/base backups to OMV MinIO.
+  # and ADR-037. This group is the whole package: namespace, CNPG cluster with its
+  # WAL/base backups to OMV MinIO (ST3), and the app itself — DataProtection keyring
+  # on OMV NFS, Deployment, Service and NetworkPolicy (ST4).
   #
   # Wiring ruling (H2-148): only the secrets this group's own manifests consume are
   # listed here. mailarchiver-app-secrets.sops.yaml belongs to the app Deployment —
   # ST4 wires it together with its consumer, so the manifest list still mirrors
-  # reality. The restore drill in apps/mail-archiver/drill/ is deliberately NOT
-  # listed: it is applied by hand as a transient object, never reconciled.
+  # reality. The restore drill and the runtime evidence script in
+  # apps/mail-archiver/drill/ are deliberately NOT listed: they are run by hand,
+  # never reconciled.
   # ============================================================
   - mail-archiver/namespace.yaml
   # SOPS-encrypted secrets consumed by this package
@@ -463,3 +465,9 @@ resources:
   - mail-archiver/objectstore.yaml
   - mail-archiver/postgres-cluster.yaml
   - mail-archiver/scheduled-backup.yaml
+  # App package (ST4): SOPS app secrets, keyring PV/PVC, Deployment, Service, netpol
+  - mail-archiver/mailarchiver-app-secrets.sops.yaml
+  - mail-archiver/mailarchiver-keys-pv.yaml
+  - mail-archiver/deployment.yaml
+  - mail-archiver/service.yaml
+  - mail-archiver/networkpolicy.yaml
