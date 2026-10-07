@@ -35,6 +35,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-029 | OpenCode Go session header — per-request normalization in LiteLLM (supersedes ADR-026) | Accepted | 2026-10-03 |
 | ADR-030 | Nightly config backups exclude re-derivable media metadata | Accepted | 2026-10-03 |
 | ADR-031 | Qwen3.8-27B MLX 4-bit replaces the ≤12B local-model cap | Accepted | 2026-10-03 |
+| ADR-032 | Public-ingress tunnels are created through the Cloudflare API, not the Zero Trust dashboard | Accepted | 2026-10-07 |
 | ADR-033 | `apps/base` + `apps/overlays` restructure deferred to a per-service migration campaign | Accepted | 2026-10-04 |
 | ADR-034 | Hermes MCP write-backs authenticate with the Andrzej agent key, not the god-user key | Accepted | 2026-10-04 |
 | ADR-035 | Bound oauth2-proxy per-request CSRF cookie pile (`--cookie-csrf-per-request-limit=3`) | Accepted | 2026-10-05 |
@@ -44,9 +45,11 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 > Note: ADR-035 and ADR-036 existed as files but were missing from this index;
 > added alongside ADR-037 (same edit, 2026-10-07).
 
-> Note: `ADR-032` is referenced by the fitness (openGym) manifests but no file
-> is present in this directory — a pre-existing gap, left as-is so the number is
-> not reused.
+> Note: `ADR-032` was previously cited by the fitness (openGym) manifests for a
+> never-written openGym deployment-design ADR. The number now documents
+> Cloudflare tunnel creation via API (H2-112), and those stale citations were
+> corrected alongside it (H2-191); the openGym design rationale lives in the
+> H2-106 tracking note.
 
 ## Writing an ADR
 
