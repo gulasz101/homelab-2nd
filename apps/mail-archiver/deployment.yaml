@@ -90,6 +90,31 @@ spec:
               value: "2500"
             - name: MailSync__IntervalMinutes
               value: "15"
+            # !!! Load-bearing workaround for a .NET-on-Linux / upstream limitation !!!
+            # Despite the name, this flag does NOT mean "trust anything". The app's
+            # ServerCertificateValidationCallback (ImapConnectionFactory.cs) returns
+            # true when the chain status is limited to UntrustedRoot | PartialChain |
+            # RevocationStatusUnknown; it still REJECTS expired certs, hostname
+            # mismatches and genuine trust failures. So this tolerates a soft
+            # revocation-check failure without weakening hostname/expiry validation.
+            #
+            # Why it is needed here: .NET's SslStream on Linux cannot complete the
+            # certificate revocation check (dotnet/runtime #17906, #81392 - Revocation
+            # Mode is effectively Online and hard-fails; MailKit exposes no per-client
+            # switch to NoCheck). Gmail's Google Trust Services cert has an http://
+            # CRL distribution point, so the chain reports "RevocationStatusUnknown /
+            # unable to get certificate CRL" and, with the default false, the callback
+            # rejects the cert -> "Connection to email server could not be established"
+            # and the account is never saved. This is upstream bug s1t5/mail-archiver
+            # #454 (open; Gmail reports in #183). Verified live: `openssl s_client`
+            # default -> "0 (ok)"; with `-crl_check` -> "3 (unable to get certificate
+            # CRL)"; the app logs "Certificate validation failed ... RemoteCertificate
+            # ChainErrors" then rejects.
+            #
+            # Remove only if upstream #454 ships a dedicated revocation setting (or
+            # .NET/MailKit grows a NoCheck path) AND the Gmail connection still works.
+            - name: MailSync__IgnoreSelfSignedCert
+              value: "true"
             # Privacy defaults: open plain text, and strip remote images/CSS/fonts
             # from HTML views. Archived mail is stored unchanged either way.
             - name: View__DefaultToPlainText
