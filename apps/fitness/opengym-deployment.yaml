@@ -82,13 +82,20 @@ spec:
               value: "1"
             # Two-person family gym: invite codes only, no guest front door,
             # password fallback for browsers that can't do passkeys + recovery.
-            # BOOTSTRAP ORDER (H2-179): must stay "0" until the instance has an
-            # admin. With "1" on an empty instance nobody can create the first
-            # profile, so nobody can mint the first code — a hard lock-out.
-            # Flip back to "1" once both family profiles exist; restore is
-            # tracked on H2-113.
+            # INVITE-ONLY RESTORED (H2-194): the instance now has an admin, so
+            # the H2-179 bootstrap escape hatch is closed again — open signup
+            # must not stay live on a public hostname. New profiles need a code
+            # minted from the admin dashboard: Settings -> Admin dashboard, the
+            # admin generates the invite and hands it to profile #2 (Sylwia).
             - name: INVITE_ONLY
-              value: "0"
+              value: "1"
+            # Wojtek's account id (Settings -> Account -> Account ID) made
+            # explicit even though FIRST_USER_ADMIN already promoted the first
+            # profile: an account id is not a secret (H2-194), and naming the
+            # admin keeps the dashboard reachable if this instance is ever
+            # emptied or db.json is rebuilt from a backup without admin flags.
+            - name: ADMIN_UIDS
+              value: "YrbtJ6bgJCUrA2At"
             - name: ALLOW_GUEST
               value: "0"
             - name: PASSWORD_LOGIN
