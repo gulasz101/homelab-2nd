@@ -79,3 +79,25 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # HTTP (port 80) — NOT for plaintext anything: this exists solely so .NET can
+    # fetch certificate-revocation material. MailKit defaults
+    # CheckCertificateRevocation=true, which .NET maps to X509RevocationMode.Online;
+    # on Linux the chain then downloads the CA's CRL / AIA cert over the certificate's
+    # *http* distribution point (Gmail's is http://c.pki.goog/...). With 80 blocked the
+    # download fails -> the chain is flagged OfflineRevocation ("unable to get
+    # certificate CRL") -> the app's Strict callback rejects a perfectly valid cert and
+    # the UI shows the misleading "server could not be established / not reachable".
+    #
+    # This was a self-inflicted outage: the original policy opened only 993/143/443, and
+    # an early probe misleadingly said 80 was reachable (the probe pod's labels did not
+    # actually match this selector, so the policy was never applied to it). The live app
+    # pod shows 80 refused / 443+993 open, which is the real picture.
+    #
+    # We deliberately restore *revocation checking* rather than blind the validator:
+    # this port exists to make the check succeed, not to skip it.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 80
