@@ -416,8 +416,13 @@ resources:
   # H2-75: S-group curfew (21:00 enable / 07:00 disable, Europe/Warsaw)
   - pihole/pihole-curfew-configmap.yaml
   - pihole/pihole-curfew-cronjob.yaml
-  # H2-76: one-shot IG experiment (2026-09-29 21:00 -> 09-30 08:00, S group)
-  - pihole/pihole-ig-experiment-cronjob.yaml
+  # H2-76: Sylwia's Pixel — Instagram-only evening curfew (21:00 enable / 08:00 disable).
+  # Dedicated "S-IG" marker so it does NOT arm the general W/S social list for S.
+  - pihole/pihole-s-ig-cronjob.yaml
+  # H2-76: one-shot IG experiment (2026-09-29 21:00 -> 09-30 08:00) — SPENT and superseded
+  # by pihole-s-ig-cronjob.yaml. Kept in the repo as a recipe for day-restricted one-shot
+  # jobs, but no longer reconciled (day-of-month schedules can never fire again anyway).
+  # - pihole/pihole-ig-experiment-cronjob.yaml
 
   # ============================================================
   # openGym family fitness tracker (H2-106) — gym.voitech.dev

@@ -1,0 +1,124 @@
+---
+# Pi-hole Instagram curfew for Sylwia's Pixel (S group, H2-76).
+#
+# Scope decision (2026-10-08): the Supreme Leader asked for *Instagram only* for
+# Sylwia's Pixel, every evening from 21:00. The general W/S social list stays
+# untouched (W keeps its 24/7 block; S is NOT given the full social list) — so
+# these jobs manage a DEDICATED marker ("S-IG"), not "W/S block".
+#
+# Why a separate marker rather than reusing the main curfew:
+#   The main `pihole-curfew-*` pair converges EVERY "W/S block" entry to [9,10]
+#   at 21:00. Reusing it for an Instagram-only ask would silently arm reddit,
+#   youtube, x, tiktok, facebook for Sylwia too — a far broader policy than the
+#   request. Marker separation keeps the two policies independently switchable.
+#
+# Design: same desired-state reconciler as pihole-curfew-* (see
+# apps/pihole/pihole-curfew-configmap.yaml), different marker + schedule.
+#   enable  21:00 Europe/Warsaw -> S-IG entries to groups [9,10]  (S blocked)
+#   disable 08:00 Europe/Warsaw -> S-IG entries to groups [9]     (S released)
+# Group 9 is always retained so Wojtek's 24/7 Instagram block is never weakened.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pihole-s-ig-enable
+  namespace: pihole
+  labels:
+    app.kubernetes.io/name: pihole-curfew
+    app.kubernetes.io/part-of: pihole-family-shield
+spec:
+  schedule: "0 21 * * *"
+  timeZone: Europe/Warsaw
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: pihole-curfew
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: s-ig-enable
+              image: python@sha256:f3ebba2ace255c93267a0278da88c7f1044432991abc4e6ad20d22e34dd0f8ee
+              imagePullPolicy: IfNotPresent
+              command: ["python3", "/scripts/pihole_curfew.py", "enable"]
+              env:
+                - name: PIHOLE_API
+                  value: "http://192.168.1.179:80/api"
+                - name: PIHOLE_MARKER
+                  value: "S-IG"
+                - name: PIHOLE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: pihole-app-secrets
+                      key: password
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+          volumes:
+            - name: script
+              configMap:
+                name: pihole-curfew-script
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pihole-s-ig-disable
+  namespace: pihole
+  labels:
+    app.kubernetes.io/name: pihole-curfew
+    app.kubernetes.io/part-of: pihole-family-shield
+spec:
+  schedule: "0 8 * * *"
+  timeZone: Europe/Warsaw
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: pihole-curfew
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: s-ig-disable
+              image: python@sha256:f3ebba2ace255c93267a0278da88c7f1044432991abc4e6ad20d22e34dd0f8ee
+              imagePullPolicy: IfNotPresent
+              command: ["python3", "/scripts/pihole_curfew.py", "disable"]
+              env:
+                - name: PIHOLE_API
+                  value: "http://192.168.1.179:80/api"
+                - name: PIHOLE_MARKER
+                  value: "S-IG"
+                # No RESTORE_MARKER: the marker stays "S-IG" so these same jobs
+                # re-adopt the entries the following evening.
+                - name: PIHOLE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: pihole-app-secrets
+                      key: password
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+          volumes:
+            - name: script
+              configMap:
+                name: pihole-curfew-script
