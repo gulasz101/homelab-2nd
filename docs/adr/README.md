@@ -41,6 +41,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-035 | Bound oauth2-proxy per-request CSRF cookie pile (`--cookie-csrf-per-request-limit=3`) | Accepted | 2026-10-05 |
 | ADR-036 | Local MLX context — pin the MLX runtime to 1.8.5 (LM Studio auto-fit override) | Accepted | 2026-10-05 |
 | ADR-037 | Mail-Archive storage model — DB-resident archive, CNPG backups to OMV MinIO, DataProtection keyring on NFS | Accepted | 2026-10-07 |
+| ADR-038 | Per-device scheduled curfews — the dedicated-marker pattern (Sylwia's Instagram-only evening block) | Accepted | 2026-10-08 |
 
 > Note: ADR-035 and ADR-036 existed as files but were missing from this index;
 > added alongside ADR-037 (same edit, 2026-10-07).
