@@ -1,10 +1,19 @@
 # ADR-039: Mail-Archiver tolerates the .NET-on-Linux revocation-check soft failure (IgnoreSelfSignedCert=true)
 
+> **⚠️ CORRECTED / SUPERSEDED by [ADR-040](adr-040-mail-archiver-crl-egress.md).**
+> The diagnosis below is **wrong** and the decision was **reverted**. The assumption
+> "the CRL URL is reachable and .NET simply cannot fetch it" was based on an invalid
+> test (a probe pod that never actually received the NetworkPolicy). In reality the
+> NetworkPolicy **blocked port 80**, so the CRL fetch genuinely failed — and setting
+> `IgnoreSelfSignedCert=true` could not have helped anyway, because Mail-Archiver's
+> callback tolerates `RevocationStatusUnknown` but **not `OfflineRevocation`**, which
+> is the flag .NET actually sets on Linux. Kept for the record; see ADR-040 for the
+> real cause and the fix. Commits: `caf94b0` (this ADR's decision), reverted by `273e68c`.
+
 ## Status
 
-Accepted — 2026-10-08 · Epic H2-145, step ST7 (H2-152). Amends the
-certificate-handling expectation in ADR-037 (storage model) but does not
-supersede it. No Supersedes.
+Superseded by ADR-040 — 2026-10-08. Originally: Accepted — 2026-10-08 · Epic H2-145,
+step ST7 (H2-152). The text below is the original, uncorrected record.
 
 ## Context
 
