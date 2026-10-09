@@ -636,6 +636,18 @@ spec:
             model: openai/qwen3.7-plus
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        # Bare alias for the native OpenCode Go model id. OpenCode's `opencode-go`
+        # provider resolves model ids against its OWN catalogue and rejects an
+        # unknown id BEFORE any HTTP call — so a lane configured with the
+        # `-go`-suffixed alias fails instantly with "produced no assistant text"
+        # and never reaches LiteLLM. The working H2 lane uses the bare
+        # `deepseek-v4.1-flash` name, which is why this route exists for it.
+        # Mirrors the deepseek pattern: bare name + `-go` alias, same upstream.
+        - model_name: qwen3.8-flash
+          litellm_params:
+            model: openai/qwen3.8-flash
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
         - model_name: qwen3.8-flash-go
           litellm_params:
             model: openai/qwen3.8-flash

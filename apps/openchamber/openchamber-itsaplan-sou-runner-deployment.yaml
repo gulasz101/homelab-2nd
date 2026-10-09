@@ -67,7 +67,7 @@ spec:
             # Cheaper worker for the fork lane: supervisor is Opus 5.5 (Szarik),
             # grinder is qwen3.8-flash-go. This is the experiment.
             - name: OPENCHAMBER_MODEL
-              value: qwen3.8-flash-go
+              value: qwen3.8-flash
             - name: OPENCHAMBER_AGENT
               value: itsaplan-worker-sou
             # Bridge wait-loop budget: 14100000 = runner lease (14400000) minus a

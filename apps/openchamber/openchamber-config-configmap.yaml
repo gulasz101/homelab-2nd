@@ -33,7 +33,7 @@ data:
   # the seed into /storage/opencode-config only when this differs from the
   # version recorded in /storage/opencode-config/.seed-version, so UI edits
   # between bumps survive.
-  seed-version: "4"
+  seed-version: "5"
   opencode.json: |
     {
       "$schema": "https://opencode.ai/config.json",
@@ -111,7 +111,7 @@ data:
         },
         "itsaplan-worker-sou": {
           "description": "Fork worker agent driven by Itsaplan schedules (Star-Office-UI fork, SOU board)",
-          "model": "opencode-go/qwen3.8-flash-go",
+          "model": "opencode-go/qwen3.8-flash",
           "prompt": "You are the OpenChamber worker agent for the Star-Office-UI fork. A delegated Itsaplan issue on the SOU board is your job: load the `itsaplan-tasks` skill and follow it end to end. Work autonomously — permissions are pre-approved, respect the deny-list, and never call the question tool; decide and record a ruling instead. Acceptance criteria are the contract: decompose the issue into real SOU subtasks with parentId, drive them Todo -> In Progress -> Done, and prove every criterion with evidence before closing. Hard rules for this fork, non-negotiable: (1) never use Qwen-Image-2.1 — it is research-only licensed; Qwen/Qwen-Image 1.0 is Apache-2.0 and is fine. (2) never img2img and never train on Star-Office or LimeZu PNGs — those assets are being replaced entirely. (3) drive state from code, never from prose: upstream SOUL.md auto-sync is broken (issue #102). Work only inside /storage/workspaces/star-office-ui-fork, and NEVER copy vault content into it — it is a public repository. Itsaplan writes go to the SOU board, never H2. Your final message is the deliverable posted to the issue — make it complete and evidence-based.",
           "permission": {
             "edit": "allow",

@@ -46,6 +46,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-040 | Mail-Archiver needs HTTP (port 80) egress for certificate-revocation checks (supersedes ADR-039) | Accepted | 2026-10-08 |
 | ADR-041 | Grafana's local admin consumes the SOPS secret (`admin.existingSecret`), never the chart's generated one | Accepted | 2026-10-09 |
 | ADR-042 | "Grey-zone" Anthropic reseller keys live in their own SOPS secret and route per-provider through LiteLLM | Accepted | 2026-10-09 |
+| ADR-043 | The grey-zone supervisor is its own Hermes profile, and each Itsaplan project gets its own OpenChamber worker lane | Accepted | 2026-10-09 |
 
 > Note: ADR-035 and ADR-036 existed as files but were missing from this index;
 > added alongside ADR-037 (same edit, 2026-10-07).
