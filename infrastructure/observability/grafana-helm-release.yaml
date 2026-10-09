@@ -49,11 +49,16 @@ spec:
     initChownData:
       enabled: false
 
-    # Local admin fallback removed; SSO via Authentik is the only login path.
+    # Admin credentials come from the SOPS-encrypted Secret
+    # grafana-admin-credentials (admin-user / admin-password), decrypted by Flux.
+    # SSO via Authentik is the only interactive login path (basic auth disabled);
+    # this local admin is retained strictly for API/automation access.
+    # NOTE: existingSecret suppresses the chart's auto-generated `grafana`
+    # secret, which is what silently drifted from the repo value before.
     admin:
+      existingSecret: grafana-admin-credentials
       userKey: admin-user
       passwordKey: admin-password
-      password: "not-used"
 
     persistence:
       enabled: true
