@@ -59,7 +59,24 @@ The fork gets a **second runner Deployment** —
 | opencode agent | `itsaplan-worker` | `itsaplan-worker-sou` |
 | Model | `deepseek-v4.1-flash` | `qwen3.8-flash-go` |
 
-The opencode config is seeded at **v4** with the second agent; the H2 lane and its agent are unchanged.
+The opencode config is seeded at **v6** with the second agent; the H2 lane and its agent are unchanged.
+
+### Correction: the fork lane's model (2026-10-09, same night)
+
+The table above lists `qwen3.8-flash-go` as the SOU lane's model. **The lane actually runs
+`deepseek-v4.1-flash`** — the same model as the H2 lane. Getting qwen onto this lane needs work that
+was not achievable that night, and the record should say so plainly:
+
+A bare-name OpenCode Go route needs **three** coordinated config touches (bare route name, an entry in
+`forward_client_headers_to_llm_api`, and an entry in the callback's `OPENCODE_GO_UNSUFFIXED` set). All
+three are now in place for `qwen3.8-flash` — but the lane still cannot use it, because OpenCode's
+opencode-go transport for that model speaks the **Anthropic** protocol and the zen/go gateway answers
+`400 ModelProtocolUnsupported` for it on `/v1/messages` (while `/v1/chat/completions` returns 200).
+`deepseek-v4.1-flash` supports both protocols, which is why it works.
+
+The qwen config is deliberately left in place: it is correct, and it is what a future fix needs. Follow-up
+filed as Itsaplan H2-207. **The supervising/grinding split this ADR argues for is unaffected** — Opus 5.5
+still supervises and a cheap fast model still grinds; only the worker's model name changed.
 
 ## Consequences
 
