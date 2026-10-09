@@ -56,7 +56,8 @@ READY_REPLICAS="$(kubectl -n "$NS" get deploy "$DEPLOY" -o jsonpath='{.status.re
 AVAIL_COND="$(kubectl -n "$NS" get deploy "$DEPLOY" -o jsonpath='{range .status.conditions[?(@.type=="Available")]}{.status}{end}' 2>/dev/null)"
 assert "deployment Available=True" "[ \"$AVAIL_COND\" = 'True' ]"
 assert "1/1 ready replica" "[ \"${READY_REPLICAS:-0}\" = '1' ]"
-assert "strategy is Recreate" "[ \"$(kubectl -n \"$NS\" get deploy \"$DEPLOY\" -o jsonpath='{.spec.strategy.type}')\" = 'Recreate' ]"
+DEPLOY_STRATEGY="$(kubectl -n "$NS" get deploy "$DEPLOY" -o jsonpath='{.spec.strategy.type}' 2>/dev/null)"
+assert "strategy is Recreate" "[ \"$DEPLOY_STRATEGY\" = 'Recreate' ]"
 
 say "2. Pod"
 POD="$(kubectl -n "$NS" get pods -l app.kubernetes.io/name="$DEPLOY" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
@@ -77,7 +78,7 @@ say "4. DataProtection keyring on the NFS PV"
 PVC_PHASE="$(kubectl -n "$NS" get pvc mailarchiver-keys -o jsonpath='{.status.phase}' 2>/dev/null)"
 PV_NAME="$(kubectl -n "$NS" get pvc mailarchiver-keys -o jsonpath='{.spec.volumeName}' 2>/dev/null)"
 PV_RECLAIM="$(kubectl get pv "$PV_NAME" -o jsonpath='{.spec.persistentVolumeReclaimPolicy}' 2>/dev/null)"
-KEYS="$(kubectl -n "$NS" exec "$DEPLOY" -c "$DEPLOY" -- sh -c 'ls -1 /app/DataProtection-Keys 2>/dev/null' 2>/dev/null)"
+KEYS="$(kubectl -n "$NS" exec "$POD" -c "$DEPLOY" -- ls -1 /app/DataProtection-Keys 2>/dev/null)"
 N_KEYS="$(printf '%s\n' "$KEYS" | grep -cE '^key-.*\.xml$|^.+\.xml$' 2>/dev/null)"
 assert "PVC mailarchiver-keys Bound" "[ \"$PVC_PHASE\" = 'Bound' ]"
 assert "PV reclaim policy Retain (keyring must never be pruned)" "[ \"$PV_RECLAIM\" = 'Retain' ]"
@@ -85,13 +86,13 @@ assert "at least one DataProtection key file (key-*.xml) on the PV" "[ \"${N_KEY
 say "     keyring files: $(printf '%s' "$KEYS" | tr '\n' ' ')"
 
 say "5. Mail tables exist in the CNPG database"
-TABLES="$(kubectl -n "$NS" exec "$DB" -c postgres -- psql -U mailarchiver -d mailarchiver -tAc \
-  "select count(*) from information_schema.tables where table_schema='public' and table_name in ('MailAccounts','ArchivedEmails','EmailAttachments','Users','SyncCheckpoints');" 2>/dev/null | tr -d '[:space:]')"
+TABLES="$(kubectl -n "$NS" exec "$DB" -c postgres -- psql -U postgres -d mailarchiver -tAc \
+  "select count(*) from information_schema.tables where table_schema='mail_archiver' and table_name in ('MailAccounts','ArchivedEmails','EmailAttachments','Users','SyncCheckpoints','UserMailAccounts');" 2>/dev/null | tr -d '[:space:]')"
 assert "core MailArchiver tables present (>=5 of 6)" "[ \"${TABLES:-0}\" -ge 5 ]"
 say "     matched tables: ${TABLES:-?}/6"
 
 say "6. stdout is flowing (the source the OTel collector ships to Loki)"
-NLOG="$(kubectl -n "$NS" logs "$DEPLOY" --tail=200 2>/dev/null | wc -l | tr -d '[:space:]')"
+NLOG="$(kubectl -n "$NS" logs "deploy/$DEPLOY" --tail=200 2>/dev/null | wc -l | tr -d '[:space:]')"
 assert "container stdout has recent lines" "[ \"${NLOG:-0}\" -ge 1 ]"
 say "     tail lines: ${NLOG:-0}"
 say "     (Loki: Grafana -> Explore -> {k8s_namespace_name=\"mail-archiver\"})"
