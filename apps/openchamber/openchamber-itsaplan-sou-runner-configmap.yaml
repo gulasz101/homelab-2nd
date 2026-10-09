@@ -1,0 +1,25 @@
+---
+# Itsaplan runner lane #2: polls plan-api for tasks delegated to the SOU-board
+# `OpenChamber` worker agent and hands each one to bridge.js with the fork agent.
+#
+# This is deliberately a SEPARATE lane from openchamber-itsaplan-runner (which
+# serves H2 as the H2 OpenChamber agent) rather than a second replica: each lane
+# authenticates as a DIFFERENT Itsaplan agent with its own key, works in a
+# different workspace, and uses a different opencode agent + model. Two lanes
+# sharing one Deployment would collide on the API key.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openchamber-itsaplan-sou-runner
+  namespace: openchamber
+data:
+  itsaplan-runner.json: |
+    {
+      "url": "https://plan-api.voitech.dev",
+      "command": "node /etc/itsaplan-runner/bridge.js",
+      "cwd": "/tmp",
+      "concurrency": 1,
+      "pollIntervalMs": 5000,
+      "timeoutMs": 14400000,
+      "outputFormat": "text"
+    }

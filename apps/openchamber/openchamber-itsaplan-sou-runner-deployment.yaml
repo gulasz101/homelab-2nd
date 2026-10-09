@@ -1,0 +1,105 @@
+---
+# Itsaplan runner lane #2 — Star-Office-UI fork (SOU board).
+#
+# Authenticates as the SOU `OpenChamber` external agent (its own key, its own
+# queue) and drives bridge.js -> an OpenCode session running the
+# `itsaplan-worker-sou` agent on qwen3.8-flash-go inside the fork workspace.
+#
+# Kept separate from the H2 lane on purpose: different Itsaplan agent key,
+# different workspace, different model. See the lane's ConfigMap for detail.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openchamber-itsaplan-sou-runner
+  namespace: openchamber
+  labels:
+    app.kubernetes.io/name: openchamber-itsaplan-sou-runner
+    app.kubernetes.io/component: agent-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openchamber-itsaplan-sou-runner
+  template:
+    metadata:
+      # Pod-template annotation used ONLY to force a rollout when the shared
+      # openchamber-itsaplan-bridge ConfigMap changes. The runner mounts
+      # bridge.js via subPath, and Kubernetes does NOT propagate ConfigMap
+      # updates through a subPath mount — so a ConfigMap-only change neither
+      # updates the file nor restarts the pod. BUMP THIS whenever bridge.js
+      # changes (must track the H2 lane's revision).
+      annotations:
+        openchamber.dev/itsaplan-bridge-revision: "2"
+      labels:
+        app.kubernetes.io/name: openchamber-itsaplan-sou-runner
+        app.kubernetes.io/component: agent-runner
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: t460
+      containers:
+        - name: runner
+          image: node:26-alpine
+          workingDir: /etc/itsaplan-runner
+          command:
+            - npx
+            - -y
+            - "@itsaplan/runner@0.5.0"
+            - ./itsaplan-runner.json
+          env:
+            # Itsaplan identity for THIS lane = the SOU OpenChamber agent.
+            - name: ITSAPLAN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-itsaplan-sou-agent-key
+                  key: ITSAPLAN_API_KEY
+            - name: ITSAPLAN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-itsaplan-sou-agent-key
+                  key: ITSAPLAN_URL
+            - name: OPENCHAMBER_URL
+              value: http://openchamber.openchamber.svc.cluster.local:3000
+            # The fork, cloned into the OpenChamber workspace set 2026-10-09.
+            - name: OPENCHAMBER_WORKDIR
+              value: /storage/workspaces/star-office-ui-fork
+            - name: OPENCHAMBER_PROVIDER
+              value: opencode-go
+            # Cheaper worker for the fork lane: supervisor is Opus 5.5 (Szarik),
+            # grinder is qwen3.8-flash-go. This is the experiment.
+            - name: OPENCHAMBER_MODEL
+              value: qwen3.8-flash-go
+            - name: OPENCHAMBER_AGENT
+              value: itsaplan-worker-sou
+            # Bridge wait-loop budget: 14100000 = runner lease (14400000) minus a
+            # 5-min margin, so the bridge times out first and can post a failure
+            # comment before @itsaplan/runner reaps the process.
+            - name: OPENCHAMBER_TASK_TIMEOUT_MS
+              value: "14100000"
+            - name: OPENCHAMBER_UI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-secrets
+                  key: OPENCHAMBER_UI_PASSWORD
+          volumeMounts:
+            - name: bridge
+              mountPath: /etc/itsaplan-runner/bridge.js
+              subPath: bridge.js
+            - name: runner-config
+              mountPath: /etc/itsaplan-runner/itsaplan-runner.json
+              subPath: itsaplan-runner.json
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              cpu: 300m
+              memory: 384Mi
+      volumes:
+        - name: bridge
+          configMap:
+            name: openchamber-itsaplan-bridge
+            defaultMode: 0755
+        - name: runner-config
+          configMap:
+            name: openchamber-itsaplan-sou-runner
+            defaultMode: 0755

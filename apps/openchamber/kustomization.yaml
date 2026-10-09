@@ -8,6 +8,7 @@ resources:
   - openchamber-oauth2-proxy.sops.yaml
   - openchamber-tunnel-token.sops.yaml
   - openchamber-itsaplan-agent-key.sops.yaml
+  - openchamber-itsaplan-sou-agent-key.sops.yaml
   - openchamber-github.sops.yaml
   - openchamber-minio-backup-creds.sops.yaml
   - openchamber-syncthing-identity.sops.yaml
@@ -33,6 +34,9 @@ resources:
   - openchamber-itsaplan-bridge-configmap.yaml
   - openchamber-itsaplan-runner-configmap.yaml
   - openchamber-itsaplan-runner-deployment.yaml
+  # Itsaplan lane #2: Star-Office-UI fork (SOU board) -> qwen3.8-flash-go worker
+  - openchamber-itsaplan-sou-runner-configmap.yaml
+  - openchamber-itsaplan-sou-runner-deployment.yaml
   # Daily session/data backup to OMV MinIO
   - openchamber-backup-cronjob.yaml
   # Observability (H2-28): namespace pod/health alerts
