@@ -104,6 +104,20 @@ data:
         "qwen3.8-max-go",
         "space-bunny-free-go",
         "deepseek-v4.1-flash",
+        # Grey-zone Anthropic resellers (2026-10-09). Two reseller endpoints
+        # (OneProvider, claudeapikey) exposed as per-provider suffixed routes.
+        # See docs/adr/adr-042-grey-zone-anthropic-providers.md.
+        "claude-opus-5-5-oneprovider",
+        "claude-opus-5-oneprovider",
+        "claude-opus-4-8-oneprovider",
+        "claude-sonnet-5-5-oneprovider",
+        "claude-sonnet-5-oneprovider",
+        "claude-haiku-4-5-oneprovider",
+        "claude-opus-5-5-claudeapikey",
+        "claude-opus-5-claudeapikey",
+        "claude-opus-4-8-claudeapikey",
+        "claude-sonnet-5-claudeapikey",
+        "claude-haiku-4-5-claudeapikey",
     ]
 
     def expand_models(models):

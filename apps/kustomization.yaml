@@ -53,6 +53,10 @@ resources:
   - llm-hub/openwebui-db-credentials.sops.yaml
   - llm-hub/litellm-master-key.sops.yaml
   - llm-hub/litellm-provider-keys.sops.yaml
+  # "Grey zone" Anthropic reseller keys (OneProvider $250, claudeapikey $100).
+  # Separate secret so a reseller key rotation never touches the core
+  # provider keys. See docs/adr/adr-042-grey-zone-anthropic-providers.md.
+  - llm-hub/litellm-grey-provider-keys.sops.yaml
   - llm-hub/litellm-user-keys.sops.yaml
   - llm-hub/openwebui-litellm-api-key.sops.yaml
   - llm-hub/openwebui-admin-credentials.sops.yaml

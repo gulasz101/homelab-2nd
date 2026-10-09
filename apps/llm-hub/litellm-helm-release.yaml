@@ -301,6 +301,71 @@ spec:
             model: openrouter/tencent/hy3:free
             api_key: "os.environ/OPENROUTER_API_KEY"
 
+        # ── "Grey zone" Anthropic reseller endpoints (2026-10-09) ──
+        # Two reseller keys dropped in for evaluation: OneProvider
+        # (USD 250 quota, expires 2027-01-07) and claudeapikey (USD 100
+        # balance). Both speak the Anthropic-native Messages API, so we use
+        # LiteLLM's anthropic/ provider with an api_base override; LiteLLM
+        # appends /v1/messages automatically (confirmed in LiteLLM docs).
+        # Suffixed per provider so the two routes can be compared head to head.
+        # NOT covered by any SLA — could vanish without notice. See
+        # docs/adr/adr-042-grey-zone-anthropic-providers.md.
+        - model_name: claude-opus-5-5-oneprovider
+          litellm_params:
+            model: anthropic/claude-opus-5-5
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-opus-5-oneprovider
+          litellm_params:
+            model: anthropic/claude-opus-5
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-opus-4-8-oneprovider
+          litellm_params:
+            model: anthropic/claude-opus-4-8
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-sonnet-5-5-oneprovider
+          litellm_params:
+            model: anthropic/claude-sonnet-5-5
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-sonnet-5-oneprovider
+          litellm_params:
+            model: anthropic/claude-sonnet-5
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-haiku-4-5-oneprovider
+          litellm_params:
+            model: anthropic/claude-haiku-4-5
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-opus-5-5-claudeapikey
+          litellm_params:
+            model: anthropic/claude-opus-5-5
+            api_base: "https://claudeapikey.dev"
+            api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
+        - model_name: claude-opus-5-claudeapikey
+          litellm_params:
+            model: anthropic/claude-opus-5
+            api_base: "https://claudeapikey.dev"
+            api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
+        - model_name: claude-opus-4-8-claudeapikey
+          litellm_params:
+            model: anthropic/claude-opus-4-8
+            api_base: "https://claudeapikey.dev"
+            api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
+        - model_name: claude-sonnet-5-claudeapikey
+          litellm_params:
+            model: anthropic/claude-sonnet-5
+            api_base: "https://claudeapikey.dev"
+            api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
+        - model_name: claude-haiku-4-5-claudeapikey
+          litellm_params:
+            model: anthropic/claude-haiku-4-5
+            api_base: "https://claudeapikey.dev"
+            api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
+
         # ── Google Gemini via AI Pro subscription key (GEMINI_API_KEY) ──
         # Probe-verified 2026-09-25: legacy gemini-2.5-* models are gated off
         # ("no longer available to new users"); image/TTS/music endpoints are
@@ -688,6 +753,10 @@ spec:
       successThreshold: 1
       failureThreshold: 30
 
-    # Pass the provider-key secret into the pod as environment variables too
+    # Pass the provider-key secrets into the pod as environment variables too
     environmentSecrets:
       - litellm-provider-keys
+      # Grey-zone reseller keys (ONEPROVIDER_API_KEY, CLAUDEAPIKEY_API_KEY).
+      # Kept in their own secret so rotating a reseller key never touches the
+      # core provider keys.
+      - litellm-grey-provider-keys
