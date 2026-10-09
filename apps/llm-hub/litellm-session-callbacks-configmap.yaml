@@ -51,9 +51,17 @@ data:
     DEFAULT_USER_AGENT = os.environ.get("OPENCODE_GO_USER_AGENT", "homelab-litellm/1.0")
 
     # Models routed to OpenCode Go that do NOT carry the -go suffix. Keep this
-    # in sync with proxy_config.model_list (the only such route today is the
-    # OpenChamber worker's native deepseek-v4.1-flash).
-    OPENCODE_GO_UNSUFFIXED = {"deepseek-v4.1-flash"}
+    # in sync with proxy_config.model_list. Two routes today: the H2 worker's
+    # deepseek-v4.1-flash, and the SOU fork lane's qwen3.8-flash.
+    #
+    # Why bare names at all: OpenChamber's OpenCode resolves model ids from ITS
+    # OWN catalogue, which only knows the bare id - a '-go'-suffixed alias never
+    # even produces a request (verified 2026-10-09: qwen3.8-flash-go produced
+    # zero LiteLLM metrics, ever). So the route must be named bare, and every
+    # bare OpenCode Go route must ALSO be listed here and in
+    # forward_client_headers_to_llm_api, or the gateway rejects it with
+    # MissingSessionID.
+    OPENCODE_GO_UNSUFFIXED = {"deepseek-v4.1-flash", "qwen3.8-flash"}
 
     # Explicit LiteLLM session headers (LiteLLM's own resolution order).
     EXPLICIT_SESSION_HEADERS = ("x-litellm-trace-id", "x-litellm-session-id")

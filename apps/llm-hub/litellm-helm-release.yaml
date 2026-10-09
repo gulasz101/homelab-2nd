@@ -144,7 +144,7 @@ spec:
     # module nor restarts the pod. BUMP THIS VALUE whenever custom_callbacks.py
     # changes, or the change will not take effect.
     podAnnotations:
-      litellm.session-callbacks-revision: "2"
+      litellm.session-callbacks-revision: "3"
 
     # Pre-call hook that normalizes the OpenCode Go session header (ADR-029).
     # LiteLLM loads a callback named in litellm_settings.callbacks by file path
