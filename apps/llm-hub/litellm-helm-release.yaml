@@ -696,6 +696,14 @@ spec:
           forward_client_headers_to_llm_api:
             - "*-go"
             - "deepseek-v4.1-flash"
+            # Fork lane (SOU). Same reasoning as deepseek-v4.1-flash above: the
+            # OpenChamber worker's native opencode-go provider emits the real
+            # per-conversation x-opencode-session header, but OpenCode resolves
+            # model ids from ITS OWN catalogue, which knows the BARE name only -
+            # a '-go'-suffixed alias never even produces a request. So the route
+            # must be named bare AND scoped here, or the Go gateway rejects it
+            # with MissingSessionID.
+            - "qwen3.8-flash"
 
       general_settings:
         # master_key is also supplied via env var from the secret
