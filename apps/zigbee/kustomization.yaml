@@ -45,3 +45,9 @@ resources:
   - influxdb-pvc.yaml
   - influxdb-service-monitor.yaml
   - influxdb-helm-release.yaml
+
+  # --- Observability (guardrail 9) ------------------------------------------
+  - zigbee-prometheus-rules.yaml
+  - zigbee-alertmanager-config.yaml
+  - zigbee-loki-rule.yaml
+  - zigbee-dashboard-configmap.yaml

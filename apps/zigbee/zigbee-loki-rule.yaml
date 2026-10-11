@@ -1,0 +1,112 @@
+---
+# ============================================================================
+# Loki ruler rules for the zigbee namespace (H2-214, guardrail 9).
+#
+# Lands in the observability namespace on purpose: the Loki ruler sidecar
+# watches ConfigMaps labelled `loki_rule: "true"` there, the same ruling as
+# apps/fitness/fitness-loki-rule.yaml and the mail-archiver package.
+#
+# This is where the "honest partial" is paid for: Mosquitto, zigbee2mqtt and
+# Node-RED publish no metrics at all, so their real failure signals come from
+# their log lines. Patterns are anchored to actual failure text - never bare
+# feature words - because a status-digit or keyword regex pages on timings
+# (hard-won lesson recorded in the homelab log-ingestion notes).
+#
+# Container names are the ones the workloads really use:
+#   mosquitto, zigbee2mqtt (chart container name), node-red (chart container
+#   name), influxdb.
+# OTel-shipped logs carry the k8s_namespace_name / k8s_container_name labels.
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zigbee-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  zigbee-errors.yaml: |
+    groups:
+      - name: zigbee.mqtt
+        interval: 1m
+        rules:
+          - alert: ZigbeeMqttAuthFailures
+            # mosquitto logs exactly this on a rejected client. Fires on the
+            # new authentication model: after H2-215 lands the password file and
+            # ACL, a client with stale credentials shows up here rather than as
+            # a silent pipeline outage.
+            expr: |
+              sum by (pod, k8s_namespace_name) (
+                count_over_time(
+                  {k8s_namespace_name="zigbee", k8s_container_name="mosquitto"}
+                    |~ "not authorised|Bad username or password|not authorized"
+                  [5m]
+                )
+              ) > 3
+            for: 5m
+            labels:
+              severity: warning
+              namespace: zigbee
+            annotations:
+              summary: "MQTT clients are being rejected"
+              description: "{{ $labels.pod }} rejected more than 3 client connections in 5 minutes. Check the ACL and password file in the zigbee-mqtt-credentials secret."
+
+      - name: zigbee.bridge
+        interval: 1m
+        rules:
+          - alert: Zigbee2mqttErrors
+            expr: |
+              sum by (pod, k8s_namespace_name) (
+                count_over_time(
+                  {k8s_namespace_name="zigbee", k8s_container_name="zigbee2mqtt"}
+                    |~ "zigbee2mqtt:error|ERROR|PREFLIGHT FAIL|Failed to connect to MQTT|No valid USB adapter"
+                  [5m]
+                )
+              ) > 3
+            for: 5m
+            labels:
+              severity: warning
+              namespace: zigbee
+            annotations:
+              summary: "zigbee2mqtt is logging errors"
+              description: "{{ $labels.pod }} logged more than 3 error lines in 5 minutes. 'PREFLIGHT FAIL' means the data volume has not been restored; 'No valid USB adapter' means the coordinator is not reachable."
+
+      - name: zigbee.flows
+        interval: 1m
+        rules:
+          - alert: NodeRedErrors
+            expr: |
+              sum by (pod, k8s_namespace_name) (
+                count_over_time(
+                  {k8s_namespace_name="zigbee", k8s_container_name="node-red"}
+                    |~ "Unhandled|unknown node type|Error: |ECONNREFUSED|ETIMEDOUT"
+                  [5m]
+                )
+              ) > 5
+            for: 5m
+            labels:
+              severity: warning
+              namespace: zigbee
+            annotations:
+              summary: "Node-RED is logging errors"
+              description: "{{ $labels.pod }} logged more than 5 error lines in 5 minutes. 'unknown node type' means a palette module used by the migrated flows is not installed (see the H2-216 notes); ECONNREFUSED usually means mosquitto or influxdb is down."
+
+      - name: zigbee.tsdb
+        interval: 1m
+        rules:
+          - alert: InfluxDbErrors
+            expr: |
+              sum by (pod, k8s_namespace_name) (
+                count_over_time(
+                  {k8s_namespace_name="zigbee", k8s_container_name="influxdb"}
+                    |~ "\\berror\\b|panic:|cannot open|write failed"
+                  [5m]
+                )
+              ) > 5
+            for: 5m
+            labels:
+              severity: warning
+              namespace: zigbee
+            annotations:
+              summary: "InfluxDB is logging errors"
+              description: "{{ $labels.pod }} logged more than 5 error lines in 5 minutes. The bucket behind the Grafana dashboards stops filling from here."

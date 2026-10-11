@@ -1,0 +1,53 @@
+---
+# ============================================================================
+# Alertmanager routing for the zigbee namespace (H2-214, guardrail 9).
+#
+# Label MUST be `release: kube-prometheus-stack` - that is the selector the
+# Alertmanager operator in infrastructure/observability/prometheus-stack-helm-release.yaml
+# watches for (alertmanagerConfigSelector.matchLabels.release). A
+# PrometheusRule uses `release: prometheus-stack` instead. The two differ; this
+# file has the Alertmanager one.
+#
+# An AlertmanagerConfig can only reference Secrets in its OWN namespace, which
+# is why the Mattermost webhook lives here as `zigbee-mattermost-webhook-url`
+# and not in the observability namespace.
+#
+# SECRET CONTRACT - ACTION FOR H2-215:
+#   zigbee-mattermost-webhook-url (SOPS), key `url` = the Mattermost incoming
+#   webhook URL for the zigbee alerts channel.
+#   This secret is NOT in H2-215's title ("MQTT auth, fresh InfluxDB, Node-RED
+#   creds") - it is called out in the H2-214 result comment so it does not get
+#   forgotten. Until it exists the Alertmanager operator reports the config as
+#   invalid and these alerts have no receiver; the rules themselves still fire
+#   and are visible in the Prometheus UI.
+# ============================================================================
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: zigbee-mattermost-alerts
+  namespace: zigbee
+  labels:
+    release: kube-prometheus-stack
+    app.kubernetes.io/part-of: zigbee
+spec:
+  route:
+    receiver: zigbee-mattermost
+    matchers:
+      - name: namespace
+        value: zigbee
+        matchType: "="
+  receivers:
+    - name: zigbee-mattermost
+      slackConfigs:
+        - apiURL:
+            name: zigbee-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.namespace }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.namespace }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

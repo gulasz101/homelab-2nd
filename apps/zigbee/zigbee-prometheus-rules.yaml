@@ -1,0 +1,129 @@
+---
+# ============================================================================
+# Alert rules for the zigbee namespace (H2-214, guardrail 9).
+#
+# PrometheusRule selector label is `release: prometheus-stack` - NOT
+# `kube-prometheus-stack`. The two selectors differ in this cluster (the
+# AlertmanagerConfig uses kube-prometheus-stack) and getting it wrong means
+# rules that silently never load. Verified gotcha, same note as
+# apps/fitness/fitness-prometheus-rules.yaml.
+#
+# HONEST PARTIAL, the same shape as the mail-archiver package: only InfluxDB
+# ships a Prometheus endpoint (see influxdb-service-monitor.yaml). Mosquitto,
+# zigbee2mqtt and Node-RED expose no /metrics at all, so for those three the
+# rules below are built on kube-state-metrics and container metrics
+# (availability, restarts, memory pressure, PVC fill) plus the Loki rules in
+# zigbee-loki-rule.yaml, which read their actual log lines. No rule here
+# pretends to measure a broker or a flow engine that does not publish anything.
+# ============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: zigbee-alerts
+  namespace: zigbee
+  labels:
+    release: prometheus-stack
+    app.kubernetes.io/part-of: zigbee
+spec:
+  groups:
+    - name: zigbee.resources
+      interval: 30s
+      rules:
+        - alert: ZigbeeContainerMemoryAbove85PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="zigbee", container!=""}
+            ) / sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="zigbee", resource="memory", container!=""}
+            ) > 85
+          for: 10m
+          labels:
+            severity: warning
+            namespace: zigbee
+          annotations:
+            summary: "zigbee/{{ $labels.pod }} memory above 85% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} has been above 85% of its memory limit for 10 minutes. The radio head (Orange Pi Zero 2W) has 1.9 GiB in total, so pressure here is usually a real leak, not a busy minute."
+
+        - alert: ZigbeeContainerMemoryAbove95PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="zigbee", container!=""}
+            ) / sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="zigbee", resource="memory", container!=""}
+            ) > 95
+          for: 5m
+          labels:
+            severity: critical
+            namespace: zigbee
+          annotations:
+            summary: "zigbee/{{ $labels.pod }} memory above 95% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} is about to be OOM-killed. If this is zigbee2mqtt the Zigbee network goes silent with it."
+
+        - alert: ZigbeePodNotRunning
+          # phase=~"Pending|Unknown" only: a Completed pod is not a failure.
+          expr: |
+            kube_pod_status_phase{namespace="zigbee", phase=~"Pending|Unknown"} > 0
+          for: 10m
+          labels:
+            severity: critical
+            namespace: zigbee
+          annotations:
+            summary: "zigbee/{{ $labels.pod }} is not Running"
+            description: "{{ $labels.pod }} has been Pending or Unknown for 10 minutes. A Pending zigbee2mqtt usually means the radio head node is gone or the dongle hostPath did not validate (type: CharDevice); a Pending mosquitto/node-red/influxdb usually means its SOPS Secret (H2-215) or PVC is missing."
+
+        - alert: ZigbeeContainerRestartLoop
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="zigbee", container!=""}[15m]) > 2
+          for: 0m
+          labels:
+            severity: critical
+            namespace: zigbee
+          annotations:
+            summary: "zigbee/{{ $labels.pod }} is in a restart loop"
+            description: "{{ $labels.pod }}/{{ $labels.container }} restarted more than twice in 15 minutes."
+
+        - alert: ZigbeePvcNearlyFull
+          expr: |
+            100 * kubelet_volume_stats_used_bytes{namespace="zigbee"}
+              / kubelet_volume_stats_capacity_bytes{namespace="zigbee"} > 85
+          for: 30m
+          labels:
+            severity: warning
+            namespace: zigbee
+          annotations:
+            summary: "zigbee/{{ $labels.persistentvolumeclaim }} is over 85% full"
+            description: "PVC {{ $labels.persistentvolumeclaim }} in the zigbee namespace is above 85%. The InfluxDB volume is the one that grows on its own (sensor history)."
+
+    - name: zigbee.migration
+      interval: 60s
+      rules:
+        - alert: Zigbee2mqttPreflightBlocked
+          # Deliberately fires while the migration is in flight: the preflight
+          # gate (zigbee2mqtt-preflight-configmap.yaml) refuses to start the
+          # bridge until H2-216 has restored configuration.yaml, database.db and
+          # coordinator_backup.json. Once that is done this alert must go quiet -
+          # if it keeps firing afterwards, the restore is incomplete.
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="zigbee", pod=~"zigbee2mqtt-.*"}[15m]) > 2
+          for: 5m
+          labels:
+            severity: warning
+            namespace: zigbee
+          annotations:
+            summary: "zigbee2mqtt is restarting - preflight gate is probably blocking"
+            description: "zigbee2mqtt restarted more than twice in 15 minutes. If the H2-216 restore has not run yet this is EXPECTED and the bridge is deliberately refusing to start against a half-restored /app/data. Check the container log for the PREFLIGHT FAIL lines."
+
+        - alert: Zigbee2mqttDongleMissing
+          # The dongle hostPath is type: CharDevice, so a missing radio shows up
+          # as a pod that never starts rather than as a bridge talking to
+          # nothing. Catches the case where the USB device re-enumerated and the
+          # by-id symlink disappeared entirely.
+          expr: |
+            absent(kube_pod_info{namespace="zigbee", pod=~"zigbee2mqtt-.*"})
+          for: 15m
+          labels:
+            severity: critical
+            namespace: zigbee
+          annotations:
+            summary: "zigbee2mqtt pod is absent"
+            description: "No zigbee2mqtt pod is scheduled in the zigbee namespace. Most likely the radio head node is down or the Sonoff dongle is no longer enumerating on it (check /dev/serial/by-id on the node)."
