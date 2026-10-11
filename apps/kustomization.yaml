@@ -504,3 +504,14 @@ resources:
   - mail-archiver/mailarchiver-alertmanager-config.yaml
   - mail-archiver/mailarchiver-loki-rule.yaml
   - mail-archiver/mailarchiver-dashboard-configmap.yaml
+
+  # ============================================================
+  # zigbee namespace (H2-210) - the Zigbee radio head
+  # The coordinator dongle lives on the dedicated `zigbee-node` worker; z2m runs
+  # in-cluster and bridges the mesh to MQTT. Chart-based (guardrail 2); the Zigbee
+  # network key + PAN IDs are SOPS-encrypted (guardrail 5).
+  # ============================================================
+  - zigbee/namespace.yaml
+  - zigbee/zigbee2mqtt-helm-repository.yaml
+  - zigbee/zigbee2mqtt-secrets.sops.yaml
+  - zigbee/zigbee2mqtt-helm-release.yaml

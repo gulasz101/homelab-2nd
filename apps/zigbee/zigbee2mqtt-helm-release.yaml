@@ -1,0 +1,129 @@
+---
+# Zigbee2MQTT — the Zigbee <-> MQTT bridge.
+#
+# Runs on the dedicated radio-head worker (`zigbee-node`), which is the node that
+# physically owns the Sonoff ZBDongle-P coordinator. The dongle is passed through
+# with a hostPath on the STABLE by-id device name, not /dev/ttyUSB0, so the pod
+# survives the kernel renumbering the tty on a re-plug.
+#
+# Chart: official upstream chart. Guardrail 2 satisfied — no hand-rolled manifests.
+# Guardrail 5: the Zigbee network key / PAN IDs come from a SOPS-encrypted Secret
+# via valuesFrom; they are deliberately absent from this file. This repo is public.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: zigbee2mqtt
+  namespace: zigbee
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: zigbee2mqtt
+      version: "2.14.2"
+      sourceRef:
+        kind: HelmRepository
+        name: zigbee2mqtt
+        namespace: zigbee
+      interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+
+  # ONLY the Zigbee network key and PAN IDs travel this way. Everything else is
+  # plain config and lives in the values block below, readable in Git.
+  valuesFrom:
+    - kind: Secret
+      name: zigbee2mqtt-secrets
+      valuesKey: values.yaml
+
+  values:
+    image:
+      tag: "2.14.2"
+      pullPolicy: IfNotPresent
+
+    # ClusterIP only: nothing outside the cluster needs to hit z2m directly yet.
+    # The frontend gets exposed over the LAN later, through a reviewed service.
+    service:
+      type: ClusterIP
+      port: 8080
+
+    statefulset:
+      # Pin to the node that owns the coordinator dongle.
+      #
+      # NOTE: NFD also labels this node `feature.node.kubernetes.io/usb-ff_10c4_ea60.present=true`
+      # (that label is unique to zigbee-node today, and reads as "schedule me wherever the
+      # dongle is"). It is deliberately NOT used as the selector: those labels are emitted as a
+      # side effect of the nvidia-device-plugin's NFD worker, so relying on them would make this
+      # workload unschedulable the day that plugin is removed. Hostname is explicit and boring.
+      nodeSelector:
+        kubernetes.io/hostname: zigbee-node
+
+      storage:
+        enabled: true
+        size: 1Gi
+        # Live state on the node's local NVMe/microSD: z2m writes the device registry
+        # continuously and sits next to the serial device. Durability is provided by the
+        # backup CronJob to OMV MinIO, exactly like the CNPG pattern — see ADR-045.
+        storageClassName: local-path
+
+      # The coordinator, by its stable by-id path.
+      volumes:
+        - name: zigbee-dongle
+          hostPath:
+            path: /dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_b2716f8592c2ef1191f1c6138148b910-if00-port0
+      volumeMounts:
+        - name: zigbee-dongle
+          mountPath: /dev/ttyUSB0
+
+      resources:
+        requests:
+          cpu: 100m
+          memory: 192Mi
+        limits:
+          cpu: 500m
+          memory: 384Mi
+
+    zigbee2mqtt:
+      timezone: Europe/Warsaw
+      # The Surface stack had homeassistant: false and this is still not a Home
+      # Assistant house, so discovery stays off.
+      homeassistant:
+        enabled: false
+      permit_join: false
+      mqtt:
+        base_topic: zigbee2mqtt
+        server: "mqtt://mosquitto.zigbee.svc.cluster.local:1883"
+      serial:
+        port: /dev/ttyUSB0
+        adapter: ember
+        baudrate: 115200
+        rtscts: false
+      frontend:
+        enabled: true
+        port: 8080
+      ota:
+        ikea_ota_use_test_url: true
+      advanced:
+        # network_key / pan_id / ext_pan_id deliberately NOT here — see valuesFrom above.
+        channel: 11
+        log_level: info
+        log_output:
+          - console
+        timestamp_format: "YYYY-MM-DD HH:mm:ss"
+        cache_state: true
+        cache_state_persistent: true
+        cache_state_send_on_startup: true
+        last_seen: "disable"
+        legacy_api: false
+        legacy_availability_payload: false
+        homeassistant_legacy_entity_attributes: false
+      device_options:
+        legacy: false
+
+    # Guardrail 9: stdout/stderr is collected by the OpenTelemetry Collector
+    # DaemonSet and queryable in Grafana/Loki. z2m exposes no native /metrics
+    # endpoint, so there is no ServiceMonitor here — recorded as an honest gap
+    # in the tracking note.

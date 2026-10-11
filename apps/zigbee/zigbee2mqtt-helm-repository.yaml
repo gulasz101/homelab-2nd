@@ -1,0 +1,12 @@
+---
+# Upstream, official Zigbee2MQTT chart. Verified against the project's own
+# Kubernetes installation docs (zigbee2mqtt.io/guide/installation/08_kubernetes.html),
+# which ship this exact Flux HelmRepository/HelmRelease shape.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: zigbee2mqtt
+  namespace: zigbee
+spec:
+  interval: 1h
+  url: https://charts.zigbee2mqtt.io
