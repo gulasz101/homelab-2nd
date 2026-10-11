@@ -57,32 +57,34 @@ spec:
                 - |
                   set -eu
                   STAMP=$(date -u +%Y%m%d-%H%M%S)
-                  DEST="zigbee2mqtt/zigbee2mqtt-$STAMP.tar.gz"
+                  PREFIX="zigbee2mqtt/$STAMP"
 
-                  # Fail loudly rather than uploading an empty archive: an empty
-                  # registry means the radio has nothing paired, which is a
-                  # disaster, not a backup.
+                  # Fail loudly rather than uploading nothing: an empty registry
+                  # means the radio has nothing paired, which is a disaster, not a
+                  # backup.
                   test -s /data/configuration.yaml || { echo "FATAL: no configuration.yaml on the volume - refusing to back up"; exit 1; }
-                  SIZE=$(wc -c < /data/configuration.yaml)
-                  echo "configuration.yaml present ($SIZE bytes)"
-
-                  tar czf /tmp/backup.tar.gz -C /data \
-                    configuration.yaml database.db state.json coordinator_backup.json 2>/dev/null \
-                    || tar czf /tmp/backup.tar.gz -C /data .
-                  echo "archive: $(wc -c < /tmp/backup.tar.gz) bytes"
+                  N=$(wc -l < /data/database.db 2>/dev/null || echo 0)
+                  echo "configuration.yaml present; database.db records: $N"
+                  test "$N" -ge 5 || { echo "FATAL: registry looks empty ($N records) - refusing to back up"; exit 1; }
 
                   export AWS_ACCESS_KEY_ID="$MINIO_ACCESS_KEY"
                   export AWS_SECRET_ACCESS_KEY="$MINIO_SECRET_KEY"
                   export AWS_DEFAULT_REGION=us-east-1
                   EP="--endpoint-url http://openmediavault.local:9000"
 
-                  aws $EP s3 cp /tmp/backup.tar.gz "s3://zigbee2mqtt-backups/$DEST"
+                  # Copy the files individually rather than tarring them: the AWS CLI
+                  # image has no tar, and per-file objects restore more precisely
+                  # anyway (you can pull back just database.db).
+                  for f in configuration.yaml database.db state.json coordinator_backup.json; do
+                    [ -s "/data/$f" ] || { echo "  skip (absent): $f"; continue; }
+                    aws $EP s3 cp "/data/$f" "s3://zigbee2mqtt-backups/$PREFIX/$f"
+                  done
 
-                  # Verify the object landed BEFORE pruning anything. A silent upload
-                  # failure followed by a prune is how you delete the last good copy.
-                  SZ=$(aws $EP s3api head-object --bucket zigbee2mqtt-backups --key "$DEST" \
-                        --query 'ContentLength' --output text)
-                  echo "uploaded and verified: $DEST ($SZ bytes)"
+                  # Verify before pruning. A silent upload failure followed by a prune
+                  # is how you lose the last good copy.
+                  SZ=$(aws $EP s3api head-object --bucket zigbee2mqtt-backups \
+                        --key "$PREFIX/database.db" --query 'ContentLength' --output text)
+                  echo "verified database.db in the bucket: $SZ bytes"
                   test "$SZ" -gt 0
 
                   # Retention: 30 days.
@@ -93,7 +95,7 @@ spec:
                         [ -n "$k" ] && aws $EP s3 rm "s3://zigbee2mqtt-backups/$k" >/dev/null && echo "pruned $k"
                       done
                   echo "retention: done"
-                  aws $EP s3 ls s3://zigbee2mqtt-backups/zigbee2mqtt/ | tail -5
+                  aws $EP s3 ls s3://zigbee2mqtt-backups/zigbee2mqtt/ | tail -6
               volumeMounts:
                 - name: data
                   mountPath: /data
