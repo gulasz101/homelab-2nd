@@ -47,6 +47,12 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-041 | Grafana's local admin consumes the SOPS secret (`admin.existingSecret`), never the chart's generated one | Accepted | 2026-10-09 |
 | ADR-042 | "Grey-zone" Anthropic reseller keys live in their own SOPS secret and route per-provider through LiteLLM | Accepted | 2026-10-09 |
 | ADR-043 | The grey-zone supervisor is its own Hermes profile, and each Itsaplan project gets its own OpenChamber worker lane | Accepted | 2026-10-09 |
+| ADR-044 | A local LM Studio model as the Hermes gateway's offline fallback | Accepted | 2026-10-10 |
+| ADR-046 | The zigbee namespace storage model — durability per workload, not per namespace | Accepted | 2026-10-11 |
+
+> Note: ADR-045 is reserved by H2-212 (the Zigbee coordinator radio-head decision) and is not in
+> this index yet; ADR-044's row was added here alongside ADR-046, since the file existed but the
+> index row had been missed.
 
 > Note: ADR-035 and ADR-036 existed as files but were missing from this index;
 > added alongside ADR-037 (same edit, 2026-10-07).
