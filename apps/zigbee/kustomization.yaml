@@ -40,3 +40,8 @@ resources:
   - node-red-data-pv.yaml
   - node-red-data-pvc.yaml
   - node-red-helm-release.yaml
+
+  # --- InfluxDB v2: sensor history ------------------------------------------
+  - influxdb-pvc.yaml
+  - influxdb-service-monitor.yaml
+  - influxdb-helm-release.yaml

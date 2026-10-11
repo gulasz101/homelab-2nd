@@ -1,0 +1,47 @@
+---
+# ============================================================================
+# InfluxDB v2 data PVC (H2-214) - storage decision made explicit.
+#
+# The ticket left the storage class to the Supreme Leader. This is the
+# guardrail-derived default, written down so it is a decision and not an
+# accident:
+#
+#   local-path on homelab-2nd, NOT OMV NFS.
+#   InfluxDB's metadata store is BoltDB and its TSM data files are mmap'd;
+#   neither is reliable over NFS, and the source stack ran InfluxDB on a local
+#   disk for exactly that reason. Guardrail 4 says a live database goes on the
+#   NVMe - this is one.
+#
+#   Durability therefore comes from a BACKUP, not from the disk: a scheduled
+#   `influx backup` of the `default` bucket into OMV MinIO, the same shape as
+#   apps/fitness/fitness-data-backup-cronjob.yaml. That job is deliberately NOT
+#   part of this ticket - it needs the MinIO credentials that H2-215 owns - and
+#   is flagged in the result comment as a required follow-up before the Surface
+#   Pro 4 is retired.
+#
+#   The PVC is pinned to homelab-2nd by the HelmRelease's nodeSelector, because
+#   local-path volumes are node-local.
+#
+# TO OVERRIDE TO OMV NFS (allowed, but do it BEFORE H2-216 restores):
+#   replace this PVC with storageClassName: "" + volumeName: <a new NFS PV>,
+#   drop the nodeSelector from influxdb-helm-release.yaml, and say so in the
+#   tracking note. A PVC cannot be repointed at another volume afterwards.
+#
+# The claim name is `influxdb` because the chart's HelmRelease points at it via
+# persistence.name (persistence.useExisting: true).
+# ============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: influxdb
+  namespace: zigbee
+  labels:
+    app.kubernetes.io/name: influxdb
+    app.kubernetes.io/part-of: zigbee
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi

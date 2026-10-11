@@ -1,0 +1,32 @@
+---
+# ============================================================================
+# Prometheus scrape config for InfluxDB (H2-214, guardrail 9).
+#
+# InfluxDB OSS v2 exposes a Prometheus-format /metrics endpoint on its HTTP
+# port (docs.influxdata.com/influxdb/v2/reference/internals/metrics -> GET
+# http://localhost:8086/metrics). That makes InfluxDB the one workload in this
+# namespace with a real metrics endpoint - the other three are honest gaps,
+# documented in zigbee-prometheus-rules.yaml.
+#
+# The chart's Service is named `influxdb` and carries the standard
+# app.kubernetes.io labels, with the port named `http` (80 -> 8086).
+# ============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: influxdb
+  namespace: zigbee
+  labels:
+    release: prometheus-stack
+    app.kubernetes.io/name: influxdb
+    app.kubernetes.io/part-of: zigbee
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: influxdb
+      app.kubernetes.io/instance: influxdb
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

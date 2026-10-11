@@ -1,0 +1,105 @@
+---
+# ============================================================================
+# InfluxDB v2 (H2-214) - official chart, with the EOL risk flagged.
+#
+# ## RISK FLAG - InfluxDB 2.x is a maintenance line, and the chart is frozen
+#
+#   * InfluxDB 3 is the successor: InfluxDB 3 open source went GA on
+#     2025-04-15, and every current release is 3.x (3.12.0 shipped 2026-10-02).
+#     There is no in-place upgrade from 2.x to 3.x - moving would be an
+#     export/import exercise.
+#   * The OFFICIAL chart is effectively unmaintained even though the repository
+#     is not archived: the newest influxdb2 release is 2.1.2 from 2023-12-04,
+#     with appVersion 2.7.4, while the server image has moved on to 2.9.1.
+#   * 2.x is not formally EOL'd (endoflife.date still lists the 2 cycle as
+#     supported, latest 2.9.1) - it is feature-frozen and community-supported.
+#
+#   Consequences taken here:
+#     - image.tag is pinned to 2.9.1-alpine instead of trusting the chart's
+#       three-year-old appVersion;
+#     - this is a MIGRATION TARGET, NOT A DESTINATION. The backup being restored
+#       is a v2 backup, so v2 has to exist first; moving to InfluxDB 3 Core (or
+#       another TSDB) once the migration is proven is a separate ticket, and no
+#       new long-lived dependency should be built on v2.
+#
+# ## What the values below are, and where they come from
+#
+#   organization `na` and bucket `default` are the SOURCE stack's values, read
+#   out of the recon of homelab-one (vault tracking note
+#   2026-10-11-homelab-one-recon-and-temp-collector-credential-exposure.md:
+#   "bucket `default`, org `na`, retention `infinite`"). They are not invented,
+#   and they matter: the Node-RED flows query a bucket by name, and the restore
+#   only makes sense if the fresh instance is set up with the same names.
+#   retention_policy 0s = infinite, matching the source bucket.
+#
+#   The admin password and the API token come from the SOPS Secret
+#   `zigbee-influxdb-credentials` (owned by H2-215), keys `admin-password` and
+#   `admin-token` - that is the chart's contract for
+#   adminUser.existingSecret. The exposed source token must be rotated, never
+#   reused (separate security ticket).
+#
+# ## Storage
+#
+#   persistence.name points at the hand-written PVC `influxdb`
+#   (persistence.useExisting: true), so the storage decision is a reviewable
+#   file in the repo rather than a chart side effect. See influxdb-pvc.yaml.
+#   The nodeSelector keeps a local-path volume and its pod on the same node.
+# ============================================================================
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: influxdb
+  namespace: zigbee
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: influxdb2
+      version: "2.1.2"
+      sourceRef:
+        kind: HelmRepository
+        name: influxdata
+        namespace: flux-system
+      interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    image:
+      repository: influxdb
+      tag: "2.9.1-alpine"
+      pullPolicy: IfNotPresent
+
+    adminUser:
+      organization: "na"
+      bucket: "default"
+      user: "admin"
+      retention_policy: "0s"
+      existingSecret: zigbee-influxdb-credentials
+
+    persistence:
+      enabled: true
+      useExisting: true
+      name: influxdb
+      accessMode: ReadWriteOnce
+      size: 5Gi
+
+    # local-path volumes are node-local: keep the pod on the node that holds the
+    # volume. Harmless if the PVC is ever repointed at OMV NFS.
+    nodeSelector:
+      kubernetes.io/hostname: homelab-2nd
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+
+    service:
+      type: ClusterIP
+      port: 80
+      targetPort: 8086
