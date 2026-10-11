@@ -1,0 +1,115 @@
+---
+# ============================================================================
+# Node-RED (H2-214) - chart pinned, image pinned, data on OMV NFS.
+#
+# Chart: schwarzit.github.io/node-red-chart 0.40.2 (Apache-2.0). Upstream
+# Node-RED publishes an image but no chart; this is the most credible chart
+# available and it was released the same day this ticket ran.
+#
+# IMAGE PIN: nodered/node-red:4.1.16-22 (the 4.1 line, Debian-based, Node 22).
+# Node-RED 5.0.8 exists. It is deliberately NOT used: the migrated flows come
+# off an unpinned `nodered/node-red` in the source stack, and a major-version
+# jump during a data migration is how you spend a weekend debugging a flow
+# engine instead of migrating data. Restore on the 4.1 line, prove the flows,
+# then upgrade as its own deliberate change.
+#
+# THE SOURCE STACK BUILT A CUSTOM IMAGE - READ THIS BEFORE THE RESTORE
+#   gulasz101/temp_collector/node-red/Dockerfile is `FROM nodered/node-red` plus
+#   `npm install node-red-contrib-influxdb node-red-contrib-sun-position
+#   node-red-contrib-cron-plus node-red-contrib-nmap`. Those nodes were baked
+#   into the image, and the restored flows use three of them (the node census in
+#   the recon note counts cronplus, influxdb-out and sun-position nodes).
+#   This scaffold runs the STOCK pinned image, so the palette has to be provided
+#   on top of it. Two honest options, both for H2-216:
+#     (a) install the three modules into /data/node_modules from the editor
+#         (Manage Palette) - /data is on the durable NFS PVC, so it is a one-off
+#         and it survives rebuilds; or
+#     (b) build a pinned custom image - needs an image registry and CI, which
+#         this repo has only for openchamber.
+#   (a) is what this scaffold assumes. node-red-contrib-nmap can be dropped: no
+#   nmap node appears in the flow census, and the module additionally needs the
+#   `nmap` binary, which the stock image does not ship.
+#
+# NO settings CONFIGMAP
+#   The chart can mount a settings.js ConfigMap at /data/settings.js. Not used
+#   here: /data comes from the restore, and the source settings.js (24 KB) is
+#   part of it. Mounting a ConfigMap over it would shadow the migrated file.
+#   The credentialSecret question is handled in the H2-216 notes instead:
+#   the restored .config.runtime.json carries the generated credential key, so
+#   flows_cred.json decrypts out of the box, and pinning a fixed
+#   NODE_RED_CREDENTIAL_SECRET is a deliberate rotation to do AFTER the cutover
+#   (setting one now would make the restored credentials undecryptable).
+#
+# ClusterIP only, same reasoning as zigbee2mqtt: the editor can rewrite the
+# house's automation, so it does not go on the LAN unauthenticated. The source
+# settings.js may already carry adminAuth - that comes with the restore.
+# LAN access meanwhile: kubectl -n zigbee port-forward svc/node-red 1880:1880
+# ============================================================================
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: node-red
+  namespace: zigbee
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: node-red
+      version: "0.40.2"
+      sourceRef:
+        kind: HelmRepository
+        name: node-red
+        namespace: flux-system
+      interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    image:
+      registry: docker.io
+      repository: nodered/node-red
+      tag: "4.1.16-22"
+      pullPolicy: IfNotPresent
+
+    service:
+      type: ClusterIP
+      port: 1880
+
+    # The restored /data on OMV NFS, not a chart-created PVC.
+    persistence:
+      enabled: true
+      existingClaim: node-red-data
+
+    # TZ is Etc/UTC in the source stack and the flows contain sun-position
+    # nodes, which do their own time maths. Do not "fix" this during a
+    # migration: changing the timezone changes when the house turns its lights
+    # on. If it should move to Europe/Warsaw, that is its own change with its
+    # own verification.
+    env:
+      - name: TZ
+        value: Etc/UTC
+
+    podSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+    securityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      seccompProfile:
+        type: RuntimeDefault
+      capabilities:
+        drop:
+          - ALL
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 512Mi

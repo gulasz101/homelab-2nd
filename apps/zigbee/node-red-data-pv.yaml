@@ -1,0 +1,32 @@
+---
+# ============================================================================
+# Node-RED data volume - OMV NFS (H2-214).
+#
+# /data holds the migrated flows.json (110 nodes, 7 tabs), flows_cred.json,
+# settings.js, the generated credential key in .config.runtime.json and the
+# palette modules. That is the automation logic of the whole house: not
+# reproducible from anywhere else, so it lives on OMV (guardrail 4) rather than
+# on a node's local disk.
+#
+# Node-RED's uid inside the image is 1000; the chart sets runAsUser/fsGroup
+# 1000 to match, and the restored files must end up owned by 1000:1000 - that
+# ownership fix is part of the H2-216 restore, not of this manifest.
+# ============================================================================
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: node-red-data
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  nfs:
+    server: openmediavault.local
+    path: /srv/dev-disk-by-uuid-cda9bf6e-0ed1-4e61-b063-1cbab7351886/zigbee/node-red
+  storageClassName: ""
+  persistentVolumeReclaimPolicy: Retain
+  mountOptions:
+    - hard
+    - intr
+    - nconnect=8

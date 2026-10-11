@@ -35,3 +35,8 @@ resources:
   - mosquitto-configmap.yaml
   - mosquitto-deployment.yaml
   - mosquitto-service.yaml
+
+  # --- Node-RED: flow engine, 110 nodes / 7 tabs migrated from homelab-one ---
+  - node-red-data-pv.yaml
+  - node-red-data-pvc.yaml
+  - node-red-helm-release.yaml

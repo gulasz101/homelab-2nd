@@ -1,0 +1,25 @@
+---
+# ============================================================================
+# Node-RED data PVC (H2-214) - bound by name to the static OMV NFS PV.
+#
+# The chart's `persistence.existingClaim` takes the name of an existing claim,
+# so this PVC is hand-written: it needs `storageClassName: ""` (no dynamic
+# provisioning) plus `volumeName` (bind to THIS PV and no other), and the
+# chart's own PVC template cannot express either.
+# ============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: node-red-data
+  namespace: zigbee
+  labels:
+    app.kubernetes.io/name: node-red
+    app.kubernetes.io/part-of: zigbee
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: ""
+  volumeName: node-red-data
