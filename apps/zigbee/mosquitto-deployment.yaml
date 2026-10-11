@@ -1,0 +1,112 @@
+---
+# ============================================================================
+# Mosquitto MQTT broker (H2-214) - RAW MANIFESTS, with the guardrail-2
+# justification written down as required.
+#
+# Why not Helm: there is NO official chart from the Eclipse Mosquitto project.
+# The candidates on ArtifactHub were checked before falling back to raw YAML:
+#   - geek-cookbook/mosquitto 4.8.2 - verified publisher, but the last release
+#     was 2022-08-02;
+#   - k8sonlab (charts.ar80.eu) mosquitto 2.7.3 - recent, but a single
+#     maintainer, and it takes the broker's password entries through Helm
+#     values (`authentication.passwordEntries`), which in this PUBLIC repo would
+#     be a plaintext credential commit;
+#   - self-hosters-by-night 0.5.2 - same shape, same problem.
+# A broker's security configuration (password file, ACL, listener) is exactly
+# the thing that must not be templated through a third party's values schema,
+# and the whole deployment is ~60 lines. The repo already ships comparable
+# internal infrastructure as raw manifests (apps/firecrawl/redis-*.yaml,
+# apps/firecrawl/rabbitmq-*.yaml, apps/honcho/redis-*.yaml).
+#
+# Service name matters: the migrated zigbee2mqtt configuration.yaml has
+# `mqtt.server: mqtt://mosquitto` (verified against the source stack), so the
+# Service is called `mosquitto` and all four workloads share this namespace.
+#
+# Image pinned to eclipse-mosquitto:2.1.2-alpine (current stable line).
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  namespace: zigbee
+  labels:
+    app: mosquitto
+    app.kubernetes.io/name: mosquitto
+    app.kubernetes.io/part-of: zigbee
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+        app.kubernetes.io/name: mosquitto
+    spec:
+      # The official image ships the `mosquitto` user as uid 1883. Running as
+      # that uid directly (rather than as root dropping privileges through a
+      # `user` directive) keeps the container honest: the ConfigMap and Secret
+      # files it reads are world-readable, and nothing here needs root.
+      securityContext:
+        runAsUser: 1883
+        runAsGroup: 1883
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mosquitto
+          image: eclipse-mosquitto:2.1.2-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: mqtt
+              containerPort: 1883
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            tcpSocket:
+              port: mqtt
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: mqtt
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /mosquitto/config/mosquitto.conf
+              subPath: mosquitto.conf
+              readOnly: true
+            # Two keys of one SOPS Secret: the mosquitto_passwd file and the ACL.
+            # The Secret itself is created by H2-215 - the pod stays in
+            # CreateContainerConfigError until it exists, which is the honest
+            # state of a manifest-only ticket.
+            - name: mqtt-credentials
+              mountPath: /mosquitto/config/passwd
+              subPath: passwd
+              readOnly: true
+            - name: mqtt-credentials
+              mountPath: /mosquitto/config/acl
+              subPath: acl
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: mosquitto-config
+        - name: mqtt-credentials
+          secret:
+            secretName: zigbee-mqtt-credentials
+            defaultMode: 0400

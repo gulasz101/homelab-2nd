@@ -1,0 +1,56 @@
+---
+# ============================================================================
+# Mosquitto broker configuration (H2-214).
+#
+# MIGRATED FROM homelab-one's docker-compose stack, WITH ONE DELIBERATE
+# SECURITY CHANGE. The source broker ran `allow_anonymous true` on the flat LAN
+# (verified in the public gulasz101/temp_collector repo, mosquitto/config/
+# mosquitto.conf). Authentication is mandatory here: `allow_anonymous false`
+# plus a password file and an ACL, both mounted from the SOPS-encrypted Secret
+# `zigbee-mqtt-credentials` (owned by H2-215). This ConfigMap carries
+# non-secret configuration only - never a credential.
+#
+# Secret contract for H2-215 (keys must match these names exactly):
+#   zigbee-mqtt-credentials:
+#     passwd -> a mosquitto_passwd(1) file (e.g. mosquitto_passwd -c -b passwd <user> <pass>)
+#     acl    -> an ACL file; at minimum zigbee2mqtt and node-red need
+#               readwrite on zigbee2mqtt/# and homeassistant/#
+#
+# The broker is STATELESS here (`persistence false`), exactly as the source
+# stack ran it (the persistence line in its mosquitto.conf was commented out).
+# Retained state is republished by zigbee2mqtt on every start
+# (advanced.cache_state_send_on_startup), so there is nothing worth a PVC. If
+# that ever stops being true, it is one OMV NFS PV plus one volumeMount - not a
+# redesign.
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto-config
+  namespace: zigbee
+  labels:
+    app.kubernetes.io/name: mosquitto
+    app.kubernetes.io/part-of: zigbee
+data:
+  mosquitto.conf: |
+    # Cluster network only. No websockets listener: the migrated Node-RED flows
+    # talk plain MQTT on 1883 (the source docker-compose.yml published 1883 and
+    # nothing else).
+    listener 1883
+
+    # Authentication is mandatory. Both files come from the SOPS Secret
+    # zigbee-mqtt-credentials (H2-215), mounted read-only by the Deployment.
+    allow_anonymous false
+    password_file /mosquitto/config/passwd
+    acl_file /mosquitto/config/acl
+
+    # No retained-message store - see the file header.
+    persistence false
+
+    # stdout only: the OpenTelemetry Collector DaemonSet reads container logs
+    # from /var/log/pods and ships them to Loki (guardrail 9).
+    log_dest stdout
+    log_type error
+    log_type warning
+    log_type notice
+    connection_messages true

@@ -1,0 +1,32 @@
+---
+# ============================================================================
+# Mosquitto Service (H2-214).
+#
+# ClusterIP only. MQTT is not exposed to the LAN: the source broker was
+# reachable on 192.168.1.144:1883 from anywhere on the flat network, and this
+# one is reachable only from inside the cluster. If a device on the LAN ever
+# needs MQTT again, that is a deliberate NodePort/LoadBalancer decision with an
+# ACL to go with it - not a default.
+#
+# The name is `mosquitto` on purpose: the migrated zigbee2mqtt
+# configuration.yaml points at `mqtt://mosquitto`, and the short name resolves
+# inside this namespace.
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto
+  namespace: zigbee
+  labels:
+    app: mosquitto
+    app.kubernetes.io/name: mosquitto
+    app.kubernetes.io/part-of: zigbee
+spec:
+  type: ClusterIP
+  ports:
+    - name: mqtt
+      port: 1883
+      protocol: TCP
+      targetPort: mqtt
+  selector:
+    app: mosquitto

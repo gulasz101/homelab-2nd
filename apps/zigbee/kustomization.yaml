@@ -29,3 +29,8 @@ resources:
   # Scaffolded by H2-210 (the radio-head ticket).
   - zigbee2mqtt-secrets.sops.yaml
   - zigbee2mqtt-helm-release.yaml
+
+  # --- Mosquitto: MQTT broker (raw manifests, no sane upstream chart exists) --
+  - mosquitto-configmap.yaml
+  - mosquitto-deployment.yaml
+  - mosquitto-service.yaml
