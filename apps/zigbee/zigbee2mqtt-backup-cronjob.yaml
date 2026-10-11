@@ -34,9 +34,11 @@ spec:
             kubernetes.io/hostname: zigbee-node
           containers:
             - name: backup
-              # Pinned: a floating tag on a backup job is how you discover that
-              # last month's backups were written by an incompatible client.
-              image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+              # Pinned. This was originally minio/mc tagged with the version mc
+              # itself reports - which is NOT a published Docker tag. The job sat in
+              # ErrImagePull and the backup never ran: found by triggering it, not
+              # by trusting a CronJob because it applied cleanly.
+              image: amazon/aws-cli:2.17.0
               imagePullPolicy: IfNotPresent
               env:
                 - name: MINIO_ACCESS_KEY
@@ -64,24 +66,34 @@ spec:
                   SIZE=$(wc -c < /data/configuration.yaml)
                   echo "configuration.yaml present ($SIZE bytes)"
 
-                  apk add --no-cache gnupg >/dev/null 2>&1 || true
                   tar czf /tmp/backup.tar.gz -C /data \
                     configuration.yaml database.db state.json coordinator_backup.json 2>/dev/null \
                     || tar czf /tmp/backup.tar.gz -C /data .
                   echo "archive: $(wc -c < /tmp/backup.tar.gz) bytes"
 
-                  mc alias set omv http://openmediavault.local:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
-                  mc cp /tmp/backup.tar.gz "omv/zigbee2mqtt-backups/$DEST"
+                  export AWS_ACCESS_KEY_ID="$MINIO_ACCESS_KEY"
+                  export AWS_SECRET_ACCESS_KEY="$MINIO_SECRET_KEY"
+                  export AWS_DEFAULT_REGION=us-east-1
+                  EP="--endpoint-url http://openmediavault.local:9000"
 
-                  # Verify the object landed and is non-trivial before pruning.
-                  OBJ=$(mc stat "omv/zigbee2mqtt-backups/$DEST" 2>/dev/null | grep -i '^Size' | awk '{print $2}')
-                  echo "uploaded: $DEST ($OBJ)"
-                  test -n "$OBJ"
+                  aws $EP s3 cp /tmp/backup.tar.gz "s3://zigbee2mqtt-backups/$DEST"
 
-                  # Keep 30 days.
-                  mc rm --recursive --force --older-than 30d omv/zigbee2mqtt-backups/zigbee2mqtt/ >/dev/null 2>&1 || true
-                  echo "retention: pruned anything older than 30d"
-                  mc ls omv/zigbee2mqtt-backups/zigbee2mqtt/ | tail -5
+                  # Verify the object landed BEFORE pruning anything. A silent upload
+                  # failure followed by a prune is how you delete the last good copy.
+                  SZ=$(aws $EP s3api head-object --bucket zigbee2mqtt-backups --key "$DEST" \
+                        --query 'ContentLength' --output text)
+                  echo "uploaded and verified: $DEST ($SZ bytes)"
+                  test "$SZ" -gt 0
+
+                  # Retention: 30 days.
+                  CUT=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
+                  aws $EP s3api list-objects-v2 --bucket zigbee2mqtt-backups --prefix zigbee2mqtt/ \
+                    --query "Contents[?LastModified<'$CUT'].Key" --output text 2>/dev/null \
+                    | tr '\t' '\n' | grep -v '^None$' | while read -r k; do
+                        [ -n "$k" ] && aws $EP s3 rm "s3://zigbee2mqtt-backups/$k" >/dev/null && echo "pruned $k"
+                      done
+                  echo "retention: done"
+                  aws $EP s3 ls s3://zigbee2mqtt-backups/zigbee2mqtt/ | tail -5
               volumeMounts:
                 - name: data
                   mountPath: /data
