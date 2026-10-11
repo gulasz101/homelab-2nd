@@ -52,6 +52,9 @@ resources:
   - node-red-data-pv.yaml
   - node-red-data-pvc.yaml
   - node-red-helm-release.yaml
+  # One-shot: seed the MQTT credential into the migrated flows. The password is
+  # injected from the Secret as an env var, never placed on a command line.
+  - nodered-mqtt-credential-job.yaml
 
   # --- InfluxDB v2: sensor history ------------------------------------------
   # SOPS-encrypted admin password + API token (H2-215); the chart's
