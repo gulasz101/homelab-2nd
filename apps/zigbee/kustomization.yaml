@@ -30,6 +30,11 @@ resources:
   - zigbee2mqtt-secrets.sops.yaml
   - zigbee2mqtt-preflight-configmap.yaml
   - zigbee2mqtt-helm-release.yaml
+  # The durability promise the storage comment makes. Holds the Zigbee
+  # network key + the 17-device registry; without it that state is a single
+  # un-backed-up copy on the radio head's microSD.
+  - zigbee2mqtt-minio-backup-creds.sops.yaml
+  - zigbee2mqtt-backup-cronjob.yaml
 
   # --- Mosquitto: MQTT broker (raw manifests, no sane upstream chart exists) --
   # SOPS-encrypted broker credentials + ACL (H2-215). The shape contracts

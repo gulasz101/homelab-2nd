@@ -1,0 +1,92 @@
+---
+# Daily Zigbee2MQTT state backup -> OMV MinIO (s3://zigbee2mqtt-backups/zigbee2mqtt/).
+#
+# WHY THIS IS THE MOST IMPORTANT OBJECT IN THE NAMESPACE:
+# /app/data holds the whole Zigbee network - the network key, the coordinator
+# backup and the registry of all 17 paired devices. The chart's storage comment
+# promised durability via a backup and, until this CronJob existed, that promise
+# was not kept: the live copy was a single un-backed-up copy on the radio head's
+# microSD card. Losing it means re-pairing every device by hand.
+#
+# The volume is the StatefulSet's own PVC, mounted read-only here. Both pods run
+# on zigbee-node, which is what makes that legal: local-path volumes are
+# ReadWriteOnce, and RWO permits multiple pods on the SAME node, just not two
+# nodes at once.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: zigbee2mqtt-backup
+  namespace: zigbee
+spec:
+  schedule: "45 3 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          # local-path PVC is bound to zigbee-node; the backup must run where the
+          # volume lives.
+          nodeSelector:
+            kubernetes.io/hostname: zigbee-node
+          containers:
+            - name: backup
+              # Pinned: a floating tag on a backup job is how you discover that
+              # last month's backups were written by an incompatible client.
+              image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: zigbee2mqtt-minio-backup-creds
+                      key: ACCESS_KEY_ID
+                - name: MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: zigbee2mqtt-minio-backup-creds
+                      key: ACCESS_SECRET_KEY
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  STAMP=$(date -u +%Y%m%d-%H%M%S)
+                  DEST="zigbee2mqtt/zigbee2mqtt-$STAMP.tar.gz"
+
+                  # Fail loudly rather than uploading an empty archive: an empty
+                  # registry means the radio has nothing paired, which is a
+                  # disaster, not a backup.
+                  test -s /data/configuration.yaml || { echo "FATAL: no configuration.yaml on the volume - refusing to back up"; exit 1; }
+                  SIZE=$(wc -c < /data/configuration.yaml)
+                  echo "configuration.yaml present ($SIZE bytes)"
+
+                  apk add --no-cache gnupg >/dev/null 2>&1 || true
+                  tar czf /tmp/backup.tar.gz -C /data \
+                    configuration.yaml database.db state.json coordinator_backup.json 2>/dev/null \
+                    || tar czf /tmp/backup.tar.gz -C /data .
+                  echo "archive: $(wc -c < /tmp/backup.tar.gz) bytes"
+
+                  mc alias set omv http://openmediavault.local:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
+                  mc cp /tmp/backup.tar.gz "omv/zigbee2mqtt-backups/$DEST"
+
+                  # Verify the object landed and is non-trivial before pruning.
+                  OBJ=$(mc stat "omv/zigbee2mqtt-backups/$DEST" 2>/dev/null | grep -i '^Size' | awk '{print $2}')
+                  echo "uploaded: $DEST ($OBJ)"
+                  test -n "$OBJ"
+
+                  # Keep 30 days.
+                  mc rm --recursive --force --older-than 30d omv/zigbee2mqtt-backups/zigbee2mqtt/ >/dev/null 2>&1 || true
+                  echo "retention: pruned anything older than 30d"
+                  mc ls omv/zigbee2mqtt-backups/zigbee2mqtt/ | tail -5
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: data-volume-zigbee2mqtt-0
