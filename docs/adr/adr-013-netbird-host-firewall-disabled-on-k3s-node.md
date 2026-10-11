@@ -1,7 +1,8 @@
-# ADR-013: NetBird host firewall disabled on the k3s control-plane node
+# ADR-013: NetBird host firewall disabled on every k3s node running NetBird
 
 **Status:** Accepted  
 **Date:** 2026-09-13  
+**Updated:** 2026-10-11 — scope widened to all k3s nodes after the `t460` re-outbreak (see "2026-10-11 update" below).  
 
 ## Context
 
@@ -48,7 +49,17 @@ Two implementation notes worth remembering:
 - In **NetBird 0.77.0** the `NB_DISABLE_FIREWALL=true` environment variable (via the systemd `EnvironmentFile`) did **not** take effect; the *profile config* is the source of truth. A copy is left in `/etc/sysconfig/netbird` as belt-and-braces, but the profile is what works.
 - `netbird up --disable-firewall` is a no-op while the client is already connected ("Already connected") — it must be preceded by `netbird down`.
 
-**Operational constraint:** never run `netbird up` on this node without `--disable-firewall`, or the rules return and k3s goes back into the crash loop.
+**Operational constraint:** never run `netbird up` on any k3s node without `--disable-firewall`, or the rules return and k3s goes back into the crash loop.
+
+### 2026-10-11 update — re-outbreak on `t460`, scope widened to all k3s nodes
+
+The September fix was applied only to `homelab-2nd`. The other NetBird-running k3s node, `t460` (worker), kept its host firewall enabled — and after the 2026-10-10 site move's full power cycle, NetBird re-applied its nftables rules at boot: identical crash loop, this time freezing every pod on the node, including five CNPG database primaries (~2 h outage; all recovered, no data loss). Verified learnings:
+
+- **A NetBird upgrade does not fix it.** `t460` moved 0.78.1 → 0.80.0 mid-incident and kept crash-looping until the firewall was disabled. The upstream incompatibility is still open.
+- **The fix is per-node and is a node-bootstrap requirement.** Every k3s node that runs NetBird needs `DisableFirewall: true`. Status 2026-10-11: homelab-2nd ✅, t460 ✅ (fixed this day), arr-box verified clean (no NetBird nftables tables) ✅.
+- **It can be applied without root** when the NetBird daemon socket is world-writable (`t460`: `/var/run/netbird.sock`, `srw-rw-rw-`): `netbird down` followed by `netbird up --disable-firewall` as the unprivileged `k3s` user works, because the root daemon performs the privileged work.
+- **Verify in the client log; do not assume.** After the fix, `/var/log/netbird/client.log` prints `disabling firewall configuration` and `firewall is disabled`.
+
 
 ## Consequences
 
