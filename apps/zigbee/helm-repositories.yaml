@@ -1,0 +1,52 @@
+---
+# ============================================================================
+# Helm chart repositories for the zigbee namespace.
+#
+# All three live in flux-system, like every other HelmRepository in this repo
+# (19 of them). The zigbee2mqtt entry was originally declared in the zigbee
+# namespace by H2-210 (the radio-head ticket); it was folded in here and moved
+# to flux-system so the group has one convention and one file - the HelmRelease
+# that consumes it had its sourceRef updated in the same commit.
+#
+# Why these three and not more:
+#   - zigbee2mqtt: the UPSTREAM chart, published by the project's own maintainer
+#     (Koen Kanters) from Koenkk/zigbee2mqtt-chart. The official Kubernetes
+#     install docs (zigbee2mqtt.io/guide/installation/08_kubernetes.html) point
+#     at exactly this repository.
+#   - node-red: SchwarzIT/node-red-chart (Apache-2.0, released the same day this
+#     ticket ran). The most credible Node-RED chart available; upstream Node-RED
+#     publishes an image but no chart.
+#   - influxdb2: InfluxData's own repository. NOTE: the chart itself has not been
+#     released since 2023-12-04 (chart 2.1.2, appVersion 2.7.4) even though the
+#     repository is still pushed to - the HelmRelease pins the image tag to
+#     2.9.1-alpine to avoid deploying a three-year-old server. See the EOL note
+#     in influxdb-helm-release.yaml.
+#
+# Mosquitto has no chart here on purpose - see mosquitto-deployment.yaml.
+# ============================================================================
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: zigbee2mqtt
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://charts.zigbee2mqtt.io
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: node-red
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://schwarzit.github.io/node-red-chart
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: influxdata
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://helm.influxdata.com

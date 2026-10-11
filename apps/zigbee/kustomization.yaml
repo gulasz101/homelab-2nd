@@ -1,0 +1,31 @@
+---
+# ============================================================================
+# zigbee namespace group.
+#
+# A NESTED kustomization referenced from apps/kustomization.yaml as "- zigbee/",
+# the same shape apps/arr-stack/ uses. H2-210 wired the four z2m files flat in
+# apps/kustomization.yaml; H2-214 folded them in here. Two reasons:
+#   1. the render gate is `kubectl kustomize <path>` and this gives it one clean
+#      path that renders exactly this group (kubeconform -strict over the whole
+#      apps tree is noisy: every SOPS-encrypted Secret in the repo trips the
+#      strict Secret schema on its `sops:` metadata block);
+#   2. twenty-odd file entries with their rationale stay next to the files they
+#      explain instead of growing apps/kustomization.yaml by another 60 lines.
+#
+# Everything is listed explicitly - no directory globs - so a forgotten file is
+# a visible diff line. apps/zigbee/tests/render-check.sh asserts that every
+# *.yaml on disk appears in this list.
+# ============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # Namespace (created by H2-210 for the radio head, extended by H2-214)
+  - namespace.yaml
+
+  # Chart sources (all pinned by the HelmReleases below)
+  - helm-repositories.yaml
+
+  # --- zigbee2mqtt: Zigbee radio head bridge (upstream chart 2.14.2) ---------
+  # Scaffolded by H2-210 (the radio-head ticket).
+  - zigbee2mqtt-secrets.sops.yaml
+  - zigbee2mqtt-helm-release.yaml

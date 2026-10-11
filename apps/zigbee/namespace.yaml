@@ -1,8 +1,26 @@
 ---
+# ============================================================================
+# zigbee namespace (H2-210 created it for the radio head, H2-214 grew it into
+# the whole home-automation stack).
+#
+# Pipeline: zigbee2mqtt -> Mosquitto (MQTT) -> Node-RED -> InfluxDB v2 -> Grafana
+#
+# The Zigbee coordinator dongle lives on the Orange Pi Zero 2W ("radio head"),
+# so zigbee2mqtt is pinned to that node by nodeSelector and takes the dongle
+# through a hostPath of the /dev/serial/by-id symlink.
+#
+# Labels: `monitoring: enabled` matches apps/arr-stack/namespace.yaml and
+# apps/itsaplan/namespace.yaml; `part-of: homelab` matches the rest of the
+# per-service namespaces.
+#
+# The SOPS secrets for this namespace are owned by H2-215 (zigbee2mqtt-secrets
+# already exists, created alongside H2-210) and the data restore by H2-216.
+# ============================================================================
 apiVersion: v1
 kind: Namespace
 metadata:
   name: zigbee
   labels:
     app.kubernetes.io/name: zigbee
+    app.kubernetes.io/part-of: homelab
     monitoring: enabled

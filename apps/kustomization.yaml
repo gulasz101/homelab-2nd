@@ -506,12 +506,18 @@ resources:
   - mail-archiver/mailarchiver-dashboard-configmap.yaml
 
   # ============================================================
-  # zigbee namespace (H2-210) - the Zigbee radio head
-  # The coordinator dongle lives on the dedicated `zigbee-node` worker; z2m runs
-  # in-cluster and bridges the mesh to MQTT. Chart-based (guardrail 2); the Zigbee
-  # network key + PAN IDs are SOPS-encrypted (guardrail 5).
+  # zigbee namespace (H2-210 radio head + H2-214 full stack)
+  # H2-210 created the namespace and ran zigbee2mqtt in-cluster on the Orange Pi
+  # Zero 2W `zigbee-node` worker that physically owns the coordinator dongle.
+  # H2-214 completed the group: Mosquitto (MQTT), Node-RED and InfluxDB v2, the
+  # namespace observability package, and a restore gate in front of zigbee2mqtt.
+  #
+  # Nested kustomization (same shape as arr-stack/) so the group has one clean
+  # render path; the file list and its rationale live in
+  # apps/zigbee/kustomization.yaml.
+  #
+  # The SOPS secrets are H2-215's job (zigbee2mqtt-secrets already exists) and
+  # the data restore is H2-216's, so some pods here will not reach Running until
+  # those land.
   # ============================================================
-  - zigbee/namespace.yaml
-  - zigbee/zigbee2mqtt-helm-repository.yaml
-  - zigbee/zigbee2mqtt-secrets.sops.yaml
-  - zigbee/zigbee2mqtt-helm-release.yaml
+  - zigbee/
