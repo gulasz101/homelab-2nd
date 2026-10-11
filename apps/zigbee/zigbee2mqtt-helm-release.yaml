@@ -9,6 +9,38 @@
 # Chart: official upstream chart. Guardrail 2 satisfied — no hand-rolled manifests.
 # Guardrail 5: the Zigbee network key / PAN IDs come from a SOPS-encrypted Secret
 # via valuesFrom; they are deliberately absent from this file. This repo is public.
+#
+# ---------------------------------------------------------------------------
+# H2-214 additions to the H2-210 scaffold (same HelmRelease, reviewed together):
+#
+# 1. THE CONFIG IS CODE, NOT A RESTORED FILE. Everything non-secret lives in the
+#    values block below and the chart renders it into its own ConfigMap, which
+#    the chart's yq init-container merges over whatever is on the data volume.
+#    Two consequences worth knowing before the restore:
+#      - the chart's ConfigMap sets `devices: devices.yaml` and
+#        `groups: groups.yaml`, i.e. z2m is pointed at external device/group files
+#        instead of reading everything out of the coordinator's database.db. The
+#        retired homelab-one configuration.yaml had no such keys. H2-216 must
+#        confirm the 17 devices still appear after the database.db restore; if
+#        they do not, clearing those two lines is the fix.
+#      - the Zigbee network_key/pan_id/ext_pan_id arrive through the valuesFrom
+#        Secret, so the chart's ConfigMap (which is NOT in Git, it is rendered in
+#        cluster) ends up holding them. That is a namespace-local exposure, not a
+#        repo leak; if that is ever unacceptable, the alternative is
+#        `configmap.enabled: false` plus a restored configuration.yaml on the PVC.
+#
+# 2. PREFLIGHT GATE. The container command is wrapped so the bridge refuses to
+#    start until the migrated state is on the data volume (see
+#    zigbee2mqtt-preflight-configmap.yaml). Without it, z2m starts on an empty
+#    device registry and re-interviews every device instead of waiting for the
+#    H2-216 restore.
+#
+# 3. THE DURABILITY PROMISE IN THE STORAGE COMMENT BELOW IS NOT KEPT YET. The
+#    backup CronJob it refers to does not exist. Until it does, the live copy of
+#    the Zigbee network (network key, 17 devices) is a single copy on the radio
+#    head's microSD card. Called out in the H2-214 result comment as the top
+#    residual risk of this namespace.
+# ---------------------------------------------------------------------------
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -23,7 +55,7 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: zigbee2mqtt
-        namespace: zigbee
+        namespace: flux-system
       interval: 1h
   install:
     remediation:
@@ -65,18 +97,56 @@ spec:
         enabled: true
         size: 1Gi
         # Live state on the node's local NVMe/microSD: z2m writes the device registry
-        # continuously and sits next to the serial device. Durability is provided by the
-        # backup CronJob to OMV MinIO, exactly like the CNPG pattern — see ADR-045.
+        # continuously and sits next to the serial device. Durability is *meant* to be
+        # provided by a backup CronJob to OMV MinIO, exactly like the CNPG pattern —
+        # see ADR-045 and ADR-046.
+        #
+        # H2-214: that CronJob DOES NOT EXIST YET. Until it does, this volume is the
+        # only copy of the Zigbee network. It is the first thing to build after the
+        # cutover, and it is flagged in the H2-214 result comment.
         storageClassName: local-path
 
+      # Preflight gate: refuse to start against a half-restored data volume.
+      # The image's documented start command (upstream Dockerfile: ENTRYPOINT
+      # docker-entrypoint.sh, CMD /sbin/tini -- node index.js) is wrapped in a
+      # shell that runs the gate first. The chart exposes no extraInitContainers,
+      # so the container command is the only hook available.
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          sh /config/preflight.sh
+          exec /sbin/tini -- node index.js
+
       # The coordinator, by its stable by-id path.
+      # type: CharDevice (H2-214): kubelet stats through the symlink, so a node
+      # where the dongle is absent fails the volume mount loudly instead of
+      # creating an empty directory where the radio should be.
       volumes:
         - name: zigbee-dongle
           hostPath:
             path: /dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_b2716f8592c2ef1191f1c6138148b910-if00-port0
+            type: CharDevice
+        # Mirrors the retired docker-compose stack, which mounted /run/udev:ro.
+        # zigbee-herdsman reads udev attributes to identify the adapter.
+        - name: udev
+          hostPath:
+            path: /run/udev
+            type: Directory
+        - name: preflight
+          configMap:
+            name: zigbee2mqtt-preflight
+            defaultMode: 0555
       volumeMounts:
         - name: zigbee-dongle
           mountPath: /dev/ttyUSB0
+        - name: udev
+          mountPath: /run/udev
+          readOnly: true
+        - name: preflight
+          mountPath: /config
+          readOnly: true
 
       resources:
         requests:

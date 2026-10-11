@@ -1,0 +1,77 @@
+---
+# ============================================================================
+# zigbee2mqtt preflight gate (H2-214).
+#
+# The chart's container command runs this script before the bridge starts, and
+# the script REFUSES to start until the migrated state is on the data volume.
+#
+# Why this exists (it is the one bit of behaviour this ticket adds beyond the
+# ticket text): the Zigbee network - network key, 17 paired devices - lives in
+# three files. A zigbee2mqtt that starts without them begins onboarding and will
+# happily create a NEW network key if that onboarding is ever completed, which
+# costs an evening of re-pairing every device by hand. Failing closed costs a
+# CrashLoopBackOff with a loud log line. That is the cheaper failure.
+#
+# The unit test for this script is apps/zigbee/tests/preflight-gate-test.sh -
+# hand-run, not reconciled.
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zigbee2mqtt-preflight
+  namespace: zigbee
+  labels:
+    app.kubernetes.io/name: zigbee2mqtt
+    app.kubernetes.io/part-of: zigbee
+data:
+  preflight.sh: |
+    #!/bin/sh
+    # Refuse to start zigbee2mqtt against a half-restored /app/data.
+    set -eu
+
+    DATA="${ZIGBEE2MQTT_DATA:-/app/data}"
+    CONFIG="$DATA/configuration.yaml"
+    bad=0
+
+    for f in configuration.yaml database.db coordinator_backup.json; do
+      if [ ! -s "$DATA/$f" ]; then
+        echo "PREFLIGHT FAIL: $DATA/$f is missing or empty" >&2
+        bad=1
+      fi
+    done
+
+    # The restored configuration.yaml must pin the adapter explicitly. Without a
+    # serial.port the bridge autodetects, which is exactly how a half-migrated
+    # config ends up talking to the wrong device. Only the `port:` inside the
+    # `serial:` block counts - a bare grep would also match frontend.port - and
+    # an explicit `port: null` (YAML for "no value", i.e. autodetect) counts as
+    # absent. Both of those cases have their own test case.
+    if [ -s "$CONFIG" ]; then
+      if awk '
+            /^[A-Za-z_]+:/ { in_serial = ($1 == "serial:") }
+            in_serial && /^[[:space:]]+port:[[:space:]]*[^[:space:]]/ {
+              v = $0
+              sub(/^[[:space:]]*port:[[:space:]]*/, "", v)
+              sub(/[[:space:]]+$/, "", v)
+              if (v != "null" && v != "~" && v != "\"null\"" && v != "'"'"'null'"'"'") found = 1
+            }
+            END { exit(found ? 0 : 1) }
+          ' "$CONFIG"; then
+        port=$(awk '
+            /^[A-Za-z_]+:/ { in_serial = ($1 == "serial:") }
+            in_serial && /^[[:space:]]+port:/ { sub(/^[[:space:]]*port:[[:space:]]*/, ""); print; exit }
+          ' "$CONFIG")
+        echo "PREFLIGHT: serial.port = $port"
+      else
+        echo "PREFLIGHT FAIL: $CONFIG has no serial.port under the serial: block" >&2
+        bad=1
+      fi
+    fi
+
+    if [ "$bad" -ne 0 ]; then
+      echo "PREFLIGHT: refusing to start zigbee2mqtt - restore the migrated state first (H2-216)." >&2
+      echo "PREFLIGHT: expected in $DATA: configuration.yaml, database.db, coordinator_backup.json" >&2
+      exit 1
+    fi
+
+    echo "PREFLIGHT: migrated state present - starting zigbee2mqtt"

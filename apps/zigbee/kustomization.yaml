@@ -28,6 +28,7 @@ resources:
   # --- zigbee2mqtt: Zigbee radio head bridge (upstream chart 2.14.2) ---------
   # Scaffolded by H2-210 (the radio-head ticket).
   - zigbee2mqtt-secrets.sops.yaml
+  - zigbee2mqtt-preflight-configmap.yaml
   - zigbee2mqtt-helm-release.yaml
 
   # --- Mosquitto: MQTT broker (raw manifests, no sane upstream chart exists) --
