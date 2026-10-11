@@ -1,0 +1,64 @@
+---
+# One-off seed of the migrated zigbee2mqtt state onto the data volume.
+#
+# WHY A JOB AND NOT A CHART VALUE: the chart has no hook for database.db. It
+# seeds configuration.yaml from its ConfigMap and optionally devices.yaml, and
+# nothing else - so the 17-device registry has no supported route in. A Job is
+# the sanctioned raw-manifest exception (guardrail 2), and it is the only way to
+# get the registry onto the volume the StatefulSet owns.
+#
+# WHY IT MATTERS: without it, every device has to be re-interviewed, and the
+# interviews are FAILING ('can not get node descriptor' for the bedroom dimmer
+# 0xd44867fffe57ad10 on 2026-10-11). Devices then never become commandable, so
+# the physical buttons do nothing. Restoring the registry is the fix.
+#
+# Idempotent by design: it re-applies the seeded files on every reconcile, which
+# is harmless (the same bytes) and means a rebuilt PVC self-heals. Flux does not
+# re-run a completed Job, so this is a one-shot gate, not a loop.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: zigbee2mqtt-restore-state
+  namespace: zigbee
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      # local-path PVC lives on zigbee-node.
+      nodeSelector:
+        kubernetes.io/hostname: zigbee-node
+      containers:
+        - name: seed
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "seeding migrated zigbee2mqtt state into /data"
+              for f in configuration.yaml database.db state.json coordinator_backup.json; do
+                test -s "/seed/$f" || { echo "FATAL: /seed/$f missing"; exit 1; }
+                cp "/seed/$f" "/data/$f"
+                echo "  $f -> $(wc -c < /data/$f) bytes"
+              done
+              # The gate looks for database.db to be non-empty; assert the registry
+              # really carries devices before declaring success.
+              N=$(wc -l < /data/database.db)
+              echo "database.db records on the volume: $N"
+              test "$N" -ge 5 || { echo "FATAL: registry looks empty ($N records) - not a restore"; exit 1; }
+              echo "restore OK"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: seed
+              mountPath: /seed
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data-volume-zigbee2mqtt-0
+        - name: seed
+          secret:
+            secretName: zigbee2mqtt-restored-state

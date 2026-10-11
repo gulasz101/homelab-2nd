@@ -67,6 +67,33 @@ spec:
   upgrade:
     remediation:
       retries: 3
+  # Node-RED's /data is OMV NFS. The pod was landing on zigbee-node, which has NO
+  # nfs-common installed, and the mount failed with:
+  #   fsconfig() failed: NFS: mount program didn't pass remote address
+  # That is the documented trap for new k3s nodes: nfs-common must be installed
+  # before a node can mount an OMV export.
+  #
+  # Two ways out: install nfs-common on zigbee-node (needs root, not available to
+  # the agent) or place the pod where nfs-common already exists. Doing the
+  # second so the automation is self-contained, and leaving the first as a
+  # follow-up so the pin can be removed later.
+  #
+  # Done as a postRenderer rather than a chart value because the chart's values
+  # schema is NOT in docs-mcp (the indexed node-red library is the application's
+  # docs, not schwarzit/node-red-chart's) - so rather than guess a key name, the
+  # patch targets the rendered Deployment. There is exactly one, so a bare
+  # kind target is unambiguous.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+            patch: |
+              - op: add
+                path: /spec/template/spec/nodeSelector
+                value:
+                  kubernetes.io/hostname: homelab-2nd
+
   values:
     image:
       registry: docker.io

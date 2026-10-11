@@ -28,6 +28,10 @@ resources:
   # --- zigbee2mqtt: Zigbee radio head bridge (upstream chart 2.14.2) ---------
   # Scaffolded by H2-210 (the radio-head ticket).
   - zigbee2mqtt-secrets.sops.yaml
+  # The migrated state (17-device registry + coordinator backup). Drives the
+  # one-off restore Job below; the preflight gate then lets z2m start.
+  - zigbee2mqtt-restored-state.sops.yaml
+  - zigbee2mqtt-restore-job.yaml
   - zigbee2mqtt-preflight-configmap.yaml
   - zigbee2mqtt-helm-release.yaml
   # The durability promise the storage comment makes. Holds the Zigbee
@@ -50,6 +54,9 @@ resources:
   - node-red-helm-release.yaml
 
   # --- InfluxDB v2: sensor history ------------------------------------------
+  # SOPS-encrypted admin password + API token (H2-215); the chart's
+  # adminUser.existingSecret contract.
+  - zigbee-influxdb-credentials.sops.yaml
   - influxdb-pvc.yaml
   - influxdb-service-monitor.yaml
   - influxdb-helm-release.yaml
