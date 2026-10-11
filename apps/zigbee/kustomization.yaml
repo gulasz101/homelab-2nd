@@ -32,6 +32,9 @@ resources:
   - zigbee2mqtt-helm-release.yaml
 
   # --- Mosquitto: MQTT broker (raw manifests, no sane upstream chart exists) --
+  # SOPS-encrypted broker credentials + ACL (H2-215). The shape contracts
+  # exactly what mosquitto-deployment.yaml mounts.
+  - zigbee-mqtt-credentials.sops.yaml
   - mosquitto-configmap.yaml
   - mosquitto-deployment.yaml
   - mosquitto-service.yaml

@@ -54,6 +54,18 @@ spec:
         runAsUser: 1883
         runAsGroup: 1883
         runAsNonRoot: true
+        # H2-215 FIX. The credential Secret below mounts as root:root, and with
+        # defaultMode 0440 (owner=root) uid 1883 cannot read the password file -
+        # the broker then fails at startup. Kubernetes mounts Secrets owned by
+        # root, so `readOnly` does not help and `runAsNonRoot` forbids falling
+        # back to root. Declaring fsGroup makes the kubelet group-own the
+        # projected files by 1883, so 0440 becomes sufficient.
+        #
+        # Note the previous comment claimed these files were world-readable while
+        # the volume asked for 0400; the two contradicted each other. 0400 with no
+        # fsGroup is unreadable for this container. 0444 is the alternative, but
+        # it exposes the password hash to every uid in the namespace for no gain.
+        fsGroup: 1883
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -109,4 +121,4 @@ spec:
         - name: mqtt-credentials
           secret:
             secretName: zigbee-mqtt-credentials
-            defaultMode: 0400
+            defaultMode: 0440
