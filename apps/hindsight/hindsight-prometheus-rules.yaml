@@ -1,0 +1,425 @@
+---
+# ============================================================================
+# PrometheusRule: Hindsight alerts (H2-242, epic H2-232).
+#
+# WHERE THIS OBJECT LIVES, AND WHY (the routing contract - AC3)
+#   prometheus-operator's namespaceEnforcer appends `namespace=<the
+#   AlertmanagerConfig's own namespace>` to the route it generates for every
+#   AlertmanagerConfig (pkg/alertmanager/amcfg.go, processRoute; the default
+#   matcher strategy is OnNamespace). An AlertmanagerConfig can also only
+#   resolve a receiver's urlSecret in its OWN namespace. Hindsight has no
+#   Mattermost webhook secret and one must not be invented (H2-235's bundle
+#   never minted one; the URL is a secret that never passes through an agent),
+#   so the config reuses the existing `homelab-node-mattermost-webhook-url` in
+#   `observability` - and therefore THIS rule and every alert label must also say
+#   `namespace: observability` or the alerts fire into nothing. The expressions
+#   below still select `namespace="hindsight"`: that is the Kubernetes namespace
+#   of the workload, a different thing from the routing label.
+#   Full reasoning + the reversal recipe: hindsight-alertmanager-config.yaml.
+#
+# SELECTOR LABEL: `release: prometheus-stack` (the Prometheus CR's ruleSelector,
+# which kube-prometheus-stack defaults to the release name). NOT
+# `release: kube-prometheus-stack` - that one belongs on AlertmanagerConfigs.
+#
+# METRIC NAMES ARE REPRODUCED, NOT QUOTED FROM THE DOCS.
+#   Hindsight declares OpenTelemetry instruments and exports them through
+#   opentelemetry-exporter-prometheus, which folds the instrument's UNIT into the
+#   Prometheus series name and appends `_total` to counters. So:
+#       hindsight.operation.total    + unit "operations" -> hindsight_operation_operations_total
+#       hindsight.llm.tokens.input   + unit "tokens"     -> hindsight_llm_tokens_input_tokens_total
+#       hindsight.retain.documents.total + unit "documents" -> hindsight_retain_documents_total
+#       hindsight.db.pool.waiting    + unit "{connections}" -> hindsight_db_pool_waiting
+#   The upstream docs' example query `hindsight_operation_total` DOES NOT EXIST,
+#   and neither does the ticket's shorthand `hindsight_operation_total` /
+#   `db_pool_waiting`. Every name below was reproduced locally from
+#   hindsight-api-slim/hindsight_api/metrics.py @ v0.10.3 with
+#   opentelemetry-exporter-prometheus 0.65b0 (script + output in the H2-242
+#   tracking note), and the hand-run gate asserts every series used here against
+#   that reproduced table. The three shipped upstream dashboards are right.
+#
+# WHAT IS DELIBERATELY NOT HERE
+#   Base-backup staleness and WAL-archiving stalls are already covered for EVERY
+#   CNPG cluster, hindsight-db included, by
+#   infrastructure/observability/cnpg-backup-prometheus-rules.yaml (its legacy
+#   in-tree-barman branch is exactly what hindsight-db uses:
+#   `backup.barmanObjectStore` + no CNPG-I plugin). Duplicating those here would
+#   page twice for one event. What is added below is what that global rule cannot
+#   know: the instance collector being down and the instance pod being unready.
+#
+# THRESHOLDS: every number is a starting point chosen for a single-user memory
+# platform on a CPU-only node, and each one says where to read the real curve
+# (the Hindsight Operations / LLM / API dashboards). Nothing here is calibrated
+# against production traffic - there is none yet.
+# ============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: hindsight-alerts
+  namespace: observability
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    # ------------------------------------------------------------------
+    # Availability
+    # ------------------------------------------------------------------
+    - name: hindsight.availability
+      interval: 30s
+      rules:
+        - alert: HindsightApiTargetMissing
+          # The house `absent(up{...})` form is only valid where the target is
+          # genuinely scraped. It is here: the chart's ServiceMonitor
+          # (metrics.serviceMonitor, labelled release: prometheus-stack) scrapes
+          # the api on /metrics, so a missing series really means the scrape
+          # target is gone (pod deleted, Service selector broken, ServiceMonitor
+          # dropped). `pod` is the pod label the operator's k8s metadata
+          # relabelling puts on every scrape target.
+          expr: |
+            absent(up{namespace="hindsight", pod=~"hindsight-api-.*"}) == 1
+          for: 5m
+          labels:
+            severity: critical
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight API is not being scraped"
+            description: "No up{} series for a hindsight-api pod for 5 minutes. Either the pod is gone, the Service selector no longer matches it, or the chart's ServiceMonitor disappeared. Hindsight memory is unreachable for every agent profile."
+
+        - alert: HindsightApiNoAvailableReplica
+          # Deployment-level, so it covers both "pod exists but not Ready" (the
+          # readiness probe queries the database, so a CNPG blip shows up here)
+          # and "pod gone" - the case `absent(up{})` also catches, deliberately
+          # twice: one is a scrape-path signal, this one is a workload signal.
+          expr: |
+            kube_deployment_status_replicas_available{namespace="hindsight", deployment="hindsight-api"} < 1
+          for: 5m
+          labels:
+            severity: critical
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight API has no available replica"
+            description: "hindsight-api has had no available replica for 5 minutes. The readiness probe (/health, which runs SELECT 1) fails while the database is unreachable, so check hindsight-db before restarting anything."
+
+        - alert: HindsightControlPlaneNoAvailableReplica
+          # The control plane is a Next.js app: it exposes NO /metrics and the
+          # chart renders no ServiceMonitor for it, so there is no `up` series to
+          # alert on - this is exactly the case the ticket warns about. Alert on
+          # kube-state-metrics instead of inventing a scrape target.
+          expr: |
+            kube_deployment_status_replicas_available{namespace="hindsight", deployment="hindsight-control-plane"} < 1
+          for: 5m
+          labels:
+            severity: critical
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight Control Plane has no available replica"
+            description: "hindsight-control-plane has had no available replica for 5 minutes. The UI (hindsight.voitech.dev) is down; the API is unaffected."
+
+        - alert: HindsightTeiNoAvailableReplica
+          # Embeddings and reranking are CPU TEI pods the chart deploys. They are
+          # the fragile part of this deployment (CPU-only, memory-hungry model
+          # loads) and both retain and recall depend on them: with TEI down the
+          # API answers but produces no facts, which is the same silent outcome
+          # the no_facts alert below guards.
+          expr: |
+            kube_deployment_status_replicas_available{namespace="hindsight", deployment=~"hindsight-tei-(embedding|reranker)"} < 1
+          for: 5m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight TEI {{ $labels.deployment }} has no available replica"
+            description: "The CPU text-embeddings-inference deployment {{ $labels.deployment }} has had no available replica for 5 minutes. Retain/recall will fail or degrade - embeddings and reranking are served by these pods, not by the API."
+
+    # ------------------------------------------------------------------
+    # Operations
+    # ------------------------------------------------------------------
+    - name: hindsight.operations
+      interval: 30s
+      rules:
+        - alert: HindsightOperationFailures
+          # Operation-level failures: extraction (retain), retrieval (recall),
+          # reasoning (reflect) and async worker completions. `source="worker"`
+          # failures mean retries were exhausted. More than two failures in an
+          # hour is abnormal for one user; a single blip must not page.
+          expr: |
+            sum by (operation) (
+              increase(hindsight_operation_operations_total{success="false"}[1h])
+            ) > 2
+          for: 15m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight {{ $labels.operation }} operations are failing"
+            description: "More than two failed {{ $labels.operation }} operations in the last hour. Check the LiteLLM gateway (LLM failures surface here as failed operations) and hindsight-api logs in Loki."
+
+        - alert: HindsightNoFactsShareHigh
+          # THE ALERT THAT GUARDS THE LIGHTWEIGHT-MODEL DECISION.
+          # outcome="no_facts" means a document was stored but produced no memory
+          # units. Those documents are invisible to recall and reflect - and
+          # nothing else reports them, because the retain itself SUCCEEDED. A
+          # share above half means the extraction model is too weak for this
+          # corpus or the retain mission is excluding more than intended; the
+          # memory platform looks healthy while remembering nothing.
+          # `and`-guarded by volume: one no_facts document out of one is 100% and
+          # is not a signal. Why a threshold and not a rising share: a
+          # rate-of-change alert on a low-volume counter is noise; the trend lives
+          # on the Hindsight Operations dashboard.
+          expr: |
+            (
+              sum(rate(hindsight_retain_documents_total{outcome="no_facts"}[30m]))
+              / clamp_min(sum(rate(hindsight_retain_documents_total[30m])), 1e-9)
+              > 0.5
+            )
+            and
+            (
+              sum(increase(hindsight_retain_documents_total[1h])) >= 5
+            )
+          for: 30m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight retain is producing no facts for most documents"
+            description: "More than half of the documents retained in the last 30 minutes produced zero memory units (outcome=no_facts) with at least 5 documents processed. Those documents cannot be recalled. Compare the extraction model against a stronger one, or review the retain mission."
+
+        - alert: HindsightNoFactsShareCritical
+          # Same signal, past the point where the platform is effectively empty:
+          # nine in ten documents remembered as nothing.
+          expr: |
+            (
+              sum(rate(hindsight_retain_documents_total{outcome="no_facts"}[30m]))
+              / clamp_min(sum(rate(hindsight_retain_documents_total[30m])), 1e-9)
+              > 0.9
+            )
+            and
+            (
+              sum(increase(hindsight_retain_documents_total[1h])) >= 5
+            )
+          for: 30m
+          labels:
+            severity: critical
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight retain is producing almost no facts"
+            description: "More than 90% of retained documents produced zero memory units over 30 minutes. Extraction is effectively broken (model rejecting the schema, prompt/mission excluding everything, or the embedder unavailable) even though every retain returns success."
+
+    # ------------------------------------------------------------------
+    # LLM (all traffic goes through the local LiteLLM gateway)
+    # ------------------------------------------------------------------
+    - name: hindsight.llm
+      interval: 30s
+      rules:
+        - alert: HindsightLlmCallFailureRateHigh
+          # LLM call failures degrade extraction silently: the operation can still
+          # return success while producing no facts (see the no_facts rules).
+          expr: |
+            sum by (model) (rate(hindsight_llm_calls_total{success="false"}[15m]))
+            / clamp_min(sum by (model) (rate(hindsight_llm_calls_total[15m])), 1e-9)
+            > 0.2
+          for: 15m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight LLM call failure rate above 20% for {{ $labels.model }}"
+            description: "More than one in five LLM calls to {{ $labels.model }} through the LiteLLM gateway failed over 15 minutes. Check LiteLLM's own metrics and the Ollama backend behind the memory-hindsight key."
+
+        - alert: HindsightLlmTokenBurnHigh
+          # Token burn per model. The model behind this is a local Ollama-served
+          # nemotron via LiteLLM, so this is not a cost alert - it is a runaway
+          # detector (a retry loop, a pathological consolidation pass, or a
+          # migration import left running). Read the real curve on the Hindsight
+          # LLM Metrics dashboard before tuning the 5M/hour line.
+          expr: |
+            sum by (model) (
+              increase(hindsight_llm_tokens_input_tokens_total[1h])
+              + increase(hindsight_llm_tokens_output_tokens_total[1h])
+            ) > 5e6
+          for: 30m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight is burning tokens fast on {{ $labels.model }}"
+            description: "More than 5 million tokens (input + output) in the last hour for model {{ $labels.model }}. Expected shape: bursty retain/consolidation batches. A flat sustained burn is a loop."
+
+        - alert: HindsightConsolidationSchemaRejections
+          # The docs' own recommended alert: consolidation batch calls the model
+          # answered with something the response schema rejects (failure_class
+          # fail_fast - a re-send of the same payload cannot help). No other
+          # metric exposes this, and `failed_consolidation` stays 0 because
+          # bisection rescues what it can, so the supersession/delete path can
+          # silently do nothing.
+          expr: |
+            sum(rate(hindsight_consolidation_batch_failures_calls_total{failure_class="fail_fast"}[15m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight consolidation is rejecting model output"
+            description: "The consolidation model is returning output the response schema rejects (failure_class fail_fast), at a sustained rate. Usually a model that cannot emit reliable JSON for the schema - switch models or enable HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION."
+
+        - alert: HindsightEventLoopStalled
+          # Hindsight runs request handlers and task work on one event loop; the
+          # watchdog (enabled by default, 1000 ms threshold) counts blocks that
+          # starve it. A stall is what a liveness restart cannot fix and what
+          # makes recall latency spike for everyone.
+          expr: |
+            increase(hindsight_event_loop_stalls_total[15m]) > 0
+          for: 15m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight event loop is stalling"
+            description: "The event-loop watchdog detected blocked loop time in the last 15 minutes. Usual suspects: a synchronous call on the request path (an unbatched database query, a blocking model call) - correlate with the API dashboard's latency panel and the API logs in Loki."
+
+    # ------------------------------------------------------------------
+    # Database (CNPG hindsight-db) + API latency
+    # ------------------------------------------------------------------
+    - name: hindsight.database
+      interval: 30s
+      rules:
+        - alert: HindsightPostgresDown
+          # CNPG exposes cnpg_collector_up, NOT a `pg_up` metric: it is 0 whenever
+          # the instance manager cannot reach PostgreSQL.
+          expr: |
+            cnpg_collector_up{namespace="hindsight", cluster="hindsight-db"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "hindsight-db PostgreSQL is down"
+            description: "The CloudNativePG collector reports the hindsight-db instance as down. The memory store is unreachable; WAL archiving is stopped until it returns."
+
+        - alert: HindsightDatabaseInstanceNotReady
+          expr: |
+            kube_pod_status_ready{namespace="hindsight", pod=~"hindsight-db-.*", condition="true"} < 1
+          for: 5m
+          labels:
+            severity: critical
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "hindsight-db instance pod not Ready"
+            description: "The hindsight-db CNPG instance pod has not been Ready for 5 minutes - the cluster is unhealthy and base backups/WAL archiving are at risk."
+
+        - alert: HindsightDbPoolWaiting
+          # `db_pool_waiting` as named in the ticket is the field in the /health
+          # payload, which is NOT a Prometheus series. The alertable gauge is
+          # hindsight_db_pool_waiting: callers currently blocked waiting for a
+          # pooled connection, tracked by the app's pool instrumentation. Anything
+          # above zero, sustained, is pool exhaustion (not merely a busy pool) -
+          # asyncpg does not expose this, so no other metric can tell them apart.
+          expr: |
+            max(hindsight_db_pool_waiting) > 0
+          for: 10m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight is waiting for database connections"
+            description: "Callers have been blocked waiting for a pooled database connection for 10 minutes. Correlate with hindsight_db_pool_size/max and the database's own CPU - a slow query on the instance shows up here first."
+
+        - alert: HindsightDbPoolNearlyFull
+          # The pool-fill view of the same problem: the app's pool against its own
+          # configured maximum (not a database server limit).
+          expr: |
+            max(hindsight_db_pool_size) / clamp_min(max(hindsight_db_pool_max), 1) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight database pool is above 90% full"
+            description: "The api's connection pool has been above 90% of its configured maximum for 10 minutes. Raise the pool only after checking the instance's max_connections - CNPG's default is not sized for a large pool."
+
+        - alert: HindsightApiLatencyHigh
+          # p95 of the API's own HTTP latency (the /metrics-instrumented app), not
+          # of recall alone. 5s is generous on purpose: recall does CPU embedding
+          # plus CPU cross-encoder reranking on this node, so a legitimate p95 of
+          # a couple of seconds is expected. Read the real p95 on the API Service
+          # dashboard and tighten from there.
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (rate(hindsight_http_duration_seconds_bucket[5m]))
+            ) > 5
+          for: 10m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight API p95 latency above 5s"
+            description: "The api's p95 HTTP latency has been above 5 seconds for 10 minutes. Check the database pool panels first (HindsightDbPoolWaiting fires alongside this when the pool is the cause), then TEI availability."
+
+        - alert: HindsightDbPvcAbove80Percent
+          # The live database is local-path on the node's NVMe and is NOT durable -
+          # durability is the barman backup to OMV MinIO. A full volume therefore
+          # takes the memory store down until the backup/restore path is used.
+          expr: |
+            100 * kubelet_volume_stats_used_bytes{namespace="hindsight", persistentvolumeclaim=~"hindsight-db-.*"}
+              / kubelet_volume_stats_capacity_bytes{namespace="hindsight", persistentvolumeclaim=~"hindsight-db-.*"} > 80
+          for: 15m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "hindsight-db PVC above 80% used"
+            description: "The hindsight-db data volume (10Gi, local-path on the NVMe) is above 80% full. Postgres does not run well at 100% - grow the claim or archive older memory banks."
+
+    # ------------------------------------------------------------------
+    # Async work: the queue the API's internal worker drains
+    # ------------------------------------------------------------------
+    - name: hindsight.backlog
+      interval: 60s
+      rules:
+        - alert: HindsightAsyncOperationsStranded
+          # worker.enabled=false: the API's internal worker does all async work,
+          # so this gauge is the only "is the worker keeping up?" signal. status
+          # "failed" is the stranded state - operations that exhausted their
+          # retries and will never be retried without intervention.
+          expr: |
+            max(hindsight_async_operations{status="failed"}) > 0
+          for: 15m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight has stranded async operations"
+            description: "Async operations have been in the failed (stranded) state for 15 minutes. They are recoverable through the operations API - check the api logs in Loki for why they exhausted their retries."
+
+        - alert: HindsightConsolidationBacklogHigh
+          # pending_consolidation as a gauge: source memories waiting to be folded
+          # into observations. A deep backlog means recall answers from raw
+          # memories only, and the knowledge base is not caught up.
+          expr: |
+            sum(hindsight_consolidation_backlog) > 100
+          for: 1h
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight consolidation backlog is deep"
+            description: "More than 100 source memories have been queued for consolidation for over an hour. With worker.enabled=false this competes with request traffic on one event loop - consider enabling the dedicated worker."
