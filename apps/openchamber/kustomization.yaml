@@ -34,7 +34,8 @@ resources:
   - openchamber-itsaplan-bridge-configmap.yaml
   - openchamber-itsaplan-runner-configmap.yaml
   - openchamber-itsaplan-runner-deployment.yaml
-  # Itsaplan lane #2: Star-Office-UI fork (SOU board) -> qwen3.8-flash-go worker
+  # Itsaplan lane #2: Star-Office-UI fork (SOU board) -> qwen3.8-flash worker
+  # (via the OpenAI-protocol `litellm` provider, ADR-050)
   - openchamber-itsaplan-sou-runner-configmap.yaml
   - openchamber-itsaplan-sou-runner-deployment.yaml
   # Daily session/data backup to OMV MinIO

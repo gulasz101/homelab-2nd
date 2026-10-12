@@ -10,6 +10,13 @@
 #     OpenAI-compatible provider — because only the native provider sends the
 #     `x-opencode-session` header the OpenCode Go gateway requires. Its baseURL
 #     is pointed at LiteLLM, which forwards client headers upstream.
+#     EXCEPTION (2026-10-12, ADR-050): the SOU fork lane runs on `qwen3.8-flash`,
+#     for which the native provider picks a transport the Go gateway cannot
+#     serve. That lane therefore uses the second provider below (`litellm`,
+#     npm @ai-sdk/openai-compatible -> /v1/chat/completions). LiteLLM's
+#     session-normalizer hook injects the missing x-opencode-session header for
+#     it (the model is listed in OPENCODE_GO_UNSUFFIXED), so the gateway accepts
+#     the request. Do NOT switch the fork lane back to `opencode-go` for this id.
 #   * The model name is the native Go model id (`deepseek-v4.1-flash`) so
 #     OpenCode picks the right transport; LiteLLM exposes the same model name
 #     and forwards to https://opencode.ai/zen/go/v1.
@@ -19,10 +26,19 @@
 #     H2-19 run stalled ~30 min waiting for interactive approvals).
 #
 # 2026-10-09 (seed-version 4): second agent `itsaplan-worker-sou` added for the
-# Star-Office-UI fork lane (SOU board), running qwen3.8-flash-go against its own
+# Star-Office-UI fork lane (SOU board), running its own model against its own
 # workspace /storage/workspaces/star-office-ui-fork. The homelab-2nd lane is
 # unchanged. The repo config was byte-identical to the live file before this
 # bump, so nothing in-flight is clobbered.
+#
+# 2026-10-12 (seed-version 7): the fork lane moves to qwen3.8-flash driven
+# through a SECOND, explicitly OpenAI-protocol provider (`litellm`). Reason:
+# OpenCode's native `opencode-go` provider chooses the Anthropic transport
+# (/v1/messages) for the bare id `qwen3.8-flash`, and the OpenCode Go gateway
+# cannot serve that model over that protocol (400 ModelProtocolUnsupported /
+# MissingSessionID, measured 2026-10-12). The same model on the OpenAI transport
+# (/v1/chat/completions, i.e. npm @ai-sdk/openai-compatible) answers 200 OK.
+# The native provider stays for the H2 lane's deepseek-v4.1-flash. See ADR-050.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -32,8 +48,10 @@ data:
   # Bump when opencode.json below changes: the prepare init container re-copies
   # the seed into /storage/opencode-config only when this differs from the
   # version recorded in /storage/opencode-config/.seed-version, so UI edits
-  # between bumps survive.
-  seed-version: "6"
+  # between bumps survive. Must be moved TOGETHER with the pod-template
+  # annotation homelab.voitech.dev/opencode-seed-version on the openchamber
+  # Deployment (that annotation is what actually rolls the pod).
+  seed-version: "7"
   opencode.json: |
     {
       "$schema": "https://opencode.ai/config.json",
@@ -47,6 +65,19 @@ data:
           "options": {
             "baseURL": "http://litellm.llm-hub.svc.cluster.local:4000/v1",
             "apiKey": "{env:OPENCHAMBER_LITELLM_KEY}"
+          }
+        },
+        "litellm": {
+          "npm": "@ai-sdk/openai-compatible",
+          "name": "LiteLLM (OpenAI protocol)",
+          "options": {
+            "baseURL": "http://litellm.llm-hub.svc.cluster.local:4000/v1",
+            "apiKey": "{env:OPENCHAMBER_LITELLM_KEY}"
+          },
+          "models": {
+            "qwen3.8-flash": {
+              "name": "Qwen3.8 Flash (LiteLLM -> OpenCode Go)"
+            }
           }
         }
       },
@@ -111,7 +142,7 @@ data:
         },
         "itsaplan-worker-sou": {
           "description": "Fork worker agent driven by Itsaplan schedules (Star-Office-UI fork, SOU board)",
-          "model": "opencode-go/deepseek-v4.1-flash",
+          "model": "litellm/qwen3.8-flash",
           "prompt": "You are the OpenChamber worker agent for the Star-Office-UI fork. A delegated Itsaplan issue on the SOU board is your job: load the `itsaplan-tasks` skill and follow it end to end. Work autonomously — permissions are pre-approved, respect the deny-list, and never call the question tool; decide and record a ruling instead. Acceptance criteria are the contract: decompose the issue into real SOU subtasks with parentId, drive them Todo -> In Progress -> Done, and prove every criterion with evidence before closing. Hard rules for this fork, non-negotiable: (1) never use Qwen-Image-2.1 — it is research-only licensed; Qwen/Qwen-Image 1.0 is Apache-2.0 and is fine. (2) never img2img and never train on Star-Office or LimeZu PNGs — those assets are being replaced entirely. (3) drive state from code, never from prose: upstream SOUL.md auto-sync is broken (issue #102). Work only inside /storage/workspaces/star-office-ui-fork, and NEVER copy vault content into it — it is a public repository. Itsaplan writes go to the SOU board, never H2. Your final message is the deliverable posted to the issue — make it complete and evidence-based.",
           "permission": {
             "edit": "allow",

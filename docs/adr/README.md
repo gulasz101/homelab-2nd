@@ -51,10 +51,15 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-046 | The zigbee namespace storage model — durability per workload, not per namespace | Accepted | 2026-10-11 |
 | ADR-047 | Surface Pro 4 boot-slot ownership and linux-surface kernel pinning | Accepted | 2026-10-12 |
 | ADR-048 | One-shot `Job` objects carry a version suffix in their name | Accepted | 2026-10-12 |
+| ADR-049 | Flux deployment health is alerted from kube-state-metrics resource state plus the controller scrape | Accepted | 2026-10-12 |
+| ADR-050 | The SOU fork lane reaches `qwen3.8-flash` through an explicit OpenAI-protocol LiteLLM provider | Accepted | 2026-10-12 |
 
 > Note: ADR-045 is reserved by H2-212 (the Zigbee coordinator radio-head decision) and is not in
 > this index yet; ADR-044's row was added here alongside ADR-046, since the file existed but the
 > index row had been missed.
+
+> Note: ADR-049's row was back-filled alongside ADR-050 (2026-10-12) — its file had landed without
+> an index row, the same miss as ADR-035/036, ADR-044 and ADR-047.
 
 > Note: ADR-047's row was back-filled alongside ADR-048 (2026-10-12) — the file landed without its
 > index row, same as ADR-035/036 and ADR-044.
