@@ -99,6 +99,22 @@ doc_by_name() {
 
 has() { grep -q -- "$2" "$1"; }
 
+# Read one scalar field by its exact key, whatever the indentation:
+#   field <file> <key>   e.g. field svc.yaml nodePort  ->  30239
+field() {
+  awk -v k="$2:" '$1 == k { v = $2; gsub(/"/, "", v); print v; exit }' "$1"
+}
+
+# Print the spec.selector of an already-extracted Service document, sorted, so
+# two selectors can be compared as sets rather than as text.
+svc_selector() {
+  awk '
+    /^  selector:$/ { f = 1; next }
+    f && /^  [^ ]/   { exit }
+    f { sub(/^    /, ""); print }
+  ' "$1" | sort
+}
+
 REPO_FILE="$DIR/hindsight-helm-repository.yaml"
 RELEASE_FILE="$DIR/hindsight-helm-release.yaml"
 
@@ -343,6 +359,102 @@ doc_by_name Service "$release-api" "$R" > "$WORK/svc-doc.yaml"
 has "$WORK/svc-doc.yaml" 'type: ClusterIP' \
   && ok "the api Service is ClusterIP only (exposure is H2-239, not this ticket)" \
   || bad "the api Service is not ClusterIP"
+
+# 5k. H2-239 - LAN/Netbird reachability for the Hermes hosts (which run OUTSIDE
+# the cluster, on the M1 Max). The chart's own Services stay ClusterIP and the
+# chart exposes no nodePort value, so the exposure is one extra, explicitly
+# named Service per component that selects the chart's pods directly - the same
+# shape as apps/honcho/honcho-service.yaml. Never a public hostname for the API.
+SVCFILE="$DIR/hindsight-service.yaml"
+NP_API=30239
+NP_CP=30240
+
+if [ -f "$SVCFILE" ]; then
+  ok "$(basename "$SVCFILE") exists"
+else
+  bad "$(basename "$SVCFILE") missing - the Hermes hosts cannot reach Hindsight over LAN/Netbird"
+fi
+
+# The chosen ports are only meaningful against the ports this cluster already
+# uses, so they are read from the whole apps render (source of truth: the repo).
+grep -oE 'nodePort: [0-9]+' "$WORK/apps.yaml" | awk '{print $2}' | sort > "$WORK/ports.txt"
+for np in "$NP_API" "$NP_CP"; do
+  n=$(grep -cx "$np" "$WORK/ports.txt")
+  if [ "$n" -eq 1 ]; then
+    ok "nodePort $np is used exactly once in the whole apps render"
+  else
+    bad "nodePort $np appears $n time(s) in the apps render (expected exactly 1; a duplicate fails at apply time)"
+  fi
+done
+dups=$(uniq -d "$WORK/ports.txt" | tr '\n' ' ')
+[ -z "$dups" ] \
+  && ok "no duplicate nodePort anywhere in the apps render ($(wc -l < "$WORK/ports.txt") in use)" \
+  || bad "duplicate nodePort(s) in the apps render: $dups"
+
+# The manifest must name the neighbours it avoids, so the next person picking a
+# port does not have to re-derive the list.
+if [ -f "$SVCFILE" ]; then
+  for neighbour in 30193 30800; do
+    grep -q "$neighbour" "$SVCFILE" \
+      && ok "the manifest comments name nodePort $neighbour as a neighbour to avoid" \
+      || bad "the manifest does not comment nodePort $neighbour ($([ "$neighbour" = 30193 ] && echo OpenViking || echo Honcho))"
+  done
+fi
+
+# One exposure Service per component: existence, type, ports, and - the part
+# that rots silently - selector equality against the CHART's own Service. The
+# expected selector is never hardcoded here; it is read from the helm render.
+for spec in \
+  "api:${release}-api-lan:${release}-api:8888:${NP_API}" \
+  "control-plane:${release}-control-plane-lan:${release}-control-plane:3000:${NP_CP}"
+do
+  comp=${spec%%:*}; rest=${spec#*:}
+  myname=${rest%%:*}; rest=${rest#*:}
+  chartname=${rest%%:*}; rest=${rest#*:}
+  port=${rest%%:*}; nodeport=${rest##*:}
+
+  doc_by_name Service "$myname" "$G"   > "$WORK/np-$comp.yaml"
+  doc_by_name Service "$chartname" "$R" > "$WORK/chartsvc-$comp.yaml"
+
+  if [ ! -s "$WORK/np-$comp.yaml" ]; then
+    bad "no NodePort Service $myname for the $comp in the group render"
+    continue
+  fi
+  ok "$comp exposure Service $myname is in the group render"
+
+  [ "$(field "$WORK/np-$comp.yaml" type)" = "NodePort" ] \
+    && ok "$myname is type: NodePort" \
+    || bad "$myname is type '$(field "$WORK/np-$comp.yaml" type)', expected NodePort"
+  [ "$(field "$WORK/np-$comp.yaml" port)" = "$port" ] \
+    && ok "$myname serves port $port (the chart's own Service port)" \
+    || bad "$myname serves port '$(field "$WORK/np-$comp.yaml" port)', expected $port"
+  [ "$(field "$WORK/np-$comp.yaml" targetPort)" = "$port" ] \
+    && ok "$myname targetPort $port (the chart's container port behind targetPort: http)" \
+    || bad "$myname targetPort is '$(field "$WORK/np-$comp.yaml" targetPort)', expected $port"
+  [ "$(field "$WORK/np-$comp.yaml" nodePort)" = "$nodeport" ] \
+    && ok "$myname nodePort $nodeport" \
+    || bad "$myname nodePort is '$(field "$WORK/np-$comp.yaml" nodePort)', expected $nodeport"
+
+  sel_mine=$(svc_selector "$WORK/np-$comp.yaml")
+  sel_chart=$(svc_selector "$WORK/chartsvc-$comp.yaml")
+  if [ -n "$sel_mine" ] && [ "$sel_mine" = "$sel_chart" ]; then
+    ok "$myname selects the chart's $comp pods (selector identical to the chart render: $(tr '\n' ' ' <<<"$sel_mine"))"
+  else
+    bad "$myname selector differs from the chart's $chartname selector:"
+    printf '        ours : %s\n' "$(tr '\n' ' ' <<<"${sel_mine:-<empty>}")"
+    printf '        chart: %s\n' "$(tr '\n' ' ' <<<"${sel_chart:-<empty>}")"
+  fi
+
+  # The chart's own Service must stay ClusterIP: the NodePort is an addition,
+  # not a mutation of the chart's object (that is why no nodePort value exists).
+  [ "$(field "$WORK/chartsvc-$comp.yaml" type)" = "ClusterIP" ] \
+    && ok "the chart's own $chartname Service is still ClusterIP" \
+    || bad "the chart's $chartname Service is no longer ClusterIP"
+done
+
+grep -q '^kind: Ingress' "$G" \
+  && bad "an Ingress appeared in the hindsight group - the API must not be published" \
+  || ok "no Ingress in the group (LAN/Netbird only; the API is never a public hostname)"
 
 head1 "6. wiring and secrets"
 # 6a. every manifest on disk is listed in the kustomization (tests/ is hand-run).
