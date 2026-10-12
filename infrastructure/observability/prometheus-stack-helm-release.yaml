@@ -110,6 +110,100 @@ spec:
           memory: 64Mi
         limits:
           memory: 256Mi
+      # Flux's own controllers do NOT export a revision label -
+      # gotk_reconcile_condition carries only kind/name/namespace/status/type,
+      # so "is what is deployed the current main?" cannot be asked of them.
+      # kube-state-metrics can read the custom resource status and export it as
+      # a label, which is the mechanism Flux documents for resource metrics:
+      #   https://fluxcd.io/flux/monitoring/custom-metrics/
+      # Result: gotk_resource_info{customresource_kind, exported_namespace, name,
+      #   ready, suspended, revision, source_name, ...} = 1
+      # Kustomization.revision = status.lastAppliedRevision,
+      # GitRepository.revision = status.artifact.revision - the two values the
+      # revision-lag alert compares (H2-223).
+      #
+      # The upstream example sets collectors: [] and
+      # --custom-resource-state-only=true. That would delete kube_pod_info and
+      # every other kube_* series and break the existing dashboards, so the
+      # custom resource state is added alongside the default collectors instead.
+      customResourceState:
+        enabled: true
+        config:
+          spec:
+            resources:
+              - groupVersionKind:
+                  group: kustomize.toolkit.fluxcd.io
+                  version: v1
+                  kind: Kustomization
+                metricNamePrefix: gotk
+                metrics:
+                  - name: "resource_info"
+                    help: "The current state of a Flux Kustomization resource."
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                    labelsFromPath:
+                      exported_namespace: [metadata, namespace]
+                      ready: [status, conditions, "[type=Ready]", status]
+                      suspended: [spec, suspend]
+                      revision: [status, lastAppliedRevision]
+                      source_name: [spec, sourceRef, name]
+                      source_kind: [spec, sourceRef, kind]
+                      source_namespace: [spec, sourceRef, namespace]
+              - groupVersionKind:
+                  group: source.toolkit.fluxcd.io
+                  version: v1
+                  kind: GitRepository
+                metricNamePrefix: gotk
+                metrics:
+                  - name: "resource_info"
+                    help: "The current state of a Flux GitRepository resource."
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                    labelsFromPath:
+                      exported_namespace: [metadata, namespace]
+                      ready: [status, conditions, "[type=Ready]", status]
+                      suspended: [spec, suspend]
+                      revision: [status, artifact, revision]
+                      url: [spec, url]
+              - groupVersionKind:
+                  group: helm.toolkit.fluxcd.io
+                  version: v2
+                  kind: HelmRelease
+                metricNamePrefix: gotk
+                metrics:
+                  - name: "resource_info"
+                    help: "The current state of a Flux HelmRelease resource."
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                    labelsFromPath:
+                      exported_namespace: [metadata, namespace]
+                      ready: [status, conditions, "[type=Ready]", status]
+                      suspended: [spec, suspend]
+                      revision: [status, history, "0", chartVersion]
+                      chart_name: [status, history, "0", chartName]
+                      chart_app_version: [status, history, "0", appVersion]
+                      chart_ref_name: [spec, chartRef, name]
+                      chart_source_name: [spec, chart, spec, sourceRef, name]
+      rbac:
+        extraRules:
+          - apiGroups:
+              - kustomize.toolkit.fluxcd.io
+              - source.toolkit.fluxcd.io
+              - helm.toolkit.fluxcd.io
+            resources:
+              - kustomizations
+              - gitrepositories
+              - helmreleases
+            verbs: ["list", "watch"]
 
     prometheus-node-exporter:
       resources:

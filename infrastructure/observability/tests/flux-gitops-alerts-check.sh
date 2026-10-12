@@ -207,5 +207,75 @@ else
   ok "no credential-shaped keys in the new manifests"
 fi
 
+head1 "8. prometheus-stack HelmRelease: kube-state-metrics custom resource state"
+HR="$ROOT/infrastructure/observability/prometheus-stack-helm-release.yaml"
+# The values: block of the HelmRelease, dedented by 4 spaces.
+extract_values() {
+  awk '
+    /^  values:$/ { f = 1; next }
+    f && (/^[^ ]/ || /^  [^ ]/) { f = 0 }
+    f { sub(/^    /, ""); print }
+  ' "$1"
+}
+if extract_values "$HR" > "$WORK/ps.values.yaml" && [ -s "$WORK/ps.values.yaml" ]; then
+  ok "extracted $(wc -l < "$WORK/ps.values.yaml") lines of HelmRelease values"
+else
+  bad "could not extract the values: block from prometheus-stack-helm-release.yaml"
+fi
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+if helm template flux-check prometheus-community/kube-prometheus-stack \
+     --version '>=69.0.0' --skip-tests -f "$WORK/ps.values.yaml" \
+     > "$WORK/ps.render.yaml" 2> "$WORK/ps.render.err"; then
+  ok "helm template kube-prometheus-stack (>=69.0.0) with the live values"
+  CRS=$(awk '/customresourcestate-config$/{f=1} f{print} f&&/^---$/{exit}' "$WORK/ps.render.yaml")
+  printf '%s\n' "$CRS" | grep -q '^    spec:$' \
+    && ok "  custom resource state ConfigMap renders" || bad "  no custom resource state ConfigMap in the render"
+  for k in Kustomization GitRepository HelmRelease; do
+    printf '%s\n' "$CRS" | grep -q "^          kind: ${k}$" \
+      && ok "  exposes ${k}" || bad "  ${k} missing from the custom resource state config"
+  done
+  printf '%s\n' "$CRS" | grep -q '^        metricNamePrefix: gotk$' \
+    && ok "  metric prefix gotk -> gotk_resource_info" || bad "  metric prefix is not gotk"
+  # toYaml expands the flow sequences, so match the block rather than one line.
+  # crs_revision_is <path> : the revision label of some resource must resolve
+  # exactly to that path, e.g. "status/lastAppliedRevision".
+  crs_revision_is() {
+    printf '%s\n' "$CRS" | awk -v path="$1" '
+      BEGIN { n = split(path, want, "/") }
+      /^            revision:$/ {
+        ok = 1
+        for (i = 1; i <= n; i++) {
+          if ((getline l) <= 0) { ok = 0; break }
+          if (l != "            - " want[i]) { ok = 0; break }
+        }
+        if (ok) found = 1
+      }
+      END { exit(found ? 0 : 1) }'
+  }
+  crs_revision_is status/lastAppliedRevision \
+    && ok "  Kustomization revision <- status.lastAppliedRevision" \
+    || bad "  Kustomization revision is not status.lastAppliedRevision"
+  crs_revision_is status/artifact/revision \
+    && ok "  GitRepository revision <- status.artifact.revision" \
+    || bad "  GitRepository revision is not status.artifact.revision"
+  grep -q -- '--custom-resource-state-config-file=' "$WORK/ps.render.yaml" \
+    && ok "  kube-state-metrics is pointed at the config file" || bad "  kube-state-metrics has no custom resource state config file argument"
+  grep -q -- '--custom-resource-state-only' "$WORK/ps.render.yaml" \
+    && bad "  --custom-resource-state-only is set: the default kube_* collectors would be dropped" \
+    || ok "  default collectors kept (no --custom-resource-state-only)"
+  grep -q -- '--resources=.*pods' "$WORK/ps.render.yaml" \
+    && ok "  the pod/node/etc collectors are still enabled" \
+    || bad "  the default collectors are gone - existing dashboards would break"
+  grep -q -- '- kustomizations' "$WORK/ps.render.yaml" \
+    && grep -q -- '- gitrepositories' "$WORK/ps.render.yaml" \
+    && grep -q -- '- helmreleases' "$WORK/ps.render.yaml" \
+    && ok "  ClusterRole grants list/watch on the three Flux kinds" \
+    || bad "  ClusterRole does not grant the Flux resources"
+else
+  bad "helm template failed:"
+  grep -v '^$' "$WORK/ps.render.err" | head -10 | sed 's/^/        /'
+fi
+
+
 printf '\n'
 [ "$fail" -eq 0 ] && { echo "RESULT: all checks passed"; exit 0; } || { echo "RESULT: FAILURES above"; exit 1; }
