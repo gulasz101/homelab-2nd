@@ -76,6 +76,14 @@ Rules that come with it:
 Applied immediately to `zigbee/nodered-mqtt-credential` → `nodered-mqtt-credential-v2` (its
 `spec.template` had changed and could not be applied).
 
+**The rule then proved itself within the hour.** Unblocking Flux immediately exposed a *second* bug in
+that Job which the freeze had been hiding: it ran on `curlimages/curl:8.11.0`, an image with no
+`python3`, while its entire payload is a Python program. It failed on its very first in-cluster run
+with `/bin/sh: python3: not found`. Fixing that is a template change (new image, new command shape),
+so per this ADR it took a **third** name — `nodered-mqtt-credential-v3`, on `python:3.13-alpine`, the
+whole script in Python. Under the old rules that second fix would have frozen `apps` for another
+however-long; under these rules it was two ordinary commits.
+
 ## Consequences
 
 **Good**
@@ -102,12 +110,12 @@ Applied immediately to `zigbee/nodered-mqtt-credential` → `nodered-mqtt-creden
   habit of `kubectl logs job/...` for a finished Job changes.
 - **Bumping re-runs the Job, which for a destructive one-shot is a footgun.** Never convert a
   destructive Job to this convention casually.
-- **Six other Jobs in the repo still use bare names** and remain armed:
-  `nextcloud-oidc-provider-setup`, `honcho-db-migrate`, `itsaplan-oidc-bootstrap`,
-  `zigbee2mqtt-restore-state`, plus the two already-suffixed mattermost ones. They are safe only
-  while their templates never change; they should be converted opportunistically, **when a re-run is
-  acceptable**, not in a sweep. `zigbee2mqtt-restore-state` in particular is deliberately left alone:
-  re-running it is a restore.
+- **Four other Jobs in the repo still use bare names** and remain armed:
+  `nextcloud-oidc-provider-setup`, `honcho-db-migrate`, `itsaplan-oidc-bootstrap`, and
+  `zigbee2mqtt-restore-state`. They are safe only while their templates never change; they should be
+  converted opportunistically, **when a re-run is acceptable**, not in a sweep.
+  `zigbee2mqtt-restore-state` in particular is deliberately left alone: re-running it is a restore.
+  (`mattermost-gitlab-sso-setup-v6` and `mattermost-purge-dead-push-sessions-gen2` already comply.)
 
 ## Alternatives considered
 
