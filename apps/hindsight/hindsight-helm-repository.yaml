@@ -1,0 +1,22 @@
+---
+# HelmRepository for the upstream Hindsight Helm chart.
+#
+# The chart is published as an OCI artifact in GitHub Container Registry, so the
+# source must be declared `type: oci` - a plain `https://` HelmRepository would
+# never find it. Same shape as apps/llm-hub/litellm-helm-repository.yaml; the
+# chart itself is named in the HelmRelease (`chart.spec.chart: hindsight`), the
+# url here is only the repository.
+#
+# Namespace is flux-system on purpose: every HelmRepository in this repo lives
+# there so chart credentials/pulls are managed in one place, and the HelmRelease
+# in namespace `hindsight` refers to it cross-namespace through
+# `spec.chart.spec.sourceRef.namespace: flux-system`.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: hindsight
+  namespace: flux-system
+spec:
+  type: oci
+  interval: 1h
+  url: oci://ghcr.io/vectorize-io/charts

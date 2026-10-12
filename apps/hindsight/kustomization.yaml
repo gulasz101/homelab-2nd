@@ -37,3 +37,11 @@ resources:
   # Order therefore matters: secrets, then the Cluster, then its backups.
   - hindsight-db-postgres-cluster.yaml
   - hindsight-scheduled-backup.yaml
+
+  # --- Helm chart source + release (H2-238) ---
+  # The HelmRepository is declared in flux-system (with every other one in this
+  # repo) and the HelmRelease in hindsight refers to it cross-namespace, so the
+  # repository has to come first: Flux resolves the sourceRef before it renders a
+  # release, and an unresolvable source leaves the HelmRelease NotReady.
+  - hindsight-helm-repository.yaml
+  - hindsight-helm-release.yaml

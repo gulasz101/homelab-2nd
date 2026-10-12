@@ -1,0 +1,190 @@
+---
+# Hindsight API + control plane HelmRelease (H2-238, epic H2-232)
+#
+# The decided configuration lives in apps/hindsight/README.md - this file is the
+# machine-readable copy of that table. Nothing here is exploratory.
+#
+# Summary of the decisions expressed below:
+#   - chart pinned 0.10.3 and every image tag pinned to 0.10.3 as well. The chart
+#     derives an unset image tag from .Values.version -> Chart.appVersion, so a
+#     chart-only pin would let a future chart bump move the app images silently.
+#     Two knobs, both pinned.
+#   - slim images: embeddings and reranking are served by our own TEI deployments,
+#     so the API does not need the ~9 GB full bundle with its baked-in models.
+#   - database: the CNPG cluster from H2-236, never the chart's bundled Postgres.
+#     The password is read from key `postgres-password` of `hindsight-secrets`
+#     because Helm values cannot reference a secret in another namespace - which is
+#     exactly why H2-235 mirrored the DB password into this namespace's secret.
+#   - LLM traffic goes to the local LiteLLM gateway, not to an upstream vendor.
+#   - CPU TEI only: the host GPU is a Maxwell (sm_52) part and TEI's CUDA images
+#     need compute capability >= 7.5.
+#   - worker.enabled false: the API's internal worker is plenty for one user, and
+#     node CPU *requests* are the binding constraint. Revisit on sustained backlog.
+#
+# Exposure is NOT decided here: the API gets a LAN/Netbird NodePort in H2-239, so
+# both Services stay at the chart's ClusterIP default.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hindsight
+  namespace: hindsight
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: hindsight
+      version: "0.10.3"
+      sourceRef:
+        kind: HelmRepository
+        name: hindsight
+        namespace: flux-system
+      interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # ------------------------------------------------------------------
+    # Version pinning - knob 1 of 2
+    # ------------------------------------------------------------------
+    # Global image tag for every component that does not set its own tag below.
+    # Belt and braces: if a future chart version adds a component, this keeps it
+    # on 0.10.3 instead of letting it follow the new chart's appVersion. The four
+    # components we know about are pinned individually further down (knob 2)
+    # because the api/worker need the `-slim` suffix, which this cannot express.
+    version: "0.10.3"
+
+    # The secret the chart's own templates read:
+    #   - every key is envFrom'd into the api, worker and control-plane containers
+    #     (`HINDSIGHT_API_LLM_API_KEY` and `HINDSIGHT_API_TENANT_API_KEY` arrive
+    #     this way)
+    #   - `postgres-password` is additionally referenced by name, because
+    #     `postgres-password` is not a valid environment variable name and is
+    #     therefore skipped by envFrom. It feeds $(POSTGRES_PASSWORD), which the
+    #     chart interpolates into HINDSIGHT_API_DATABASE_URL.
+    existingSecret: hindsight-secrets
+
+    # ------------------------------------------------------------------
+    # API
+    # ------------------------------------------------------------------
+    api:
+      # knob 2 of 2: the api image tag is explicit so a chart bump cannot move it
+      # (see the version block above). `-slim` because embeddings/reranking are
+      # external (our TEI) and the full bundle is ~9 GB of models we never use.
+      image:
+        repository: ghcr.io/vectorize-io/hindsight-api
+        tag: "0.10.3-slim"
+        pullPolicy: IfNotPresent
+
+      # HINDSIGHT_API_PORT aside, these are the only api settings the chart does
+      # not derive itself. Explicit env beats envFrom, so these win over anything
+      # with the same name inside `hindsight-secrets`.
+      env:
+        # LLM: the local LiteLLM gateway, which already fronts every provider the
+        # homelab uses (and holds the real upstream keys). `litellm` is a
+        # first-class Hindsight provider; the model name is a LiteLLM route, not
+        # an upstream model id.
+        HINDSIGHT_API_LLM_PROVIDER: litellm
+        HINDSIGHT_API_LLM_MODEL: nemotron-3-nano-30b-ollama
+        HINDSIGHT_API_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000
+        # MCP auth ON: the tenant extension makes the API require the tenant key
+        # that arrives via envFrom (HINDSIGHT_API_TENANT_API_KEY).
+        HINDSIGHT_API_TENANT_EXTENSION: "hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension"
+        # TEI providers. The chart ALSO sets these two (plus the TEI URLs) when
+        # tei.embedding.enabled / tei.reranker.enabled are true - its entries are
+        # rendered after this env block and carry the same value, so the effective
+        # value is tei either way. Kept explicit here so the embedding/reranking
+        # backend is visible in one place in our own values.
+        HINDSIGHT_API_EMBEDDINGS_PROVIDER: tei
+        HINDSIGHT_API_RERANKER_PROVIDER: tei
+
+      # External models, external TEI: a model-cache PVC would only pin the api pod
+      # to one node (ReadWriteOnce) and there is nothing local to cache.
+      persistence:
+        modelCache:
+          enabled: false
+
+      # Requests are deliberately modest: the node is already at ~78% CPU requests,
+      # and this workload is I/O-bound on Postgres and LiteLLM. Limits stay generous
+      # because the burst (embedding/consolidation passes) is short and rare.
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: 2000m
+          memory: 3Gi
+
+      # ClusterIP, on purpose - H2-239 adds the LAN/Netbird NodePort.
+      service:
+        type: ClusterIP
+
+    # ------------------------------------------------------------------
+    # Control plane (Next.js UI)
+    # ------------------------------------------------------------------
+    controlPlane:
+      # The control plane IS the full image: upstream publishes no `-slim` variant
+      # for it, so it is pinned to the plain 0.10.3 tag.
+      image:
+        repository: ghcr.io/vectorize-io/hindsight-control-plane
+        tag: "0.10.3"
+        pullPolicy: IfNotPresent
+
+    # ------------------------------------------------------------------
+    # Worker
+    # ------------------------------------------------------------------
+    worker:
+      # The API's internal worker handles one user's traffic. Turning this on adds a
+      # second pod that would also hold a slice of the model cache and wait in the
+      # CPU-request queue. Revisit when the internal worker shows a sustained
+      # backlog (that is the trigger, not "we have CPU one day").
+      enabled: false
+      image:
+        # Inert while enabled: false - set for the same reason as the api tag, so
+        # whoever flips the switch gets the slim image and not a 9 GB pull.
+        repository: ghcr.io/vectorize-io/hindsight-api
+        tag: "0.10.3-slim"
+        pullPolicy: IfNotPresent
+
+    # ------------------------------------------------------------------
+    # Database: our CNPG cluster, never the chart's bundled Postgres
+    # ------------------------------------------------------------------
+    postgresql:
+      enabled: false
+      external:
+        host: hindsight-db-rw.hindsight.svc.cluster.local
+        port: 5432
+        database: hindsight
+        username: hindsight
+        # No password here and none possible: this file is public. The chart reads
+        # `postgres-password` from existingSecret (above) and interpolates it into
+        # HINDSIGHT_API_DATABASE_URL. Do not add `external.password` - that would
+        # both leak a credential and render a chart-managed Secret.
+
+    # ------------------------------------------------------------------
+    # Embeddings + reranker: CPU TEI sidecars of this chart
+    # ------------------------------------------------------------------
+    # Both models are CPU-served on purpose. The host GPU is a GTX 970M (Maxwell,
+    # compute capability 5.2) and TEI's published CUDA images require >= 7.5. The
+    # `test-embeddings-inference` docs are indexed in docs-mcp if that is ever
+    # revisited (moving embeddings to the GPU's Ollama is a provider swap, see the
+    # README). Image tag and resources stay at the chart's cpu-1.8.3 defaults, which
+    # are pinned by the chart version.
+    tei:
+      embedding:
+        enabled: true
+      reranker:
+        enabled: true
+
+    # ------------------------------------------------------------------
+    # Metrics: the API's /metrics endpoint into the homelab Prometheus
+    # ------------------------------------------------------------------
+    # Only the api monitor renders (the worker one is gated on worker.enabled).
+    # `release: prometheus-stack` is the label the live Prometheus selects on.
+    metrics:
+      serviceMonitor:
+        enabled: true
+        labels:
+          release: prometheus-stack
