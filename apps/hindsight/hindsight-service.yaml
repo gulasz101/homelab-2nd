@@ -1,0 +1,85 @@
+---
+# ============================================================
+# LAN/Netbird NodePort exposure for Hindsight (H2-239, epic H2-232)
+#
+# Why this file exists at all: the Hermes hosts (M1 Max) run OUTSIDE the
+# cluster, so a ClusterIP is no use to them. The chart can be told to make its
+# own Service NodePort (`api.service.type`), but it exposes no value for the
+# port NUMBER - and an ephemeral NodePort would come out different on every
+# rebuild, which is useless for a config file living in another repo. So the
+# chart's own Services stay ClusterIP and these two select the same pods on
+# fixed ports. Same shape as apps/honcho/honcho-service.yaml and
+# apps/openviking/openviking-service.yaml.
+#
+# Reachable at (LAN)        192.168.1.179:30239   Hindsight API (MCP + REST)
+#                           192.168.1.179:30240   Control Plane UI
+# and on the node's Netbird address, same ports.
+#
+# NOT published: no Ingress, no Cloudflare tunnel, no public hostname for the
+# API - ever. The Control Plane gets its own tunnel in a later ticket; until
+# that exists this NodePort is the only way to look at it at all.
+#
+# Port choice, read from the live list in this repo on 2026-10-12 (the repo is
+# the source of truth, guardrail 1 - and the worker's cluster ServiceAccount is
+# not permitted to list Services, so the repo IS the live list):
+#     30030 homepage             30193 OPENVIKING   <-- neighbour
+#     30069 prowlarr             30195 openchamber-syncthing
+#     30076 bazarr               30530 shlink-web
+#     30078 radarr               30800 HONCHO       <-- neighbour
+#     30080 gluetun              30810 pihole-oauth2-proxy
+#     30089 sonarr
+#     30096 jellyfin
+#     30114 ollama-embeddings
+#   -> 30239 / 30240 are free and deliberately a PAIR: the API keeps the ticket
+#      number and the UI is the one after it, so nobody has to go looking for
+#      the second port of the same service.
+# ============================================================
+
+# --- API: the MCP endpoint the Hermes plugin talks to ----------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: hindsight-api-lan
+  namespace: hindsight
+spec:
+  type: NodePort
+  selector:
+    # Taken from the chart's own Service in the rendered output, not from
+    # memory (apps/hindsight/tests/render-check.sh compares the two blocks):
+    #   helm template hindsight oci://ghcr.io/vectorize-io/charts/hindsight \
+    #     --version 0.10.3 -f <the HelmRelease's values>  ->  Service/hindsight-api
+    # whose spec.selector is exactly these three labels.
+    app.kubernetes.io/name: hindsight
+    app.kubernetes.io/instance: hindsight
+    app.kubernetes.io/component: api
+  ports:
+    # The chart's Service is ClusterIP on port 8888 with `targetPort: http`;
+    # the api container names 8888 `http`. Numeric targetPort here on purpose -
+    # it says the same thing without depending on the name surviving a bump.
+    - name: http
+      port: 8888
+      targetPort: 8888
+      nodePort: 30239
+
+---
+# --- Control plane: the Next.js UI, over LAN/Netbird until its tunnel ------
+apiVersion: v1
+kind: Service
+metadata:
+  name: hindsight-control-plane-lan
+  namespace: hindsight
+spec:
+  type: NodePort
+  selector:
+    # Same three labels as the chart's Service/hindsight-control-plane in the
+    # render above, with `component: control-plane`.
+    app.kubernetes.io/name: hindsight
+    app.kubernetes.io/instance: hindsight
+    app.kubernetes.io/component: control-plane
+  ports:
+    # Chart Service: ClusterIP, port 3000, `targetPort: http`; the control-plane
+    # container names 3000 `http`.
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30240

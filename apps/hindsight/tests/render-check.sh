@@ -368,7 +368,7 @@ has "$WORK/svc-doc.yaml" 'type: ClusterIP' \
 SVCFILE="$DIR/hindsight-service.yaml"
 NP_API=30239
 NP_CP=30240
-
+head1 "5k. H2-239: LAN/Netbird NodePort exposure (api $NP_API, control plane $NP_CP)"
 if [ -f "$SVCFILE" ]; then
   ok "$(basename "$SVCFILE") exists"
 else

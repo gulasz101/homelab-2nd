@@ -45,3 +45,10 @@ resources:
   # release, and an unresolvable source leaves the HelmRelease NotReady.
   - hindsight-helm-repository.yaml
   - hindsight-helm-release.yaml
+
+  # --- LAN/Netbird exposure (H2-239) ---
+  # The chart's own Services stay ClusterIP: it has no nodePort value, so the
+  # Hermes hosts (outside the cluster) reach Hindsight through these two fixed
+  # NodePorts - api 30239, control plane 30240, no public hostname. The chosen
+  # ports are documented in the file along with the neighbours they avoid.
+  - hindsight-service.yaml
