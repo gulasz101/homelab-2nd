@@ -1,0 +1,31 @@
+---
+# ============================================================
+# Hindsight — agent memory platform (H2-232)
+#
+# Nested kustomization, same shape as apps/zigbee/ and apps/arr-stack/: the
+# group has one render path and its own file list, so the shared
+# apps/kustomization.yaml only ever carries the single `- hindsight/` entry.
+#
+# ORDER MATTERS for the SOPS secrets: they must exist before the HelmRelease
+# consumes them (the api pod reads `postgres-password` out of
+# hindsight-secrets), and before the CNPG cluster bootstraps from
+# hindsight-db-credentials.
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+
+  # --- credentials (SOPS; encrypted with the repo age recipient) ---
+  # hindsight-db-credentials  : username+password for the CNPG app role
+  #                             (referenced by bootstrap.initdb.secret)
+  # hindsight-secrets         : the chart's existingSecret -- envFrom'd, AND the
+  #                             source of `postgres-password` that
+  #                             api-deployment/worker-statefulset read whenever
+  #                             postgresql.enabled=false. Also carries
+  #                             HINDSIGHT_API_LLM_API_KEY (the LiteLLM virtual
+  #                             key `memory-hindsight`) and the MCP tenant key.
+  # hindsight-minio-backup-creds : OMV MinIO user scoped to cnpg-backups/hindsight
+  - hindsight-db-credentials.sops.yaml
+  - hindsight-secrets.sops.yaml
+  - hindsight-minio-backup-creds.sops.yaml

@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: hindsight-minio-backup-creds
+    namespace: hindsight
+type: Opaque
+stringData:
+    ACCESS_KEY_ID: ENC[AES256_GCM,data:X3IZKmP/dutOzf6LRiHZt6M=,iv:m8BuDo6X+v7QDFNJ+sz1LxfNEX6fgeo5sKKda6H+7Qc=,tag:F6+gPmZcwhEvvSM6ozECLw==,type:str]
+    ACCESS_SECRET_KEY: ENC[AES256_GCM,data:zI0oR3oIpbDDoXtXMw/I2uhDrV7Qr0o/J1ro5AeW7pA=,iv:h6K6QSSmnKU7XuaZs5/AA6PoqrYthDIstPTWz4877oQ=,tag:5jWg3vBFANVtbjkMIb7Hig==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBBMFBxWGVCYUhDc1ZIWDgx
+            SXBQWW1iTDRoakRXQnl5L25zYUY3VmVYQkEwCjlnM0M5L0N2dDJjbXRDU0hyUlRq
+            NnpvQmdWMzBIaUdQV29SbXFHT2l5bmcKLS0tIEdKcVZYSlBvcXFZOVZ4bXpHbDA0
+            WnJBODlNZERyTlZTcDJoaEx0YWdNU3cKbon2cIms89eGQa3VWH0G5kVYkPjgFTGf
+            iT3rea9xTua04vD1AVqosh0edHQxHS6VNnN1r9MAm4IDLnYWLDMZ9Q==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-12T21:25:21Z"
+    mac: ENC[AES256_GCM,data:jZXIzF5b3iR9JID7LXTN8COjXR32d0FpinZuXvFbQUoJDpBudtHslyxjh02H54DSBaKhFx0aUUg6nmORhM4dx43WhA5PLfuSgb+Rq7MQAOe7The18bQWTUX3QbSOq7spS2I7L0NweUgrc9IdNu4L1Yny2PtK+yexEwERU9hZ56U=,iv:o0XmaEuwe2wBAOBbiXWCh3ybPWJMHzeit6gtObopRQA=,tag:nA8aMd/MR0I/+eQv5ozEcw==,type:str]
+    version: 3.13.1

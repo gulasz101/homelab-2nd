@@ -506,6 +506,14 @@ resources:
   - mail-archiver/mailarchiver-dashboard-configmap.yaml
 
   # ============================================================
+  # hindsight namespace (H2-232)
+  # Self-hosted Hindsight (agent memory) replacing Honcho + OpenViking.
+  # Nested kustomization, like zigbee/ and arr-stack/, so this group has
+  # one render path. Live DB is CNPG (pgvector) with barman -> OMV MinIO.
+  # ============================================================
+  - hindsight/
+
+  # ============================================================
   # zigbee namespace (H2-210 radio head + H2-214 full stack)
   # H2-210 created the namespace and ran zigbee2mqtt in-cluster on the Orange Pi
   # Zero 2W `zigbee-node` worker that physically owns the coordinator dongle.
