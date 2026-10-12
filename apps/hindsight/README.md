@@ -87,6 +87,14 @@ apps/hindsight/hindsight-dashboard-configmap.yaml   # the 3 upstream Grafana das
 
 ## Gotchas already paid for upstream
 
+- **Do NOT "fix" the `***` you will see in a rendered `HINDSIGHT_API_DATABASE_URL`.** The chart
+  renders `postgresql://hindsight:$(POSTGRES_PASSWORD)@<host>:5432/hindsight`, where
+  `$(POSTGRES_PASSWORD)` is Kubernetes env interpolation resolved from the `POSTGRES_PASSWORD` env
+  entry that the chart emits **before** it (that ordering is load-bearing). Anything that displays
+  tool output masks a credential-shaped URL and shows you `***` instead of the token. Verified
+  2026-10-12 by measuring the field: **20 characters** = the length of `$(POSTGRES_PASSWORD)`, and
+  zero literal `***` anywhere in the rendered file. If you see `***`, it is the display, not the
+  manifest.
 - liveness `/health/live` (no DB I/O) vs readiness `/health` (queries the DB) — deliberately
   different; do not "fix" them to match.
 - `recall_min_scores: {"reranker": 0.25}` is the fix for off-topic recall noise in the Hermes
