@@ -1,0 +1,53 @@
+---
+# PodMonitor: scrape every GitOps Toolkit controller pod in flux-system.
+#
+# Nothing scraped flux-system before this, which is why the 20h `apps`
+# Kustomization freeze on 2026-10-12 produced no signal at all.
+#
+# Why a PodMonitor and not Service + ServiceMonitor: the controllers already
+# carry the pod label `app.kubernetes.io/part-of: flux`, and every deployed
+# controller exposes the same named container port `http-prom` (8080), so one
+# PodMonitor covers all of them. It also avoids adding a second Service named
+# `source-controller`/`kustomize-controller`, which would either collide with
+# the existing `source-controller` Service (port 80 -> 9090) or force ugly
+# suffixed names. This is the shape Flux upstream documents for monitoring
+# the controllers.
+#
+# Ports (verified against clusters/production/flux-system/gotk-components.yaml):
+#   source-controller       v1.8.5  8080 http-prom
+#   kustomize-controller    v1.8.5  8080 http-prom
+#   helm-controller         v1.5.5  8080 http-prom
+#   notification-controller v1.8.4  8080 http-prom
+#
+# This exposes gotk_reconcile_condition, gotk_reconcile_duration_seconds,
+# gotk_suspend_status, controller_runtime_reconcile_total, workqueue_* and the
+# Go runtime metrics. The revision-labelled resource metrics come from
+# kube-state-metrics instead - see
+# infrastructure/observability/prometheus-stack-helm-release.yaml.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flux-controllers
+  namespace: flux-system
+  labels:
+    release: prometheus-stack
+spec:
+  # The PodMonitor lives in flux-system; be explicit rather than relying on the
+  # default "own namespace" behaviour.
+  namespaceSelector:
+    matchNames:
+      - flux-system
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: flux
+  podMetricsEndpoints:
+    - port: http-prom
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      # Surface a clean `controller` label from the pod's component label so
+      # alerts and dashboards can name the offending controller.
+      relabelings:
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+          targetLabel: controller

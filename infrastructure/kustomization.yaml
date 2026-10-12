@@ -39,6 +39,8 @@ resources:
   - observability/homelab-node-prometheus-rules.yaml
   - observability/homelab-node-alertmanager-config.yaml
   - observability/homelab-node-mattermost-webhook-url.sops.yaml
+  # GitOps control-plane health: flux-system controller metrics
+  - observability/flux-controller-podmonitor.yaml
   # CloudNativePG backup health: PodMonitor + PrometheusRule + AlertmanagerConfig
   - observability/cnpg-instance-podmonitor.yaml
   - observability/cnpg-backup-prometheus-rules.yaml
