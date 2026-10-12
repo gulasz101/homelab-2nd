@@ -103,7 +103,10 @@ the whole experiment later is "drop one file + its three references".
 - Either provider's balance hits zero or `GET /v1/usage` starts reporting `isValid: false`
   — remove that provider's routes.
 - A provider starts failing or timing out consistently — the grey routes have no fallback
-  by design; remove rather than paper over.
+  by design; remove rather than paper over. **Amended by ADR-051**, which adds a *profile-level*
+  fallback from one reseller's copy of a model to the other's: "no fallback by design" is read here
+  as guarding against propping up a *chronically* bad provider, not against surviving a blip. The
+  rule for a provider failing consistently is unchanged.
 - The keys are needed for anything beyond evaluation — this ADR's "never for sensitive
   content" rule would have to be revisited by the Supreme Leader explicitly.
 - A first-party Claude route (or a vetted reseller) becomes available — retire the whole
