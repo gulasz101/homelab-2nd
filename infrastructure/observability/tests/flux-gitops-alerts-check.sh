@@ -158,9 +158,9 @@ if PR=$(block PrometheusRule flux-gitops-alerts "$RENDER") && block_found "$PR";
   # namespace label for the Mattermost message title.
   n_alerts=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*- alert: ')
   n_group=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*alertgroup: flux-gitops$')
-  n_ns=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*namespace: flux-system$')
+  n_ns=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]{4,}namespace: observability$')
   [ "$n_alerts" -eq 5 ] && [ "$n_alerts" -eq "$n_group" ] && [ "$n_alerts" -eq "$n_ns" ] \
-    && ok "  all ${n_alerts} alerts carry alertgroup: flux-gitops and namespace: flux-system" \
+    && ok "  all ${n_alerts} alerts carry alertgroup: flux-gitops and namespace: observability" \
     || bad "  ${n_alerts} alerts but ${n_group} alertgroup / ${n_ns} namespace labels"
   # gotk_reconcile_condition does NOT exist in Flux v1.8.5's live output (it was
   # verified absent against /api/v1/label/__name__/values). A rule written
@@ -197,6 +197,20 @@ if AC=$(block AlertmanagerConfig flux-gitops-mattermost-alerts "$RENDER") && blo
   printf '%s\n' "$AC" | grep -qE '^[[:space:]]*name: homelab-node-mattermost-webhook-url$' \
     && ok "  reuses the existing SOPS Mattermost webhook Secret" \
     || bad "  does not reference homelab-node-mattermost-webhook-url"
+  # THE ROUTING CONTRACT. prometheus-operator's default
+  # alertmanagerConfigMatcherStrategy (OnNamespace) injects
+  # `namespace="<this AlertmanagerConfig's namespace>"` into the generated
+  # route, so an alert is only matched if its `namespace` label equals the
+  # AlertmanagerConfig's namespace. When it does not, the alert fires, falls
+  # through to the top-level `receiver: "null"`, and nothing reaches Mattermost
+  # - silently. Assert the two namespaces agree.
+  if [ -n "${PR:-}" ]; then
+    ac_ns=$(printf '%s\n' "$AC" | awk '/^[[:space:]]*namespace:/ {print $2; exit}')
+    n_route=$(printf '%s\n' "$PR" | grep -cE "^[[:space:]]{4,}namespace: ${ac_ns}$")
+    [ "$n_route" -eq 5 ] \
+      && ok "  every rule's namespace label matches the AlertmanagerConfig namespace (${ac_ns}) - the alert can actually route" \
+      || bad "  ${n_route} of 5 rules carry namespace=${ac_ns}; the rest would be routed to the null receiver and never reach Mattermost"
+  fi
 else
   bad "AlertmanagerConfig/flux-gitops-mattermost-alerts not found in the render"
 fi

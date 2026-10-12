@@ -152,11 +152,46 @@ GitRepository set and become a permanent false positive.
 `for: 15m` on all five. kustomize-controller reacts to a source change immediately, so a normal
 rollout closes the lag gap in seconds; only a genuine failure holds it open.
 
-### 4. Route it like everything else
+### 4. Route it like everything else — and label the alerts with the CONFIG's namespace
 
 `infrastructure/observability/flux-gitops-alertmanager-config.yaml` matches `alertgroup: flux-gitops`
 and sends to the existing `homelab-node-mattermost-webhook-url` SOPS Secret with `sendResolved: true`,
 identical in shape to the node and CNPG configs.
+
+**The alerts carry `namespace: observability`, not `namespace: flux-system`** — even though every
+object they describe lives in `flux-system`. That is not sloppiness, it is a hard requirement of
+prometheus-operator's default `alertmanagerConfigMatcherStrategy: OnNamespace`: the operator injects
+`namespace="<the AlertmanagerConfig's own namespace>"` into every route it generates, so an alert is
+only matched if its `namespace` label equals the config's namespace. Confirmed in the live generated
+config:
+
+```yaml
+# curl -s <alertmanager>/api/v2/status | jq -r .config.original
+  - receiver: observability/flux-gitops-mattermost-alerts/flux-gitops-mattermost
+    matchers:
+    - alertgroup="flux-gitops"
+    - namespace="observability"     # <- injected by the operator, not written by hand
+    continue: true
+```
+
+The first version of these rules labelled the alerts `namespace: flux-system`, and the failure was
+**silent**: the alert fired, matched no route, fell through to the top-level `receiver: "null"`, and
+reached nobody. Observed live:
+
+```
+$ curl -s <alertmanager>/api/v2/alerts?active=true | jq '.[] | select(.labels.alertname=="FluxKustomizationNotReady") | .receivers'
+["null"]
+```
+
+This is the same shape of bug as the phantom metric, one layer along: everything reports fine, and
+nothing happens. The two labels therefore must agree, and the render check now asserts it explicitly.
+The real object namespace is still on every alert as `exported_namespace` (and named in the
+description), so nothing is lost.
+
+The alternative — putting the AlertmanagerConfig in `flux-system` so the injected matcher reads
+`namespace="flux-system"` — was rejected because the AlertmanagerConfig resolves `apiURL`'s Secret in
+its **own** namespace, and the Mattermost webhook Secret lives in `observability`. Moving the config
+would mean duplicating a credential, which is not worth a nicer label.
 
 ### 5. What this does and does not cover
 
@@ -217,6 +252,11 @@ need a GitHub API comparison — a different mechanism (CronJob/Exporter), out o
 - **`health=ok` in `/api/v1/rules` is not evidence that an alert works.** Three rules shipped in the
   first push of this work reported `health=ok` while referencing a metric that does not exist. The
   only thing that catches that is proving the metric live, and then firing the alert on purpose.
+- **Routing is a second silent failure point.** An alert that fires and is routed to the `null`
+  receiver looks identical, from the ticket's point of view, to an alert that never fired. Both were
+  hit in this one change, and both were only found by firing the alert deliberately and then reading
+  `/api/v2/alerts` for the `receivers` field. The render check asserts the namespace-label/routing
+  contract so the second one cannot recur.
 
 ## Alternatives considered
 
