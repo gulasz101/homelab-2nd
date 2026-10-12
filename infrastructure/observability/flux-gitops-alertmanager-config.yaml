@@ -1,0 +1,37 @@
+---
+# AlertmanagerConfig: route Flux GitOps deployment-health alerts to the existing
+# Mattermost webhook via the kube-prometheus-stack Alertmanager, formatted as
+# Slack messages so Mattermost renders them nicely. Same shape as
+# homelab-node-alertmanager-config.yaml and cnpg-backup-alertmanager-config.yaml
+# - the Prometheus Operator resolves urlSecret in the AlertmanagerConfig's own
+# namespace, so the existing homelab-node-mattermost-webhook-url SOPS Secret is
+# reused rather than duplicated.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: flux-gitops-mattermost-alerts
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: flux-gitops-mattermost
+    matchers:
+      - name: alertgroup
+        value: flux-gitops
+        matchType: "="
+  receivers:
+    - name: flux-gitops-mattermost
+      slackConfigs:
+        - apiURL:
+            name: homelab-node-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.namespace }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.namespace }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

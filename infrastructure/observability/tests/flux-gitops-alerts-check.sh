@@ -5,6 +5,9 @@
 # kubeconform -strict, and then asserts the properties a schema cannot express
 # (rule labels, routing matchers, secret shape).
 #
+# Structural greps use `^[[:space:]]*` because kubectl kustomize re-indents
+# sequences; pinning exact indentation would break on an unrelated refactor.
+#
 # Not listed in infrastructure/kustomization.yaml on purpose - Flux never sees
 # this directory.
 #
@@ -27,7 +30,6 @@ KUBECONFORM=(kubeconform -strict -summary -kubernetes-version "$K8S_VERSION"
 fail=0
 ok()   { printf '  ok    %s\n' "$1"; }
 bad()  { printf '  FAIL  %s\n' "$1"; fail=1; }
-note() { printf '  note  %s\n' "$1"; }
 head1() { printf '\n== %s\n' "$1"; }
 
 RENDER="$WORK/infrastructure.yaml"
@@ -56,16 +58,14 @@ block() {
     }
   ' "$file"
 }
-
-# Non-empty output of block() means the document was found.
 block_found() { [ -n "$1" ]; }
 
 # Collect the objects this work introduces so they can be validated strictly,
 # with CRD schemas, on their own.
 collect_own() {
-  local kind="$1" name="$2"
+  local kind="$1" name="$2" b
   if b=$(block "$kind" "$name" "$RENDER") && block_found "$b"; then
-    printf '%s\n---\n' "$b" >> "$OWN"
+    printf '%s\n' "$b" >> "$OWN"
     return 0
   fi
   return 1
@@ -92,11 +92,10 @@ fi
 
 head1 "3. kubeconform -strict"
 : > "$OWN"
-collect_own PodMonitor flux-controllers        || true
-collect_own PrometheusRule flux-gitops-alerts  || true
-collect_own AlertmanagerConfig flux-gitops-mattermost-alerts || true
+collect_own PodMonitor flux-controllers                          || true
+collect_own PrometheusRule flux-gitops-alerts                    || true
+collect_own AlertmanagerConfig flux-gitops-mattermost-alerts     || true
 if [ -s "$OWN" ]; then
-  # Strict, with the datree CRD catalog, over exactly the objects this work adds.
   if kubeconform -strict -summary -kubernetes-version "$K8S_VERSION" \
        -schema-location default -schema-location "$CRD_SCHEMA" \
        "$OWN" > "$WORK/own.txt" 2>&1; then
@@ -125,15 +124,15 @@ fi
 head1 "4. PodMonitor flux-controllers (flux-system controller metrics)"
 if PM=$(block PodMonitor flux-controllers "$RENDER") && block_found "$PM"; then
   ok "PodMonitor/flux-controllers renders"
-  printf '%s\n' "$PM" | grep -q '^  namespace: flux-system$' \
+  printf '%s\n' "$PM" | grep -qE '^[[:space:]]*namespace: flux-system$' \
     && ok "  lives in flux-system" || bad "  not in flux-system"
-  printf '%s\n' "$PM" | grep -q '^    - flux-system$' \
+  printf '%s\n' "$PM" | grep -qE '^[[:space:]]*- flux-system$' \
     && ok "  namespaceSelector matchNames: [flux-system]" || bad "  namespaceSelector does not pin flux-system"
-  printf '%s\n' "$PM" | grep -q '^      app.kubernetes.io/part-of: flux$' \
+  printf '%s\n' "$PM" | grep -qE '^[[:space:]]*app\.kubernetes\.io/part-of: flux$' \
     && ok "  selects app.kubernetes.io/part-of: flux" || bad "  selector does not use part-of: flux"
-  printf '%s\n' "$PM" | grep -q '^    port: http-prom$' \
+  printf '%s\n' "$PM" | grep -qE '^[[:space:]]*port: http-prom$' \
     && ok "  scrapes the named port http-prom" || bad "  does not scrape http-prom"
-  printf '%s\n' "$PM" | grep -q '^    path: /metrics$' \
+  printf '%s\n' "$PM" | grep -qE '^[[:space:]]*path: /metrics$' \
     && ok "  path /metrics" || bad "  path is not /metrics"
 else
   bad "PodMonitor/flux-controllers not found in the render"
@@ -142,27 +141,31 @@ fi
 head1 "5. PrometheusRule flux-gitops-alerts"
 if PR=$(block PrometheusRule flux-gitops-alerts "$RENDER") && block_found "$PR"; then
   ok "PrometheusRule/flux-gitops-alerts renders"
-  printf '%s\n' "$PR" | grep -q '^  namespace: observability$' \
+  printf '%s\n' "$PR" | grep -qE '^[[:space:]]*namespace: observability$' \
     && ok "  lives in observability (the Prometheus ruleNamespaceSelector is {})" \
     || bad "  not in observability"
   # The trap this work exists to avoid: the Prometheus CR's ruleSelector is
   # {matchLabels: {release: prometheus-stack}}, so a rule without that label is
   # silently ignored.
-  printf '%s\n' "$PR" | grep -q '^    release: prometheus-stack$' \
+  printf '%s\n' "$PR" | grep -qE '^[[:space:]]*release: prometheus-stack$' \
     && ok "  carries label release: prometheus-stack (ruleSelector match)" \
     || bad "  missing label release: prometheus-stack - Prometheus would ignore this rule"
   for a in FluxKustomizationNotReady FluxHelmReleaseNotReady FluxGitRepositoryNotReady FluxKustomizationRevisionLagging; do
-    printf '%s\n' "$PR" | grep -q "^        - alert: ${a}$" \
+    printf '%s\n' "$PR" | grep -qE "^[[:space:]]*- alert: ${a}$" \
       && ok "  rule ${a}" || bad "  rule ${a} missing"
   done
   # Every alert must carry the label the AlertmanagerConfig routes on, and a
   # namespace label for the Mattermost message title.
-  n_alerts=$(printf '%s\n' "$PR" | grep -c '^        - alert: ')
-  n_group=$(printf '%s\n' "$PR" | grep -c '^            alertgroup: flux-gitops$')
-  n_ns=$(printf '%s\n' "$PR" | grep -c '^            namespace: flux-system$')
-  [ "$n_alerts" -eq "$n_group" ] && [ "$n_alerts" -eq "$n_ns" ] \
+  n_alerts=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*- alert: ')
+  n_group=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*alertgroup: flux-gitops$')
+  n_ns=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*namespace: flux-system$')
+  [ "$n_alerts" -ge 4 ] && [ "$n_alerts" -eq "$n_group" ] && [ "$n_alerts" -eq "$n_ns" ] \
     && ok "  all ${n_alerts} alerts carry alertgroup: flux-gitops and namespace: flux-system" \
     || bad "  ${n_alerts} alerts but ${n_group} alertgroup / ${n_ns} namespace labels"
+  # The lag rule must never be able to fire for a non-Git source.
+  printf '%s\n' "$PR" | grep -qE '^[[:space:]]*source_kind="GitRepository",$' \
+    && ok "  revision-lag rule is guarded to source_kind=GitRepository" \
+    || bad "  revision-lag rule is not guarded to GitRepository sources"
 else
   bad "PrometheusRule/flux-gitops-alerts not found in the render"
 fi
@@ -170,16 +173,17 @@ fi
 head1 "6. AlertmanagerConfig flux-gitops-mattermost-alerts"
 if AC=$(block AlertmanagerConfig flux-gitops-mattermost-alerts "$RENDER") && block_found "$AC"; then
   ok "AlertmanagerConfig/flux-gitops-mattermost-alerts renders"
-  printf '%s\n' "$AC" | grep -q '^  namespace: observability$' \
+  printf '%s\n' "$AC" | grep -qE '^[[:space:]]*namespace: observability$' \
     && ok "  lives in observability (next to the Alertmanager)" || bad "  not in observability"
-  printf '%s\n' "$AC" | grep -q '^    release: kube-prometheus-stack$' \
+  printf '%s\n' "$AC" | grep -qE '^[[:space:]]*release: kube-prometheus-stack$' \
     && ok "  carries label release: kube-prometheus-stack (alertmanagerConfigSelector match)" \
     || bad "  missing label release: kube-prometheus-stack - Alertmanager would ignore this config"
-  printf '%s\n' "$AC" | grep -q '^        value: flux-gitops$' \
+  printf '%s\n' "$AC" | grep -qE '^[[:space:]]*name: alertgroup$' \
+    && printf '%s\n' "$AC" | grep -qE '^[[:space:]]*value: flux-gitops$' \
     && ok "  routes on alertgroup = flux-gitops" || bad "  route matcher does not use alertgroup"
-  printf '%s\n' "$AC" | grep -q '^          sendResolved: true$' \
+  printf '%s\n' "$AC" | grep -qE '^[[:space:]]*sendResolved: true$' \
     && ok "  sendResolved: true (resolution is part of AC4)" || bad "  sendResolved missing"
-  printf '%s\n' "$AC" | grep -q '^            name: homelab-node-mattermost-webhook-url$' \
+  printf '%s\n' "$AC" | grep -qE '^[[:space:]]*name: homelab-node-mattermost-webhook-url$' \
     && ok "  reuses the existing SOPS Mattermost webhook Secret" \
     || bad "  does not reference homelab-node-mattermost-webhook-url"
 else
@@ -198,9 +202,11 @@ if [ -f "$WEBHOOK" ]; then
 else
   bad "homelab-node-mattermost-webhook-url.sops.yaml missing"
 fi
-# The new files must not carry any credential material.
+# The new files must not carry any credential material. Comments are skipped -
+# they name the Secret to reuse, they do not hold a value.
 if grep -nEi '(password|passwd|api[_-]?key|secret[_-]?key|token|webhook[_-]?url|BEGIN [A-Z ]*PRIVATE KEY)[: ]' \
-     "$ROOT"/infrastructure/observability/flux-*.yaml > "$WORK/plain.txt" 2>/dev/null; then
+     "$ROOT"/infrastructure/observability/flux-*.yaml 2>/dev/null \
+   | grep -vE ':[0-9]+:[[:space:]]*#' > "$WORK/plain.txt"; then
   bad "plaintext-looking credential material in the new manifests:"
   sed 's/^/        /' "$WORK/plain.txt"
 else
@@ -228,25 +234,25 @@ if helm template flux-check prometheus-community/kube-prometheus-stack \
      > "$WORK/ps.render.yaml" 2> "$WORK/ps.render.err"; then
   ok "helm template kube-prometheus-stack (>=69.0.0) with the live values"
   CRS=$(awk '/customresourcestate-config$/{f=1} f{print} f&&/^---$/{exit}' "$WORK/ps.render.yaml")
-  printf '%s\n' "$CRS" | grep -q '^    spec:$' \
+  printf '%s\n' "$CRS" | grep -qE '^[[:space:]]*spec:$' \
     && ok "  custom resource state ConfigMap renders" || bad "  no custom resource state ConfigMap in the render"
   for k in Kustomization GitRepository HelmRelease; do
-    printf '%s\n' "$CRS" | grep -q "^          kind: ${k}$" \
+    printf '%s\n' "$CRS" | grep -qE "^[[:space:]]*kind: ${k}$" \
       && ok "  exposes ${k}" || bad "  ${k} missing from the custom resource state config"
   done
-  printf '%s\n' "$CRS" | grep -q '^        metricNamePrefix: gotk$' \
+  printf '%s\n' "$CRS" | grep -qE '^[[:space:]]*metricNamePrefix: gotk$' \
     && ok "  metric prefix gotk -> gotk_resource_info" || bad "  metric prefix is not gotk"
   # toYaml expands the flow sequences, so match the block rather than one line.
-  # crs_revision_is <path> : the revision label of some resource must resolve
-  # exactly to that path, e.g. "status/lastAppliedRevision".
+  # crs_revision_is <path> : some revision label must resolve exactly to that
+  # path, e.g. "status/lastAppliedRevision".
   crs_revision_is() {
     printf '%s\n' "$CRS" | awk -v path="$1" '
       BEGIN { n = split(path, want, "/") }
-      /^            revision:$/ {
+      /^[[:space:]]*revision:$/ {
         ok = 1
         for (i = 1; i <= n; i++) {
           if ((getline l) <= 0) { ok = 0; break }
-          if (l != "            - " want[i]) { ok = 0; break }
+          if (l !~ ("^[[:space:]]*- " want[i] "$")) { ok = 0; break }
         }
         if (ok) found = 1
       }
@@ -275,7 +281,6 @@ else
   bad "helm template failed:"
   grep -v '^$' "$WORK/ps.render.err" | head -10 | sed 's/^/        /'
 fi
-
 
 printf '\n'
 [ "$fail" -eq 0 ] && { echo "RESULT: all checks passed"; exit 0; } || { echo "RESULT: FAILURES above"; exit 1; }

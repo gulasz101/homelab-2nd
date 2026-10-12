@@ -1,0 +1,128 @@
+---
+# PrometheusRule: Flux GitOps deployment health.
+#
+# Why this exists: on 2026-10-12 the `apps` Kustomization sat Ready=False for
+# ~20 hours and nothing alerted, because every pod was still green. The pods
+# were fine - the pipeline that replaces them was dead. These rules watch the
+# pipeline itself.
+#
+# The Prometheus CR observability/prometheus-stack-kube-prom-prometheus has
+# spec.ruleSelector = {matchLabels: {release: prometheus-stack}}. A
+# PrometheusRule without that label is loaded by the operator but never picked
+# up by Prometheus, silently.
+#
+# Where the metrics come from:
+#   gotk_reconcile_condition - the Flux controllers themselves, scraped via
+#     flux-controller-podmonitor.yaml (http-prom, 8080).
+#   gotk_resource_info       - kube-state-metrics customResourceState, wired in
+#     prometheus-stack-helm-release.yaml. The controllers expose NO revision
+#     label, so the applied-revision comparison cannot be made with
+#     gotk_reconcile_condition.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: flux-gitops-alerts
+  namespace: observability
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: flux-gitops
+      interval: 60s
+      rules:
+        # The exact failure of 2026-10-12: a Kustomization that cannot apply.
+        # `status="False"` is the only series that carries a non-zero value, so
+        # a healthy Kustomization contributes nothing to this expression.
+        - alert: FluxKustomizationNotReady
+          expr: |
+            max by (exported_namespace, name) (
+              gotk_reconcile_condition{kind="Kustomization", type="Ready", status="False"}
+            ) > 0
+          for: 15m
+          labels:
+            severity: critical
+            alertgroup: flux-gitops
+            namespace: flux-system
+          annotations:
+            summary: "Flux cannot apply Kustomization {{ $labels.name }}"
+            description: "Kustomization {{ $labels.exported_namespace }}/{{ $labels.name }} has reported Ready=False for more than 15 minutes. The cluster is running whatever was applied last, which may now be hours behind main."
+
+        # Same silent-freeze class, one layer down: a HelmRelease that will not
+        # install/upgrade leaves the pods green and the intended change unapplied.
+        - alert: FluxHelmReleaseNotReady
+          expr: |
+            max by (exported_namespace, name) (
+              gotk_reconcile_condition{kind="HelmRelease", type="Ready", status="False"}
+            ) > 0
+          for: 15m
+          labels:
+            severity: critical
+            alertgroup: flux-gitops
+            namespace: flux-system
+          annotations:
+            summary: "Flux cannot reconcile HelmRelease {{ $labels.name }}"
+            description: "HelmRelease {{ $labels.exported_namespace }}/{{ $labels.name }} has reported Ready=False for more than 15 minutes. A chart install or upgrade is stuck or failing."
+
+        # The other way the pipeline dies: the source stops fetching (auth,
+        # network, branch rename). Everything downstream then quietly stops
+        # moving while the cluster still looks healthy.
+        - alert: FluxGitRepositoryNotReady
+          expr: |
+            max by (exported_namespace, name) (
+              gotk_reconcile_condition{kind="GitRepository", type="Ready", status="False"}
+            ) > 0
+          for: 15m
+          labels:
+            severity: critical
+            alertgroup: flux-gitops
+            namespace: flux-system
+          annotations:
+            summary: "Flux cannot fetch GitRepository {{ $labels.name }}"
+            description: "GitRepository {{ $labels.exported_namespace }}/{{ $labels.name }} has reported Ready=False for more than 15 minutes - the cluster has stopped receiving changes from Git."
+
+        # The headline rule: what is deployed is not the current revision.
+        #
+        # Both sides come from gotk_resource_info, whose `revision` is a LABEL
+        # (PromQL cannot compare two label values directly, so the comparison is
+        # expressed as a label-join):
+        #   Kustomization.revision   = status.lastAppliedRevision
+        #   GitRepository.revision   = status.artifact.revision
+        # `unless on (exported_namespace, source_name, revision)` keeps only the
+        # Kustomizations whose (namespace, source, applied revision) triple does
+        # NOT exist on the GitRepository side - i.e. applied != current source
+        # revision. A Kustomization that is up to date contributes nothing.
+        #
+        # Guarded to source_kind="GitRepository" so a Bucket/OCIRepository-backed
+        # Kustomization can never match the GitRepository set and become a
+        # permanent false positive. Suspended Kustomizations are excluded: a
+        # deliberate freeze is not an incident.
+        #
+        # 15m is generous: kustomize-controller reacts to a source change
+        # immediately, so a normal rollout closes this gap in seconds. Only a
+        # genuine failure holds it open.
+        - alert: FluxKustomizationRevisionLagging
+          expr: |
+            (
+              max by (exported_namespace, name, source_name, revision) (
+                gotk_resource_info{
+                  customresource_kind="Kustomization",
+                  source_kind="GitRepository",
+                  suspended!="true"
+                }
+              )
+              unless on (exported_namespace, source_name, revision)
+              max by (exported_namespace, source_name, revision) (
+                label_replace(
+                  gotk_resource_info{customresource_kind="GitRepository"},
+                  "source_name", "$1", "name", "(.*)"
+                )
+              )
+            ) > 0
+          for: 15m
+          labels:
+            severity: critical
+            alertgroup: flux-gitops
+            namespace: flux-system
+          annotations:
+            summary: "Flux is applying a stale revision for {{ $labels.name }}"
+            description: "Kustomization {{ $labels.exported_namespace }}/{{ $labels.name }} has lastAppliedRevision {{ $labels.revision }}, which is not the revision its GitRepository source {{ $labels.source_name }} is serving. What is deployed is not what is in Git."
