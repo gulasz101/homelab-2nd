@@ -49,10 +49,15 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-043 | The grey-zone supervisor is its own Hermes profile, and each Itsaplan project gets its own OpenChamber worker lane | Accepted | 2026-10-09 |
 | ADR-044 | A local LM Studio model as the Hermes gateway's offline fallback | Accepted | 2026-10-10 |
 | ADR-046 | The zigbee namespace storage model — durability per workload, not per namespace | Accepted | 2026-10-11 |
+| ADR-047 | Surface Pro 4 boot-slot ownership and linux-surface kernel pinning | Accepted | 2026-10-12 |
+| ADR-048 | One-shot `Job` objects carry a version suffix in their name | Accepted | 2026-10-12 |
 
 > Note: ADR-045 is reserved by H2-212 (the Zigbee coordinator radio-head decision) and is not in
 > this index yet; ADR-044's row was added here alongside ADR-046, since the file existed but the
 > index row had been missed.
+
+> Note: ADR-047's row was back-filled alongside ADR-048 (2026-10-12) — the file landed without its
+> index row, same as ADR-035/036 and ADR-044.
 
 > Note: ADR-035 and ADR-036 existed as files but were missing from this index;
 > added alongside ADR-037 (same edit, 2026-10-07).
