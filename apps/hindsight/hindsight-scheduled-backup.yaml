@@ -1,0 +1,24 @@
+---
+# Daily scheduled base backup for the Hindsight CNPG cluster (H2-232).
+#
+# Same shape as the live apps/honcho/scheduled-backup.yaml: the in-tree
+# `backup.barmanObjectStore` on the Cluster is the method, so there is
+# deliberately NO `method: plugin` / `pluginConfiguration` here (the plugin
+# clusters look different on purpose).
+#
+# `immediate: true` takes the first base backup as soon as this lands, so the
+# s3://cnpg-backups/hindsight tree is populated before the restore ticket
+# (H2-237) tries to prove a restore. Without it the first backup would only
+# exist after the next 03:00 and a same-day restore drill would have nothing to
+# restore from but WAL.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: hindsight-db-backup
+  namespace: hindsight
+spec:
+  schedule: "0 0 3 * * *"  # 03:00 daily (6-field cron with seconds)
+  backupOwnerReference: self
+  cluster:
+    name: hindsight-db
+  immediate: true

@@ -29,3 +29,11 @@ resources:
   - hindsight-db-credentials.sops.yaml
   - hindsight-secrets.sops.yaml
   - hindsight-minio-backup-creds.sops.yaml
+
+  # --- CNPG cluster (H2-236) ---
+  # The Cluster consumes hindsight-db-credentials (the initdb owner role) and
+  # hindsight-minio-backup-creds (barman WAL archiving + base backups to
+  # s3://cnpg-backups/hindsight); the ScheduledBackup consumes the Cluster.
+  # Order therefore matters: secrets, then the Cluster, then its backups.
+  - hindsight-db-postgres-cluster.yaml
+  - hindsight-scheduled-backup.yaml

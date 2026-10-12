@@ -1,0 +1,108 @@
+---
+# ============================================================
+# CNPG Cluster for Hindsight — the agent-memory platform (H2-232)
+#
+# Single instance on the homelab-2nd NVMe via `local-path` — fast, and NOT
+# durable. Durability is the barman WAL archiving + base backups to OMV MinIO
+# below (guardrail 4: OMV is the only durable store, this node is rebuildable).
+#
+# IMAGE CHOICE: the DEFAULT `postgresql:16` flavour, deliberately not
+# `-minimal`/`-standard`. It is the only CNPG operand image that ships BOTH
+# pgvector (Hindsight's schema needs the `vector` extension) and `barman-cloud`
+# (the in-tree `backup.barmanObjectStore` needs it inside the operand). Same
+# choice and same reason as the live apps/honcho/postgres-cluster.yaml.
+#
+# Barman `serverName` generation convention: see
+# docs/cnpg-backup-servername-generations.md. This is generation 1, so both the
+# archiver target and the recovery source name `hindsight-db`. A rebuild must
+# bump the archiver target to `hindsight-db-gen2` and leave the recovery source
+# on `hindsight-db` — never one side alone.
+# ============================================================
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: hindsight-db
+  namespace: hindsight
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16
+
+  # Same modest trio as the proven honcho-db cluster on the same node.
+  postgresql:
+    parameters:
+      max_connections: "100"
+      shared_buffers: "256MB"
+      effective_cache_size: "512MB"
+
+  # Generation 1 bootstraps fresh from initdb. `postInitApplicationSQL` runs as
+  # the SUPERUSER against the application database immediately after init —
+  # verified against the CNPG docs (cloudnative-pg.io/docs/bootstrap "Executing
+  # Queries After Initialization"). It is the only place the `vector` extension
+  # can be created: the application role `hindsight` is not a superuser, so
+  # without this line Hindsight's API crash-loops on its migrations and the
+  # whole epic stalls.
+  bootstrap:
+    initdb:
+      database: hindsight
+      owner: hindsight
+      secret:
+        name: hindsight-db-credentials
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector;
+
+  # The recovery source for the post-rebuild path. Inert while `bootstrap` is
+  # `initdb` (nothing recovers from it today), but it is the generation-1
+  # history the rebuild runbook points at, so the destination is declared here
+  # and does not have to be invented during an incident.
+  externalClusters:
+    - name: origin
+      barmanObjectStore:
+        destinationPath: s3://cnpg-backups/hindsight
+        endpointURL: http://openmediavault.local:9000
+        # Previous generation (recovery source); bump to the prior genN on rebuild.
+        serverName: hindsight-db
+        s3Credentials:
+          accessKeyId:
+            name: hindsight-minio-backup-creds
+            key: ACCESS_KEY_ID
+          secretAccessKey:
+            name: hindsight-minio-backup-creds
+            key: ACCESS_SECRET_KEY
+        data:
+          compression: gzip
+        wal:
+          compression: gzip
+
+  # Storage — local-path on the homelab-2nd NVMe (fast, NOT durable).
+  storage:
+    storageClass: local-path
+    size: 10Gi
+
+  # Backup + WAL archiving -> OMV MinIO S3 (the durable copy).
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/hindsight
+      endpointURL: http://openmediavault.local:9000
+      # Current generation (archiver target); bump to "<name>-genN" (fresh) on rebuild.
+      serverName: hindsight-db
+      s3Credentials:
+        accessKeyId:
+          name: hindsight-minio-backup-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: hindsight-minio-backup-creds
+          key: ACCESS_SECRET_KEY
+      data:
+        compression: gzip
+    retentionPolicy: "30d"
+
+  # Deliberately modest. This node's CPU requests are already ~78% committed, so
+  # the upstream chart's 1Gi request is NOT copied here; values mirror the
+  # running honcho-db cluster (same node, same image).
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
