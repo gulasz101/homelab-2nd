@@ -44,6 +44,9 @@ resources:
   # GitOps deployment health: alerts when Flux stops being able to deploy
   - observability/flux-gitops-prometheus-rules.yaml
   - observability/flux-gitops-alertmanager-config.yaml
+  # THROWAWAY (H2-223 AC4): false-positive test target, removed once the alert
+  # has been observed firing and resolving.
+  - observability/flux-gitops-alert-selftest.yaml
   # CloudNativePG backup health: PodMonitor + PrometheusRule + AlertmanagerConfig
   - observability/cnpg-instance-podmonitor.yaml
   - observability/cnpg-backup-prometheus-rules.yaml

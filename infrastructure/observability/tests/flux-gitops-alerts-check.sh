@@ -150,7 +150,7 @@ if PR=$(block PrometheusRule flux-gitops-alerts "$RENDER") && block_found "$PR";
   printf '%s\n' "$PR" | grep -qE '^[[:space:]]*release: prometheus-stack$' \
     && ok "  carries label release: prometheus-stack (ruleSelector match)" \
     || bad "  missing label release: prometheus-stack - Prometheus would ignore this rule"
-  for a in FluxKustomizationNotReady FluxHelmReleaseNotReady FluxGitRepositoryNotReady FluxKustomizationRevisionLagging; do
+  for a in FluxKustomizationNotReady FluxHelmReleaseNotReady FluxGitRepositoryNotReady FluxKustomizationRevisionLagging FluxControllersUnmonitored; do
     printf '%s\n' "$PR" | grep -qE "^[[:space:]]*- alert: ${a}$" \
       && ok "  rule ${a}" || bad "  rule ${a} missing"
   done
@@ -159,9 +159,20 @@ if PR=$(block PrometheusRule flux-gitops-alerts "$RENDER") && block_found "$PR";
   n_alerts=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*- alert: ')
   n_group=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*alertgroup: flux-gitops$')
   n_ns=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*namespace: flux-system$')
-  [ "$n_alerts" -ge 4 ] && [ "$n_alerts" -eq "$n_group" ] && [ "$n_alerts" -eq "$n_ns" ] \
+  [ "$n_alerts" -eq 5 ] && [ "$n_alerts" -eq "$n_group" ] && [ "$n_alerts" -eq "$n_ns" ] \
     && ok "  all ${n_alerts} alerts carry alertgroup: flux-gitops and namespace: flux-system" \
     || bad "  ${n_alerts} alerts but ${n_group} alertgroup / ${n_ns} namespace labels"
+  # gotk_reconcile_condition does NOT exist in Flux v1.8.5's live output (it was
+  # verified absent against /api/v1/label/__name__/values). A rule written
+  # against it loads with health=ok and can never fire, so it is banned here.
+  printf '%s\n' "$PR" | grep -q 'gotk_reconcile_condition' \
+    && bad "  the rule references gotk_reconcile_condition, which does not exist in this Flux version - it would never fire" \
+    || ok "  no reference to the non-existent gotk_reconcile_condition"
+  # Readiness therefore comes from the metric that is proven live.
+  n_ready=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*ready=~"False\|Unknown",$')
+  [ "$n_ready" -eq 3 ] \
+    && ok "  the 3 not-Ready rules read gotk_resource_info{ready=~\"False|Unknown\"}" \
+    || bad "  ${n_ready} of 3 not-Ready rules use ready=~\"False|Unknown\""
   # The lag rule must never be able to fire for a non-Git source.
   printf '%s\n' "$PR" | grep -qE '^[[:space:]]*source_kind="GitRepository",$' \
     && ok "  revision-lag rule is guarded to source_kind=GitRepository" \

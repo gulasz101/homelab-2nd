@@ -11,13 +11,21 @@
 # PrometheusRule without that label is loaded by the operator but never picked
 # up by Prometheus, silently.
 #
-# Where the metrics come from:
-#   gotk_reconcile_condition - the Flux controllers themselves, scraped via
-#     flux-controller-podmonitor.yaml (http-prom, 8080).
-#   gotk_resource_info       - kube-state-metrics customResourceState, wired in
-#     prometheus-stack-helm-release.yaml. The controllers expose NO revision
-#     label, so the applied-revision comparison cannot be made with
-#     gotk_reconcile_condition.
+# Where the metrics come from - and why NOT gotk_reconcile_condition:
+#
+#   gotk_reconcile_condition DOES NOT EXIST in Flux v1.8.5's live output. It was
+#   verified absent before these rules were written; the full set of gotk_*
+#   metrics the controllers actually export is gotk_reconcile_duration_seconds_*,
+#   gotk_event_http_*, gotk_token_cache_* and gotk_token_cached_items. A rule
+#   written against gotk_reconcile_condition loads with health=ok and can never
+#   fire - the exact failure this ticket forbids.
+#
+#   gotk_resource_info - kube-state-metrics customResourceState, wired in
+#   prometheus-stack-helm-release.yaml. It carries BOTH `ready` and `revision`
+#   as labels, so it answers readiness and applied-revision lag from one metric.
+#
+#   up{namespace="flux-system"} - the flux controller pods, scraped via
+#   flux-controller-podmonitor.yaml (http-prom, 8080).
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -31,12 +39,16 @@ spec:
       interval: 60s
       rules:
         # The exact failure of 2026-10-12: a Kustomization that cannot apply.
-        # `status="False"` is the only series that carries a non-zero value, so
-        # a healthy Kustomization contributes nothing to this expression.
+        # `suspended!="true"` keeps a deliberately frozen Kustomization quiet -
+        # it will never become Ready again, and that is not an incident.
         - alert: FluxKustomizationNotReady
           expr: |
             max by (exported_namespace, name) (
-              gotk_reconcile_condition{kind="Kustomization", type="Ready", status="False"}
+              gotk_resource_info{
+                customresource_kind="Kustomization",
+                ready=~"False|Unknown",
+                suspended!="true"
+              }
             ) > 0
           for: 15m
           labels:
@@ -52,7 +64,11 @@ spec:
         - alert: FluxHelmReleaseNotReady
           expr: |
             max by (exported_namespace, name) (
-              gotk_reconcile_condition{kind="HelmRelease", type="Ready", status="False"}
+              gotk_resource_info{
+                customresource_kind="HelmRelease",
+                ready=~"False|Unknown",
+                suspended!="true"
+              }
             ) > 0
           for: 15m
           labels:
@@ -69,7 +85,11 @@ spec:
         - alert: FluxGitRepositoryNotReady
           expr: |
             max by (exported_namespace, name) (
-              gotk_reconcile_condition{kind="GitRepository", type="Ready", status="False"}
+              gotk_resource_info{
+                customresource_kind="GitRepository",
+                ready=~"False|Unknown",
+                suspended!="true"
+              }
             ) > 0
           for: 15m
           labels:
@@ -96,6 +116,13 @@ spec:
         # Kustomization can never match the GitRepository set and become a
         # permanent false positive. Suspended Kustomizations are excluded: a
         # deliberate freeze is not an incident.
+        #
+        # Scope: this compares the applied revision against the revision the
+        # cluster has FETCHED, not against origin/main on GitHub - no cluster
+        # metric knows the remote HEAD. This repo has no GitHub webhook Receiver,
+        # so the GitRepository polls every 15m and the artifact is normally up to
+        # 15m behind; being further behind means the fetch is failing, which
+        # FluxGitRepositoryNotReady covers.
         #
         # 15m is generous: kustomize-controller reacts to a source change
         # immediately, so a normal rollout closes this gap in seconds. Only a
@@ -126,3 +153,24 @@ spec:
           annotations:
             summary: "Flux is applying a stale revision for {{ $labels.name }}"
             description: "Kustomization {{ $labels.exported_namespace }}/{{ $labels.name }} has lastAppliedRevision {{ $labels.revision }}, which is not the revision its GitRepository source {{ $labels.source_name }} is serving. What is deployed is not what is in Git."
+
+        # Every other rule here is only as good as the scrape feeding it. If the
+        # flux-system targets go away - PodMonitor pruned, controller down,
+        # service account lost - the rules above do not fire, they simply stop
+        # existing, and their alerts resolve themselves. That is the same class
+        # of silent failure as the 20h freeze, so it gets its own alert.
+        # absent() covers "no series at all"; == 0 covers "target present, scrape
+        # failing".
+        - alert: FluxControllersUnmonitored
+          expr: |
+            (up{namespace="flux-system"} == 0)
+            or
+            absent(up{namespace="flux-system"})
+          for: 15m
+          labels:
+            severity: critical
+            alertgroup: flux-gitops
+            namespace: flux-system
+          annotations:
+            summary: "Flux controller metrics are missing"
+            description: "No healthy up target for the flux-system namespace for more than 15 minutes - the GitOps controllers are either down or no longer being scraped. Every other Flux alert is blind while this is true."
