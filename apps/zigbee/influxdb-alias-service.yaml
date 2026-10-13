@@ -69,5 +69,19 @@ spec:
     - name: http
       port: 8086
       protocol: TCP
-      # The real Service's published port; forwards to container 8086 upstream.
-      targetPort: 80
+      # MUST be 8086, not 80. Correction after the first attempt failed with
+      # "can't connect to remote host (10.43.9.149): Connection refused".
+      #
+      # I originally wrote targetPort: 80, reasoning it would hop through the
+      # real Service's published port. It does not. targetPort is resolved
+      # against THIS Service's own endpoints - the InfluxDB POD - and the pod's
+      # containerPort is 8086 (the real Service publishes :80 -> 8086, doing the
+      # translation itself). Asking for 80 reached the pod on a port nothing
+      # listens on. DNS resolved fine; the TCP connect was refused. That is the
+      # signature of a targetPort pointing at the wrong layer.
+      #
+      # Two subtle failures in one file, worth remembering:
+      #   targetPort: 80  -> CONNECTION REFUSED (wrong layer: pod listens 8086)
+      #   ExternalName    -> would also fail, no port translation at all
+      # targetPort by NUMBER directly against the pod is the only correct shape.
+      targetPort: 8086
