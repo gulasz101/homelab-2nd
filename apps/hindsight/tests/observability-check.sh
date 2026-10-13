@@ -282,8 +282,8 @@ done
 # valid where the target is genuinely scraped. The control plane exposes no
 # /metrics and the chart renders no ServiceMonitor for it, so it must be alerted
 # on kube-state-metrics, not on `up`.
-if has "$RULES_FILE" 'absent(up{'; then
-  if grep -E 'absent\(up\{' "$RULES_FILE" | grep -qv 'pod=~"hindsight-api-.*"'; then
+if grep -v '^[[:space:]]*#' "$RULES_FILE" | grep -q 'absent(up{'; then
+  if grep -v '^[[:space:]]*#' "$RULES_FILE" | grep -E 'absent\(up\{' | grep -qv 'pod=~"hindsight-api-.*"'; then
     bad "an absent(up{...}) targets something that is not the scraped api pod:"
     grep -n 'absent(up{' "$RULES_FILE" | sed 's/^/        /'
   else
