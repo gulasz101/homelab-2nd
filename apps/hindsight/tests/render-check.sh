@@ -119,7 +119,7 @@ svc_selector() {
   awk '
     /^  selector:$/ { f = 1; next }
     f && /^  [^ ]/   { exit }
-    f { sub(/^    /, ""); print }
+    f { sub(/^    /, ""); if ($0 != "") print }
   ' "$1" | sort
 }
 
@@ -333,11 +333,15 @@ has "$API" 'HINDSIGHT_API_EMBEDDINGS_TEI_URL' && has "$API" 'HINDSIGHT_API_RERAN
   && ok "both TEI URLs are wired into the api container" \
   || bad "the TEI URLs are not wired into the api container"
 
-# 5h. LLM wiring through the local LiteLLM gateway.
+# 5h. LLM wiring through the local LiteLLM *proxy*.
+# The proxy speaks the OpenAI Chat Completions API, so the provider must be
+# `openai` and the base URL must end in /v1. `provider: litellm` means "use the
+# LiteLLM library against a real upstream vendor" and fails at the first retain
+# with `LLM Provider NOT provided ... You passed model=...` (H2-279).
 for kv in \
-  'HINDSIGHT_API_LLM_PROVIDER: "litellm"' \
+  'HINDSIGHT_API_LLM_PROVIDER: "openai"' \
   'HINDSIGHT_API_LLM_MODEL: "nemotron-3-nano-30b-ollama"' \
-  'HINDSIGHT_API_LLM_BASE_URL: "http://litellm.llm-hub.svc.cluster.local:4000"' \
+  'HINDSIGHT_API_LLM_BASE_URL: "http://litellm.llm-hub.svc.cluster.local:4000/v1"' \
   'HINDSIGHT_API_TENANT_EXTENSION: "hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension"'
 do
   key=${kv%%: *}; want=${kv#*: }

@@ -20,7 +20,7 @@ Docs are indexed in the homelab docs-mcp as library `hindsight@0.10.3`.
 | Chart DB | `postgresql.enabled: false` (never the chart's bundled Postgres) |
 | DB host for the chart | `hindsight-db-rw.hindsight.svc.cluster.local:5432` |
 | Secrets | `existingSecret: hindsight-secrets` — **must contain `postgres-password`** (the api deployment and worker statefulset read that exact key whenever `postgresql.enabled=false`), plus `HINDSIGHT_API_LLM_API_KEY` and `HINDSIGHT_API_TENANT_API_KEY` |
-| LLM | `HINDSIGHT_API_LLM_PROVIDER: litellm` → `http://litellm.llm-hub.svc.cluster.local:4000`, model `nemotron-3-nano-30b-ollama` (fallback `gpt-oss-20b-ollama`); key is the LiteLLM virtual key `memory-hindsight` |
+| LLM | `HINDSIGHT_API_LLM_PROVIDER: openai` → `http://litellm.llm-hub.svc.cluster.local:4000/v1`, model `nemotron-3-nano-30b-ollama` (fallback `gpt-oss-20b-ollama`); key is the LiteLLM virtual key `memory-hindsight`. **`openai`, not `litellm`** — see the gotcha below |
 | Image | **slim** (`-slim`), because embeddings/reranking are served externally |
 | Embeddings | `HINDSIGHT_API_EMBEDDINGS_PROVIDER: tei` + the chart's `tei.embedding.enabled: true` (model `sentence-transformers/all-MiniLM-L6-v2`, 384-dim) |
 | Reranker | `HINDSIGHT_API_RERANKER_PROVIDER: tei` + the chart's `tei.reranker.enabled: true` (model `cross-encoder/ms-marco-MiniLM-L6-v2`) |
@@ -87,6 +87,16 @@ apps/hindsight/hindsight-dashboard-configmap.yaml   # the 3 upstream Grafana das
 
 ## Gotchas already paid for upstream
 
+- **`HINDSIGHT_API_LLM_PROVIDER=litellm` is NOT "talk to our LiteLLM proxy".** Hindsight's `litellm`
+  provider loads the LiteLLM **library** inside `hindsight-api` and calls a real upstream vendor, so
+  the model name must carry LiteLLM's own prefix (`azure/gpt-4o`). Pointed at the LiteLLM *proxy*
+  (`litellm.llm-hub:4000`) it fails at the **first retain** with
+  `litellm.BadRequestError: LLM Provider NOT provided … You passed model=nemotron-3-nano-30b-ollama`.
+  Our gateway speaks the OpenAI Chat Completions API: use `HINDSIGHT_API_LLM_PROVIDER=openai` and a
+  base URL **ending in `/v1`**. The nasty part is the shape of the failure — the Deployment is Ready,
+  `/health` says `database: connected`, MCP lists 30+ tools and `recall` answers `{"results":[]}` — so
+  everything looks green while **nothing can ever be stored**. Only `sync_retain` shows it. Verified
+  2026-10-13 (H2-279).
 - **Do NOT "fix" the `***` you will see in a rendered `HINDSIGHT_API_DATABASE_URL`.** The chart
   renders `postgresql://hindsight:$(POSTGRES_PASSWORD)@<host>:5432/hindsight`, where
   `$(POSTGRES_PASSWORD)` is Kubernetes env interpolation resolved from the `POSTGRES_PASSWORD` env
