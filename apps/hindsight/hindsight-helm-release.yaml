@@ -233,3 +233,68 @@ spec:
         enabled: true
         labels:
           release: prometheus-stack
+
+  # ==================================================================
+  # STARTUP GATE for the api container (H2-275)
+  # ==================================================================
+  # THE EVIDENCE. Pod `hindsight-api-55b6d8c954-bcwmh` on `zigbee-node`,
+  # 2026-10-13 05:35 CEST (read-only probe of the live cluster; the pod was in
+  # CrashLoopBackOff with 13 restarts):
+  #
+  #   Last State: Terminated   Reason: Completed   Exit Code: 0
+  #   Started 05:35:06 CEST    Finished 05:36:04 CEST        # 58 s alive
+  #   Liveness:  http-get http://:8888/health/live delay=30s timeout=5s
+  #              period=10s #success=1 #failure=3
+  #   Events:    Liveness probe failed: dial tcp 10.42.3.251:8888:
+  #              connect: connection refused
+  #              Container api failed liveness probe, will be restarted
+  #   Last log:  "Loaded tenant extension: ApiKeyTenantExtension"
+  #              "Received signal 15, shutting down..."
+  #
+  # Exit code 0, no traceback, and no "Uvicorn running on ...": the app did not
+  # crash, kubelet reaped it. Config + extension loading alone took 23 s
+  # (03:35:32 -> 03:35:55) and :8888 had still not bound when the liveness budget
+  # expired - 30 s initialDelaySeconds + 3 x 10 s periodSeconds = 60 s to the
+  # first success, on a node that is also running this release's CNPG primary.
+  #
+  # THE FIX. A startupProbe on :8888. Until it succeeds kubelet suspends BOTH the
+  # liveness and the readiness probe, so a slow boot gets one explicit budget and
+  # then liveness resumes with its own semantics intact - liveness is deliberately
+  # NOT disabled, because a process that hangs AFTER startup must still be
+  # restarted. Budget: failureThreshold 30 x periodSeconds 10 s = 300 s (5 min)
+  # plus a 5 s per-attempt timeout, i.e. ~13x the 23 s of extension loading seen
+  # live, while a genuinely hung boot is still killed inside the 5th minute.
+  #
+  # WHY NOT A VALUES KNOB: chart 0.10.3 exposes `api.livenessProbe` and
+  # `api.readinessProbe` (the two objects below) but renders NO startupProbe at
+  # all - `templates/api-deployment.yaml` emits `livenessProbe:` and
+  # `readinessProbe:` and nothing else - and it has no probe extension point. So
+  # the chart's two probes are left exactly as they are and the gate is added to
+  # the rendered Deployment through `spec.postRenderers`, the supported kustomize
+  # hook that helm-controller runs on every render. Same mechanism, same reason,
+  # as apps/shlink, apps/itsaplan and apps/zigbee/node-red.
+  #
+  # `containers/0` is the api container: the chart's template writes it first,
+  # before `api.extraContainers`, and this release defines no extra containers.
+  #
+  # tests/render-check.sh section 5m replays this patch through `kubectl
+  # kustomize` over `helm template` of the pinned chart - the same two-step render
+  # helm-controller performs - and asserts the probe, the 300 s budget and that
+  # liveness/readiness come through untouched. So the assertion is on the object
+  # that reaches the cluster, not on the chart's raw output.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: hindsight-api
+            patch: |
+              - op: add
+                path: /spec/template/spec/containers/0/startupProbe
+                value:
+                  httpGet:
+                    path: /health/live
+                    port: 8888
+                  periodSeconds: 10
+                  timeoutSeconds: 5
+                  failureThreshold: 30

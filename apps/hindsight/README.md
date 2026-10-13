@@ -101,3 +101,10 @@ apps/hindsight/hindsight-dashboard-configmap.yaml   # the 3 upstream Grafana das
   plugin config (a later task) — recall ranks, it does not judge relevance.
 - The alert that matters most: `hindsight_retain_documents_total{outcome="no_facts"}` — documents
   stored but producing no memories are **invisible to recall** and nothing else reports them.
+- The api container carries a **startupProbe** (`/health/live` on `:8888`, 30 × 10 s = 300 s budget) that is
+  deliberately **not** in `values:` — chart 0.10.3 renders no startupProbe and has no probe extension point, so
+  `hindsight-helm-release.yaml` adds it through `spec.postRenderers` (kustomize). Without it, kubelet's
+  liveness budget (30 s + 3 × 10 s = 60 s) reaps the pod 58 s into a slow first boot on `zigbee-node`: exit code 0,
+  no traceback, just `Received signal 15` — a probe kill, not a crash (H2-275). Do **not** "simplify" the gate into
+  a bigger `api.livenessProbe.initialDelaySeconds`: that keeps a hung process alive for the whole delay and leaves
+  the readiness noise. `api.livenessProbe` / `api.readinessProbe` stay at the chart's values.
