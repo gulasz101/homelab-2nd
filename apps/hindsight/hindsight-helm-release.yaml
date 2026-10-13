@@ -100,6 +100,39 @@ spec:
         HINDSIGHT_API_EMBEDDINGS_PROVIDER: tei
         HINDSIGHT_API_RERANKER_PROVIDER: tei
 
+        # ------------------------------------------------------------------
+        # Traces -> the homelab's OTel Collector -> Tempo (H2-242)
+        # ------------------------------------------------------------------
+        # Hindsight ships OpenTelemetry tracing for operations and LLM calls
+        # (GenAI semantic conventions), and it continues a caller's W3C trace
+        # context when one is sent - so a recall triggered from an agent appears
+        # under that agent's trace rather than as a parallel one. Off by default
+        # upstream (`otel_traces_enabled` defaults to False), so without these
+        # three lines nothing ever reaches Tempo and H2-242's "traces reach
+        # Tempo" acceptance test is unprovable.
+        # The endpoint is the Collector's OTLP/HTTP port on the Service the
+        # collector chart renders in `observability` (verified by rendering
+        # opentelemetry-collector with mode=daemonset: Service
+        # `opentelemetry-collector`, ports 4317 gRPC / 4318 HTTP). HTTP, not gRPC:
+        # that is the endpoint the upstream docs use for this variable.
+        # Health and /metrics are excluded from tracing by the app's default
+        # OTEL_PYTHON_FASTAPI_EXCLUDED_URLS, so probe traffic stays out of Tempo.
+        HINDSIGHT_API_OTEL_TRACES_ENABLED: "true"
+        HINDSIGHT_API_OTEL_EXPORTER_OTLP_ENDPOINT: "http://opentelemetry-collector.observability.svc.cluster.local:4318"
+        HINDSIGHT_API_OTEL_SERVICE_NAME: "hindsight-api"
+
+        # ------------------------------------------------------------------
+        # Queue-depth gauges for the API's internal worker (H2-242)
+        # ------------------------------------------------------------------
+        # `metrics_backlog_enabled` defaults to False because it runs periodic
+        # per-schema COUNT queries. With worker.enabled=false the API's internal
+        # worker drains everything, so these three gauges
+        # (hindsight_async_operations, hindsight_consolidation_backlog,
+        # hindsight_consolidation_failed) are the only "is the worker keeping up?"
+        # signal - and the only way to see a hung operation stuck holding the
+        # worker slot. One user, one tenant: the COUNTs are trivial here.
+        HINDSIGHT_API_METRICS_BACKLOG_ENABLED: "true"
+
       # External models, external TEI: a model-cache PVC would only pin the api pod
       # to one node (ReadWriteOnce) and there is nothing local to cache.
       persistence:
