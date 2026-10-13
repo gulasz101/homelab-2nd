@@ -54,6 +54,12 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-049 | Flux deployment health is alerted from kube-state-metrics resource state plus the controller scrape | Accepted | 2026-10-12 |
 | ADR-050 | The SOU fork lane reaches `qwen3.8-flash` through an explicit OpenAI-protocol LiteLLM provider | Accepted | 2026-10-12 |
 | ADR-051 | A grey-zone profile falls back to the *other* reseller's copy of the same model (amends ADR-042) | Accepted | 2026-10-12 |
+| ADR-052 | Hindsight is the agent-memory platform — CNPG + pgvector, LiteLLM LLM, CPU TEI, tunnel + SSO, OpenViking retained as an MCP endpoint | Accepted | 2026-10-13 |
+
+> Note: ADR-052 was booked as ADR-050 while epic H2-232 was being planned (the directory then
+> ended at ADR-046 with 045 reserved); 047–051 landed from unrelated work before stage 1 was
+> committed, so the decision is recorded as 052. The epic's older internal references to
+> "ADR-050" mean this file.
 
 > Note: ADR-045 is reserved by H2-212 (the Zigbee coordinator radio-head decision) and is not in
 > this index yet; ADR-044's row was added here alongside ADR-046, since the file existed but the
