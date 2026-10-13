@@ -1,0 +1,111 @@
+---
+# Repair the migrated Node-RED flows (2026-10-13 -> overnight).
+#
+# Two defects the restore left behind, both invisible from pod status:
+#
+#   a) the mqtt-broker node pointed at mqtt://192.168.1.179:30180. 30180 is
+#      NODE-RED's own LAN editor port, not MQTT. Node-RED sat there retrying
+#      every 15s: "Connection failed to broker: mqtt://192.168.1.179:30180".
+#      MQTT on the LAN is 30188; from INSIDE the cluster there is no reason to
+#      leave the cluster at all, so it is pointed back at the in-cluster broker
+#      that was proven working on 2026-10-11 (u'nodered' connected).
+#   b) the influxdb config nodes carry the retired homelab-one API token, so
+#      writes fail with "HttpError: unauthorized access" even though the network
+#      path is now fixed (influxdb alias serves :8086 -> pod 8086).
+#
+# Both are fixed through Node-RED's own admin API with a whole-flow update:
+# GET /flows -> patch -> POST /flows with the SAME rev. The rev is mandatory.
+# Credentials come in as env vars from SOPS Secrets, read with os.environ, so
+# no secret ever appears in a command line, argv, manifest or log.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nodered-flows-repair-v1
+  namespace: zigbee
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: repair
+          image: python:3.13-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MQTT_USER
+              value: nodered
+            - name: MQTT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zigbee-mqtt-credentials
+                  key: NODERED_MQTT_PASSWORD
+            - name: INFLUX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: zigbee-influxdb-credentials
+                  key: admin-token
+          command:
+            - python3
+            - -c
+            - |
+              import json, os, sys, time, urllib.request
+
+              NR = "http://node-red:1880"
+              MQTT_USER = os.environ["MQTT_USER"]
+              MQTT_PASSWORD = os.environ["MQTT_PASSWORD"]
+              INFLUX_TOKEN = os.environ["INFLUX_TOKEN"]
+              BROKER = "mqtt://mosquitto:1883"
+
+              def req(method, path, body=None, timeout=30):
+                  data = json.dumps(body).encode() if body is not None else None
+                  r = urllib.request.Request(NR + path, data=data, method=method)
+                  r.add_header("Content-Type", "application/json")
+                  r.add_header("Node-RED-API-Version", "v2")
+                  with urllib.request.urlopen(r, timeout=timeout) as resp:
+                      return json.load(resp)
+
+              print("waiting for Node-RED admin API")
+              deadline = time.time() + 180
+              while True:
+                  try:
+                      req("GET", "/flows"); break
+                  except Exception:
+                      if time.time() > deadline:
+                          print("FATAL: admin API unreachable"); sys.exit(1)
+                      time.sleep(3)
+
+              d = req("GET", "/flows")
+              rev, flows = d.get("rev"), d.get("flows") or []
+              print("fetched rev=%s flows=%d" % (rev, len(flows)))
+
+              nb = ni = 0
+              seen_influx = []
+              for n in flows:
+                  t = n.get("type")
+                  if t == "mqtt-broker":
+                      print("  mqtt-broker %s was %r" % (n.get("id"), n.get("broker")))
+                      n["broker"] = BROKER
+                      n["port"] = "1883"
+                      n["clientid"] = ""
+                      n["credentials"] = {"user": MQTT_USER, "password": MQTT_PASSWORD}
+                      nb += 1
+                  elif t == "influxdb":
+                      # Older 0.x fields retired by InfluxDB v2 chart.
+                      for dead in ("username", "password", "database"):
+                          n.pop(dead, None)
+                      n["hostname"] = "influxdb"
+                      n["port"] = "8086"
+                      n["url"] = "http://influxdb:8086"
+                      n["influxdbVersion"] = "2.0"
+                      n["credentials"] = {"token": INFLUX_TOKEN}
+                      seen_influx.append({k: n.get(k) for k in
+                                          ("id", "name", "organisation", "bucket", "orgid")})
+                      ni += 1
+
+              print("  influxdb nodes: %s" % json.dumps(seen_influx))
+              if nb == 0:
+                  print("FATAL: no mqtt-broker node found"); sys.exit(1)
+
+              req("POST", "/flows", {"rev": rev, "flows": flows})
+              print("patched mqtt-broker=%d influxdb=%d ; flows redeployed" % (nb, ni))
+              print("done")

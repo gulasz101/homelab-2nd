@@ -67,6 +67,10 @@ resources:
   # One-shot: seed the MQTT credential into the migrated flows. The password is
   # injected from the Secret as an env var, never placed on a command line.
   - nodered-mqtt-credential-job.yaml
+  # Repair the migrated flows (overnight 2026-10-13): point the broker node at
+  # the in-cluster MQTT server (it had been aimed at Node-RED's own LAN port)
+  # and refresh the stale InfluxDB v2 token. Versioned name per ADR-048.
+  - nodered-flows-repair-v1.yaml
   # LAN reachability for the editor (2026-10-13). Supreme Leader's explicit
   # call: reachable from a browser on the LAN, unauthenticated - same
   # convenience as the previous device, no SSO gate. NOT tunnel-exposed: an
