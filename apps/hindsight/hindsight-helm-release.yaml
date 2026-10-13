@@ -92,13 +92,25 @@ spec:
         # MCP auth ON: the tenant extension makes the API require the tenant key
         # that arrives via envFrom (HINDSIGHT_API_TENANT_API_KEY).
         HINDSIGHT_API_TENANT_EXTENSION: "hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension"
-        # TEI providers. The chart ALSO sets these two (plus the TEI URLs) when
-        # tei.embedding.enabled / tei.reranker.enabled are true - its entries are
-        # rendered after this env block and carry the same value, so the effective
-        # value is tei either way. Kept explicit here so the embedding/reranking
-        # backend is visible in one place in our own values.
-        HINDSIGHT_API_EMBEDDINGS_PROVIDER: tei
-        HINDSIGHT_API_RERANKER_PROVIDER: tei
+        # TEI providers: deliberately NOT set in this env block, and they must
+        # never be added back to it. While `tei.embedding.enabled` /
+        # `tei.reranker.enabled` are true (bottom of this file), the chart emits
+        # these four entries itself:
+        #   HINDSIGHT_API_EMBEDDINGS_PROVIDER = tei
+        #   HINDSIGHT_API_EMBEDDINGS_TEI_URL  = http://hindsight-tei-embedding:8091
+        #   HINDSIGHT_API_RERANKER_PROVIDER   = tei
+        #   HINDSIGHT_API_RERANKER_TEI_URL    = http://hindsight-tei-reranker:8090
+        # Declaring the two *_PROVIDER keys here as well would render each key
+        # NAME twice in the api container's env list, and Kubernetes server-side
+        # apply rejects that outright:
+        #   .spec.template.spec.containers[name="api"].env: duplicate entries for
+        #   key [name="HINDSIGHT_API_EMBEDDINGS_PROVIDER"]
+        # That is NOT cosmetic, and "the chart's value wins anyway" is wrong: the
+        # api Deployment is then never created at all, the HelmRelease stalls on
+        # MissingRollbackTarget, and the API simply has no backend. It cost us
+        # exactly that on 2026-10-13 (H2-271). The four values above are the
+        # chart's to own; tests/render-check.sh asserts both providers are still
+        # `tei` AND that no env key name repeats anywhere in the render.
 
         # ------------------------------------------------------------------
         # Traces -> the homelab's OTel Collector -> Tempo (H2-242)
