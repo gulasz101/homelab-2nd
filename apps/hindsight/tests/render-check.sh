@@ -17,7 +17,9 @@
 #      HINDSIGHT_API_DATABASE_URL, POSTGRES_PASSWORD defined *before* it,
 #      liveness /health/live vs readiness /health, slim pinned images, no
 #      chart-managed Secret/PVC, worker off, CPU TEI on, ServiceMonitor with
-#      the prometheus-stack label
+#      the prometheus-stack label, and (H2-271) NO DUPLICATE env KEY NAME in
+#      any rendered container - the defect that kept the api Deployment from
+#      ever being created, and that neither helm nor kubeconform catches
 #   6. every manifest on disk is wired into the kustomization (the classic
 #      "wrote the file, forgot the wiring" bug) and nothing plaintext leaked in
 #
@@ -455,6 +457,86 @@ done
 grep -q '^kind: Ingress' "$G" \
   && bad "an Ingress appeared in the hindsight group - the API must not be published" \
   || ok "no Ingress in the group (LAN/Netbird only; the API is never a public hostname)"
+
+# 5l. H2-271: NO DUPLICATE env KEY NAMES in the rendered containers.
+# Kubernetes server-side apply REJECTS a container whose env list carries the
+# same key name twice:
+#   .spec.template.spec.containers[name="api"].env: duplicate entries for key
+#   [name="HINDSIGHT_API_EMBEDDINGS_PROVIDER"]
+# Neither `helm template` nor kubeconform -strict looks at that, so this class of
+# defect sailed through this gate until it took the api Deployment down: the
+# HelmRelease declared HINDSIGHT_API_EMBEDDINGS_PROVIDER / _RERANKER_PROVIDER
+# itself while tei.embedding.enabled / tei.reranker.enabled made the chart emit
+# the same two names, the apply was refused, and the release stalled with no api
+# pod at all.
+#
+# Two checks, both POSITIVE uniqueness over the rendered names: the api
+# container by name (the container this ticket is about) and every env block in
+# the render (so a duplicate of any other key, in any container, fails too). A
+# grep for the two historical strings would rot the moment the chart renames a
+# key, and simply deleting those strings from this gate would hide the bug again.
+head1 "5l. H2-271: no duplicate env key names in the rendered containers"
+
+# Print every `- name:` inside an `env:` block, prefixed with that block's
+# sequence number, so duplicates are `uniq -d` on "<block>\t<key>". The chart's
+# YAML puts a sequence item at the SAME indentation as the `env:` key it belongs
+# to, so a block ends either at a shallower line or at a sibling key (`ind ==
+# envind` and not a list item); deeper lines are values and are ignored.
+env_key_names() {
+  awk '
+    function indent(s,   i) { i = 0; while (substr(s, i+1, 1) == " ") i++; return i }
+    /^[[:space:]]*env:[[:space:]]*$/ { inenv = 1; envind = indent($0); seq++; next }
+    inenv {
+      if ($0 ~ /^[[:space:]]*$/) next
+      ind = indent($0)
+      if (ind < envind) { inenv = 0; next }
+      if (ind == envind) {
+        if ($0 ~ /^[[:space:]]*- name:[[:space:]]*/) {
+          v = $0; sub(/^[[:space:]]*- name:[[:space:]]*/, "", v); gsub(/"/, "", v)
+          print seq "\t" v
+          next
+        }
+        inenv = 0
+      }
+    }
+  ' "$1"
+}
+
+# (a) the api container itself - the one this ticket exists for. The extraction
+# is guarded against a silent zero-key parse: an empty list would make the
+# uniqueness test pass vacuously, which is exactly the failure mode the H2-238
+# gate had.
+env_key_names "$API" | awk -F'\t' '$1 == 1 { print $2 }' | sort > "$WORK/api-env-keys.txt"
+api_env_n=$(grep -c . "$WORK/api-env-keys.txt")
+if [ "$api_env_n" -lt 5 ]; then
+  bad "only $api_env_n env key name(s) parsed out of the api container - the uniqueness check below would be vacuous"
+else
+  ok "parsed $api_env_n env key names out of the rendered api container"
+fi
+uniq -d < "$WORK/api-env-keys.txt" > "$WORK/api-env-dups.txt"
+if [ -s "$WORK/api-env-dups.txt" ]; then
+  bad "the rendered api container repeats these env key name(s) - server-side apply refuses to create the Deployment:"
+  sed 's/^/        /' "$WORK/api-env-dups.txt"
+else
+  ok "every env key name in the rendered api container appears exactly once"
+fi
+
+# (b) every env block in the whole chart render - the same defect anywhere else
+# fails too, so the gate does not depend on anyone remembering this ticket.
+env_key_names "$R" > "$WORK/env-keys.txt"
+all_env_n=$(grep -c . "$WORK/env-keys.txt")
+if [ "$all_env_n" -lt 10 ]; then
+  bad "only $all_env_n env key names parsed out of the whole render - the sweep below would be vacuous"
+else
+  ok "swept $all_env_n env key names over $(cut -f1 "$WORK/env-keys.txt" | uniq | wc -l) env block(s) in the chart render"
+fi
+sort "$WORK/env-keys.txt" | uniq -d > "$WORK/env-dups.txt"
+if [ -s "$WORK/env-dups.txt" ]; then
+  bad "duplicate env key name(s) inside a rendered env block - such a container can never be created:"
+  sed 's/^/        /' "$WORK/env-dups.txt"
+else
+  ok "no env block in the chart render repeats a key name"
+fi
 
 head1 "6. wiring and secrets"
 # 6a. every manifest on disk is listed in the kustomization (tests/ is hand-run).
