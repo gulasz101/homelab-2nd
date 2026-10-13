@@ -20,6 +20,12 @@
 #      the prometheus-stack label, and (H2-271) NO DUPLICATE env KEY NAME in
 #      any rendered container - the defect that kept the api Deployment from
 #      ever being created, and that neither helm nor kubeconform catches
+#   5m. (H2-275) the api STARTUP GATE: the HelmRelease's postRenderer is read
+#      out of the manifest and replayed through `kubectl kustomize` over the
+#      chart render - the same two-step render helm-controller performs - and
+#      the resulting api container is asserted to carry a startupProbe on
+#      :8888 while liveness (/health/live) and readiness (/health) come through
+#      untouched, parameter for parameter
 #   6. every manifest on disk is wired into the kustomization (the classic
 #      "wrote the file, forgot the wiring" bug) and nothing plaintext leaked in
 #
@@ -537,6 +543,209 @@ if [ -s "$WORK/env-dups.txt" ]; then
 else
   ok "no env block in the chart render repeats a key name"
 fi
+
+# 5m. H2-275: the api startup gate.
+# Live evidence (2026-10-13 05:35 CEST, pod hindsight-api-55b6d8c954-bcwmh on
+# zigbee-node): config + extension loading took 23 s, the container was SIGTERMed
+# 58 s in with exit code 0 (graceful - a probe-budget kill, not a crash), and it
+# never logged "Uvicorn running on ...". The liveness budget was initialDelay 30 s
+# + 3 x period 10 s = 60 s to the first success, so liveness reaped a process that
+# was merely slow to bind :8888.
+#
+# The fix is a startupProbe, and it CANNOT be a chart value: chart 0.10.3 exposes
+# api.livenessProbe / api.readinessProbe but renders no startupProbe at all
+# (asserted below on the unpatched render). Helm rejects overwriting a template's
+# keys from outside, so the gate goes in through spec.postRenderers - kustomize on
+# the rendered manifests, the same extension point apps/shlink, apps/itsaplan and
+# apps/zigbee/node-red already use, and the one helm-controller runs on every
+# reconcile. Which is why this section does not just grep the YAML: it replays the
+# patch out of the HelmRelease through `kubectl kustomize` over the chart render,
+# so what is asserted is the object that actually reaches the cluster.
+head1 "5m. H2-275: the api startup gate (postRenderer)"
+
+# Print the postRenderers' kustomize `patches:` list out of a HelmRelease,
+# dedented so it can be dropped into a kustomization verbatim. Empty output means
+# there is no postRenderers block (or a shape this extractor does not understand -
+# the caller fails loudly in that case rather than testing nothing).
+postrender_patches() {
+  awk '
+    /^  postRenderers:/ { inpr = 1; next }
+    inpr {
+      if ($0 ~ /^[^ ]/ || $0 ~ /^  [^ ]/) exit
+      if (!seen) { if ($0 ~ /^[[:space:]]*- kustomize:/) seen = 1; next }
+      sub(/^ {8}/, "")
+      print
+    }
+  ' "$1"
+}
+
+# Print one container out of an extracted Deployment document, identified by its
+# name. It cannot look for a literal `- name: <want>`: the two renders this
+# section compares put the container's keys in different orders - `helm template`
+# emits the chart's template order (name first), while kustomize rebuilds each
+# object from a map and emits keys alphabetically, so the post-rendered item
+# starts with `- env:` and carries `name: api` further down. So the block is
+# delimited by indentation instead: `containers:` marks the list, its items share
+# that indentation, a sibling key at the same indentation ends the list, and the
+# item's own `name:` is either on the item line or one level deeper.
+container_block() {
+  awk -v want="$2" '
+    function indent(s,   i) { i = 0; while (substr(s, i+1, 1) == " ") i++; return i }
+    function item_name(s, cind,   n, l, i, ind, v) {
+      n = split(s, l, "\n")
+      for (i = 1; i <= n; i++) {
+        if (l[i] == "") continue
+        ind = indent(l[i])
+        if (ind == cind && l[i] ~ /^[ ]*-[ ]*name:/) { v = l[i]; sub(/^[ ]*-[ ]*name:[ ]*/, "", v); return v }
+        if (ind == cind + 2 && l[i] ~ /^[ ]*name:/)  { v = l[i]; sub(/^[ ]*name:[ ]*/, "", v); return v }
+      }
+      return ""
+    }
+    function flush(   nm) {
+      if (start) {
+        nm = item_name(buf, cind); gsub(/"/, "", nm)
+        if (nm == want) printf "%s", buf
+      }
+      buf = ""; start = 0
+    }
+    /^[ ]*containers:[ ]*$/ { inc = 1; cind = indent($0); next }
+    !inc { next }
+    {
+      ind = indent($0)
+      if ($0 !~ /^[ ]*$/) {
+        if (ind < cind) { flush(); inc = 0; next }
+        if (ind == cind) {
+          if ($0 ~ /^[ ]*- /) { flush(); start = 1 }   # a new container item
+          else                { flush(); inc = 0; next } # a sibling key: volumes, nodeSelector, ...
+        }
+      }
+      if (start) buf = buf $0 "\n"
+    }
+    END { flush() }
+  ' "$1"
+}
+
+# One scalar out of a probe block inside an already-extracted container block:
+# probe_field <container file> <livenessProbe|readinessProbe|startupProbe> <key>
+# The block ends at the next key at the probe's own indentation (8 spaces in this
+# chart's render); deeper keys belong to the probe.
+probe_field() {
+  awk -v p="$2:" -v k="$3:" '
+    $1 == p { inx = 1; next }
+    inx && /^        [A-Za-z]/ { exit }
+    inx && $1 == k { v = $2; gsub(/"/, "", v); print v; exit }
+  ' "$1"
+}
+
+PRP="$WORK/postrender-patches.yaml"
+postrender_patches "$RELEASE_FILE" > "$PRP"
+if grep -q '^patches:' "$PRP"; then
+  ok "read a kustomize patch list out of the HelmRelease's spec.postRenderers ($(grep -c '^ *- op:' "$PRP") JSON6902 operation(s))"
+else
+  bad "no kustomize patch list under spec.postRenderers in $(basename "$RELEASE_FILE") - the pinned chart renders no startupProbe from values, so nothing re-arms the liveness timer during a slow first boot"
+fi
+grep -q "name: ${release}-api" "$PRP" \
+  && ok "the postRenderer targets Deployment ${release}-api" \
+  || bad "the postRenderer does not name Deployment ${release}-api as its target (a bare kind target would hit the TEI and control-plane Deployments too)"
+
+# Replay the chart render through the patch, exactly as helm-controller does.
+mkdir -p "$WORK/gate"
+cp "$R" "$WORK/gate/render.yaml"
+{
+  printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n'
+  printf 'resources:\n  - render.yaml\n'
+  cat "$PRP"
+} > "$WORK/gate/kustomization.yaml"
+if kubectl kustomize "$WORK/gate" > "$WORK/gated.yaml" 2> "$WORK/gate.err"; then
+  ok "replayed the chart render through the HelmRelease's postRenderer -> $(grep -c '^kind:' "$WORK/gated.yaml") objects (the object Flux applies, not the raw chart output)"
+else
+  bad "the postRenderer does not apply to the chart render:"
+  sed 's/^/        /' "$WORK/gate.err"
+  cp "$R" "$WORK/gated.yaml"   # keep going so the probe checks below still report what is missing
+fi
+if "${KUBECONFORM[@]}" "$WORK/gated.yaml" > "$WORK/kc-gated.txt" 2>&1; then
+  ok "kubeconform on the post-rendered output: $(tail -1 "$WORK/kc-gated.txt")"
+else
+  bad "kubeconform rejected the post-rendered output:"
+  grep -v '^Summary:' "$WORK/kc-gated.txt" | sed 's/^/        /'
+fi
+
+doc_by_name Deployment "$release-api" "$WORK/gated.yaml" > "$WORK/api-doc-gated.yaml"
+container_block "$API" api                                    > "$WORK/api-container-chart.yaml"
+container_block "$WORK/api-doc-gated.yaml" api                > "$WORK/api-container-gated.yaml"
+CHART_API_CONTAINER="$WORK/api-container-chart.yaml"
+GATED_API_CONTAINER="$WORK/api-container-gated.yaml"
+if [ -s "$CHART_API_CONTAINER" ] && [ -s "$GATED_API_CONTAINER" ]; then
+  ok "extracted the api container from both the chart render and the post-rendered render"
+else
+  bad "could not extract the api container (chart: $(wc -l < "$CHART_API_CONTAINER") line(s), post-rendered: $(wc -l < "$GATED_API_CONTAINER") line(s)) - every check below would be vacuous"
+fi
+
+# (a) the gap: the chart itself has no startup probe for the api.
+grep -q 'startupProbe' "$CHART_API_CONTAINER" \
+  && note "the pinned chart already renders a startupProbe for the api container - re-check whether the postRenderer is still needed" \
+  || ok "the pinned chart 0.10.3 renders NO startupProbe for the api container (there is no api.startupProbe value; liveness starts counting from its own initialDelaySeconds)"
+
+# (b) after the postRenderer the api container is gated on the app answering.
+if grep -q '^        startupProbe:' "$GATED_API_CONTAINER"; then
+  ok "the post-rendered api container has a startupProbe:"
+  awk '/^        startupProbe:/{f=1; print; next} f && /^        [A-Za-z]/{exit} f{print}' "$GATED_API_CONTAINER" \
+    | sed 's/^/        | /'
+else
+  bad "the post-rendered api container has NO startupProbe - kubelet still reaps a slow first boot 60 s in"
+fi
+for kv in 'path:/health/live' 'port:8888' 'periodSeconds:10' 'timeoutSeconds:5' 'failureThreshold:30'; do
+  key=${kv%%:*}; want=${kv#*:}
+  got=$(probe_field "$GATED_API_CONTAINER" startupProbe "$key")
+  [ "$got" = "$want" ] \
+    && ok "startupProbe $key = $got" \
+    || bad "startupProbe $key is '${got:-none}', expected $want"
+done
+
+sp_period=$(probe_field "$GATED_API_CONTAINER" startupProbe periodSeconds)
+sp_thresh=$(probe_field "$GATED_API_CONTAINER" startupProbe failureThreshold)
+sp_timeout=$(probe_field "$GATED_API_CONTAINER" startupProbe timeoutSeconds)
+case "$sp_period$sp_thresh$sp_timeout" in
+  ''|*[!0-9]*)
+    bad "startupProbe budget not computable (periodSeconds='${sp_period:-none}', failureThreshold='${sp_thresh:-none}', timeoutSeconds='${sp_timeout:-none}')" ;;
+  *)
+    budget=$(( sp_period * sp_thresh ))
+    if [ "$budget" -ge 300 ]; then
+      ok "total startup budget = failureThreshold ${sp_thresh} x periodSeconds ${sp_period}s = ${budget}s (plus a ${sp_timeout}s per-attempt timeout) before the first liveness-driven restart; the old liveness-only budget was 30s + 3 x 10s = 60s, and the container was SIGTERMed 58s in"
+    else
+      bad "total startup budget is only ${budget}s - under the 58s+ this app already spent before binding :8888 on zigbee-node"
+    fi ;;
+esac
+
+# (c) liveness and readiness come through the patch untouched, parameter for
+# parameter - liveness /health/live (no DB I/O), readiness /health (queries the
+# DB, so a slow database gates traffic instead of restarting the pod). Compared
+# against the CHART's own render rather than against constants, so a silent
+# overwrite of either probe fails here whatever the chart's values become.
+for probe in livenessProbe readinessProbe; do
+  detail=""; differs=""
+  for key in path port initialDelaySeconds periodSeconds timeoutSeconds failureThreshold; do
+    got=$(probe_field "$GATED_API_CONTAINER" "$probe" "$key")
+    want=$(probe_field "$CHART_API_CONTAINER" "$probe" "$key")
+    detail="$detail $key=$got"
+    if [ -z "$want" ] || [ "$got" != "$want" ]; then differs="$differs $key"; fi
+  done
+  if [ -z "$differs" ]; then
+    ok "post-render $probe is unchanged from the chart render:$detail"
+  else
+    bad "post-render $probe differs from the chart render in:$differs (post-render:$detail)"
+  fi
+done
+lpath=$(probe_field "$GATED_API_CONTAINER" livenessProbe path)
+lport=$(probe_field "$GATED_API_CONTAINER" livenessProbe port)
+rpath=$(probe_field "$GATED_API_CONTAINER" readinessProbe path)
+rport=$(probe_field "$GATED_API_CONTAINER" readinessProbe port)
+[ "$lpath" = "/health/live" ] && [ "$lport" = "8888" ] \
+  && ok "liveness still $lpath on :$lport and still enabled (a process that hangs AFTER startup must still be restarted)" \
+  || bad "liveness is $lpath on :$lport, expected /health/live on :8888"
+[ "$rpath" = "/health" ] && [ "$rport" = "8888" ] \
+  && ok "readiness still $rpath on :$rport (database-backed, deliberately different from liveness)" \
+  || bad "readiness is $rpath on :$rport, expected /health on :8888"
 
 head1 "6. wiring and secrets"
 # 6a. every manifest on disk is listed in the kustomization (tests/ is hand-run).
