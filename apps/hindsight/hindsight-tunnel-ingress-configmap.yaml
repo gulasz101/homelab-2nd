@@ -1,0 +1,44 @@
+---
+# Documents the public-ingress wiring for hindsight.voitech.dev.
+#
+# The REAL rule lives in Cloudflare, not here: the tunnel was created with
+# config_src: cloudflare, so its ingress is held remotely and pushed by the API.
+# This ConfigMap exists so the next person (or agent) can see the mapping and the
+# exact commands used without reverse-engineering it from the dashboard.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hindsight-tunnel-ingress
+  namespace: hindsight
+data:
+  note: |
+    # hindsight.voitech.dev -> http://hindsight-oauth2-proxy.hindsight.svc.cluster.local:4180
+    #
+    # NOT straight to the control plane. The CP has no authentication of its own,
+    # so the tunnel origin is the Authentik-backed oauth2-proxy in front of it.
+    # Pointing this at hindsight-control-plane:3000 would publish an unauthenticated
+    # admin UI to the internet.
+    #
+    # Created via the Cloudflare API on 2026-10-13 (ADR-032 path), tunnel id
+    # 0d2a303a-bf06-4bfe-8c8e-03dfaa841871:
+    #
+    #   POST /accounts/$ACCT/cfd_tunnel            {"name":"hindsight","config_src":"cloudflare"}
+    #   PUT  /accounts/$ACCT/cfd_tunnel/$ID/configurations
+    #        {"config":{"ingress":[{"hostname":"hindsight.voitech.dev",
+    #                               "service":"http://hindsight-oauth2-proxy.hindsight.svc.cluster.local:4180",
+    #                               "originRequest":{}},
+    #                              {"service":"http_status:404"}]}}
+    #   POST /zones/$ZONE/dns_records              {"type":"CNAME","proxied":true,
+    #                                               "name":"hindsight.voitech.dev",
+    #                                               "content":"$ID.cfargotunnel.com"}
+    #
+    # The ingress array MUST end with a catch-all, or the tunnel rejects the config.
+    #
+    # SSO is enforced IN-CLUSTER by hindsight-oauth2-proxy against Authentik
+    # (application slug `hindsight`, redirect https://hindsight.voitech.dev/oauth2/callback).
+    # Cloudflare Access is deliberately NOT used on top: one auth gate, in-cluster,
+    # same as every other SSO-fronted app in this homelab.
+    #
+    # Verified 2026-10-13: DNS resolves through the Cloudflare proxy and the
+    # hostname returns 530 while no cloudflared connector is attached - which is
+    # the correct answer for "tunnel exists, nothing connected yet".

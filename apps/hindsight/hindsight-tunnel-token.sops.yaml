@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: hindsight-tunnel-token
+    namespace: hindsight
+stringData:
+    token: ENC[AES256_GCM,data:56byHZRRdb/GIBIhYjoDomI0Q7UTK6WgmyzgNdJuLZ17PJIMT8myNQ8NR4tXNN7H7pcIrVjlvmSEzI/0iUeFy+VjQEa3O0uiKJPaqIVIJC5UvaDGUdj7+0+9Rw23RRAGxm6hi+QSi9jXk8lmEq8aliN9xWi0GIMvO/qabuCclwibdKsnZH/g0LITqt0G0ELmH/X4TKoOlp6mQ46Eicllkkr8AsnguKo9/1Fvmyc+nDvwSDaEbT0UeuuzaKxyuIvBny+xkRV3Dj+lHTXdQxHPl5Dp4Tkn9ZPG9C4pUtVM/D7/MFSFLpQUKRN+NkI/If1j,iv:oG2aWUFgyze0arGlsLk38YJkxSERanabGZW4iXmTz0M=,tag:dewuavv7aajTkUE51MpgUA==,type:str]
+type: Opaque
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBycXUyenoyUFZSU2FzZ28w
+            Ynd2QmVKUXh0eS9PcXh6ZkN4OUZPWTd3bWhvCk50ZHZhOFhmdHMza0ZJVEhsalho
+            NzNGL2R4OSs3TG56STZjOWtPVkhBSWMKLS0tIFp5SDdLeGxnUzdNa3dKMGxZelNY
+            dlMrcmVGODlKMUVKZGN1M1FIdnliOVUKeJQcE8w6854IAffGFyc4TdX9tURaBBxv
+            5RUqCTXsMY18dKWHw5BtOj1/BfWVkeJfu56DwyK7VPW8m6LEZAY4+Q==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-13T08:31:59Z"
+    mac: ENC[AES256_GCM,data:bjIQeBv112QZwdpOPVILscLzKMiQ3T2QXf0DvWhWQjkwBWo5q/IsZpKlGeAqEvqDGu/H+mnFZ5HJ2y4K4COKupEf3BNd7supeApJT1fKasrkUyPbMg+rq1CEekQYVgv+BbY2NcYA1H5ki1Z67QvN0vMh9Vsp+V4A/HhxeV87xfE=,iv:DV/cWVtF1LL9zSApwu0BEFmgsu5qVmWh5zKg4hydx5s=,tag:gAe823c5WsnYV136oEo/FA==,type:str]
+    version: 3.13.1

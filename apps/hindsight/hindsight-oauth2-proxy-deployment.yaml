@@ -1,0 +1,120 @@
+---
+# oauth2-proxy enforces Authentik SSO in front of the Hindsight control plane.
+#
+# WHY THIS EXISTS: the Hindsight Control Plane has NO authentication of its own
+# (no built-in OIDC, no login). Its API is protected by the tenant API key, but
+# the CP is a browser UI — anyone who reaches its port can read and edit banks,
+# directives, mental models and memories. Until this proxy, reachable on the LAN
+# NodePort 30240 it was acceptable; the moment a public hostname existed it was not.
+#
+# The homelab's "app-native OIDC" pattern therefore does not apply, exactly as with
+# OpenChamber: the tunnel terminates TLS and this proxy is the SSO gate —
+#   Cloudflare Tunnel -> oauth2-proxy (Authentik OIDC) -> hindsight-control-plane
+#
+# The Authentik OAuth2 provider "Hindsight CP OIDC" is declared in
+# infrastructure/auth/authentik-blueprint-secret.sops.yaml, slug `hindsight`, so the
+# issuer URL below must match it exactly (trailing slash included).
+#
+# Every arg below that carries a comment was paid for in an incident. Do not
+# "tidy" them away — they are load-bearing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hindsight-oauth2-proxy
+  namespace: hindsight
+  labels:
+    app.kubernetes.io/name: hindsight-oauth2-proxy
+    app.kubernetes.io/component: sso
+spec:
+  replicas: 1
+  strategy:
+    # Single replica + a RWO-free but node-pinned pod: Recreate avoids a second
+    # pod briefly owning the same pinned node slot during a rollout.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hindsight-oauth2-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hindsight-oauth2-proxy
+        app.kubernetes.io/component: sso
+    spec:
+      nodeSelector:
+        # Pinned off the control-plane node on purpose: homelab-2nd is the CPU
+        # -saturated one and runs the whole workload; t460 is idle-ish. Same
+        # choice as openchamber's proxy and the cloudflared pods.
+        kubernetes.io/hostname: t460
+      containers:
+        - name: oauth2-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4
+          args:
+            - --provider=oidc
+            # Must match the Authentik application slug exactly.
+            - --oidc-issuer-url=https://auth.voitech.dev/application/o/hindsight/
+            - --redirect-url=https://hindsight.voitech.dev/oauth2/callback
+            - --email-domain=*
+            - --upstream=http://hindsight-control-plane.hindsight.svc.cluster.local:3000/
+            - --http-address=0.0.0.0:4180
+            - --reverse-proxy=true
+            - --set-xauthrequest=true
+            - --cookie-secure=true
+            - --cookie-expire=168h
+            - --cookie-refresh=1h
+            - --whitelist-domain=.voitech.dev
+            - --skip-provider-button=true
+            # offline_access is REQUIRED together with --cookie-refresh: without it
+            # the session cannot refresh and dies at the token TTL (the
+            # `refresh_token:false` symptom, 2026-09-15).
+            - --scope=openid email profile offline_access
+            # Per-request CSRF cookies: two concurrent login tabs in one browser
+            # otherwise clobber each other's handshake (403 CSRF token mismatch).
+            - --cookie-csrf-per-request=true
+            # ...but bound the pile: each unauthenticated request mints a uniquely
+            # named ~206-byte cookie, and unbounded minting breaches downstream
+            # header limits (HTTP 431). 3 keeps tab protection, caps it ~620 bytes.
+            - --cookie-csrf-per-request-limit=3
+            # No upstream keep-alive pooling: an upstream that closes idle
+            # connections faster than Go's 90s IdleConnTimeout produces
+            # "connection reset by peer" -> 502 at the edge on the first request
+            # after an idle period.
+            - --disable-keep-alives
+          env:
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: hindsight-oauth2-proxy
+                  key: client-id
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: hindsight-oauth2-proxy
+                  key: client-secret
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: hindsight-oauth2-proxy
+                  key: cookie-secret
+          ports:
+            - name: http
+              containerPort: 4180
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

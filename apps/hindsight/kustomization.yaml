@@ -53,6 +53,26 @@ resources:
   # ports are documented in the file along with the neighbours they avoid.
   - hindsight-service.yaml
 
+  # --- Public ingress (H2-241) ---
+  # hindsight.voitech.dev is served by a dedicated Cloudflare Tunnel, created via
+  # the Cloudflare API (ADR-032), whose origin is the SSO gate and NOT the control
+  # plane: the CP has no authentication of its own, so
+  #   Tunnel -> hindsight-oauth2-proxy (Authentik OIDC) -> hindsight-control-plane
+  # Order matters: the tunnel-token Secret and the oauth2-proxy credentials must
+  # exist before the Deployments that mount them, and the proxy Service should be
+  # up before cloudflared starts dialling its origin.
+  #
+  # hindsight-tunnel-token      : the tunnel's own token (SOPS, repo recipient)
+  # hindsight-oauth2-proxy      : Authentik client-id / client-secret / cookie-secret
+  #                               (SOPS) - provider declared in
+  #                               infrastructure/auth/authentik-blueprint-secret.sops.yaml
+  - hindsight-tunnel-token.sops.yaml
+  - hindsight-oauth2-proxy.sops.yaml
+  - hindsight-oauth2-proxy-service.yaml
+  - hindsight-oauth2-proxy-deployment.yaml
+  - cloudflared-hindsight-deployment.yaml
+  - hindsight-tunnel-ingress-configmap.yaml
+
   # --- Observability (H2-242) ---
   # The ServiceMonitor is NOT here on purpose: the chart renders it from
   # metrics.serviceMonitor (labelled release: prometheus-stack), and a second

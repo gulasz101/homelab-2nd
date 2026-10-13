@@ -1,0 +1,23 @@
+---
+# oauth2-proxy Service — the tunnel's origin for hindsight.voitech.dev.
+#
+# Cloudflare Tunnel -> this Service (4180) -> hindsight-control-plane:3000.
+# ClusterIP only: nothing outside the cluster may reach the SSO gate directly,
+# and the control plane itself is never exposed to the tunnel.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hindsight-oauth2-proxy
+  namespace: hindsight
+  labels:
+    app.kubernetes.io/name: hindsight-oauth2-proxy
+    app.kubernetes.io/component: sso
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: hindsight-oauth2-proxy
+  ports:
+    - name: http
+      port: 4180
+      targetPort: 4180
+      protocol: TCP

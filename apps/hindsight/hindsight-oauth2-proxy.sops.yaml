@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: hindsight-oauth2-proxy
+    namespace: hindsight
+type: Opaque
+stringData:
+    client-id: ENC[AES256_GCM,data:38HtuVjTdeVl1IzvpzfQDZq5wrEK6QKaCd4YaQZ2XajMySCxpa4nMhWwSZMwzPwy,iv:5xedVsDJAAtyjXYBU7lUjJFTmYnokvpr+KhJgX5KHnI=,tag:4xrEYcZhicMZRQWiWl8wgA==,type:str]
+    client-secret: ENC[AES256_GCM,data:qNKwPgAbcm3AKgztuyt7uyms4LZyN4x/eukJLEZLs6zJQl6CLljADG/NqpfU9TX4xGfClMNwyoTPGfzipOvapQ==,iv:OVLmWYnCkZlQxLnQSiyFIb0M7Qk+mZ+2pF5GuxtR158=,tag:7HsCIQZ3Gq4V/7AT8XW86Q==,type:str]
+    cookie-secret: ENC[AES256_GCM,data:9HVY7iCWBw2ZmlgAH/R2l7/mC5AUCjsNuAlSfZxaE8/ZynKcQH6OdYSJuA==,iv:2cuDEU25BvVb33cJ0W16WKDMqMSOBNMAzYquC7xQD74=,tag:tjPlOKuhniop5Z7LCGM2Ow==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA0UzBvdE9MOWc3a0NNUUxu
+            Ulg3ZGxqbDhsVmx0SElGREVtcHJUNlVZZFN3CnJ5T24wbG1BSVIycmtwVlJZelNZ
+            eXBhL2lJOC92WG9SOEx0RkZzQzVHZTAKLS0tIG0vTmxNQUtkU0FqbEpJUlh5YU0z
+            Vm0rVS9CalF5NGdxYWlTcmZXMmRMMWcK86vMXLqwSIhdhI0W8CZEMKvaVlPAjCSx
+            Bp1NGiD8UBQsSa9mHPXXpRnR884nvIlInZ6mZ5wjXyWJTiw9e5GvbA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-13T08:33:28Z"
+    mac: ENC[AES256_GCM,data:uDFM7zjRhQDl6sQ36ubwcOoMZCTbSrYg84EgEO42iwvAJ0e+O0nZ/dU/2hbQgV60CkBmnDqYJejDfSC5U56EvQThHYgLps1T2xkmod3tJHZbNtEQuRdIJYpx2idO59y3Elz/WLv77RbjJuiJV/+DuETK1g2Weun7HDwoOclRl4Q=,iv:PURkm2R9pgJpSAPm9uX/NzW4hNxkuOrsHitE/SOWKLo=,tag:ladOIf57KrdJtV83kal0Ag==,type:str]
+    version: 3.13.3

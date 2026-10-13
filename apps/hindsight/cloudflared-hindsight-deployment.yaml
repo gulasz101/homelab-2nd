@@ -1,0 +1,61 @@
+---
+# Dedicated Cloudflare Tunnel for hindsight.voitech.dev -> oauth2-proxy (SSO)
+# -> Hindsight control plane. TLS terminates at the Cloudflare edge; the
+# in-cluster hop is plain HTTP, per the homelab ingress rule.
+#
+# Tunnel id : 0d2a303a-bf06-4bfe-8c8e-03dfaa841871
+# Created via the Cloudflare API on 2026-10-13 (scoped token, ~/cloudflare-api.sops.yaml).
+# Ingress is configured REMOTELY (config_src: cloudflare), so the --url below is
+# only a local fallback — the real origin is the public hostname rule in Zero
+# Trust. It is set to the proxy on purpose: if the remote rule were ever lost,
+# the fallback still must not point at the unauthenticated control plane.
+#
+# The token is the only secret here and it is SOPS-encrypted (repo recipient).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-hindsight
+  namespace: hindsight
+  labels:
+    app.kubernetes.io/name: cloudflared-hindsight
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-hindsight
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-hindsight
+        app.kubernetes.io/component: tunnel
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: t460
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+            - --url
+            - http://hindsight-oauth2-proxy.hindsight.svc.cluster.local:4180
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hindsight-tunnel-token
+                  key: token
+          resources:
+            # Kept deliberately small: 4 tunnels already run in this cluster and
+            # the control-plane node is CPU-request-saturated. cloudflared needs
+            # almost nothing; a high request only reserves capacity for nothing.
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
