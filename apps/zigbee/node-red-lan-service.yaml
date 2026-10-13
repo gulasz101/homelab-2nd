@@ -1,0 +1,60 @@
+---
+# ============================================================================
+# Node-RED editor on the LAN (2026-10-13).
+#
+# Supreme Leader's call, stated explicitly: the editor must be reachable from a
+# browser on the LAN, unauthenticated. Reasoning accepted: this is a home
+# network behind OPNsense with no untrusted actors, and the editor is the
+# working tool for editing flows - waiting on SSO to get at it is friction with
+# no threat behind it.
+#
+# WHAT IS ACTUALLY TRUE ABOUT THE EDITOR TODAY
+#   Verified from inside the cluster before writing this file: GET / returned
+#   HTTP 200 for a completely unauthenticated request, and GET /settings
+#   exposed no adminAuth / httpAdminAuth / httpNodeAuth key. The migrated
+#   settings.js does NOT carry adminAuth, contrary to the assumption written
+#   into node-red-helm-release.yaml ("The source settings.js may already carry
+#   adminAuth - that comes with the restore"). It does not. This Service does
+#   not change that; it only makes an already-open editor reachable from the
+#   LAN. The HelmRelease comment should be corrected to say so.
+#
+# WHY NOT PUBLIC
+#   A Cloudflare Tunnel would put the house's automation writer on the open
+#   internet with no login. That is the one combination guardrail 8 and plain
+#   sense both forbid. LAN-only NodePort, full stop.
+#
+# NODE SELECTION - the part that will bite later
+#   nodeRED is pinned to homelab-2nd by a postRenderer in its HelmRelease,
+#   because its /data lives on an OMV NFS export and only nodes with
+#   nfs-common can mount it (zigbee-node lacks nfs-common). So the pod always
+#   lands on homelab-2nd. A NodePort is nonetheless reachable through ANY node
+#   in the cluster - kube-proxy routes it to wherever the pod lives - so
+#   <any-node-ip>:30180 works. Point your bookmarks at 192.168.1.179 (the
+#   control plane, always on, always this address) rather than the pod's node.
+#
+# PORT 30180 chosen outside the used set:
+#   30030 30069 30076 30078 30080 30089 30096 30114 30193 30195
+#   30239 30240 30530 30800 30810
+# Same shape as openchamber-syncthing-service.yaml (NodePort 30195).
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-red-lan
+  namespace: zigbee
+  labels:
+    app.kubernetes.io/name: node-red
+    app.kubernetes.io/component: lan-access
+    app.kubernetes.io/part-of: zigbee
+spec:
+  type: NodePort
+  # Matches the chart-rendered node-red Service selector exactly.
+  selector:
+    app.kubernetes.io/instance: node-red
+    app.kubernetes.io/name: node-red
+  ports:
+    - name: http
+      port: 1880
+      targetPort: http
+      nodePort: 30180
+      protocol: TCP

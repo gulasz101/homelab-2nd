@@ -47,6 +47,18 @@ resources:
   - mosquitto-configmap.yaml
   - mosquitto-deployment.yaml
   - mosquitto-service.yaml
+  # LAN reachability (2026-10-13). NodePort so Tasmota devices can dial MQTT
+  # exactly as they did against the retired homelab-one broker. The dedicated
+  # `tasmota` user + ACL ride along in the Secret above - this is deliberately
+  # NOT anonymous, unlike the broker it replaces. See the file header for the
+  # nodePinning caveat and why devices should target 192.168.1.179.
+  - mosquitto-lan-service.yaml
+
+  # --- InfluxDB compatibility alias for the migrated flows (2026-10-13) ------
+  # The restored flows dial http://influxdb:8086; the real Service is named
+  # influxdb-influxdb2 and publishes :80. Until this alias existed every sensor
+  # sample was dropped with ENOTFOUND while all pods reported Running.
+  - influxdb-alias-service.yaml
 
   # --- Node-RED: flow engine, 110 nodes / 7 tabs migrated from homelab-one ---
   - node-red-data-pv.yaml
@@ -55,6 +67,14 @@ resources:
   # One-shot: seed the MQTT credential into the migrated flows. The password is
   # injected from the Secret as an env var, never placed on a command line.
   - nodered-mqtt-credential-job.yaml
+  # LAN reachability for the editor (2026-10-13). Supreme Leader's explicit
+  # call: reachable from a browser on the LAN, unauthenticated - same
+  # convenience as the previous device, no SSO gate. NOT tunnel-exposed: an
+  # unauthenticated automation writer on the public internet is the one
+  # combination nobody wants. See the file header; note it also records that
+  # the HelmRelease's "settings.js may already carry adminAuth" assumption
+  # turned out to be FALSE.
+  - node-red-lan-service.yaml
 
   # --- InfluxDB v2: sensor history ------------------------------------------
   # SOPS-encrypted admin password + API token (H2-215); the chart's

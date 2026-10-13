@@ -1,0 +1,67 @@
+---
+# ============================================================================
+# Mosquitto MQTT broker on the LAN (2026-10-13).
+#
+# WHY THIS FILE EXISTS
+#   The broker is not only for zigbee2mqtt. Tasmota devices on the LAN dial it
+#   directly, exactly as they did against the retired homelab-one broker on
+#   192.168.1.144:1883. When the stack moved into the cluster the Service was
+#   deliberately left ClusterIP-only, with this note in mosquitto-service.yaml:
+#
+#     "If a device on the LAN ever needs MQTT again, that is a deliberate
+#      NodePort/LoadBalancer decision with an ACL to go with it - not a default."
+#
+#   That day arrived. This is the deliberate decision, and the ACL comes with
+#   it (see zigbee-mqtt-credentials.sops.yaml: a dedicated `tasmota` user).
+#
+# THE ONE THING TO UNDERSTAND ABOUT NODEPORT + THE TASMOTA DEVICES
+#   mosquitto's pod runs on zigbee-node today, but that does not matter: kube-proxy
+#   publishes this NodePort on EVERY node and forwards to wherever the pod is.
+#   A Tasmota device can therefore be pointed at 192.168.1.179 (homelab-2nd) and
+#   will still reach the broker even though the pod sits elsewhere.
+#
+#   BUT: mosquitto has no nodeSelector and no local storage claim. If it is
+#   rescheduled to another node, or zigbee-node is powered off, the port keeps
+#   answering from the remaining nodes - as long as at least one node is up.
+#   Configure devices against 192.168.1.179 because it is the always-on control
+#   plane with a stable address, not because the pod lives there.
+#
+# THREAT MODEL - stated plainly, because this is a real change in exposure
+#   This puts an authenticated MQTT broker on the LAN. It is NOT anonymous:
+#   allow_anonymous false still holds, and every client needs a username and
+#   password. Tasmota devices get the dedicated `tasmota` credential, NOT
+#   zigbee2mqtt's or nodered's - if a cheap IoT gadget leaks its password in a
+#   firmware dump, the blast radius is that one ACL-scoped user, not the bridge.
+#   No cluster workload reuses it.
+#
+#   The retired broker ran allow_anonymous TRUE on a flat LAN with no ACL at
+#   all. This is strictly better than the setup being replaced, which is the
+#   bar the Supreme Leader asked for ("same setup as I had with previous
+#   device" - functionally usable from the LAN, not equally insecure).
+#
+# PORT 30188 (mnemonic: 1883 prefixed with 30), outside the used set:
+#   30030 30069 30076 30078 30080 30089 30096 30114 30180 30193
+#   30195 30239 30240 30530 30800 30810
+# 1880/1883 themselves are avoided - 1883 is Node-RED's container port and
+# picking numbers that collide with well-known ones makes tcpdump output lie.
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto-lan
+  namespace: zigbee
+  labels:
+    app: mosquitto
+    app.kubernetes.io/name: mosquitto
+    app.kubernetes.io/component: lan-access
+    app.kubernetes.io/part-of: zigbee
+spec:
+  type: NodePort
+  selector:
+    app: mosquitto
+  ports:
+    - name: mqtt
+      port: 1883
+      protocol: TCP
+      targetPort: mqtt
+      nodePort: 30188

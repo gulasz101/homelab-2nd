@@ -136,9 +136,15 @@ for f in "$DIR"/*helm-release.yaml; do
     # when it is non-empty. A one-replica StatefulSet behind a normal ClusterIP
     # Service does not need per-pod DNS, so this is accepted - but ONLY if it is
     # the single complaint. Anything else is a real failure.
+    # 2026-10-13: accept the SINGULAR 'missing property' too. This exception was
+    # written against a kubeconform that said `missing properties: 'serviceName'`;
+    # the installed one emits `missing property 'serviceName'`. Same single
+    # complaint, different wording across validator versions - the guard had
+    # silently stopped matching and was reporting a known-accepted upstream bug
+    # as a hard failure. Match either spelling rather than exactly one.
     if [ "$rel" = "zigbee2mqtt" ] \
        && [ "$(grep -c ' is invalid:' "$WORK/$rel.kc.txt")" -eq 1 ] \
-       && grep -q "missing properties: 'serviceName'" "$WORK/$rel.kc.txt"; then
+       && grep -qE "missing propert(y|ies):? 'serviceName'" "$WORK/$rel.kc.txt"; then
       note "$rel: kubeconform's only complaint is the upstream chart's absent StatefulSet.serviceName (schema requires it, the API server does not) - accepted"
     else
       bad "$rel: kubeconform rejected the chart render:"
@@ -242,7 +248,13 @@ grep -q 'grafana_dashboard: "1"' "$R" && ok "Grafana dashboard ConfigMap present
 if grep -rnE '(password|passwd|token|api[_-]?key|network_key|secret): *[^ ]' "$DIR" \
      --include='*.yaml' --exclude='tests/*' > "$WORK/plaintext.txt"; then
   # Secret *names* and secretKeyRef/secretRef references are fine; values are not.
-  if grep -vE 'secretName|name:|secretKeyRef|key:|secretRef|(PASSWORD|TOKEN|KEY)_|existingSecret|password_file|credentialSecret|network_key.*(never|must not)|token.*(H2-215|owned)' "$WORK/plaintext.txt" > "$WORK/plaintext-real.txt"; then
+  # 2026-10-13: added the ENC[...] exclusion. The check was firing on every
+  # SOPS-encrypted value in the group (`admin-password: ENC[AES256_GCM,...]`),
+  # i.e. reporting correctly-encrypted ciphertext as plaintext leakage. That is
+  # both a false alarm and dangerous: a gate that always cries wolf gets
+  # ignored, and then a REAL leak slips through unnoticed. An `ENC[` marker
+  # means sops got to it, which is exactly what we want.
+  if grep -vE 'secretName|name:|secretKeyRef|key:|secretRef|(PASSWORD|TOKEN|KEY)_|existingSecret|password_file|credentialSecret|network_key.*(never|must not)|token.*(H2-215|owned)|ENC\[' "$WORK/plaintext.txt" > "$WORK/plaintext-real.txt"; then
     if [ -s "$WORK/plaintext-real.txt" ]; then
       bad "possible plaintext secret material:"; sed 's/^/        /' "$WORK/plaintext-real.txt"
     else
@@ -264,9 +276,46 @@ if [ -f "$N" ]; then
   grep -q 'claimName: node-red-data' "$N" && grep -q 'mountPath: /data' "$N" \
     && ok "node-red mounts the OMV NFS claim at /data" \
     || bad "node-red does not mount node-red-data at /data"
+  # 2026-10-13: this used to assert "no LAN exposure of the flow editor". That
+  # is now deliberately false - node-red-lan-service.yaml publishes NodePort
+  # 30180 at Supreme Leader's request. The cluster-internal Service rendered by
+  # the chart MUST stay ClusterIP (that is what mosquitto/node-red DNS inside
+  # the namespace resolve to, and what a LAN client should NOT be able to reach
+  # once the NodePort is the reviewed front door); the LAN exposure is asserted
+  # separately below against node-red-lan-service.yaml.
   grep -q 'type: ClusterIP' "$N" \
-    && ok "node-red is ClusterIP only (no LAN exposure of the flow editor)" \
-    || bad "node-red is not ClusterIP"
+    && ok "node-red chart Service is ClusterIP (in-clusterDNS path unchanged)" \
+    || bad "node-red chart Service is not ClusterIP"
+  # The LAN door must exist, be a NodePort, and carry purpose-written docs.
+  L="$ROOT/apps/zigbee/node-red-lan-service.yaml"
+  if [ -f "$L" ]; then
+    grep -q 'type: NodePort' "$L" \
+      && ok "node-red editor is exposed on the LAN via a dedicated NodePort Service" \
+      || bad "node-red-lan-service.yaml exists but is not a NodePort"
+    grep -q 'nodePort: 30180' "$L" \
+      && ok "node-red LAN port is 30180 (outside the used NodePort set)" \
+      || bad "node-red LAN nodePort has drifted from 30180"
+  else
+    bad "node-red LAN access is expected (apps/zigbee/node-red-lan-service.yaml missing)"
+  fi
+  # Same deal for MQTT: Tasmota devices need the broker on the LAN.
+  M="$ROOT/apps/zigbee/mosquitto-lan-service.yaml"
+  if [ -f "$M" ]; then
+    grep -q 'type: NodePort' "$M" && grep -q 'nodePort: 30188' "$M" \
+      && ok "mosquitto is exposed on the LAN via NodePort 30188 with its own Service" \
+      || bad "mosquitto-lan-service.yaml is missing or has drifted from nodePort 30188"
+  else
+    bad "mosquitto-lan-service.yaml missing - Tasmota devices cannot reach the broker"
+  fi
+  # The InfluxDB name mismatch silently ate every sensor sample. Assert the alias.
+  A="$ROOT/apps/zigbee/influxdb-alias-service.yaml"
+  if [ -f "$A" ]; then
+    grep -q 'name: influxdb' "$A" && grep -q 'port: 8086' "$A" \
+      && ok "influxdb compatibility alias serves :8086 for the migrated flows" \
+      || bad "influxdb alias has drifted - Node-RED flows will ENOTFOUND again"
+  else
+    bad "influxdb-alias-service.yaml missing - Node-RED cannot write to InfluxDB"
+  fi
   grep -q 'kind: ConfigMap' "$N" \
     && bad "the node-red chart rendered a ConfigMap - it would shadow the restored /data/settings.js" \
     || ok "node-red chart renders no settings ConfigMap (the restored /data wins)"

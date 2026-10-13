@@ -2,11 +2,21 @@
 # ============================================================================
 # Mosquitto Service (H2-214).
 #
-# ClusterIP only. MQTT is not exposed to the LAN: the source broker was
-# reachable on 192.168.1.144:1883 from anywhere on the flat network, and this
-# one is reachable only from inside the cluster. If a device on the LAN ever
-# needs MQTT again, that is a deliberate NodePort/LoadBalancer decision with an
-# ACL to go with it - not a default.
+# SUPERSEDED 2026-10-13 - read this before trusting the sentence below.
+#
+# This Service is STILL ClusterIP, and it is still the one every in-cluster
+# client should use (zigbee2mqtt's `mqtt://mosquitto`, Node-RED's broker node).
+# What changed is that it is no longer the only way in:
+# mosquitto-lan-service.yaml now publishes the same broker on NodePort 30188 so
+# Tasmota devices can dial it from the LAN, exactly as they reached the retired
+# homelab-one broker on 192.168.1.144:1883. That came with what this comment
+# demanded - a deliberate decision plus an ACL - namely the dedicated `tasmota`
+# user in zigbee-mqtt-credentials.sops.yaml. Still not anonymous.
+#
+# Original reasoning, kept for the record:
+# "reachable only from inside the cluster. If a device on the LAN ever needs
+#  MQTT again, that is a deliberate NodePort/LoadBalancer decision with an ACL
+#  to go with it - not a default."
 #
 # The name is `mosquitto` on purpose: the migrated zigbee2mqtt
 # configuration.yaml points at `mqtt://mosquitto`, and the short name resolves

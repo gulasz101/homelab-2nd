@@ -1,0 +1,73 @@
+---
+# ============================================================================
+# `influxdb` compatibility alias for the migrated Node-RED flows (2026-10-13).
+#
+# WHY THIS EXISTS
+#   The flows restored from homelab-one (110 nodes, 7 tabs) carry the OLD
+#   stack's InfluxDB coordinates baked into every influxdb-out node:
+#
+#       "hostname": "influxdb",
+#       "url": "http://influxdb:8086",
+#       "influxdbVersion": "2.0",
+#
+#   In THIS cluster the InfluxDB v2 chart names its Service `influxdb-influxdb2`
+#   and publishes port 80 -> targetPort 8086. So Node-RED's writes resolved
+#   nothing:
+#
+#       WARN:  Write to InfluxDB failed. getaddrinfo ENOTFOUND influxdb
+#       ERROR: Write to InfluxDB failed. Error: Max retry time exceeded.
+#
+#   Every temperature/humidity/battery sample since the migration was generated
+#   correctly by zigbee2mqtt, received correctly by Node-RED, and then dropped
+#   on the floor before it ever reached InfluxDB. Silent data loss: all pods
+#   reported Running the whole time.
+#
+# CHOICE: alias Service vs editing the flows
+#   Two ways to fix it:
+#     (a) rewrite "hostname"/"url" in every influxdb-out node through the editor
+#     (b) make the name Node-RED is already asking for resolve correctly
+#   (b) is what this is. Reasons:
+#     - it is declarative and reviewable in Git; hand-editing 7 tabs of flows in
+#       a browser is neither;
+#     - it survives a flow re-import from an older backup, which would
+#       reintroduce the old hostname if we had fixed it only in the editor;
+#     - it cannot be silently reverted by someone the way the credentials in
+#       flows_cred.json can.
+#   The flows stay byte-for-byte as migrated. Nothing about the restore is
+#   mutated.
+#
+# PORT ARITHMETIC THAT MATTERS
+#   The alias publishes port 8086 (what the flows dial) and forwards to the real
+#   Service's port 80, which itself forwards to container 8086. Two hops, both
+#   explicit. `influxdb-influxdb2` keeps serving :80 for everything else; this
+#   Service is purely additive and nothing else needs to change.
+#
+# NOT an ExternalName: ExternalName cannot rewrite ports, and would leave the
+# flows dialling :8086 against a service that answers on :80. A selector-based
+# ClusterIP Service is the only shape that does the port translation.
+#
+# SELECTOR is copied from the real Service exactly:
+#   {"app.kubernetes.io/instance":"influxdb","app.kubernetes.io/name":"influxdb2"}
+# Verify with: kubectl -n zigbee get svc influxdb-influxdb2 -o jsonpath='{.spec.selector}'
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: influxdb
+  namespace: zigbee
+  labels:
+    app.kubernetes.io/name: influxdb2
+    app.kubernetes.io/component: compatibility-alias
+    app.kubernetes.io/part-of: zigbee
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/instance: influxdb
+    app.kubernetes.io/name: influxdb2
+  ports:
+    # What the migrated flows dial: http://influxdb:8086
+    - name: http
+      port: 8086
+      protocol: TCP
+      # The real Service's published port; forwards to container 8086 upstream.
+      targetPort: 80

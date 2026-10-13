@@ -40,10 +40,24 @@
 #   NODE_RED_CREDENTIAL_SECRET is a deliberate rotation to do AFTER the cutover
 #   (setting one now would make the restored credentials undecryptable).
 #
-# ClusterIP only, same reasoning as zigbee2mqtt: the editor can rewrite the
-# house's automation, so it does not go on the LAN unauthenticated. The source
-# settings.js may already carry adminAuth - that comes with the restore.
-# LAN access meanwhile: kubectl -n zigbee port-forward svc/node-red 1880:1880
+# CORRECTED 2026-10-13. Two sentences above were wrong and caused real damage:
+#
+# 1. "ClusterIP only" - no longer true. node-red-lan-service.yaml now publishes
+#    the editor on NodePort 30180 so it is reachable from a browser on the LAN.
+#    Supreme Leader's explicit call: he edits flows in the browser and needs the
+#    same convenience he had on the previous device. It is deliberately NOT
+#    behind a Cloudflare Tunnel - an unauthenticated automation writer on the
+#    public internet is the one combination nobody wants.
+#
+# 2. "The source settings.js may already carry adminAuth - that comes with the
+#    restore." VERIFIED FALSE. Probed from inside the cluster: GET / returned
+#    HTTP 200 unauthenticated, and GET /settings exposed no adminAuth,
+#    httpAdminAuth or httpNodeAuth. The restored settings.js has NO auth.
+#    Anyone who can reach :1880 can deploy flows. Do not let the older comment
+#    convince you otherwise - it was an assumption written down as fact.
+#
+# LAN access now: http://<any-node-ip>:30180  (use 192.168.1.179, always-on).
+# port-forward is no longer the only way in.
 # ============================================================================
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
