@@ -229,6 +229,14 @@ else
   done < <(alert_blocks "$RULES_FILE")
   [ "$mismatch" -eq 0 ] && ok "all $total alerts carry namespace: $am_ns"
 fi
+# The urlSecret must be a secret that exists in this repo, in the config's own
+# namespace (the operator cannot look across namespaces).
+am_secret=$(awk '/^            name:/{print $2;exit}' "$AM_FILE")
+if [ -n "$am_secret" ] && ls "$ROOT/infrastructure/observability/${am_secret}.sops.yaml" >/dev/null 2>&1; then
+  ok "urlSecret '$am_secret' exists as infrastructure/observability/${am_secret}.sops.yaml (SOPS, same namespace)"
+else
+  bad "urlSecret '${am_secret:-<none>}' has no SOPS secret file in infrastructure/observability/ - the config would be rejected"
+fi
 # Every alert must also be labelled with the route matcher and a severity, or the
 # route matches nothing / Alertmanager cannot group it.
 missing_label=0

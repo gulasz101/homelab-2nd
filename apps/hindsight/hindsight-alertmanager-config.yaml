@@ -1,0 +1,84 @@
+---
+# ============================================================================
+# AlertmanagerConfig: route Hindsight alerts to Mattermost (H2-242, epic H2-232).
+#
+# TWO LABELS THAT MUST NOT BE CONFUSED
+#   * `release: kube-prometheus-stack` on THIS object - that is the Alertmanager
+#     operator's alertmanagerConfigSelector (see
+#     infrastructure/observability/prometheus-stack-helm-release.yaml,
+#     alertmanagerSpec.alertmanagerConfigSelector). A PrometheusRule uses
+#     `release: prometheus-stack` instead. Swap them and nothing loads.
+#   * `alertgroup: hindsight` in the route matcher - the grouping label every
+#     alert in hindsight-prometheus-rules.yaml carries, so notifications read
+#     "hindsight" rather than the namespace this config has to live in.
+#
+# WHY THIS LIVES IN `observability` AND NOT IN `hindsight` (ruling, H2-242)
+#   Two prometheus-operator behaviours collide here:
+#     1. A receiver's urlSecret is resolved in the AlertmanagerConfig's OWN
+#        namespace only (pkg/alertmanager/amcfg.go, getValidURLFromSecret).
+#     2. The default AlertmanagerConfigMatcherStrategy appends
+#        `namespace=<the AlertmanagerConfig's own namespace>` to the route it
+#        generates (namespaceEnforcer.processRoute) - so the config can only ever
+#        match alerts carrying that exact namespace label.
+#   Hindsight has no Mattermost webhook secret of its own: H2-235's SOPS bundle
+#   minted db credentials, hindsight-secrets and the MinIO backup creds, and the
+#   URL of a Mattermost incoming webhook is a secret that must not be invented,
+#   decrypted or pasted by an agent. So this config reuses the existing
+#   SOPS-encrypted `homelab-node-mattermost-webhook-url` in `observability` -
+#   exactly what cnpg-backup-, homelab-node-, flux-gitops- and
+#   mailarchiver-alertmanager-config.yaml already do - and therefore every alert
+#   in hindsight-prometheus-rules.yaml is labelled `namespace: observability`.
+#   The rule EXPRESSIONS still select namespace="hindsight": that is the
+#   workload's Kubernetes namespace, a different thing from the routing label.
+#   The hand-run gate (apps/hindsight/tests/observability-check.sh) asserts the
+#   equality between this file's namespace and every rule's namespace label, so
+#   the two cannot drift apart silently.
+#
+# TO GIVE HINDSIGHT ITS OWN CHANNEL LATER (the reversal recipe)
+#   1. create apps/hindsight/hindsight-mattermost-webhook-url.sops.yaml with
+#      `sops -e` (key `url`, the webhook for a #hindsight channel) and wire it
+#      into apps/hindsight/kustomization.yaml;
+#   2. move this object to namespace hindsight and repoint apiURL.name at it;
+#   3. change every alert's `namespace:` label in hindsight-prometheus-rules.yaml
+#      from observability to hindsight (and move that PrometheusRule too, if you
+#      want the objects to live together);
+#   4. re-run the gate: the routing-contract section enforces exactly this.
+# ============================================================================
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: hindsight-mattermost-alerts
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+    app.kubernetes.io/part-of: hindsight
+spec:
+  route:
+    receiver: hindsight-mattermost
+    # `alertgroup` is the matcher; the injected `namespace=observability` matcher
+    # is added by the operator on top of it (see the header).
+    matchers:
+      - name: alertgroup
+        value: hindsight
+        matchType: "="
+    groupBy: ["alertname", "namespace"]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 12h
+  receivers:
+    - name: hindsight-mattermost
+      # Slack-shaped payload: Mattermost renders it natively and shows the
+      # measured value from the description.
+      slackConfigs:
+        - apiURL:
+            name: homelab-node-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.alertgroup }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.alertgroup }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
