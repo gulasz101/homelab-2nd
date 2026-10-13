@@ -8,12 +8,32 @@ Accepted — 2026-10-13. **Epic:** H2-232 (*Replace Honcho + OpenViking with sel
 gate; this ADR is that choice. **Uses ADR-032** (tunnels created via the Cloudflare API with a scoped
 token).
 
+**Correction — same day, after the operator's acceptance test failed (2026-10-13).** The first version of
+this ADR claimed the CP had no authentication of its own and that oauth2-proxy was therefore the *only*
+gate. That came from reading `.env[*]` and **missing `envFrom`**, and it was wrong in a way that actually
+blocked the operator: the CP's UI *does* bounce an authenticated user to its own `/login`, and that page is
+**unsatisfiable** — `/api/auth/login` returns `503 Access key not configured` while `HINDSIGHT_CP_ACCESS_KEY`
+is unset, so no typed key can ever be accepted. What was genuinely missing is
+**`HINDSIGHT_CP_DATAPLANE_API_KEY`**: without it the CP calls the API keyless, gets
+`Authentication failed: Invalid API key`, and shows a login page the user cannot pass. It is now set to the
+same value as the tenant key, and the CP logs `Using API key authentication`.
+`HINDSIGHT_CP_ACCESS_KEY` remains **deliberately unset** — oauth2-proxy stays the single gate — so the CP's
+login page is not a second lock, it is a symptom of a missing dataplane key. The lesson is worth more than
+the fix: **`.env[*]` does not describe a container's environment when `envFrom` is in play, and "not in the
+manifest" is not the same as "not in the process".**
+
 ## Context
 
-The Hindsight **Control Plane** has no authentication of its own — no login, no built-in OIDC. It is a
-browser UI over the banks, memories, directives and mental models; anyone who can reach its port can
+The Hindsight **Control Plane** has no authentication of its own — no built-in OIDC, and no usable login.
+It is a browser UI over the banks, memories, directives and mental models; anyone who can reach its port can
 read and edit the whole memory platform. Its API is protected by the tenant API key, but the CP is not
 protected by anything.
+
+The one login page it *does* render is a trap rather than a gate: it appears when the CP cannot reach the
+API, and it cannot be satisfied, because `/api/auth/login` answers `503 Access key not configured` unless
+`HINDSIGHT_CP_ACCESS_KEY` is set — which it deliberately is not here (see the correction above). What the CP
+actually needs to serve anything is `HINDSIGHT_CP_DATAPLANE_API_KEY`, a *different* variable with a
+confusingly similar name.
 
 Until this ticket the CP was reachable only on the LAN / Netbird NodePort **30240**, which was
 tolerable. The epic calls for a public hostname (`hindsight.voitech.dev`) because the Supreme Leader
@@ -26,7 +46,9 @@ Two candidates for that "something", and a third that is not a real option:
 1. **Cloudflare Access** — the documented pattern in the `homelab-cloudflare-access` skill for services
    with no native OIDC.
 2. **In-cluster `oauth2-proxy` + Authentik** — the pattern already running in front of OpenChamber.
-3. The CP's own "access key" — investigated and rejected below: it does not gate the UI.
+3. The CP's own `HINDSIGHT_CP_ACCESS_KEY` — never set in this homelab, and **not a usable gate**: with it
+   unset the CP's `/api/auth/login` answers `503 Access key not configured`, so the page that looks like a
+   lock cannot be passed by anyone (see the correction above).
 
 A constraint that matters: the scoped Cloudflare API token this homelab holds (`~/cloudflare-api.sops.yaml`,
 ADR-032) carries exactly **`Cloudflare Tunnel → Edit`** and **`DNS → Edit`**, nothing else. Access
