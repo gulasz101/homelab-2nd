@@ -52,3 +52,48 @@ resources:
   # NodePorts - api 30239, control plane 30240, no public hostname. The chosen
   # ports are documented in the file along with the neighbours they avoid.
   - hindsight-service.yaml
+
+  # --- Observability (H2-242) ---
+  # The ServiceMonitor is NOT here on purpose: the chart renders it from
+  # metrics.serviceMonitor (labelled release: prometheus-stack), and a second
+  # hand-written one would scrape the api twice.
+  #
+  # All three objects below live in the `observability` namespace, not in
+  # `hindsight` - and that is deliberate:
+  #   * AlertmanagerConfig: the operator resolves a receiver's urlSecret only in
+  #     the config's OWN namespace, and Hindsight has no Mattermost webhook
+  #     secret (H2-235's bundle never minted one; a webhook URL is a secret that
+  #     must not be invented). So it reuses the existing
+  #     homelab-node-mattermost-webhook-url in `observability`, exactly as the
+  #     cnpg-backup / homelab-node / flux-gitops / mail-archiver configs do.
+  #     The operator then appends `namespace=observability` to the generated
+  #     route (AlertmanagerConfigMatcherStrategy, default OnNamespace), which is
+  #     why every alert in hindsight-prometheus-rules.yaml is labelled
+  #     `namespace: observability` even though its expression selects
+  #     namespace="hindsight". Reversal recipe: hindsight-alertmanager-config.yaml.
+  #   * PrometheusRule: sits beside that config so the routing label is not a
+  #     lie; the Prometheus ruleSelector is label-based (release:
+  #     prometheus-stack) and ruleNamespaceSelector is empty, so a rule in any
+  #     namespace loads. Do NOT swap the two labels: PrometheusRules use
+  #     `release: prometheus-stack`, AlertmanagerConfigs use
+  #     `release: kube-prometheus-stack`.
+  #   * dashboard ConfigMap: the Grafana sidecar provisions ConfigMaps labelled
+  #     grafana_dashboard=1 into the folder named by the grafana.folder
+  #     annotation. Every sibling app dashboard in this repo lives in
+  #     `observability` with the same shape.
+  #
+  # The dashboards are the three upstream JSON files fetched verbatim from
+  # monitoring/grafana/dashboards/ at tag v0.10.3 (Hindsight Operations, Hindsight
+  # LLM Metrics, Hindsight API Service) - not hand-drawn panels. Two editing
+  # gotchas, recorded here because a JSON ConfigMap cannot carry comments:
+  #   1. Units belong at fieldConfig.defaults.unit. Grafana silently ignores
+  #      custom.unit and then formats every panel with the default unit.
+  #   2. Every panel filters on `tenant=~"$tenant"` and the $tenant template
+  #      variable is a label_values() query with includeAll + allValue ".*", so it
+  #      resolves to All by default and the panels render non-empty while the
+  #      tenant label is off (HINDSIGHT_API_METRICS_INCLUDE_TENANT defaults to
+  #      false). If a future edit switches that variable to a concrete value, the
+  #      panels go blank on a deployment whose metrics carry no tenant label.
+  - hindsight-prometheus-rules.yaml
+  - hindsight-alertmanager-config.yaml
+  - hindsight-dashboard-configmap.yaml

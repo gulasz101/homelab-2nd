@@ -168,11 +168,32 @@ else
   bad "kubeconform rejected the group render:"
   grep -v '^Summary:' "$WORK/kc-group.txt" | sed 's/^/        /'
 fi
+# AC2 says "every file": validate each manifest of this group on its own too.
+# (kustomization.yaml is a kustomize config object, not a Kubernetes resource.)
+for f in "$DIR"/*.yaml; do
+  [ "$(basename "$f")" = "kustomization.yaml" ] && continue
+  if "${KUBECONFORM[@]}" "$f" > "$WORK/kc-file.txt" 2>&1; then
+    ok "$(basename "$f"): $(tail -1 "$WORK/kc-file.txt")"
+  else
+    bad "$(basename "$f") failed kubeconform -strict:"
+    grep -v '^Summary:' "$WORK/kc-file.txt" | sed 's/^/        /'
+  fi
+done
+# The whole-tree render is a wiring regression check. It is deliberately NOT
+# kubeconform'd document-by-document: eight resources elsewhere in this repo are
+# SOPS-encrypted to the point where their `kind` itself is an ENC[...] blob, so
+# kubeconform reports "could not find schema" for them on a pristine checkout too.
+# Those are allowed by name; any OTHER error is a failure.
 if "${KUBECONFORM[@]}" "$WORK/apps.yaml" > "$WORK/kc-apps.txt" 2>&1; then
   ok "apps render: $(tail -1 "$WORK/kc-apps.txt")"
 else
-  bad "kubeconform rejected the apps render:"
-  grep -v '^Summary:' "$WORK/kc-apps.txt" | sed 's/^/        /'
+  grep -v 'could not find schema for ENC\[AES256_GCM' "$WORK/kc-apps.txt" | grep -v '^Summary:' > "$WORK/kc-apps-real.txt"
+  if [ -s "$WORK/kc-apps-real.txt" ]; then
+    bad "kubeconform rejected the apps render:"
+    sed 's/^/        /' "$WORK/kc-apps-real.txt"
+  else
+    ok "apps render: only the repo's pre-existing SOPS-blob documents are unschema-able ($(grep -c 'could not find schema for ENC' "$WORK/kc-apps.txt") of them; no new errors)"
+  fi
 fi
 # The rendered group must actually contain the two observability CRs.
 grep -q '^kind: PrometheusRule' "$G" && ok "PrometheusRule is in the group render" \
@@ -191,15 +212,15 @@ elif [ "$PROMTOOL_SKIP" = "1" ]; then
   note "PROMTOOL_SKIP=1 - duplicate-key + PromQL parse check SKIPPED (AC1 unproven)"
 elif command -v "$PROMTOOL" >/dev/null 2>&1; then
   if "$PROMTOOL" check rules "$WORK/rules.yaml" > "$WORK/promtool.txt" 2>&1; then
-    ok "promtool check rules: $(grep -c '^        - alert:' "$WORK/rules.yaml") rules parsed, no duplicate keys"
+    ok "promtool check rules: $(grep -c '^ *- alert:' "$WORK/rules.yaml") rules parsed, no duplicate keys"
   else
     bad "promtool rejected the rules (duplicate key or bad PromQL):"
     sed 's/^/        /' "$WORK/promtool.txt"
   fi
   # A duplicate key is also caught by comparing the alert count of the extracted
   # spec against the raw file (belt and braces for the AC's wording).
-  raw=$(grep -c '^        - alert:' "$RULES_FILE")
-  parsed=$(grep -c '^        - alert:' "$WORK/rules.yaml")
+  raw=$(grep -c '^ *- alert:' "$RULES_FILE")
+  parsed=$(grep -c '^ *- alert:' "$WORK/rules.yaml")
   [ "$raw" = "$parsed" ] && ok "alert count survives the render ($raw == $parsed)" \
     || bad "alert count differs between file ($raw) and extracted spec ($parsed)"
 else
