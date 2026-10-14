@@ -245,6 +245,15 @@ spec:
         # HTTP 413 'batch size 257 > maximum allowed batch size 256'.
         env:
           MAX_CLIENT_BATCH_SIZE: "512"
+        # --auto-truncate: TEI's per-input token cap is the model's context
+        # (256 for MiniLM). Without it, any chunk over 256 tokens fails the
+        # ENTIRE retain with HTTP 413 'inputs must have less than 256 tokens.
+        # Given: 272'. The chart gives the reranker this flag by default but
+        # NOT the embedder - asymmetry, presumably an upstream oversight.
+        # Truncation loses the tail of very long chunks; acceptable loss
+        # versus a hard failure. Verified 2026-10-14.
+        args:
+          - "--auto-truncate"
       reranker:
         enabled: true
 
