@@ -125,6 +125,12 @@ Why: one credential for the whole homelab, cost tracking in the place that alrea
 changing the model is a one-file change in `apps/llm-hub` rather than a new vendor key in a new
 namespace. Nothing here holds an upstream provider key.
 
+> **Amended 2026-10-14 (ADR-054):** the extraction model is no longer `nemotron-3-nano-30b-ollama`.
+> It is now `gpt-oss-120b-openrouter` served through OpenRouter. Reason: every retain failed with
+> `429 'timed out waiting for a concurrent request slot'` emitted by LiteLLM itself, whose upstream
+> slot pool for Ollama Cloud was exhausted. See ADR-054 — the proxy, key-scoping and "one file to
+> change" reasoning all still hold; only the upstream provider moved.
+
 **The trade-off, written down because it will bite someone:** the key provisioner only *updates* keys
 it knows about — it never creates them — so a virtual key that is not registered there sits outside
 the sync. Adding a model to Hindsight's config therefore needs a hand update of the key (or a new
