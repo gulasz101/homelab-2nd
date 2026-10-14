@@ -300,6 +300,18 @@ spec:
             # Tencent Hybrid 3 (MoE) via OpenRouter free tier
             model: openrouter/tencent/hy3:free
             api_key: "os.environ/OPENROUTER_API_KEY"
+        - model_name: gpt-oss-120b-openrouter
+          litellm_params:
+            # OpenAI gpt-oss-120b via OpenRouter (paid credits), added 2026-10-14
+            # to unblock the OpenViking -> Hindsight migration. The Ollama Cloud
+            # route (gpt-oss-120b-ollama, same slug different provider) is a
+            # separate model_name; keeping both lets us compare providers.
+            # Reason: Hindsight's fact extraction saturated LiteLLM's concurrent
+            # request slots against ollama.com, producing
+            #   429 'timed out waiting for a concurrent request slot'
+            # on every retain. See docs/adr/adr-054-*.md and H2-284.
+            model: openrouter/openai/gpt-oss-120b
+            api_key: "os.environ/OPENROUTER_API_KEY"
 
         # ── "Grey zone" Anthropic reseller endpoints (2026-10-09) ──
         # Two reseller keys dropped in for evaluation: OneProvider

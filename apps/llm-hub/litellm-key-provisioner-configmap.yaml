@@ -47,6 +47,7 @@ data:
         "glm-4.7-zai",
         "mistral-3.5-middle",
         "hy3-free",
+        "gpt-oss-120b-openrouter",
         # Google Gemini (AI Pro subscription key)
         # NOTE 2026-09-26: removed gemini-pro-latest, gemini-3.1-pro-preview,
         # gemini-3.1-pro-preview-customtools (429 quota on every call — AI Pro
