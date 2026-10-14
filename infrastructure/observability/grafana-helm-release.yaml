@@ -28,6 +28,10 @@ spec:
     # injected through a SOPS-encrypted secret mounted as envFrom.
     envFromSecrets:
       - name: grafana-oidc-client
+      # 2026-10-14: read-only InfluxDB datasource token (org na, bucket default)
+      # used by the InfluxDB datasource provisioning below (secureJsonData token
+      # interpolation). See grafana-influxdb-datasource.sops.yaml.
+      - name: grafana-influxdb-datasource
 
     env:
       GF_SERVER_ROOT_URL: "https://grafana.voitech.dev"
@@ -116,6 +120,26 @@ spec:
             url: http://tempo.observability.svc.cluster.local:3200
             access: proxy
             editable: false
+          # 2026-10-14: the migrated home-sensor pipeline (Node-RED influxdb-out
+          # nodes, org 'na' bucket 'default', measurements LYWSD03MMC /
+          # MOVEMENT / bathroom_heater / power_usage) had NO Grafana datasource
+          # after the k3s migration - only Prometheus/Loki/Tempo were carried
+          # over, so every home-sensor dashboard went blind even though writes
+          # kept landing. Port is 80 (chart service), not 8086 (pod). Token is a
+          # READ-ONLY auth scoped to the default bucket
+          # (grafana-influxdb-datasource.sops.yaml), because Grafana only queries.
+          - name: InfluxDB
+            type: influxdb
+            url: http://influxdb-influxdb2.zigbee.svc.cluster.local:80
+            access: proxy
+            editable: false
+            jsonData:
+              version: Flux
+              organization: na
+              defaultBucket: default
+              tlsSkipVerify: true
+            secureJsonData:
+              token: ${INFLUX_TOKEN}
 
     # Service stays internal; Cloudflare Tunnel ingress is added separately.
     service:

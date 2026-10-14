@@ -1,0 +1,27 @@
+# InfluxDB datasource read-only token for Grafana (org 'na', bucket 'default').
+# Created 2026-10-14 via `influx auth create --read-bucket 43a2b9b363aac792` on the
+# zigbee influxdb2 instance. Consumed by grafana-helm-release.yaml datasource
+# provisioning via secretRef. Read-only on purpose: Grafana queries, never writes.
+apiVersion: v1
+kind: Secret
+metadata:
+    name: grafana-influxdb-datasource
+    namespace: observability
+type: Opaque
+stringData:
+    token: ENC[AES256_GCM,data:eEMgUIQN8eXxV5VY0rAFJVpb9ga8//i+8VkNn0s7XdMPYSDFTDUx0yLcWI14DJUUd5EMMyIOSRf9cYwljeiqP+0cc/t6IOAfDu52sgEu5GmyBGs+d+Tnqw==,iv:7/jIR7XGgD/Nu9lE4H9l30Sd3lWbo9I2O5B5i8Aat3Q=,tag:61vlqnHHcbonQXoMcVhzsw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB2STB3UVBDQkRmU0txeGs3
+            Y3JxTUVsZVJlYkNwc1JiSldTKzFpU1BKM0ZvClFkYmVscnMvNzBYZ2tuN1VueXRw
+            ZDJiSEtYMzNNVDV5ZytTbVNId2dScm8KLS0tIFVDYVQ0WHdQNVhmaFNxN0g3cFhS
+            UUh3TzBLbjdQdGlpN29hazUvTzBrRHMKx7Z56nZSV6VMuB7GL1g96uAVBdFWAscC
+            gs4tIuqtTJnYdc0cc81hbHApesJw8uCEbJ4rkessUWeESrdp/gO4iA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-14T17:40:41Z"
+    mac: ENC[AES256_GCM,data:VCSUAqMOLBfBHJqjuuDJtKMyEaKoarBHipdOlRKJTif2s3QA1WLw/jDm3OpGDkjSZ/lVwq70cvAGQtHPF0HT3oeHqUpaGBbwN6OWaRS1UXb73ByIfhD6PoKvavRNpH+S78qSPH7vAnbYNeLxjaOFfDmXYSQQ855+vY33FMpAoAo=,iv:KgOy58981VfS8u0JH+UcZNTdHdIej6XzsiiDHx9VlDk=,tag:aWSOWdK/Nlwcu7cIAWskOg==,type:str]
+    version: 3.13.1
