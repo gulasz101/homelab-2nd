@@ -236,6 +236,15 @@ spec:
     tei:
       embedding:
         enabled: true
+        # MAX_CLIENT_BATCH_SIZE is TEI's cap on inputs per /embed call. The
+        # default 256 413s on dense documents: Hindsight embeds every memory
+        # unit of a doc in ONE request, so any doc that yields 257+ facts
+        # (e.g. long architecture/reference notes) fails its whole retain with
+        # "Failed to generate batch embeddings: TEI ... HTTP 413". 512 covers
+        # the whole known corpus. Verified 2026-10-14: 256 inputs OK, 257 ->
+        # HTTP 413 'batch size 257 > maximum allowed batch size 256'.
+        env:
+          MAX_CLIENT_BATCH_SIZE: "512"
       reranker:
         enabled: true
 
