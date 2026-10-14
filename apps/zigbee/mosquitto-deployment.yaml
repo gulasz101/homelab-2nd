@@ -53,7 +53,7 @@ spec:
         # "not authorised" (seen as client DVES_A7FBD6).
         # Bump the value to force a recreate. Preferred over an imperative
         # `kubectl rollout restart`, which Flux records as drift and reverts.
-        secret-version: "tasmota-1"
+        secret-version: "tasmota-2"
     spec:
       # The official image ships the `mosquitto` user as uid 1883. Running as
       # that uid directly (rather than as root dropping privileges through a
