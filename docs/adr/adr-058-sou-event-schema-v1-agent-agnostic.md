@@ -1,10 +1,10 @@
-# ADR-055: SOU Event Schema v1 — Agent-Agnostic JSON
+# ADR-058: SOU Event Schema v1 — Agent-Agnostic JSON
 
 **Date:** 2026-10-12  
 
 > **Renumbered 2026-10-14:** originally authored as ADR-034/035/036 in the Obsidian
 > vault's `homelab/docs/adr/` (a stale snapshot whose numbers were later reused in
-> this repo). Moved here and renumbered to avoid collisions; vault copy removed.
+> this repo). Moved here and renumbered twice (054-056 then 057-059) to avoid collisions; vault copy removed.
 
 **Status:** Proposed  
 **Deciders:** akadmin (Supreme Leader), Szarik  
@@ -180,7 +180,7 @@ def ingest_event():
     except jsonschema.ValidationError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     
-    # Write to DB (see ADR-054 for db.py adapter)
+    # Write to DB (see ADR-057 for db.py adapter)
     db.insert_event(
         agent=data["agent"],
         event_type=data["event_type"],
@@ -239,8 +239,8 @@ hooks:
 
 ## References
 
-- **ADR-054:** Database layer (Postgres primary, SQLite fallback) — defines `events` table schema
-- **ADR-056:** OpenClaw decoupling — deprecates `/set_state` in favor of `/events`
+- **ADR-057:** Database layer (Postgres primary, SQLite fallback) — defines `events` table schema
+- **ADR-059:** OpenClaw decoupling — deprecates `/set_state` in favor of `/events`
 - **Tracking note:** `2026-10-12-sou-agent-agnostic-redesign.md`
 - **JSON Schema spec:** https://json-schema.org/
 

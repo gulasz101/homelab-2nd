@@ -1,10 +1,10 @@
-# ADR-054: SOU Database Layer — Postgres Primary, SQLite Fallback
+# ADR-057: SOU Database Layer — Postgres Primary, SQLite Fallback
 
 **Date:** 2026-10-12  
 
 > **Renumbered 2026-10-14:** originally authored as ADR-034/035/036 in the Obsidian
 > vault's `homelab/docs/adr/` (a stale snapshot whose numbers were later reused in
-> this repo). Moved here and renumbered to avoid collisions; vault copy removed.
+> this repo). Moved here and renumbered twice (054-056 then 057-059) to avoid collisions; vault copy removed.
 
 **Status:** Proposed  
 **Deciders:** akadmin (Supreme Leader), Szarik  
@@ -35,7 +35,7 @@ We adopt a **dual-backend database layer**:
 ### Postgres (primary)
 - **Production backend** for homelab k3s deployment
 - Deployed via **CloudNativePG** cluster (existing homelab pattern, proven backup/restore on the deployed CloudNativePG clusters)
-- Schema: `agents`, `events`, `sessions` tables (see ADR-055 for event schema)
+- Schema: `agents`, `events`, `sessions` tables (see ADR-058 for event schema)
 - Connection: psycopg2 or psycopg3 (async if needed later)
 
 ### SQLite (fallback)
@@ -76,7 +76,7 @@ We write a **database adapter** (`backend/db.py`) that:
 
 ## Implementation Notes
 
-### Schema (sketch, refined in ADR-055)
+### Schema (sketch, refined in ADR-058)
 
 ```sql
 CREATE TABLE agents (
@@ -153,7 +153,7 @@ else:
 
 - CloudNativePG cluster deployment + backup/restore (Mattermost, Nextcloud, Karakeep)
   — the established homelab pattern this ADR follows
-- **ADR-055:** Event schema v1 (agent-agnostic JSON) — defines `events.payload` structure
+- **ADR-058:** Event schema v1 (agent-agnostic JSON) — defines `events.payload` structure
 - **Tracking note:** `2026-10-12-sou-agent-agnostic-redesign.md`
 
 ---

@@ -1,10 +1,10 @@
-# ADR-056: SOU OpenClaw Decoupling — Ruthless Divergence
+# ADR-059: SOU OpenClaw Decoupling — Ruthless Divergence
 
 **Date:** 2026-10-12  
 
 > **Renumbered 2026-10-14:** originally authored as ADR-034/035/036 in the Obsidian
 > vault's `homelab/docs/adr/` (a stale snapshot whose numbers were later reused in
-> this repo). Moved here and renumbered to avoid collisions; vault copy removed.
+> this repo). Moved here and renumbered twice (054-056 then 057-059) to avoid collisions; vault copy removed.
 
 **Status:** Proposed  
 **Deciders:** akadmin (Supreme Leader), Szarik  
@@ -37,11 +37,11 @@ We **ruthlessly decouple from OpenClaw**. This is a **one-way fork** — we will
 
 ### What gets deleted (Phase 3)
 
-1. **`IDENTITY.md` reading** — `backend/app.py` lines 49-50, 204-217 (reads agent name from OpenClaw workspace). **Delete.** Agent name comes from event payload (`agent` field in JSON, see ADR-055).
+1. **`IDENTITY.md` reading** — `backend/app.py` lines 49-50, 204-217 (reads agent name from OpenClaw workspace). **Delete.** Agent name comes from event payload (`agent` field in JSON, see ADR-058).
 
 2. **`OPENCLAW_WORKSPACE` env var** — `backend/app.py` line 49. **Delete.** No hardcoded workspace paths.
 
-3. **`set_state.py` script** — root-level script for OpenClaw agents to push state. **Delete.** Replace with generic `push_event.py` (see ADR-055).
+3. **`set_state.py` script** — root-level script for OpenClaw agents to push state. **Delete.** Replace with generic `push_event.py` (see ADR-058).
 
 4. **`SKILL.md`** — OpenClaw skill file with deployment instructions. **Delete.** Replace with generic `docs/agent-integration.md` covering Hermes, OpenChamber, OpenCode.
 
@@ -53,7 +53,7 @@ We **ruthlessly decouple from OpenClaw**. This is a **one-way fork** — we will
 
 1. **Multi-agent join flow** — `/join-agent` and `/agent-push` endpoints are **agent-agnostic** (already generic). **Keep**, but rename variables from `agent` → `visitor` for clarity.
 
-2. **6-state model** (`idle`, `writing`, `researching`, `executing`, `syncing`, `error`) — this is **upstream UI design**, not OpenClaw-specific. **Keep** for Phase 1, map `tool_call` events to states (see ADR-055). Eventually infer state from event activity instead of explicit state changes.
+2. **6-state model** (`idle`, `writing`, `researching`, `executing`, `syncing`, `error`) — this is **upstream UI design**, not OpenClaw-specific. **Keep** for Phase 1, map `tool_call` events to states (see ADR-058). Eventually infer state from event activity instead of explicit state changes.
 
 3. **Phaser.js renderer** — area-based positioning (`breakroom`, `writing`, `error`) is **agent-agnostic**. **Keep** as-is, refactor in Phase 4 to consume `/events` API instead of `/status`.
 
@@ -164,8 +164,8 @@ if __name__ == "__main__":
 
 ## References
 
-- **ADR-054:** Database layer (Postgres primary, SQLite fallback)
-- **ADR-055:** Event schema v1 (agent-agnostic JSON)
+- **ADR-057:** Database layer (Postgres primary, SQLite fallback)
+- **ADR-058:** Event schema v1 (agent-agnostic JSON)
 - **Tracking note:** `2026-10-12-sou-agent-agnostic-redesign.md`
 - **Upstream repo:** `https://github.com/ringhyacinth/Star-Office-UI`
 - **Fork repo:** `https://github.com/gulasz101/star-office-ui-fork`
@@ -176,5 +176,5 @@ if __name__ == "__main__":
 1. Execute Phase 3 cleanup (delete OpenClaw files, refactor `app.py`)
 2. Write `push_event.py` script
 3. Update README with agent-agnostic quick start
-4. Commit changes with message: "Phase 3: Ruthless OpenClaw decoupling (ADR-056)"
+4. Commit changes with message: "Phase 3: Ruthless OpenClaw decoupling (ADR-059)"
 5. Verify local `docker run` still works (SQLite backend, `push_event.py` test)
