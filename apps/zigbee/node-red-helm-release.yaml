@@ -131,7 +131,13 @@ spec:
     # own verification.
     env:
       - name: TZ
-        value: Etc/UTC
+        # 2026-10-14: was Etc/UTC. The restored cronplus schedules ("turn on
+        # unicorn 20:00", "turn off unicorn 00:00", heater, morning lights)
+        # were written in WALL-CLOCK local time on the old stack. Under Etc/UTC
+        # every one of them fired two hours late (unicorn on at 22:00 Warsaw,
+        # off at 02:00). zigbee2mqtt already carries Europe/Warsaw; the flows
+        # scheduler must agree with it.
+        value: Europe/Warsaw
 
     podSecurityContext:
       runAsUser: 1000
