@@ -71,6 +71,23 @@ OpenViking: a fixed nodePort, no Ingress, no tunnel, LAN only.
 - **Bring the Firecrawl stack under this decision.** It is already Flux-managed via the `apps`
   Kustomization; nothing to change.
 
+## Outcome (recorded same day)
+
+**ZeroClaw cannot use this endpoint, and the exposure was kept anyway.**
+
+Genuine 4 Argon (not just the throttled fallback) markdown-wraps every URL inside tool arguments,
+and tool calling on this chain is prompt-level — so the argument never arrives intact and no browser
+backend is reached. See ADR-062's related tracking note for the trace evidence.
+
+The exposure is therefore **currently unused by its intended client**. It is retained because:
+
+- it is not ZeroClaw-specific — any Mac-side client can use it;
+- it matches the posture of the existing `-lan` NodePorts;
+- tool calling may become viable if a future client uses native tool schemas (an MCP server in k3s
+  would be the natural next shape, and would need the same LAN path).
+
+If a tighter LAN is ever wanted, this is a legitimate candidate for removal — it is unused today.
+
 ## When to revisit
 
 - Firecrawl moves to a public/SLO'd surface, or gains authentication we want agents to honour too.
