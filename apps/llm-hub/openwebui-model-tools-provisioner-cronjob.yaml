@@ -1,8 +1,3 @@
----
-# CronJob that gives EVERY LiteLLM chat model the Hindsight MCP tool servers as default
-# tools in Open WebUI. Companion to litellm-key-provisioner (same reconcile pattern): the
-# model list is not static, so the workspace-model override rows are reconciled hourly,
-# not hand-seeded. Script: openwebui-model-tools-provisioner-configmap.yaml (provision.sh).
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -12,7 +7,7 @@ metadata:
     app.kubernetes.io/name: openwebui-model-tools-provisioner
     app.kubernetes.io/part-of: llm-hub
 spec:
-  schedule: "10 * * * *"
+  schedule: 10 * * * *
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
@@ -21,31 +16,48 @@ spec:
       template:
         spec:
           restartPolicy: OnFailure
-          containers:
-            - name: provisioner
-              # CNPG postgres image: psql for the Open WebUI DB + python3 for the LiteLLM call.
-              image: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
-              command:
-                - /bin/sh
-                - /scripts/provision.sh
-              env:
-                - name: LITELLM_URL
-                  value: "http://litellm.llm-hub.svc.cluster.local:4000"
-                - name: LITELLM_MASTER_KEY
-                  valueFrom:
-                    secretKeyRef:
-                      name: litellm-master-key
-                      key: master-key
-                - name: DATABASE_URL
-                  valueFrom:
-                    secretKeyRef:
-                      name: openwebui-db-credentials
-                      key: databaseUrl
-              volumeMounts:
-                - name: scripts
-                  mountPath: /scripts
-          volumes:
+          initContainers:
+          - name: fetch-models
+            image: python:3.13-alpine
+            command:
+            - /bin/sh
+            - /scripts/provision.sh
+            env:
+            - name: LITELLM_URL
+              value: http://litellm.llm-hub.svc.cluster.local:4000
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-master-key
+                  key: master-key
+            volumeMounts:
             - name: scripts
-              configMap:
-                name: openwebui-model-tools-provisioner
-                defaultMode: 0755
+              mountPath: /scripts
+            - name: shared
+              mountPath: /shared
+          containers:
+          - name: apply-sql
+            image: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
+            command:
+            - /bin/sh
+            - /scripts/provision.sh
+            env:
+            - name: SKIP_FETCH
+              value: '1'
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-db-credentials
+                  key: databaseUrl
+            volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: shared
+              mountPath: /shared
+          volumes:
+          - name: scripts
+            configMap:
+              name: openwebui-model-tools-provisioner
+              defaultMode: 493
+          - name: shared
+            emptyDir: {}
