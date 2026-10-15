@@ -161,6 +161,15 @@ spec:
         # worker slot. One user, one tenant: the COUNTs are trivial here.
         HINDSIGHT_API_METRICS_BACKLOG_ENABLED: "true"
 
+        # ------------------------------------------------------------------
+        # MCP tool-description guidance (open-webui wiring, 2026-10-15)
+        # ------------------------------------------------------------------
+        # Open WebUI exposes Hindsight as native MCP tools; the chat model only
+        # benefits if it actually CALLS recall/retain. Appended to the built-in
+        # tool descriptions so every MCP client sees the fleet-wide rule:
+        # which bank owns chat memories and when recall must run first.
+        HINDSIGHT_API_MCP_INSTRUCTIONS: "Banks: chat memories (ai-chat conversations) live in the 'open-webui' bank - retain there. The hermes-* banks are read-only knowledge from the homelab's agent fleet (Andrzej, Szarik, ...). Before answering questions about the user's past, preferences, prior work, the homelab, or anything discussed in earlier chats, call recall FIRST (bank_id 'open-webui' for chat-shared facts, 'hermes-andrzej' or another hermes-* bank for agent knowledge, or omit bank_id to search across banks). When the user asks you to remember something, call sync_retain right away."
+
       # External models, external TEI: a model-cache PVC would only pin the api pod
       # to one node (ReadWriteOnce) and there is nothing local to cache.
       persistence:
