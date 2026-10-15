@@ -96,13 +96,14 @@ spec:
         compression: gzip
     retentionPolicy: "30d"
 
-  # Deliberately modest. This node's CPU requests are already ~78% committed, so
-  # the upstream chart's 1Gi request is NOT copied here; values mirror the
-  # running honcho-db cluster (same node, same image).
+  # 520Mi steady state, but OOMKilled at 1Gi under the florian/default batch migration
+  # load (H2-290, 2026-10-15 04:10): conc=2 x 24-item retain calls drive parallel
+  # extraction + big transactions + embedding writes. 2Gi gives honest headroom.
+  # CPU unchanged: node's CPU requests already ~78% committed.
   resources:
     requests:
-      memory: "256Mi"
+      memory: "512Mi"
       cpu: "250m"
     limits:
-      memory: "1Gi"
+      memory: "2Gi"
       cpu: "1000m"
