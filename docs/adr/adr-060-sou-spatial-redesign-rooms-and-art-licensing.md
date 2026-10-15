@@ -1,7 +1,7 @@
 # ADR-060: SOU Spatial Redesign — One Room per Agent, Camera-Followed Movement, Licence-Clean Art
 
 **Date:** 2026-10-14
-**Status:** Accepted
+**Status:** Accepted — **amended 2026-10-15** (art generation route + cluster GPU finding: see "Amendment 2026-10-15" at the end)
 **Supersedes:** the single-agent spatial assumptions in `frontend/layout.js` / `frontend/game.js`
 **Related:** ADR-057 (database layer), ADR-058 (event schema v1), ADR-059 (OpenClaw decoupling)
 **Issues:** SOU-88 (spatial redesign), SOU-80 (multi-agent renderer, prerequisite), SOU-79 (English-only)
@@ -118,3 +118,48 @@ Art pack generation is a separate ticket, gated on the Qwen-Image 1.0 route bein
 
 Do not start SOU-88 before SOU-80 lands — SOU-80 removes the privileged `main` agent and makes
 agents first-class, which the room model assumes.
+
+---
+
+## Amendment 2026-10-15 — art generation route (Supreme Leader's ruling)
+
+**Decision.** The art pack is generated with **`black-forest-labs/FLUX.2-klein-4B`**
+(**Apache-2.0**, not gated — verified on the model card and via the HF API) plus
+**`Limbicnation/pixel-art-lora`** (Apache-2.0, trained exclusively on a CC0 set,
+`base_model: FLUX.2-klein-4B`). **`Qwen/Qwen-Image` 1.0 is demoted to fallback**, not the primary
+route: its licence is fine, but it is not sprite-specialised and the klein-4B + LoRA chain is the
+one already scoped on SOU-2/SOU-8. The prohibition on **Qwen-Image 2.1** (research-only) stands.
+
+**Why the D6 wording above is now insufficient.** D6 fixed the *look* (cozy 16-bit lodge). It named
+Qwen-Image 1.0 as "the permitted generation route", which the tickets never did — SOU-2 and SOU-8
+both name klein-4B. The ADR and the board disagreed for ten days; a future reader follows the ADR.
+That is the defect this amendment closes.
+
+**Cluster GPU finding (constrains the pipeline, not the look).** `homelab-2nd` does report
+`nvidia.com/gpu: 1`, but the device is a **GeForce GTX 970M — 3 GB, Maxwell, compute 5.2** — and it
+is **already fully claimed by `gpu-embedding/ollama-embeddings`**. The klein-4B pipeline wants
+~13 GB and a bf16-capable device. Therefore:
+
+- **Art generation runs on the M1 Max as a Mac-side batch step** (32 GB unified, MPS). It is not a
+  cluster workload and cannot be one on this hardware.
+- **No deployed component may depend on generating an image inside a request.** Any "agent joins →
+  server renders its room" design is unbuildable here; generation must be decoupled from the join
+  path (pre-generation + a placeholder bay while a pack is missing).
+
+**Runtime note.** `Flux2KleinPipeline` now ships in **released diffusers 0.41.0** — the LoRA card's
+"diffusers >= 0.37.0.dev0 from git main" requirement is satisfied by the wheel. Note the pipeline's
+text encoder is **Qwen3**, not the Mistral3 encoder of the FLUX.2-dev pipeline, so off-the-shelf
+FLUX.2-dev guidance does not transfer. `guidance_scale` is ignored on this distilled model.
+
+**Art contract note (verified, feeds the post-process step).** "Downscale to the native sprite
+size" has no single answer: `frontend/game.js` uses 128×128, 230×144, 256×256, 160×160, 230×230,
+180×251, 65×65 and guest characters at 128×64 (2 × 64×64). Frames are sliced per asset by
+`frameWidth`/`frameHeight`, and `asset-positions.json` / `asset-defaults.json` key position and
+scale **by filename**. Post-processing must be driven per asset from the existing sheets.
+
+**Camera-angle correction.** The shipped `office_bg.webp` is a **3/4 oblique** view (walls *and*
+floor, ~32px tile scale, upscaled ~2×), not strictly top-down, and it carries readable third-party
+signage ("CENTRAL PERK", "FRIENDS"). "No text, no logos" in generated backgrounds is therefore a
+hard acceptance criterion, and the current background is disqualified as a public-repo style
+reference for a second reason beyond LimeZu.
+
