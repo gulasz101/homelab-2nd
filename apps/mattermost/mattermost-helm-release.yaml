@@ -45,6 +45,12 @@ spec:
       externalPort: 8065
       internalPort: 8065
 
+    # The pinned Mattermost image digest has no arm64 variant — keep the pod on
+    # amd64 nodes (discovered 2026-10-15: a reschedule put it on zigbee-node/ARM
+    # and the pod died on ErrImagePull).
+    nodeSelector:
+      kubernetes.io/arch: amd64
+
     # Ingress disabled — Cloudflare Tunnel comes later
     ingress:
       enabled: false
