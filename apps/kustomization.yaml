@@ -207,35 +207,9 @@ resources:
   - nextcloud/nextcloud-dashboard-configmap.yaml
   # Cloudflare Tunnel for photos.voitech.dev -> Nextcloud
   - nextcloud/cloudflared-deployment.yaml
-  # Honcho namespace
-  - honcho/namespace.yaml
-  # SOPS-encrypted secrets
-  - honcho/honcho-db-credentials.sops.yaml
-  - honcho/honcho-secrets.sops.yaml
-  - honcho/honcho-minio-backup-creds.sops.yaml
-  - honcho/honcho-mattermost-webhook-url.sops.yaml
-  # Non-secret config
-  - honcho/honcho-configmap.yaml
-  # CNPG Cluster + backups for Honcho
-  - honcho/postgres-cluster.yaml
-  - honcho/scheduled-backup.yaml
-  # Redis cache/queue
-  - honcho/redis-pvc.yaml
-  - honcho/redis-deployment.yaml
-  - honcho/redis-service.yaml
-  # Honcho API + Deriver deployments
-  - honcho/honcho-api-deployment.yaml
-  - honcho/honcho-deriver-deployment.yaml
-  # AlertmanagerConfig to route Honcho alerts to Mattermost
-  - honcho/honcho-alertmanager-config.yaml
-  # PrometheusRule for Honcho CPU/memory resource alerts
-  - honcho/honcho-prometheus-rules.yaml
-  # Loki Ruler rule for Honcho error alerts
-  - honcho/honcho-error-loki-rule.yaml
-  # Provisioned Grafana dashboard for Honcho
-  - honcho/honcho-dashboard-configmap.yaml
-  # LAN-only NodePort service
-  - honcho/honcho-service.yaml
+  # Honcho decommissioned 2026-10-15 (H2-296): apps/honcho removed, namespace torn
+  # down by Flux prune. CNPG backup data remains in MinIO cnpg-backups/honcho until
+  # the drip-deletion gate (H2-295, due 2026-11-14).
   # OpenGist namespace
   - opengist/namespace.yaml
   # Helm repository
