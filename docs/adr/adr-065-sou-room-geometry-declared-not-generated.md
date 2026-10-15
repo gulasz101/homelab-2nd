@@ -71,6 +71,23 @@ cost scales with room count, and each generated prop carries the usual provenanc
 A room's lattice is coupled to the projection its art was generated in — changing the
 projection invalidates the room's furniture set, which is deliberate and checkable.
 
-**Open.** Whether to standardise on the model's natural 30° isometric (zero skew work, slightly
-unusual for pixel art) or to force 2:1 by skewing generated art by 1.0/1.155 (conventional
-look, one extra lossy resample). Not blocking: the lattice is a declaration either way.
+**Open.** ~~Whether to standardise on the model's natural 30° isometric or to force 2:1 by
+skewing generated art by 1.0/1.155.~~ **DECIDED 2026-10-15 by the Supreme Leader: keep the
+30-degree true isometric angle.** Reason: it is the look of the classic isometric strategy
+games (Pharaoh, Zeus) that he identifies with, and the single-desk composite rendered at this
+angle read as "so on point — keep that direction". Per ADR-061, where "correct" and "fun to
+look at" conflict the operator's taste wins, so this is not a technical call.
+
+Consequences of that decision, as built:
+
+- the declared lattice is `tile_w 96 / tile_h 55` (0.573 ≈ tan 30°) in `room_geometry.ROOM`,
+  not the 2:1 pixel-art convention;
+- the projection prompt was rewritten to *ask* for 30° with the Pharaoh/Zeus anchor, because
+  the previous wording asked for 2:1 (26.57°) — i.e. the prompt had become the opposite of the
+  decision;
+- the alignment gate tightened from ±0.12 to **±0.07**, and `gen_room_set.py` now **re-rolls**
+  a prop that misses the lattice (up to 3 seeds) instead of accepting it or averaging it in:
+  the generator returns either ~0.50 (2:1) or ~0.577 (30°) for the same instruction, so a
+  per-room gate is the only thing that keeps one projection inside one room;
+- a prop already on disk is re-checked against the CURRENT lattice on resume rather than
+  trusted, so tightening the gate cannot leave a stale prop inside a room.
