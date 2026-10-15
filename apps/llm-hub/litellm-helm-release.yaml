@@ -689,6 +689,33 @@ spec:
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
 
+      router_settings:
+        # Fallback chain for the OpenChamber runner lanes (SOU-104 fix, 2026-10-15).
+        # The Alibaba-hosted qwen3.8-flash behind the OpenCode Go gateway
+        # intermittently rejects task texts with HTTP 400:
+        #   [data_inspection_failed] InternalError.Algo.DataInspectionFailed:
+        #   "Input text data may contain inappropriate content"
+        # LiteLLM does NOT classify that error as ContentPolicyViolationError
+        # (no pattern in exception_mapping_utils.py matches data_inspection_failed),
+        # so it surfaces as a generic BadRequestError and ONLY the generic
+        # `fallbacks` path can rescue it. Both mappings are set on purpose:
+        #   - fallbacks            -> catches the observed BadRequestError(400)
+        #   - content_policy_fallbacks -> catches a properly-classified CPV in case
+        #     upstream/mapping changes ever surface it as such
+        # deepseek-v4.1-flash lives on the SAME gateway and subscription key, so
+        # cost profile and auth are unchanged. The OpenCode session pre-call hook
+        # is fallback-safe: it injects x-opencode-session only when absent, and
+        # the header already on the request kwargs is carried into the fallback
+        # call untouched (deepseek-v4.1-flash is in OPENCODE_GO_UNSUFFIXED).
+        # Scope: plain per-lane mappings, no wildcard - no other model's routing
+        # behaviour changes. Fallback responses arrive labelled deepseek-v4.1-flash
+        # while the client keeps its qwen3.8-flash model string; that is the
+        # intended resilience semantics (see ADR-052).
+        fallbacks:
+          - {"qwen3.8-flash": ["deepseek-v4.1-flash"]}
+        content_policy_fallbacks:
+          - {"qwen3.8-flash": ["deepseek-v4.1-flash"]}
+
       litellm_settings:
         callbacks:
           - "prometheus"
