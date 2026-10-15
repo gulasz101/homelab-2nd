@@ -58,6 +58,11 @@ spec:
 
     # Mattermost application config via env vars
     extraEnvVars:
+      # Secret-change roll trigger (chart has no podAnnotations): bump the value
+      # when a Secret this Deployment consumes changes, so env-var consumers pick
+      # up the new value without an imperative kubectl rollout restart.
+      - name: SECRET_VERSION_ROLL
+        value: "minio-creds-20261015"
       # File storage — OMV MinIO S3
       - name: MM_FILESETTINGS_DRIVERNAME
         value: "amazons3"
