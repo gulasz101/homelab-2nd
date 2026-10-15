@@ -53,6 +53,10 @@ resources:
   # NOT anonymous, unlike the broker it replaces. See the file header for the
   # nodePinning caveat and why devices should target 192.168.1.179.
   - mosquitto-lan-service.yaml
+  # LAN reachability for the z2m frontend (2026-10-15). Same ruling as
+  # node-red-lan-service.yaml: LAN NodePort, no tunnel - the dashboard can
+  # permit device pairing, so it must never sit on a public hostname.
+  - zigbee2mqtt-lan-service.yaml
 
   # --- InfluxDB compatibility alias for the migrated flows (2026-10-13) ------
   # The restored flows dial http://influxdb:8086; the real Service is named

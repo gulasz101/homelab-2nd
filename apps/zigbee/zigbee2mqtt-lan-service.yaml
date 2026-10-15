@@ -1,0 +1,50 @@
+---
+# ============================================================================
+# Zigbee2MQTT frontend on the LAN (2026-10-15).
+#
+# ASKED AND ANSWERED: "how do I access the zigbee2mqtt dashboard?" Until this
+# file existed the answer was "you don't, yet" - the HelmRelease deliberately
+# ships z2m ClusterIP-only with the comment "The frontend gets exposed over
+# the LAN later, through a reviewed service". This IS that reviewed service.
+#
+# Precedent is node-red-lan-service.yaml (2026-10-13): LAN-only NodePort,
+# unauthenticated, behind OPNsense. Same ruling applies here - the z2m
+# frontend can permit device pairing, so the one combination we DO forbid is
+# a public Cloudflare Tunnel against it. LAN, full stop.
+#
+# SELECTOR + PORTS are copied from the live chart Service, verified with:
+#   kubectl -n zigbee get svc zigbee2mqtt \
+#     -o jsonpath='{.spec.selector}{.spec.ports}'
+#   -> {"app":"zigbee2mqtt"}, port 8080 targetPort "web"
+# Mirroring beats guessing: the influxdb-alias-service saga (targetPort 80 vs
+# 8086) already taught why a typo'd targetPort is a silent failure.
+#
+# PORT 30181 chosen outside the used set (30180 Node-RED, 30188 mosquitto,
+# 30030/30069/30076/30078/30089/30096/30114/30193/30195/30239/30240/30250/
+# 30530/30800/30810), one digit away from Node-RED's 30180 so the two
+# automation UIs are neighbours in the bookmark bar.
+#
+# REACHABILITY: NodePort is routed through ANY node, so the stable address is
+# the control plane 192.168.1.179:30181 - even though the pod itself lives on
+# zigbee-node (it owns the coordinator dongle).
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: zigbee2mqtt-lan
+  namespace: zigbee
+  labels:
+    app.kubernetes.io/name: zigbee2mqtt
+    app.kubernetes.io/component: lan-access
+    app.kubernetes.io/part-of: zigbee
+spec:
+  type: NodePort
+  # Matches the chart-rendered zigbee2mqtt Service selector exactly.
+  selector:
+    app: zigbee2mqtt
+  ports:
+    - name: http
+      port: 8080
+      targetPort: web
+      nodePort: 30181
+      protocol: TCP
