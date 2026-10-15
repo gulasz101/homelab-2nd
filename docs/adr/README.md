@@ -57,6 +57,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-052 | Hindsight is the agent-memory platform — CNPG + pgvector, LiteLLM LLM, CPU TEI, tunnel + SSO, OpenViking retained as an MCP endpoint | Accepted | 2026-10-13 |
 | ADR-053 | The Hindsight Control Plane is published behind its Cloudflare Tunnel through in-cluster oauth2-proxy + Authentik (never bare, no Cloudflare Access on top) | Accepted | 2026-10-13 |
 | ADR-054 | Hindsight fact extraction runs on gpt-oss-120b via OpenRouter, not Ollama Cloud (amends ADR-052) | Accepted | 2026-10-14 |
+| ADR-062 | ZeroClaw reaches in-cluster Firecrawl over a LAN NodePort, with `http_request` auto-approved | Accepted | 2026-10-15 |
 
 > Note: ADR-052 was booked as ADR-050 while epic H2-232 was being planned (the directory then
 > ended at ADR-046 with 045 reserved); 047–051 landed from unrelated work before stage 1 was
