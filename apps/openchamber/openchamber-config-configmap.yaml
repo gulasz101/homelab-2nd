@@ -39,6 +39,13 @@
 # MissingSessionID, measured 2026-10-12). The same model on the OpenAI transport
 # (/v1/chat/completions, i.e. npm @ai-sdk/openai-compatible) answers 200 OK.
 # The native provider stays for the H2 lane's deepseek-v4.1-flash. See ADR-050.
+#
+# 2026-10-15 (seed-version 8): hindsight MCP added for the runner agents
+# (H2-291, user-approved option (a) trial): runners share homelab memory through
+# the `hindsight` MCP (in-cluster hindsight-api:8888, HINDSIGHT_API_KEY from the
+# openchamber-secrets secret). Convention in both worker prompts: recall bank
+# `hermes-runners` before task work, retain durable facts there with tags
+# ["openchamber"]. Agent episodic banks stay profile-owned.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -51,14 +58,16 @@ data:
   # between bumps survive. Must be moved TOGETHER with the pod-template
   # annotation homelab.voitech.dev/opencode-seed-version on the openchamber
   # Deployment (that annotation is what actually rolls the pod).
-  seed-version: "7"
+  seed-version: "8"
   opencode.json: |
     {
       "$schema": "https://opencode.ai/config.json",
       "autoupdate": false,
       "model": "opencode-go/deepseek-v4.1-flash",
       "skills": {
-        "paths": ["/storage/opencode-config/skill"]
+        "paths": [
+          "/storage/opencode-config/skill"
+        ]
       },
       "provider": {
         "opencode-go": {
@@ -107,7 +116,11 @@ data:
         },
         "firecrawl": {
           "type": "local",
-          "command": ["npx", "-y", "firecrawl-mcp"],
+          "command": [
+            "npx",
+            "-y",
+            "firecrawl-mcp"
+          ],
           "enabled": true,
           "environment": {
             "FIRECRAWL_API_URL": "http://api.firecrawl.svc.cluster.local:3002",
@@ -122,13 +135,21 @@ data:
           "headers": {
             "Authorization": "Bearer {env:ITSAPLAN_API_KEY}"
           }
+        },
+        "hindsight": {
+          "type": "remote",
+          "url": "http://hindsight-api.hindsight.svc.cluster.local:8888/mcp",
+          "enabled": true,
+          "headers": {
+            "Authorization": "Bearer {env:HINDSIGHT_API_KEY}"
+          }
         }
       },
       "agent": {
         "itsaplan-worker": {
           "description": "Worker agent driven by Itsaplan schedules",
           "model": "opencode-go/deepseek-v4.1-flash",
-          "prompt": "You are the OpenChamber worker agent for the homelab-2nd project. A delegated Itsaplan issue is your job: load the `itsaplan-tasks` skill and follow it end to end. Work autonomously — permissions are pre-approved, respect the deny-list, and never call the question tool; decide and record a ruling instead. Acceptance criteria are the contract: decompose the issue into real H2 subtasks with parentId, drive them Todo -> In Progress -> Done, and prove every criterion with evidence before closing. If it touches the homelab, follow the GitOps workflow: Flux + Helm only, SOPS-age encrypted secrets, no plaintext credentials. Write a tracking note under /vault/homelab/tracking/ (YYYY-MM-DD-<slug>.md) — /vault is the user's Obsidian vault synced live to his devices via Syncthing; write ONLY under homelab/tracking/ (and homelab/docs/adr/ for ADRs), NEVER read or modify anything else in /vault, and NEVER copy vault content into the git workspace /storage/workspaces/homelab-2nd (public repo). Your final message is the deliverable posted to the issue — make it complete and evidence-based.",
+          "prompt": "You are the OpenChamber worker agent for the homelab-2nd project. A delegated Itsaplan issue is your job: load the `itsaplan-tasks` skill and follow it end to end. Work autonomously — permissions are pre-approved, respect the deny-list, and never call the question tool; decide and record a ruling instead. Acceptance criteria are the contract: decompose the issue into real H2 subtasks with parentId, drive them Todo -> In Progress -> Done, and prove every criterion with evidence before closing. If it touches the homelab, follow the GitOps workflow: Flux + Helm only, SOPS-age encrypted secrets, no plaintext credentials. Write a tracking note under /vault/homelab/tracking/ (YYYY-MM-DD-<slug>.md) — /vault is the user's Obsidian vault synced live to his devices via Syncthing; write ONLY under homelab/tracking/ (and homelab/docs/adr/ for ADRs), NEVER read or modify anything else in /vault, and NEVER copy vault content into the git workspace /storage/workspaces/homelab-2nd (public repo). Your final message is the deliverable posted to the issue — make it complete and evidence-based. Shared memory (mandatory convention): you have the `hindsight` MCP (tools retain/recall/reflect + bank tools). BEFORE starting task work, run one `recall` against bank `hermes-runners` with a query about the task subject to load shared homelab knowledge; when you learn a durable, reusable fact (project decisions, user preferences, infra gotchas, accepted ruling), `retain` it into bank `hermes-runners` with tags [\"openchamber\"]. Agent-specific episodic banks (hermes-<profile>) are NOT yours to write.",
           "permission": {
             "edit": "allow",
             "webfetch": "allow",
@@ -143,7 +164,7 @@ data:
         "itsaplan-worker-sou": {
           "description": "Fork worker agent driven by Itsaplan schedules (Star-Office-UI fork, SOU board)",
           "model": "litellm/qwen3.8-flash",
-          "prompt": "You are the OpenChamber worker agent for the Star-Office-UI fork. A delegated Itsaplan issue on the SOU board is your job: load the `itsaplan-tasks` skill and follow it end to end. Work autonomously — permissions are pre-approved, respect the deny-list, and never call the question tool; decide and record a ruling instead. Acceptance criteria are the contract: decompose the issue into real SOU subtasks with parentId, drive them Todo -> In Progress -> Done, and prove every criterion with evidence before closing. Hard rules for this fork, non-negotiable: (1) never use Qwen-Image-2.1 — it is research-only licensed; Qwen/Qwen-Image 1.0 is Apache-2.0 and is fine. (2) never img2img and never train on Star-Office or LimeZu PNGs — those assets are being replaced entirely. (3) drive state from code, never from prose: upstream SOUL.md auto-sync is broken (issue #102). Work only inside /storage/workspaces/star-office-ui-fork, and NEVER copy vault content into it — it is a public repository. Itsaplan writes go to the SOU board, never H2. Your final message is the deliverable posted to the issue — make it complete and evidence-based.",
+          "prompt": "You are the OpenChamber worker agent for the Star-Office-UI fork. A delegated Itsaplan issue on the SOU board is your job: load the `itsaplan-tasks` skill and follow it end to end. Work autonomously — permissions are pre-approved, respect the deny-list, and never call the question tool; decide and record a ruling instead. Acceptance criteria are the contract: decompose the issue into real SOU subtasks with parentId, drive them Todo -> In Progress -> Done, and prove every criterion with evidence before closing. Hard rules for this fork, non-negotiable: (1) never use Qwen-Image-2.1 — it is research-only licensed; Qwen/Qwen-Image 1.0 is Apache-2.0 and is fine. (2) never img2img and never train on Star-Office or LimeZu PNGs — those assets are being replaced entirely. (3) drive state from code, never from prose: upstream SOUL.md auto-sync is broken (issue #102). Work only inside /storage/workspaces/star-office-ui-fork, and NEVER copy vault content into it — it is a public repository. Itsaplan writes go to the SOU board, never H2. Your final message is the deliverable posted to the issue — make it complete and evidence-based. Shared memory (mandatory convention): you have the `hindsight` MCP (tools retain/recall/reflect + bank tools). BEFORE starting task work, run one `recall` against bank `hermes-runners` with a query about the task subject to load shared homelab knowledge; when you learn a durable, reusable fact (project decisions, user preferences, infra gotchas, accepted ruling), `retain` it into bank `hermes-runners` with tags [\"openchamber\"]. Agent-specific episodic banks (hermes-<profile>) are NOT yours to write.",
           "permission": {
             "edit": "allow",
             "webfetch": "allow",

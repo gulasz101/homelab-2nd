@@ -33,7 +33,7 @@ spec:
         # seed ConfigMap alone does not roll the pod; this marker makes the
         # rollout declarative (the prepare init container re-seeds on version
         # mismatch). H2-95: docs-mcp URL moved /sse -> /mcp (seed v3).
-        homelab.voitech.dev/opencode-seed-version: "7"
+        homelab.voitech.dev/opencode-seed-version: "8"
     spec:
       # Service links would inject OPENCHAMBER_PORT (and OPENCHAMBER_SERVICE_*)
       # from the Service named "openchamber", clobbering the app's own vars.
@@ -200,6 +200,14 @@ spec:
                 secretKeyRef:
                   name: openchamber-secrets
                   key: OPENVIKING_API_KEY
+            # H2-291 (2026-10-15): hindsight MCP share trial — runner sessions resolve
+            # {env:HINDSIGHT_API_KEY} in the seed's mcp.hindsight block. Same value as the
+            # hindsight tenant key (hindsight-secrets/HINDSIGHT_API_TENANT_API_KEY).
+            - name: HINDSIGHT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openchamber-secrets
+                  key: HINDSIGHT_API_KEY
             # The OpenChamber agent's own Itsaplan key. Gives worker sessions
             # board autonomy (decompose, link, move, assign) through the
             # `itsaplan` MCP server. See ADR-022; injected process-wide, so it
