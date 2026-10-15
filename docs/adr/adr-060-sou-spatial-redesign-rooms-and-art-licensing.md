@@ -163,3 +163,60 @@ signage ("CENTRAL PERK", "FRIENDS"). "No text, no logos" in generated background
 hard acceptance criterion, and the current background is disqualified as a public-repo style
 reference for a second reason beyond LimeZu.
 
+### Field result — first end-to-end run, 2026-10-15 (M1 Max)
+
+The pipeline works, and three of its assumptions did **not** survive contact with the hardware.
+
+**Working.** `diffusers 0.41.0` + `torch 2.14.1` on MPS loads klein-4B in ~19 s and generates
+512×512 at 4 steps in **~13 s** (first run 33 s), with ~70 % of the 32 GB unified memory still
+free. Weights: 15.3 GB downloaded (the repo's duplicate root safetensors is skippable). LoRA needs
+**`peft`**, which is not pulled in by diffusers — `load_lora_weights()` raises
+`PEFT backend is required` without it.
+
+**Defect 1 — the pixel-art LoRA is unusable at its documented strengths in diffusers.** Applying it
+collapses the image to black, monotonically with strength (mean RGB over opaque pixels, same seed
+and prompt):
+
+| LoRA strength (diffusers) | mean RGB | |
+|---|---|---|
+| none (control) | 216.2 | clean illustration |
+| 0.05 / 0.10 | 214.1 / 212.8 | as if not applied |
+| 0.15 | 157.9 | biting, image degraded |
+| 0.25 | 64.3 | collapsing |
+| 0.40 | 15.1 | near-black |
+| **1.0 (the LoRA card's recommendation)** | **1.8** | **black frame** |
+
+The same collapse happens with the repo's ComfyUI-format weights file, so it is the adapter, not
+the file layout. The repo's peft config is rank 64 / alpha 128 with rsLoRA, i.e. an effective
+`alpha/rank = 2×` multiplier before any rsLoRA handling — consistent with a scale roughly an order
+of magnitude too hot, but **the cause is not proven**; what is proven is that the card's "0.85–1.4"
+range is a ComfyUI statement that does not transfer to `diffusers`. Also note `set_adapters` must
+address the adapter diffusers actually registered (`default_0`, not `default`).
+
+**Defect 2 — klein does not emit alpha; it paints a checkerboard.** Every pixel of every output
+came back with `alpha = 255`; the "transparent background" promised by the trigger words is *drawn*.
+Real cut-outs therefore need the pipeline to key the background: generate on a flat named key
+colour, then **border-seeded flood-fill** matting (a global colour match would punch holes in any
+key-coloured detail inside the sprite), then a de-fringe pass for the anti-aliased boundary pixels.
+A cheap border-key + flood fill + de-fringe produced a clean binary-alpha sprite.
+
+**Failure mode of a LoRA-era prompt worth remembering.** Without the LoRA the model produces a
+*smooth illustration wearing a pixel-art costume* — soft anti-aliased edges, no strict grid. Crisp
+pixels are therefore the **post-process's** job (nearest-neighbour resample to the frame size plus
+palette quantisation), not something to hope for from the model.
+
+**What this run produced (committed under `assets/generated/`, never overwriting shipped art):**
+a room background for the `andrzej` profile at 1280×720 (640×360 generated, nearest-upscaled 2× so
+every pixel is a uniform 2×2 block, matching the shipped art's upscaling), and a 64×64 character
+sprite with real binary alpha plus a contract-conforming 128×64 sheet of eight 32×32 frames (the
+office's actual guest-animation geometry).
+
+**Asset contract details confirmed the hard way.** Guest animation sets are **32×32** frames
+(128×64 = 4×2 = 8 frames) — not the 64×64 the "role" art suggests at a glance. The live flat scene's
+background is `frontend/office_bg_small.webp` (1280×720) and is served with
+`Cache-Control: public, max-age=31536000, immutable` behind a `?v=<process start timestamp>`
+cache-buster, so **a background swap only appears after an app restart**. The SOU-88 nav space
+(1216×832) is a different coordinate system again — room packs for that layer must not reuse the
+flat scene's canvas.
+
+
