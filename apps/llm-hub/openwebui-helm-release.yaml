@@ -109,6 +109,12 @@ spec:
         value: "false"
       - name: ENABLE_PERSISTENT_CONFIG
         value: "false"
+      # Built-in personalization memory OFF (2026-10-15): Hindsight is the ONLY memory
+      # system. OWUI's native search_memories/add_memory tools would otherwise inject in
+      # every chat (env default True) and compete with hindsight-recall - the exact
+      # "two memory systems in one prompt" conflict the integration docs warn about.
+      - name: ENABLE_MEMORIES
+        value: "false"
       - name: BYPASS_MODEL_ACCESS_CONTROL
         value: "true"
       - name: ENABLE_OAUTH_SIGNUP
