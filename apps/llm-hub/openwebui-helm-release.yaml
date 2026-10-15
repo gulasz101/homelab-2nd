@@ -228,34 +228,24 @@ spec:
             key: FIRECRAWL_API_KEY
       - name: FIRECRAWL_TIMEOUT
         value: "60000"
-      # Native MCP tool server: the homelab docs-mcp-server over Streamable HTTP.
-      # ADDITIVE to Firecrawl web search — no existing search behaviour changes.
-      # Only the four read-only query tools are exposed to the model; the server
-      # also advertises destructive tools (remove_docs, cancel_job, scrape_docs)
-      # which are deliberately filtered out by function_name_filter_list.
-      # In-cluster, unauthenticated: auth_type "none" (Bearer without a key would
-      # send an empty Authorization header and be rejected). access_grants: []
-      # keeps the connection admin-only, which is Open WebUI's own default.
+      # Native MCP tool servers over Streamable HTTP:
+      #   1. hindsight-chat-memory  — per-turn sync_retain into the dedicated 'open-webui' bank
+      #   2. hindsight-fleet-memory — read-only recall across ALL agent banks (multi-bank root /mcp/)
+      #   3. docs-mcp-server        — homelab indexed docs (read-only tool list)
+      # The full connections JSON (incl. the Hindsight tenant key) lives in the SOPS-encrypted
+      # Secret openwebui-hindsight-mcp — NEVER inline it here, this repo is public.
+      # Both hindsight endpoints use auth_type "bearer" with the tenant API key; Open WebUI's
+      # build_tool_server_headers() turns that into `Authorization: Bearer <key>`, which is
+      # exactly what Hindsight's ApiKeyTenantExtension requires.
+      # Destructive tools (delete_bank, clear_memories, invalidate_memory, update_bank, ...) are
+      # deliberately filtered out per connection by function_name_filter_list. access_grants: []
+      # keeps all three connections admin-only (Open WebUI's own default) — fine while Wojtek is
+      # the only human user. Revisit per-user access_grants before onboarding anyone else.
       - name: TOOL_SERVER_CONNECTIONS
-        value: |
-          [
-            {
-              "type": "mcp",
-              "url": "http://docs-mcp-server.docs-mcp.svc.cluster.local:6280/mcp",
-              "auth_type": "none",
-              "key": "",
-              "config": {
-                "enable": true,
-                "function_name_filter_list": "search_docs,list_libraries,fetch_url,find_version",
-                "access_grants": []
-              },
-              "info": {
-                "id": "docs-mcp-server",
-                "name": "docs-mcp-server",
-                "description": "Homelab indexed documentation over MCP (Streamable HTTP)."
-              }
-            }
-          ]
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-hindsight-mcp
+            key: TOOL_SERVER_CONNECTIONS
       # Structured JSON logs for Loki
       - name: GLOBAL_LOG_LEVEL
         value: "INFO"
