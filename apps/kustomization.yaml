@@ -285,6 +285,9 @@ resources:
   # Firecrawl API/worker and Playwright
   - firecrawl/api-deployment.yaml
   - firecrawl/api-service.yaml
+  # LAN NodePort (192.168.1.179:30250) so Mac-side agents - ZeroClaw - can reach
+  # the API; the ClusterIP above is in-cluster only.
+  - firecrawl/firecrawl-lan-service.yaml
   - firecrawl/metrics-proxy-configmap.yaml
   - firecrawl/playwright-deployment.yaml
   - firecrawl/playwright-service.yaml

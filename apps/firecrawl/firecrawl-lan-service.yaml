@@ -1,0 +1,41 @@
+---
+# ============================================================
+# LAN NodePort exposure for the Firecrawl API.
+#
+# Why this file exists: agents that live OUTSIDE the cluster (ZeroClaw on the
+# M1 Max, same position as the Hermes hosts) cannot reach a ClusterIP. This
+# selects exactly the same pods as apps/firecrawl/api-service.yaml and pins a
+# fixed nodePort, the same shape as apps/hindsight/hindsight-service.yaml,
+# apps/honcho/honcho-service.yaml and apps/openviking/openviking-service.yaml.
+#
+# Reachable at (LAN) 192.168.1.179:30250   Firecrawl API (/v2/scrape, /v2/crawl)
+#
+# NOT published: no Ingress, no tunnel change. firecrawl.voitech.dev stays
+# behind Cloudflare Access (Zero Trust) for humans; this is LAN-only.
+#
+# Auth: USE_DB_AUTHENTICATION=false (see firecrawl-config-configmap.yaml), so
+# the in-cluster API needs no key and no secret is referenced here. Anything on
+# the LAN can therefore use it - the same posture as the other -lan NodePorts.
+#
+# Port choice, read from the live list in this repo (guardrail 1 - the repo is
+# the source of truth):
+#   30030 30069 30076 30078 30080 30089 30096 30114 30180 30188 30193 30195
+#   30239 30240 30530 30800 30810
+#   -> 30250 is free.
+# ============================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: firecrawl-api-lan
+  namespace: firecrawl
+spec:
+  type: NodePort
+  selector:
+    # Copied from apps/firecrawl/api-service.yaml, not from memory.
+    app.kubernetes.io/name: firecrawl-api
+    app.kubernetes.io/part-of: firecrawl
+  ports:
+    - name: http
+      port: 3002
+      targetPort: 3002
+      nodePort: 30250
