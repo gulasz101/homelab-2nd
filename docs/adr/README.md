@@ -58,6 +58,21 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-053 | The Hindsight Control Plane is published behind its Cloudflare Tunnel through in-cluster oauth2-proxy + Authentik (never bare, no Cloudflare Access on top) | Accepted | 2026-10-13 |
 | ADR-054 | Hindsight fact extraction runs on gpt-oss-120b via OpenRouter, not Ollama Cloud (amends ADR-052) | Accepted | 2026-10-14 |
 | ADR-062 | ZeroClaw reaches in-cluster Firecrawl over a LAN NodePort, with `http_request` auto-approved | Accepted | 2026-10-15 |
+| ADR-057 | SOU database layer — Postgres primary, SQLite fallback | Accepted | 2026-10-13 |
+| ADR-058 | SOU event schema v1 — agent-agnostic JSON | Accepted | 2026-10-13 |
+| ADR-059 | SOU OpenClaw decoupling — ruthless divergence | Accepted | 2026-10-13 |
+| ADR-060 | SOU spatial redesign — one room per agent, camera-followed movement, licence-clean art | Accepted | 2026-10-14 |
+| ADR-061 | SOU product definition and cross-cutting invariants | Accepted | 2026-10-14 |
+| ADR-063 | LiteLLM router fallback `qwen3.8-flash` → `deepseek-v4.1-flash` for runner lanes | Accepted | 2026-10-15 |
+| ADR-064 | SOU scene composition — the backdrop is a room *shell*, the engine owns the furniture | Accepted | 2026-10-15 |
+| ADR-065 | SOU rooms declare their geometry; objects are generated in that projection and gated by measurement | Accepted | 2026-10-15 |
+| ADR-066 | Bill Cipher gets a personal Interia mailbox on the Hermes Email gateway | Accepted | 2026-10-16 |
+| ADR-067 | SOU renderer v2 — an engine-native isometric tilemap (Phaser 4) | Accepted | 2026-10-16 |
+
+> Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
+> ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,
+> ADR-044, ADR-047, ADR-049 and ADR-062). ADR-055 and ADR-056 have no file: the numbers are
+> unassigned, not missing.
 
 > Note: ADR-052 was booked as ADR-050 while epic H2-232 was being planned (the directory then
 > ended at ADR-046 with 045 reserved); 047–051 landed from unrelated work before stage 1 was
