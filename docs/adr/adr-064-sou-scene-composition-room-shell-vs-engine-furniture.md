@@ -63,9 +63,19 @@ shadows baked into the backdrop.
    ADR-060 still forbids it. The upstream *method* is not reusable; the upstream
    *composition contract* is. We reproduce the geometry by declaring it (canvas, camera,
    regions, clear zones), never by tracing their pixels.
-6. **Pixel density must match the sprite layer.** The first shell rendered too smoothly
-   (soft gradients) against the props' hard 1-pixel outlines; the post-process must
-   quantise hard enough to read as the same game.
+6. **Post-process per asset class — the backdrop is not a sprite.** Measured flat-neighbour
+   rates: the ORIGINAL shipped backdrop is 6 % flat with ~19 000 colours (a smooth painted
+   image, *not* pixel art), while the prop sprites run 26–54 % flat with hard dark outlines.
+   The shipped look is therefore "smooth detailed room + crisp outlined props", and that
+   contrast is intended. Consequence: a sprite-grade quantization (≈20 colours) on the
+   backdrop makes it *flatter than everything in the scene* (measured 70 % flat) and reads as
+   banded posterisation. The backdrop quantises lightly (96 colours) and keeps its shading;
+   sprites quantise hard. Both numbers live in `profiles/scene_shell_office.json`.
+
+   Corollary for anyone repeating this: do not "fix" a perceived style mismatch by
+   quantising harder without measuring first — that instinct was wrong here, and the
+   measurement is two lines of numpy (`script: make_scene_shell.py --from-raw` recomposites
+   without a GPU run).
 
 ## Consequences
 
