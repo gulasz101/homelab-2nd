@@ -367,6 +367,11 @@ resources:
   - itsaplan/itsaplan-andrzej-webhook-creds.sops.yaml
   - itsaplan/itsaplan-andrzej-runner-configmap.yaml
   - itsaplan/itsaplan-andrzej-runner-deployment.yaml
+  # szarik Route A runner lane (SOU project, executor for delegated/mentioned runs)
+  - itsaplan/itsaplan-szarik-agent-key.sops.yaml
+  - itsaplan/itsaplan-szarik-webhook-creds.sops.yaml
+  - itsaplan/itsaplan-szarik-runner-configmap.yaml
+  - itsaplan/itsaplan-szarik-runner-deployment.yaml
   - itsaplan/itsaplan-tunnel-ingress-configmap.yaml
   # Observability
   - itsaplan/itsaplan-prometheus-rules.yaml
