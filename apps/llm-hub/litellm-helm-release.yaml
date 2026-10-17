@@ -312,6 +312,15 @@ spec:
             # on every retain. See docs/adr/adr-054-*.md and H2-284.
             model: openrouter/openai/gpt-oss-120b
             api_key: "os.environ/OPENROUTER_API_KEY"
+        - model_name: deepseek-v4.1-flash-openrouter
+          litellm_params:
+            # DeepSeek v4.1 Flash via OpenRouter (paid credits), added 2026-10-17.
+            # Same model as the Zen Go deepseek-v4.1-flash lanes on a different
+            # billing account: first cross-account hop for every OpenCode Go
+            # lane, so a Go weekly wall keeps the model instead of dropping to
+            # gpt-oss. See docs/adr/adr-069-*.md.
+            model: openrouter/deepseek/deepseek-v4.1-flash
+            api_key: "os.environ/OPENROUTER_API_KEY"
 
         # ── "Grey zone" Anthropic reseller endpoints (2026-10-09) ──
         # Two reseller keys dropped in for evaluation: OneProvider
@@ -725,14 +734,18 @@ spec:
         # when BOTH Zen Go models fail) and rides Wojtek's OpenRouter credits;
         # quality drops for the affected turns but the session SURVIVES. See
         # ADR-068 (this) and ADR-063 (original same-account chain).
+        # 2026-10-17 (ADR-069): the cross-account hop now tries the SAME model
+        # on OpenRouter first (deepseek-v4.1-flash-openrouter), so a Go wall no
+        # longer drops agent sessions to a weaker model; gpt-oss-120b-openrouter
+        # stays as the last resort.
         fallbacks:
-          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "gpt-oss-120b-openrouter"]}
-          - {"deepseek-v4.1-flash": ["gpt-oss-120b-openrouter"]}
-          - {"deepseek-v4.1-flash-go": ["gpt-oss-120b-openrouter"]}
-          - {"qwen3.8-flash-go": ["gpt-oss-120b-openrouter"]}
+          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash-go": ["deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"qwen3.8-flash-go": ["deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
         content_policy_fallbacks:
-          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "gpt-oss-120b-openrouter"]}
-          - {"deepseek-v4.1-flash": ["gpt-oss-120b-openrouter"]}
+          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
 
       litellm_settings:
         callbacks:

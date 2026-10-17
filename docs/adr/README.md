@@ -68,6 +68,8 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-065 | SOU rooms declare their geometry; objects are generated in that projection and gated by measurement | Accepted | 2026-10-15 |
 | ADR-066 | Bill Cipher gets a personal Interia mailbox on the Hermes Email gateway | Accepted | 2026-10-16 |
 | ADR-067 | SOU renderer v2 — an engine-native isometric tilemap (Phaser 4) | Accepted | 2026-10-16 |
+| ADR-068 | OpenCode Go lanes terminate their fallback chain on a different account (`gpt-oss-120b-openrouter`) | Accepted | 2026-10-17 |
+| ADR-069 | Go-lane cross-account fallback keeps the model: `deepseek-v4.1-flash-openrouter` before gpt-oss | Accepted | 2026-10-17 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,
