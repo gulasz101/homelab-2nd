@@ -711,10 +711,28 @@ spec:
         # behaviour changes. Fallback responses arrive labelled deepseek-v4.1-flash
         # while the client keeps its qwen3.8-flash model string; that is the
         # intended resilience semantics (see ADR-052).
+        # 2026-10-17 (SOU-267): the same-gateway fallback proved useless against
+        # an ACCOUNT-level wall. At 01:51:22Z the Zen Go workspace
+        # (wrk_01KXTGFFFC4XBA5T9P8TVVQTB8) exhausted its WEEKLY usage limit:
+        #   429 GoUsageLimitError 'Go usage limit exceeded' (limitName: weekly)
+        # qwen3.8-flash 429'd and its fallback deepseek-v4.1-flash 429'd too -
+        # same gateway, same subscription key, same weekly bucket. The
+        # OpenChamber bridge translated the empty session into "produced no
+        # assistant text" (runs 124-126 on SOU-223/523) and the SOU lane sat
+        # dead for 5+ hours. Fix: every OpenCode Go lane terminates its chain
+        # on gpt-oss-120b-openrouter - different vendor, different billing
+        # account, immune to a Zen Go quota. Fallback traffic is rare (only
+        # when BOTH Zen Go models fail) and rides Wojtek's OpenRouter credits;
+        # quality drops for the affected turns but the session SURVIVES. See
+        # ADR-068 (this) and ADR-063 (original same-account chain).
         fallbacks:
-          - {"qwen3.8-flash": ["deepseek-v4.1-flash"]}
+          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash": ["gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash-go": ["gpt-oss-120b-openrouter"]}
+          - {"qwen3.8-flash-go": ["gpt-oss-120b-openrouter"]}
         content_policy_fallbacks:
-          - {"qwen3.8-flash": ["deepseek-v4.1-flash"]}
+          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash": ["gpt-oss-120b-openrouter"]}
 
       litellm_settings:
         callbacks:
