@@ -739,13 +739,13 @@ spec:
         # longer drops agent sessions to a weaker model; gpt-oss-120b-openrouter
         # stays as the last resort.
         fallbacks:
-          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
-          - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
-          - {"deepseek-v4.1-flash-go": ["deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
-          - {"qwen3.8-flash-go": ["deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash-go": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"qwen3.8-flash-go": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
         content_policy_fallbacks:
-          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
-          - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
 
       litellm_settings:
         callbacks:

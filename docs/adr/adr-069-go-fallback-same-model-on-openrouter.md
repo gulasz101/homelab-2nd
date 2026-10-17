@@ -1,7 +1,7 @@
 # ADR-069: Go-lane cross-account fallback keeps the model (`deepseek-v4.1-flash-openrouter` before gpt-oss)
 
 **Date:** 2026-10-17
-**Status:** Accepted
+**Status:** Accepted (amended by ADR-070: Ollama Cloud now comes before OpenRouter)
 **Deciders:** Wojtek Gula; implemented by Claude Code
 **Project:** llm-hub (LiteLLM router)
 **Related:** ADR-068 (cross-account terminal hop, refined by this), ADR-063 (same-account qwen → deepseek hop)
