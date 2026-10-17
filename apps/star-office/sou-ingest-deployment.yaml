@@ -1,0 +1,92 @@
+---
+# sou-ingest: LAN/Netbird-only ingest face. One gunicorn worker; in-process state.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sou-ingest
+  namespace: star-office
+  labels:
+    app.kubernetes.io/name: sou-ingest
+    app.kubernetes.io/part-of: star-office
+    app.kubernetes.io/component: ingest
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sou-ingest
+      app.kubernetes.io/part-of: star-office
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sou-ingest
+        app.kubernetes.io/part-of: star-office
+        app.kubernetes.io/component: ingest
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sou
+          image: ghcr.io/gulasz101/star-office-ui-fork:v2.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 19000
+              protocol: TCP
+          env:
+            - name: SOU_MODE
+              value: ingest
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: star-office-db-credentials
+                  key: ingest_database_url
+            - name: SOU_INGEST_TOKENS
+              value: /run/secrets/sou/tokens.json
+            - name: SOU_MIGRATE
+              value: "1"
+          volumeMounts:
+            - name: sou-ingest-tokens
+              mountPath: /run/secrets/sou
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: sou-ingest-tokens
+          secret:
+            secretName: sou-ingest-tokens
+            items:
+              - key: tokens.json
+                path: tokens.json

@@ -1,0 +1,79 @@
+---
+# sou-public: public read-only face via Cloudflare Tunnel. One gunicorn worker.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sou-public
+  namespace: star-office
+  labels:
+    app.kubernetes.io/name: sou-public
+    app.kubernetes.io/part-of: star-office
+    app.kubernetes.io/component: public
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sou-public
+      app.kubernetes.io/part-of: star-office
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sou-public
+        app.kubernetes.io/part-of: star-office
+        app.kubernetes.io/component: public
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sou
+          image: ghcr.io/gulasz101/star-office-ui-fork:v2.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 19000
+              protocol: TCP
+          env:
+            - name: SOU_MODE
+              value: public
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: star-office-db-credentials
+                  key: public_database_url
+            - name: SOU_MIGRATE
+              value: "0"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

@@ -1,0 +1,45 @@
+---
+# One-off Job: create the read-only sou_public role after CNPG bootstrap.
+# Initdb created the DB with owner sou_ingest. This job connects as sou_ingest
+# (via star-office-db-credentials) and creates sou_public, grants CONNECT/USAGE/SELECT,
+# and sets default SELECT privileges for future tables.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: star-office-db-public-role
+  namespace: star-office
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: star-office-db-public-role
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: psql
+          image: ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              PGPASSWORD="$SOU_INGEST_PASSWORD" psql -h "$SOU_DB_HOST" -U sou_ingest -d sou -c "CREATE ROLE sou_public WITH LOGIN PASSWORD '$SOU_PUBLIC_PASSWORD';"
+              PGPASSWORD="$SOU_INGEST_PASSWORD" psql -h "$SOU_DB_HOST" -U sou_ingest -d sou -c "GRANT CONNECT ON DATABASE sou TO sou_public;"
+              PGPASSWORD="$SOU_INGEST_PASSWORD" psql -h "$SOU_DB_HOST" -U sou_ingest -d sou -c "GRANT USAGE ON SCHEMA public TO sou_public;"
+              PGPASSWORD="$SOU_INGEST_PASSWORD" psql -h "$SOU_DB_HOST" -U sou_ingest -d sou -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO sou_public;"
+              PGPASSWORD="$SOU_INGEST_PASSWORD" psql -h "$SOU_DB_HOST" -U sou_ingest -d sou -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO sou_public;"
+              echo "sou_public role provisioned"
+          env:
+            - name: SOU_DB_HOST
+              value: star-office-db-rw.star-office.svc.cluster.local
+            - name: SOU_INGEST_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: star-office-db-credentials
+                  key: sou_ingest_password
+            - name: SOU_PUBLIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: star-office-db-credentials
+                  key: sou_public_password
+  backoffLimit: 4

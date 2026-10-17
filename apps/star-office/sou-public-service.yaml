@@ -1,0 +1,19 @@
+---
+# ClusterIP service for sou-public (public via Cloudflare Tunnel only)
+apiVersion: v1
+kind: Service
+metadata:
+  name: sou-public
+  namespace: star-office
+  labels:
+    app.kubernetes.io/name: sou-public
+    app.kubernetes.io/part-of: star-office
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: sou-public
+    app.kubernetes.io/part-of: star-office
+  ports:
+    - name: http
+      port: 19000
+      targetPort: http

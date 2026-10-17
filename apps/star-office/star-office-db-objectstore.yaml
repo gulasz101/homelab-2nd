@@ -1,0 +1,22 @@
+---
+# ObjectStore for the Barman Cloud CNPG-I plugin — Star Office backups to OMV MinIO
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: star-office-db-backups
+  namespace: star-office
+spec:
+  configuration:
+    destinationPath: s3://cnpg-backups/star-office
+    endpointURL: http://openmediavault.local:9000
+    s3Credentials:
+      accessKeyId:
+        name: star-office-minio-backup-creds
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: star-office-minio-backup-creds
+        key: ACCESS_SECRET_KEY
+    data:
+      compression: gzip
+    wal:
+      compression: gzip

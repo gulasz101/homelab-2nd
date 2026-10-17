@@ -492,6 +492,13 @@ resources:
   - mail-archiver/mailarchiver-dashboard-configmap.yaml
 
   # ============================================================
+  # ============================================================
+  # Star Office UI (H2-299 / SOU-224) — the Lodge
+  # Public read-only face on lodge.voitech.dev; LAN/Netbird-only ingest
+  # face on 192.168.1.179:30260. One image, two Deployments, CNPG backing store.
+  # ============================================================
+  - star-office/
+
   # hindsight namespace (H2-232)
   # Self-hosted Hindsight (agent memory) replacing Honcho + OpenViking.
   # Nested kustomization, like zigbee/ and arr-stack/, so this group has

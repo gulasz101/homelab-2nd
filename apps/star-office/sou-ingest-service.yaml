@@ -1,0 +1,39 @@
+---
+# ClusterIP service for sou-ingest (in-cluster + LAN/Netbird via NodePort below)
+apiVersion: v1
+kind: Service
+metadata:
+  name: sou-ingest
+  namespace: star-office
+  labels:
+    app.kubernetes.io/name: sou-ingest
+    app.kubernetes.io/part-of: star-office
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: sou-ingest
+    app.kubernetes.io/part-of: star-office
+  ports:
+    - name: http
+      port: 19000
+      targetPort: http
+---
+# LAN/Netbird NodePort for sou-ingest. Never on the tunnel.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sou-ingest-lan
+  namespace: star-office
+  labels:
+    app.kubernetes.io/name: sou-ingest-lan
+    app.kubernetes.io/part-of: star-office
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: sou-ingest
+    app.kubernetes.io/part-of: star-office
+  ports:
+    - name: http
+      port: 19000
+      targetPort: http
+      nodePort: 30260

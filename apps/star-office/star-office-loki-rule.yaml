@@ -1,0 +1,31 @@
+---
+# Loki Ruler rules for Star Office UI.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: star-office-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  star-office-errors.yaml: |
+    groups:
+      - name: star-office.errors
+        interval: 1m
+        rules:
+          - alert: StarOfficeErrorsOrCrashes
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {k8s_namespace_name="star-office"}
+                    |~ "Error|ERROR|ERR|FATAL|fatal|Traceback|Exception|exception"
+                  [5m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: star-office
+            annotations:
+              summary: "star-office logged errors or crashes"
+              description: "{{ $labels.pod }} logged errors/exceptions within the last 5 minutes."

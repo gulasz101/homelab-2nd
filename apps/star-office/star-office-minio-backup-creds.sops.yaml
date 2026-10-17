@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: star-office-minio-backup-creds
+    namespace: star-office
+type: Opaque
+stringData:
+    ACCESS_KEY_ID: ENC[AES256_GCM,data:vHsSh96MizYIlWEWtql0g8P+,iv:+5vjZxc/DAyX201x3+M1lPPvnJ6gWwNV+DaILf3BVps=,tag:zHBk0Mtmr24fgGF/QeTdtA==,type:str]
+    ACCESS_SECRET_KEY: ENC[AES256_GCM,data:BRZdoYLDpsyr4EKxmTQrWN+0xT5QLTYd0LRfVMWW+XE=,iv:7zVRIOqqIDyA6bh/V/mcjhjquSt7mRtYL7VaaQZv9ts=,tag:WE543vxFoVaqAaam1plWyA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBhLzk4R1ZWTDBwT2Nxd0ht
+            UEhJSzVNamo1K1lVZUN5UE9idldweUY5aUNZCmRORFNuZ1N5UzhHZEpaNkUrV0NN
+            MUYxY2JYRmhVTDFqZnhkcVptcTRUSGcKLS0tIFdoMGFQUmZHRmt1YkN3SloraHJH
+            WUVRc1VXRjErSlN3V3ZCb05abEtvSFEKKBNKXfe7/DVCpHX8n7QY9jOshAVJlbwl
+            QMJByBT6TiD33sUatxnx1GjBKXGPB6W/jxSJbNib7GMLam7f+uIJYQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-17T17:24:45Z"
+    mac: ENC[AES256_GCM,data:Wxd0CgS44ZKD946Xn2fnLeJo3/jHnk4h92th+Q70jE7D/nOwghT0SLhzoibSpTuOMUnl0CuLKNo/cMriN3PKtSdrHaho0SBpZ7x3uuv3rZK7BG+Sk94a4FPvfPzV8/8Of0VrijENdcoZADX5SN8AQTYRkMibLu3rNhQh1VHMgH4=,iv:x65SQffdWSJWlhSM66cqXt6VNk4mDr8+rXsVot+J6rI=,tag:1QFpd4UQXOyYNsYanV+VfA==,type:str]
+    version: 3.13.1

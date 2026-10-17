@@ -1,0 +1,42 @@
+---
+# Dedicated Cloudflare Tunnel for lodge.voitech.dev -> sou-public
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-star-office
+  namespace: star-office
+  labels:
+    app.kubernetes.io/name: cloudflared-star-office
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-star-office
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-star-office
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: star-office-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 50m
+              memory: 128Mi

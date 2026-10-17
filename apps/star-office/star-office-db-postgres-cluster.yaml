@@ -1,0 +1,40 @@
+---
+# CloudNativePG cluster for Star Office UI (sou)
+# Single instance on local-path NVMe; WAL + base backups to OMV MinIO.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: star-office-db
+  namespace: star-office
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie
+
+  bootstrap:
+    initdb:
+      database: sou
+      owner: sou_ingest
+      secret:
+        name: star-office-db-credentials
+
+  storage:
+    storageClass: local-path
+    size: 5Gi
+
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: star-office-db-backups
+        serverName: star-office-db
+
+  backup:
+    retentionPolicy: "30d"
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"

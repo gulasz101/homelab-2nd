@@ -1,0 +1,90 @@
+---
+# PrometheusRule for star-office namespace.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: star-office-resource-alerts
+  namespace: star-office
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: star-office.resources
+      interval: 1m
+      rules:
+        - alert: StarOfficeMemoryAbove85PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="star-office", container!=""}
+            )
+            /
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="star-office", resource="memory", container!=""}
+            ) > 85
+          for: 15m
+          labels:
+            severity: warning
+            namespace: star-office
+          annotations:
+            summary: "star-office/{{ $labels.pod }} memory above 85% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 85% of its limit for more than 15 minutes."
+
+        - alert: StarOfficeCPUAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              rate(container_cpu_usage_seconds_total{namespace="star-office", container!=""}[5m])
+            )
+            /
+            sum by (pod, container, namespace) (
+              container_spec_cpu_quota{namespace="star-office", container!=""} / container_spec_cpu_period{namespace="star-office", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: star-office
+          annotations:
+            summary: "star-office/{{ $labels.pod }} CPU above 90% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} CPU is above 90% of its limit for more than 5 minutes."
+
+        - alert: StarOfficeMemoryAbove90PercentLimit
+          expr: |
+            100 * sum by (pod, container, namespace) (
+              container_memory_working_set_bytes{namespace="star-office", container!=""}
+            )
+            /
+            sum by (pod, container, namespace) (
+              kube_pod_container_resource_limits{namespace="star-office", resource="memory", container!=""}
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+            namespace: star-office
+          annotations:
+            summary: "star-office/{{ $labels.pod }} memory above 90% of limit"
+            description: "{{ $labels.pod }}/{{ $labels.container }} memory is above 90% of its limit for more than 5 minutes."
+
+        - alert: StarOfficePodNotReady
+          expr: |
+            (
+              kube_pod_status_ready{namespace="star-office", pod=~"sou-.*", condition="true"} != 1
+            )
+            unless on(pod)
+            kube_pod_owner{namespace="star-office", owner_kind="Job"}
+          for: 3m
+          labels:
+            severity: critical
+            namespace: star-office
+          annotations:
+            summary: "star-office/{{ $labels.pod }} is not ready"
+            description: "The Star Office UI pod has been not ready for more than 3 minutes."
+
+        - alert: StarOfficeContainerRestarting
+          expr: |
+            rate(kube_pod_container_status_restarts_total{namespace="star-office", container="sou"}[15m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+            namespace: star-office
+          annotations:
+            summary: "star-office/{{ $labels.pod }} container is restarting"
+            description: "The Star Office UI container has restarted in the last 15 minutes."

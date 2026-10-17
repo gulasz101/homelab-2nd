@@ -1,0 +1,36 @@
+---
+# Star Office UI (the Lodge) — H2-299 / SOU-224
+# Public read-only face on lodge.voitech.dev; LAN/Netbird-only ingest face on 192.168.1.179:30260.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: star-office
+resources:
+  - namespace.yaml
+  # SOPS secrets
+  - star-office-db-credentials.sops.yaml
+  - star-office-minio-backup-creds.sops.yaml
+  - star-office-mattermost-webhook-url.sops.yaml
+  - sou-ingest-tokens.sops.yaml
+  - star-office-tunnel-token.sops.yaml
+  # CNPG cluster + backups
+  - star-office-db-objectstore.yaml
+  - star-office-db-postgres-cluster.yaml
+  - star-office-db-scheduled-backup.yaml
+  # DB read-only role provisioning
+  - star-office-db-public-role-job.yaml
+  # Workloads + services
+  - sou-ingest-deployment.yaml
+  - sou-public-deployment.yaml
+  - sou-ingest-service.yaml
+  - sou-public-service.yaml
+  # Public ingress
+  - cloudflared-star-office-deployment.yaml
+  - star-office-tunnel-ingress-configmap.yaml
+  # Flux image automation
+  - star-office-image-policy.yaml
+  # Observability package
+  - star-office-prometheus-rules.yaml
+  - star-office-alertmanager-config.yaml
+  - star-office-loki-rule.yaml
+  - star-office-dashboard-configmap.yaml

@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: star-office-tunnel-token
+    namespace: star-office
+type: Opaque
+stringData:
+    token: ENC[AES256_GCM,data:YMOL45GT9EhV10p1vS0fnXowyboXoYvryWf7lVqb8UApyyEY5+NGZdtEinuzmLWU4nI8dSQCJpj7ThuGTQqkywxTpkJl27qjWzlzZXq8FmMv2DPX/3y5XJXw7ImIljORvdmk1Zu4fDbeK9c6aGc8OA2qB0+NNBnZ1rbx7gIxLGyPDWxOz1eisL8nvSz9pEhnWdJS/SAVB9tX+K8eYgZLw4iXBg5yoqG2o4d+PArILA6BSA7jRfcARMXghW6jcjn3LHoxQy1FUW4kCZEH9zHyJOOSvc9U/v6U1tMlvDrAA16Gz1fRBo+ByvJhhEvlKDkV,iv:Gj2feAYuA6woj1++DP5lmBFiZXZs0AtqTNMDM2O9lfA=,tag:E/NQl6AiT8Ef7uCvnatyYw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBMYWNxMEcrVDgrblFJT2xK
+            YWNlWWd6OVQvaTEvYnBBRUNIamNrZ0dlTkdjCkM2cGNjRUl4TzRCOEpCQS95ZEY3
+            UlJXemJYZ2NWL3U4OHp3dUk3cGhTOFUKLS0tIEFjZ1orSGZUQ0ErMFNJL0dNQXFz
+            Y1dLK1o2ZWR1dXZIcTd5QXhMZjVRL1EKLf3npB5XsyKa0yyQfJmCQZXQsyuqkFSF
+            wXwDFPDPb9j0sDKB6WZ3T4kefR8TMXDWDdtHJMfXn+NHWOaVNEqZVw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-17T17:23:39Z"
+    mac: ENC[AES256_GCM,data:75T8IA8IFXguEY99gSALsqo7Z6yqXhgaHgk3SA27X+ik6VrDNRlKeOAKygWz+Ne9GdoP2SxKjKE3P4hrGRVxzSoRdMpLKb5LK7MYZuaAf0DX/VfQc0XcGTIjEeOElOgg5SMOYX8Hgk0z7vte5h+ET+vHhZJ3TksYoEw+gzwpIHk=,iv:zxecoEGZbHVzRw/BErBC7Y/LFesA9GUn/vuhkinctSo=,tag:linax/BMI2IWbaacqzsQfw==,type:str]
+    version: 3.13.1

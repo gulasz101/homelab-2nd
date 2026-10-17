@@ -1,0 +1,13 @@
+---
+# Reminder of the public hostname rule (real rule lives in Cloudflare Zero Trust)
+# lodge.voitech.dev -> http://sou-public.star-office.svc.cluster.local:19000
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: star-office-tunnel-ingress
+  namespace: star-office
+data:
+  note: |
+    # lodge.voitech.dev -> http://sou-public.star-office.svc.cluster.local:19000
+    # Public face serves: GET / -> 302 /v3/, /v3/*, /public/*, /health
+    # Everything else (including POST /events and /events/recent) is 404 in the pod.
