@@ -18,6 +18,8 @@ spec:
       labels:
         app.kubernetes.io/name: cloudflared-star-office
     spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
       containers:
         - name: cloudflared
           image: cloudflare/cloudflared:latest
