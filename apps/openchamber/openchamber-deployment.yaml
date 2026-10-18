@@ -266,6 +266,13 @@ spec:
             # /.opencode/ is git-ignored, so skills ship as ConfigMaps).
             - name: itsaplan-skill
               mountPath: /storage/opencode-config/skill/itsaplan-tasks
+            - name: sou-reporter-plugin
+              mountPath: /storage/opencode-config/plugins
+              readOnly: true
+            - name: sou-reporter-config
+              mountPath: /storage/opencode-config/star-office-reporter.json
+              subPath: star-office-reporter.json
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /health
@@ -311,6 +318,14 @@ spec:
           configMap:
             name: openchamber-itsaplan-skill
             defaultMode: 0644
+        - name: sou-reporter-plugin
+          configMap:
+            name: openchamber-sou-reporter-plugin
+            defaultMode: 0644
+        - name: sou-reporter-config
+          secret:
+            secretName: openchamber-sou-reporter
+            defaultMode: 0400
         # Vault-sync sidecar volumes (H2-28).
         # syncthing-home: writable home (index db + staged identity/config).
         # emptyDir = local NVMe scratch, wiped on pod restart (index rebuilds

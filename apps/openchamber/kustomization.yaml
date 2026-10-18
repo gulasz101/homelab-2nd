@@ -10,6 +10,7 @@ resources:
   - openchamber-itsaplan-agent-key.sops.yaml
   - openchamber-itsaplan-sou-agent-key.sops.yaml
   - openchamber-github.sops.yaml
+  - openchamber-sou-reporter.sops.yaml
   - openchamber-minio-backup-creds.sops.yaml
   - openchamber-syncthing-identity.sops.yaml
   # Storage + config
@@ -42,3 +43,10 @@ resources:
   - openchamber-backup-cronjob.yaml
   # Observability (H2-28): namespace pod/health alerts
   - openchamber-prometheus-rules.yaml
+configMapGenerator:
+  - name: openchamber-sou-reporter-plugin
+    namespace: openchamber
+    options:
+      disableNameSuffixHash: true
+    files:
+      - sou-reporter/openchamber-star-office-reporter.js
