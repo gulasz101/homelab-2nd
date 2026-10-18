@@ -23,15 +23,12 @@ spec:
             - -c
             - |
               set -e
-              PSQL="psql -h $SOU_DB_HOST -U postgres -d sou -v ON_ERROR_STOP=1 -v sou_public_password=$SOU_PUBLIC_PASSWORD"
-              # Idempotent: ignore "role already exists" on first install.
-              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=0 -v sou_public_password="$SOU_PUBLIC_PASSWORD" \
-                -c "CREATE ROLE sou_public WITH LOGIN PASSWORD :'sou_public_password';" || true
-              $PSQL -c "ALTER ROLE sou_public WITH LOGIN PASSWORD :'sou_public_password';"
-              $PSQL -c "GRANT CONNECT ON DATABASE sou TO sou_public;"
-              $PSQL -c "GRANT USAGE ON SCHEMA public TO sou_public;"
-              $PSQL -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO sou_public;"
-              $PSQL -c "ALTER DEFAULT PRIVILEGES FOR ROLE sou_ingest IN SCHEMA public GRANT SELECT ON TABLES TO sou_public;"
+              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=0 -c "CREATE ROLE sou_public WITH LOGIN PASSWORD '$(printf '%s' "$SOU_PUBLIC_PASSWORD")';" || true
+              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -c "ALTER ROLE sou_public WITH LOGIN PASSWORD '$(printf '%s' "$SOU_PUBLIC_PASSWORD")';"
+              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -c "GRANT CONNECT ON DATABASE sou TO sou_public;"
+              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -c "GRANT USAGE ON SCHEMA public TO sou_public;"
+              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO sou_public;"
+              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE sou_ingest IN SCHEMA public GRANT SELECT ON TABLES TO sou_public;"
               echo "sou_public role provisioned"
           env:
             - name: SOU_DB_HOST
