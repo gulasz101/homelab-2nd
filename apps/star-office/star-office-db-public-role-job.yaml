@@ -23,19 +23,13 @@ spec:
             - -c
             - |
               set -e
-              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -v sou_public_password="$SOU_PUBLIC_PASSWORD" <<'PSQL'
-              DO $$
-              BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sou_public') THEN
-                  CREATE ROLE sou_public WITH LOGIN PASSWORD :'sou_public_password';
-                END IF;
-              END $$;
-              ALTER ROLE sou_public WITH LOGIN PASSWORD :'sou_public_password';
-              GRANT CONNECT ON DATABASE sou TO sou_public;
-              GRANT USAGE ON SCHEMA public TO sou_public;
-              GRANT SELECT ON ALL TABLES IN SCHEMA public TO sou_public;
-              ALTER DEFAULT PRIVILEGES FOR ROLE sou_ingest IN SCHEMA public GRANT SELECT ON TABLES TO sou_public;
-              PSQL
+              PSQL="psql -h $SOU_DB_HOST -U postgres -d sou -v ON_ERROR_STOP=1 -v sou_public_password=$SOU_PUBLIC_PASSWORD"
+              $PSQL -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sou_public') THEN CREATE ROLE sou_public WITH LOGIN PASSWORD :'sou_public_password'; END IF; END \$\$;"
+              $PSQL -c "ALTER ROLE sou_public WITH LOGIN PASSWORD :'sou_public_password';"
+              $PSQL -c "GRANT CONNECT ON DATABASE sou TO sou_public;"
+              $PSQL -c "GRANT USAGE ON SCHEMA public TO sou_public;"
+              $PSQL -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO sou_public;"
+              $PSQL -c "ALTER DEFAULT PRIVILEGES FOR ROLE sou_ingest IN SCHEMA public GRANT SELECT ON TABLES TO sou_public;"
               echo "sou_public role provisioned"
           env:
             - name: SOU_DB_HOST
