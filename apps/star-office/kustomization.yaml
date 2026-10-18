@@ -29,6 +29,7 @@ resources:
   - star-office-tunnel-ingress-configmap.yaml
   # Flux image automation
   - star-office-image-policy.yaml
+  - star-office-image-update-automation.yaml
   # Observability package
   - star-office-prometheus-rules.yaml
   - star-office-alertmanager-config.yaml

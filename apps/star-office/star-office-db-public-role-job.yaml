@@ -1,8 +1,8 @@
 ---
 # One-off Job: create the read-only sou_public role after CNPG bootstrap.
-# Initdb created the DB with owner sou_ingest. This job connects as sou_ingest
-# (via star-office-db-credentials) and creates sou_public, grants CONNECT/USAGE/SELECT,
-# and sets default SELECT privileges for future tables.
+# Connects as the postgres superuser (CNPG creates star-office-db-superuser
+# when enableSuperuserAccess is true) so it can create roles and set passwords
+# even though sou_ingest lacks CREATEROLE.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -23,23 +23,31 @@ spec:
             - -c
             - |
               set -e
-              PGPASSWORD="$SOU_INGEST_PASSWORD" psql -h "$SOU_DB_HOST" -U sou_ingest -d sou -c "CREATE ROLE sou_public WITH LOGIN PASSWORD '$SOU_PUBLIC_PASSWORD';"
-              PGPASSWORD="$SOU_INGEST_PASSWORD" psql -h "$SOU_DB_HOST" -U sou_ingest -d sou -c "GRANT CONNECT ON DATABASE sou TO sou_public;"
-              PGPASSWORD="$SOU_INGEST_PASSWORD" psql -h "$SOU_DB_HOST" -U sou_ingest -d sou -c "GRANT USAGE ON SCHEMA public TO sou_public;"
-              PGPASSWORD="$SOU_INGEST_PASSWORD" psql -h "$SOU_DB_HOST" -U sou_ingest -d sou -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO sou_public;"
-              PGPASSWORD="$SOU_INGEST_PASSWORD" psql -h "$SOU_DB_HOST" -U sou_ingest -d sou -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO sou_public;"
+              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -v sou_public_password="$SOU_PUBLIC_PASSWORD" <<'PSQL'
+              DO $$
+              BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sou_public') THEN
+                  CREATE ROLE sou_public WITH LOGIN PASSWORD :'sou_public_password';
+                END IF;
+              END $$;
+              ALTER ROLE sou_public WITH LOGIN PASSWORD :'sou_public_password';
+              GRANT CONNECT ON DATABASE sou TO sou_public;
+              GRANT USAGE ON SCHEMA public TO sou_public;
+              GRANT SELECT ON ALL TABLES IN SCHEMA public TO sou_public;
+              ALTER DEFAULT PRIVILEGES FOR ROLE sou_ingest IN SCHEMA public GRANT SELECT ON TABLES TO sou_public;
+              PSQL
               echo "sou_public role provisioned"
           env:
             - name: SOU_DB_HOST
               value: star-office-db-rw.star-office.svc.cluster.local
-            - name: SOU_INGEST_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: star-office-db-credentials
-                  key: sou_ingest_password
             - name: SOU_PUBLIC_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: star-office-db-credentials
                   key: sou_public_password
-  backoffLimit: 4
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: star-office-db-superuser
+                  key: password
+  backoffLimit: 10
