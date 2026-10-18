@@ -1,8 +1,8 @@
 ---
 # One-off Job: create the read-only sou_public role after CNPG bootstrap.
 # Connects as the postgres superuser (CNPG creates star-office-db-superuser
-# when enableSuperuserAccess is true) so it can create roles and set passwords
-# even though sou_ingest lacks CREATEROLE.
+# when enableSuperuserAccess is true) so it can create roles and set passwords.
+# sou_ingest lacks CREATEROLE, so this job cannot run as sou_ingest.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -24,7 +24,9 @@ spec:
             - |
               set -e
               PSQL="psql -h $SOU_DB_HOST -U postgres -d sou -v ON_ERROR_STOP=1 -v sou_public_password=$SOU_PUBLIC_PASSWORD"
-              $PSQL -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sou_public') THEN CREATE ROLE sou_public WITH LOGIN PASSWORD :'sou_public_password'; END IF; END \$\$;"
+              # Idempotent: ignore "role already exists" on first install.
+              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=0 -v sou_public_password="$SOU_PUBLIC_PASSWORD" \
+                -c "CREATE ROLE sou_public WITH LOGIN PASSWORD :'sou_public_password';" || true
               $PSQL -c "ALTER ROLE sou_public WITH LOGIN PASSWORD :'sou_public_password';"
               $PSQL -c "GRANT CONNECT ON DATABASE sou TO sou_public;"
               $PSQL -c "GRANT USAGE ON SCHEMA public TO sou_public;"
