@@ -20,8 +20,8 @@ spec:
       messageTemplate: |
         Automated image update for {{ .AutomationObject }}
         Images:
-        {{ range .Updated.Objects -}}
-        - {{ .Kind }} {{ .Name }}: {{ .OldImage }} -> {{ .NewImage }}
+        {{ range $_, $change := .Changed.Changes -}}
+        - {{ $change.OldValue }} -> {{ $change.NewValue }}
         {{ end -}}
     push:
       branch: main
