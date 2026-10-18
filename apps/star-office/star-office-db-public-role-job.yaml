@@ -23,12 +23,16 @@ spec:
             - -c
             - |
               set -e
-              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=0 -c "CREATE ROLE sou_public WITH LOGIN PASSWORD '$(printf '%s' "$SOU_PUBLIC_PASSWORD")';" || true
-              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -c "ALTER ROLE sou_public WITH LOGIN PASSWORD '$(printf '%s' "$SOU_PUBLIC_PASSWORD")';"
-              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -c "GRANT CONNECT ON DATABASE sou TO sou_public;"
-              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -c "GRANT USAGE ON SCHEMA public TO sou_public;"
-              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO sou_public;"
-              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE sou_ingest IN SCHEMA public GRANT SELECT ON TABLES TO sou_public;"
+              cat >/tmp/grant.sql <<EOF
+              CREATE ROLE sou_public WITH LOGIN PASSWORD '$SOU_PUBLIC_PASSWORD';
+              ALTER ROLE sou_public WITH LOGIN PASSWORD '$SOU_PUBLIC_PASSWORD';
+              GRANT CONNECT ON DATABASE sou TO sou_public;
+              GRANT USAGE ON SCHEMA public TO sou_public;
+              GRANT SELECT ON ALL TABLES IN SCHEMA public TO sou_public;
+              ALTER DEFAULT PRIVILEGES FOR ROLE sou_ingest IN SCHEMA public GRANT SELECT ON TABLES TO sou_public;
+              EOF
+              psql -h "$SOU_DB_HOST" -U postgres -d sou -v ON_ERROR_STOP=0 -f /tmp/grant.sql || true
+              rm -f /tmp/grant.sql
               echo "sou_public role provisioned"
           env:
             - name: SOU_DB_HOST
