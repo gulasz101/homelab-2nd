@@ -34,7 +34,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: sou
-          image: ghcr.io/gulasz101/star-office-ui-fork:v2.3.0 # {"$imagepolicy": "flux-system:star-office-ui"}
+          image: ghcr.io/gulasz101/star-office-ui-fork:v2.4.0 # {"$imagepolicy": "flux-system:star-office-ui"}
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
