@@ -77,6 +77,13 @@ spec:
         fsGroup: 1883
         seccompProfile:
           type: RuntimeDefault
+      nodeSelector:
+        kubernetes.io/hostname: zigbee-node
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: zigbee
+          effect: NoSchedule
       containers:
         - name: mosquitto
           image: eclipse-mosquitto:2.1.2-alpine

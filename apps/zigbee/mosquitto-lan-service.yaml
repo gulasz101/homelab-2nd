@@ -15,14 +15,16 @@
 #   it (see zigbee-mqtt-credentials.sops.yaml: a dedicated `tasmota` user).
 #
 # THE ONE THING TO UNDERSTAND ABOUT NODEPORT + THE TASMOTA DEVICES
-#   mosquitto's pod runs on zigbee-node today, but that does not matter: kube-proxy
-#   publishes this NodePort on EVERY node and forwards to wherever the pod is.
-#   A Tasmota device can therefore be pointed at 192.168.1.179 (homelab-2nd) and
-#   will still reach the broker even though the pod sits elsewhere.
+#   mosquitto's pod runs on zigbee-node today. It is pinned there by a
+#   nodeSelector and toleration in mosquitto-deployment.yaml, because the
+#   Supreme Leader wants the entire Zigbee stack on the 2 GB radio head.
 #
-#   BUT: mosquitto has no nodeSelector and no local storage claim. If it is
-#   rescheduled to another node, or zigbee-node is powered off, the port keeps
-#   answering from the remaining nodes - as long as at least one node is up.
+#   kube-proxy still publishes this NodePort on EVERY node and forwards to the
+#   pod, so a Tasmota device can be pointed at 192.168.1.179 (homelab-2nd) and
+#   will still reach the broker. BUT: if zigbee-node is down, MQTT is down,
+#   because the broker no longer floats to other nodes. Devices must tolerate that
+#   or be pointed at a different HA broker.
+#
 #   Configure devices against 192.168.1.179 because it is the always-on control
 #   plane with a stable address, not because the pod lives there.
 #
