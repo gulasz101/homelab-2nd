@@ -61,6 +61,12 @@ presence_penalty 1.5. Keep the LiteLLM→LM Studio hop on the direct LAN
 → .119, the last drift caught and repinned on 2026-10-03), never through the Cloudflare edge, whose
 ~100 s timeout will 524 a 27B cold load.
 
+The OpenChamber Syncthing sidecar peer address follows the same lease: it was
+found still dialling `.129` on 2026-10-19 while the Mac sat on `.119` (H2-311,
+fixed in `8d9386e`). The address class stays open as H2-312 — an OPNsense DHCP
+reservation plus a `m1max.voitech.dev` name, then point every consumer at the
+name instead of the digits.
+
 ## Consequences
 
 **Positive**
