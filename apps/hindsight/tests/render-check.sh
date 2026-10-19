@@ -300,9 +300,14 @@ if [ -n "$chart" ] && [ -n "$version" ] && [ -n "$release" ]; then
     bad "helm template failed:"; sed 's/^/        /' "$WORK/render.err"
     printf '\n== result: FAIL\n'; exit 1
   fi
+  # Validate the render WITHOUT identity-less documents (same filter as 5m). Helm 4
+  # emits an empty template (pdb.yaml with podDisruptionBudget off) as a comment-only
+  # document that kubeconform rejects with "missing 'kind' key"; Helm 3 did not
+  # trip it, which is why this passed on the H2-313 runner but not on Helm 4.2.3.
+  strip_nonresources "$WORK/render.yaml" "$WORK/render-kc-filter.txt" > "$WORK/render-kc.yaml"
   if [ "$HAVE_KUBECONFORM" -eq 0 ]; then
     bad "kubeconform missing - the chart render was not validated (section 0 prints the one-line install command)"
-  elif "${KUBECONFORM[@]}" "$WORK/render.yaml" > "$WORK/kc-render.txt" 2>&1; then
+  elif "${KUBECONFORM[@]}" "$WORK/render-kc.yaml" > "$WORK/kc-render.txt" 2>&1; then
     ok "kubeconform on the chart render: $(tail -1 "$WORK/kc-render.txt")"
   else
     bad "kubeconform rejected the chart render:"
