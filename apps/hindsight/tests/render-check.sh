@@ -17,17 +17,33 @@
 #      HINDSIGHT_API_DATABASE_URL, POSTGRES_PASSWORD defined *before* it,
 #      liveness /health/live vs readiness /health, slim pinned images, no
 #      chart-managed Secret/PVC, worker off, CPU TEI on, ServiceMonitor with
-#      the prometheus-stack label, and (H2-271) NO DUPLICATE env KEY NAME in
+#      the prometheus-stack label, (H2-271) NO DUPLICATE env KEY NAME in
 #      any rendered container - the defect that kept the api Deployment from
-#      ever being created, and that neither helm nor kubeconform catches
+#      ever being created, and that neither helm nor kubeconform catches - and
+#      (H2-313) the H2-306/H2-307 LLM, timeout, fan-out, pool and worker
+#      settings, read out of the rendered api container with quotes stripped,
+#      including the knobs that must stay ABSENT: the reverted
+#      *_REASONING_EFFORT pair and CONSOLIDATION_LLM_BATCH_SIZE
 #   5m. (H2-275) the api STARTUP GATE: the HelmRelease's postRenderer is read
 #      out of the manifest and replayed through `kubectl kustomize` over the
 #      chart render - the same two-step render helm-controller performs - and
 #      the resulting api container is asserted to carry a startupProbe on
 #      :8888 while liveness (/health/live) and readiness (/health) come through
-#      untouched, parameter for parameter
+#      untouched, parameter for parameter. (H2-313) the documents helm emits for
+#      templates that render nothing are dropped before kustomize is handed the
+#      render (that is what used to break this replay with "missing Resource
+#      metadata"), the drop is asserted to lose no rendered object, and the
+#      post-rendered api Deployment is asserted to be strategy Recreate with no
+#      rolling parameters - the shape that stops an api restart from orphaning
+#      in-flight consolidation work (H2-306)
 #   6. every manifest on disk is wired into the kustomization (the classic
 #      "wrote the file, forgot the wiring" bug) and nothing plaintext leaked in
+#
+# Needs: kubectl, helm, and kubeconform. kubeconform is a hard dependency -
+#        sections 3, 4 and 5m validate the render with it - so a missing binary
+#        is a FAIL, and section 0 prints the one-line install command (H2-313:
+#        it used to surface only as `kubeconform: command not found` inside a
+#        section that then read as if the MANIFEST had been rejected).
 #
 # Usage:  bash apps/hindsight/tests/render-check.sh
 # Exit:   0 = all checks passed, 1 = at least one check failed
@@ -123,6 +139,92 @@ svc_selector() {
   ' "$1" | sort
 }
 
+# Value of one env key in an already-extracted container document, with the
+# surrounding quotes removed (H2-313). The two renders this file reads quote
+# strings differently: `helm template` emits the chart's own template output,
+# where the chart quotes every value (`value: "60"`), while a kustomize rebuild
+# re-serialises the object and drops quotes that are not needed (`value: 60`).
+# Comparing raw text would make an expectation depend on which render it was read
+# from; comparing the value makes it depend on nothing.
+#   env_value <container file> <ENV_KEY_NAME>
+env_value() {
+  awk -v want="$2" '
+    $0 ~ /^[[:space:]]*- name:[[:space:]]*/ {
+      v = $0; sub(/^[[:space:]]*- name:[[:space:]]*/, "", v); gsub(/"/, "", v)
+      inenv = (v == want); next
+    }
+    inenv && $1 == "value:" { v = $2; gsub(/^"|"$/, "", v); print v; exit }
+    inenv && $0 ~ /^[[:space:]]*- name:/ { inenv = 0 }
+  ' "$1"
+}
+
+# 1 if the env key NAME appears at all in an extracted container document (or in
+# a whole render). Used for the keys that must NOT be set (H2-313).
+env_key_present() {
+  grep -qE "^[[:space:]]*- name:[[:space:]]*\"?$2\"?[[:space:]]*$" "$1"
+}
+
+# Drop the YAML documents that carry no resource identity, and report them
+# (H2-313).
+#   strip_nonresources <input> [report file]  ->  stdout
+#
+# `helm template` emits one document per TEMPLATE FILE, so a template that
+# renders nothing while its value is disabled still lands in the render as a bare
+# separator plus its `# Source:` comment - chart 0.10.3 does exactly that with
+# templates/pdb.yaml while podDisruptionBudget is off. kustomize refuses a
+# document it cannot name:
+#   accumulating resources from 'render.yaml': missing Resource metadata
+# (reproduced with kustomize v4.5.7 .. v5.8.0 by feeding it a document that has
+# content but no apiVersion/kind/metadata). Section 5m replays the postRenderer
+# through `kubectl kustomize`, so whether that replay dies depended on how
+# tolerant the installed loader happens to be - not something a validation gate
+# should inherit. Identity-less documents are dropped here, and ONLY those: a
+# document declaring a non-empty apiVersion/kind, or a metadata map with at least
+# one field that is not an empty value ({} / [] / null / ~ / ""), is passed
+# through unchanged. The bias is deliberate - a document that is kept but still
+# unacceptable to kustomize fails loudly in 5m with kustomize's own message,
+# while a document that is dropped by mistake would quietly remove a manifest
+# from the replay, which is why 5m also asserts that no `kind:` line was lost,
+# that the filter is idempotent, and that the filter's own contract holds on a
+# synthetic input.
+# The report file gets `dropped <n>` followed by the `# Source:` line of every
+# dropped document, so a silent drop is impossible to miss.
+strip_nonresources() {
+  awk -v report="${2:-}" '
+    function hasval(line,   v) {
+      v = line
+      sub(/^[[:space:]]+("[A-Za-z0-9_.\/-]+"|[A-Za-z0-9_.\/-]+):[[:space:]]*/, "", v)
+      if (v == line) return 0
+      return !(v == "" || v == "{}" || v == "[]" || v == "null" || v == "~" || v == "\"\"")
+    }
+    function flush() {
+      if (buf == "") return
+      if (identity) {
+        if (kept++) printf "---\n"
+        printf "%s", buf
+      } else {
+        dropped++
+        detail = detail sprintf("    - %s\n", (src == "" ? "(no # Source: comment)" : src))
+      }
+      buf = ""; identity = 0; inmeta = 0; src = ""
+    }
+    /^---[[:space:]]*$/ { flush(); next }
+    /^\.\.\.[[:space:]]*$/ { flush(); next }
+    {
+      buf = buf $0 "\n"
+      if (src == "" && $0 ~ /^# Source:/) src = $0
+      if (inmeta && hasval($0)) identity = 1
+      if ($0 ~ /^metadata:[[:space:]]*$/) inmeta = 1
+      else if ($0 ~ /^[^[:space:]]/) inmeta = 0
+      if ($0 ~ /^(apiVersion|kind):[[:space:]]*[^[:space:]]/) identity = 1
+    }
+    END {
+      flush()
+      if (report != "") printf "dropped %d\n%s", dropped + 0, detail > report
+    }
+  ' "$1"
+}
+
 REPO_FILE="$DIR/hindsight-helm-repository.yaml"
 RELEASE_FILE="$DIR/hindsight-helm-release.yaml"
 
@@ -143,6 +245,17 @@ grep -q '^  - hindsight/$' "$ROOT/apps/kustomization.yaml" \
 [ -f "$REPO_FILE" ] && [ -f "$RELEASE_FILE" ] \
   || { printf '\n== result: FAIL (deliverables absent - expected before they are written)\n'; exit 1; }
 
+# kubeconform is a hard dependency of sections 3, 4 and 5m. H2-313: a missing
+# binary used to show up only as `kubeconform: command not found` inside those
+# sections, where the surrounding message reads as if the MANIFEST had been
+# rejected. It stays a FAIL - without it nothing is validated - but it says what
+# to install, in one line, and the sections below say they could not run.
+HAVE_KUBECONFORM=1
+if ! command -v kubeconform >/dev/null 2>&1; then
+  HAVE_KUBECONFORM=0
+  bad "kubeconform is not on PATH - install the pinned release: curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz -C /usr/local/bin kubeconform"
+fi
+
 head1 "1. render the group"
 if kubectl kustomize "$DIR" > "$WORK/group.yaml" 2> "$WORK/kustomize.err"; then
   ok "kubectl kustomize apps/hindsight -> $(grep -c '^kind:' "$WORK/group.yaml") objects"
@@ -159,7 +272,9 @@ else
 fi
 
 head1 "3. kubeconform -strict on the group render"
-if "${KUBECONFORM[@]}" "$G" > "$WORK/kc-group.txt" 2>&1; then
+if [ "$HAVE_KUBECONFORM" -eq 0 ]; then
+  bad "kubeconform missing - the group render was not validated (section 0 prints the one-line install command)"
+elif "${KUBECONFORM[@]}" "$G" > "$WORK/kc-group.txt" 2>&1; then
   ok "$(tail -1 "$WORK/kc-group.txt")"
 else
   bad "kubeconform rejected the group render:"
@@ -185,7 +300,14 @@ if [ -n "$chart" ] && [ -n "$version" ] && [ -n "$release" ]; then
     bad "helm template failed:"; sed 's/^/        /' "$WORK/render.err"
     printf '\n== result: FAIL\n'; exit 1
   fi
-  if "${KUBECONFORM[@]}" "$WORK/render.yaml" > "$WORK/kc-render.txt" 2>&1; then
+  # Validate the render WITHOUT identity-less documents (same filter as 5m). Helm 4
+  # emits an empty template (pdb.yaml with podDisruptionBudget off) as a comment-only
+  # document that kubeconform rejects with "missing 'kind' key"; Helm 3 did not
+  # trip it, which is why this passed on the H2-313 runner but not on Helm 4.2.3.
+  strip_nonresources "$WORK/render.yaml" "$WORK/render-kc-filter.txt" > "$WORK/render-kc.yaml"
+  if [ "$HAVE_KUBECONFORM" -eq 0 ]; then
+    bad "kubeconform missing - the chart render was not validated (section 0 prints the one-line install command)"
+  elif "${KUBECONFORM[@]}" "$WORK/render-kc.yaml" > "$WORK/kc-render.txt" 2>&1; then
     ok "kubeconform on the chart render: $(tail -1 "$WORK/kc-render.txt")"
   else
     bad "kubeconform rejected the chart render:"
@@ -333,22 +455,62 @@ has "$API" 'HINDSIGHT_API_EMBEDDINGS_TEI_URL' && has "$API" 'HINDSIGHT_API_RERAN
   && ok "both TEI URLs are wired into the api container" \
   || bad "the TEI URLs are not wired into the api container"
 
-# 5h. LLM wiring through the local LiteLLM *proxy*.
+# 5h. LLM and consolidation wiring: the local LiteLLM *proxy*, plus the
+# throughput / timeout / pool / worker rulings of H2-306 and H2-307 (H2-313
+# replaced the stale nemotron expectation with this table).
 # The proxy speaks the OpenAI Chat Completions API, so the provider must be
 # `openai` and the base URL must end in /v1. `provider: litellm` means "use the
 # LiteLLM library against a real upstream vendor" and fails at the first retain
 # with `LLM Provider NOT provided ... You passed model=...` (H2-279).
+# Values are read out of the RENDERED api container by name with env_value(),
+# which strips quotes - so an expectation here is the value the app sees, not the
+# punctuation of whichever render it was read from.
 for kv in \
-  'HINDSIGHT_API_LLM_PROVIDER: "openai"' \
-  'HINDSIGHT_API_LLM_MODEL: "nemotron-3-nano-30b-ollama"' \
-  'HINDSIGHT_API_LLM_BASE_URL: "http://litellm.llm-hub.svc.cluster.local:4000/v1"' \
-  'HINDSIGHT_API_TENANT_EXTENSION: "hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension"'
+  'HINDSIGHT_API_LLM_PROVIDER: openai' \
+  'HINDSIGHT_API_LLM_MODEL: gpt-oss-120b-hindsight' \
+  'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: gpt-oss-120b-openrouter' \
+  'HINDSIGHT_API_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
+  'HINDSIGHT_API_TENANT_EXTENSION: hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension' \
+  'HINDSIGHT_API_DB_STATEMENT_TIMEOUT: 60' \
+  'HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT: 50' \
+  'HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM: 6' \
+  'HINDSIGHT_API_DB_POOL_MAX_SIZE: 30' \
+  'HINDSIGHT_API_WORKER_ID: hindsight-api'
 do
   key=${kv%%: *}; want=${kv#*: }
-  if has "$API" "name: $key" && has "$API" "value: $want"; then
-    ok "$key = $want"
+  got=$(env_value "$API" "$key")
+  if [ "$got" = "$want" ]; then
+    ok "$key = $got"
   else
-    bad "$key is not set to $want"
+    bad "$key is '${got:-unset}', expected $want"
+  fi
+done
+
+# The knobs that must stay ABSENT - absence is a behaviour here, so it is
+# asserted positively, in the api container and then over the whole render:
+#   - *_LLM_REASONING_EFFORT: LiteLLM answers the dedicated :nitro route with
+#       400 UnsupportedParamsError: openrouter does not support parameters:
+#       ['reasoning_effort']
+#     and every retain failed from 08:37 until the revert (H2-306). Reasoning
+#     control, if wanted, belongs in the LiteLLM model entry, not here.
+#   - CONSOLIDATION_LLM_BATCH_SIZE: at 16 about 10% of consolidation calls failed
+#     validation (gpt-oss dropped required fields such as source_fact_ids in the
+#     longer structured answers). The app default is 8, so the key must be gone
+#     and not merely set back to 8 - an explicit 8 would hide the next person's
+#     attempt to raise it (H2-306).
+for kv in \
+  'HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT: reasoning_effort is unsupported on the :nitro route - LiteLLM answers 400 UnsupportedParamsError and every retain fails (H2-306)' \
+  'HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT: reasoning_effort is unsupported on the :nitro route - LiteLLM answers 400 UnsupportedParamsError and every retain fails (H2-306)' \
+  'HINDSIGHT_API_LLM_REASONING_EFFORT: same revert - reasoning control belongs in the LiteLLM model entry, not in this env block (H2-306)' \
+  'HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE: at 16 about 10% of consolidation calls failed validation - gpt-oss dropped required fields such as source_fact_ids in the longer structured answers, so the app default of 8 is the corrected state (H2-306)'
+do
+  key=${kv%%: *}; why=${kv#*: }
+  if env_key_present "$API" "$key"; then
+    bad "$key is set in the api container again, but $why"
+  elif env_key_present "$R" "$key"; then
+    bad "$key appears elsewhere in the chart render, but $why"
+  else
+    ok "$key is not set anywhere in the render"
   fi
 done
 
@@ -565,6 +727,18 @@ fi
 # reconcile. Which is why this section does not just grep the YAML: it replays the
 # patch out of the HelmRelease through `kubectl kustomize` over the chart render,
 # so what is asserted is the object that actually reaches the cluster.
+#
+# H2-313 - the replay used to be at the mercy of `helm template`'s empty
+# documents. helm emits one document per TEMPLATE FILE, so a template that
+# renders nothing (chart 0.10.3's pdb.yaml while podDisruptionBudget is off)
+# still lands in the render as a separator plus its `# Source:` comment, and
+# kustomize cannot name a document like that:
+#   accumulating resources from 'render.yaml': missing Resource metadata
+# and this whole section then reported `none` for every probe it asserts. The
+# render now goes through strip_nonresources() first. The drop is printed, never
+# silent, and it is asserted to lose no rendered object, to be idempotent, and to
+# behave correctly on a synthetic input (the self-test below), so the fix cannot
+# hide a failure of its own.
 head1 "5m. H2-275: the api startup gate (postRenderer)"
 
 # Print the postRenderers' kustomize `patches:` list out of a HelmRelease,
@@ -652,9 +826,64 @@ grep -q "name: ${release}-api" "$PRP" \
   && ok "the postRenderer targets Deployment ${release}-api" \
   || bad "the postRenderer does not name Deployment ${release}-api as its target (a bare kind target would hit the TEI and control-plane Deployments too)"
 
-# Replay the chart render through the patch, exactly as helm-controller does.
+# Replay the chart render through the patch, exactly as helm-controller does -
+# with the identity-less documents helm emits for templates that render nothing
+# removed first (H2-313, see strip_nonresources above).
 mkdir -p "$WORK/gate"
-cp "$R" "$WORK/gate/render.yaml"
+strip_nonresources "$R" "$WORK/gate/filter.txt" > "$WORK/gate/render.yaml"
+dropped=$(sed -n 's/^dropped //p' "$WORK/gate/filter.txt")
+kinds_before=$(grep -c '^kind:' "$R")
+kinds_after=$(grep -c '^kind:' "$WORK/gate/render.yaml")
+if [ "${dropped:-0}" -gt 0 ]; then
+  ok "dropped $dropped identity-less document(s) before handing the render to kustomize (helm emits one for every template that renders nothing):"
+  sed -n '2,$p' "$WORK/gate/filter.txt" | sed 's/^/        /'
+else
+  note "the chart render carries no identity-less document - nothing for the filter to drop"
+fi
+if [ "$kinds_before" = "$kinds_after" ]; then
+  ok "the filter lost nothing renderable: $kinds_before rendered object(s) before it, $kinds_after after"
+else
+  bad "the document filter dropped a rendered object ($kinds_before -> $kinds_after '^kind:' lines) - the replay below would be validating fewer manifests than the chart renders"
+fi
+# The filter is TESTED here, not trusted. An identity-less document must go, and
+# real objects must stay: a filter that dropped everything would make every
+# assertion below pass vacuously, which is the same class of defect as the gate
+# that let H2-271 through. The first document below is the shape that kills the
+# replay outright ("missing Resource metadata"), the second is what helm emits
+# for a template that renders nothing.
+cat > "$WORK/filter-selftest.yaml" <<'SELFTEST'
+---
+# Source: chart/templates/empty.yaml
+foo: bar
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: before-the-junk
+---
+# Source: chart/templates/empty2.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: after-the-junk
+SELFTEST
+strip_nonresources "$WORK/filter-selftest.yaml" "$WORK/filter-selftest.txt" > "$WORK/filter-selftest.out"
+st_dropped=$(sed -n 's/^dropped //p' "$WORK/filter-selftest.txt")
+st_kept=$(grep -c '^kind:' "$WORK/filter-selftest.out")
+if [ "${st_dropped:-x}" = "2" ] && [ "$st_kept" = "2" ] \
+   && grep -q 'name: before-the-junk' "$WORK/filter-selftest.out" \
+   && grep -q 'name: after-the-junk' "$WORK/filter-selftest.out"; then
+  ok "filter self-test: the identity-less document ('foo: bar') and the empty template document were both dropped, and the real objects on either side of them were kept"
+else
+  bad "filter self-test failed: dropped=${st_dropped:-none} (expected 2), kept=$st_kept object(s) (expected 2)"
+fi
+strip_nonresources "$WORK/gate/render.yaml" "$WORK/gate/filter2.txt" > /dev/null
+st_again=$(sed -n 's/^dropped //p' "$WORK/gate/filter2.txt")
+[ "${st_again:-x}" = "0" ] \
+  && ok "the filter is idempotent: a second pass over the filtered render drops 0 documents" \
+  || bad "the filter is not idempotent: a second pass dropped ${st_again:-none} document(s)"
+
 {
   printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n'
   printf 'resources:\n  - render.yaml\n'
@@ -667,16 +896,19 @@ else
   sed 's/^/        /' "$WORK/gate.err"
   cp "$R" "$WORK/gated.yaml"   # keep going so the probe checks below still report what is missing
 fi
-if "${KUBECONFORM[@]}" "$WORK/gated.yaml" > "$WORK/kc-gated.txt" 2>&1; then
+if [ "$HAVE_KUBECONFORM" -eq 0 ]; then
+  bad "kubeconform missing - the post-rendered output was not validated (section 0 prints the one-line install command)"
+elif "${KUBECONFORM[@]}" "$WORK/gated.yaml" > "$WORK/kc-gated.txt" 2>&1; then
   ok "kubeconform on the post-rendered output: $(tail -1 "$WORK/kc-gated.txt")"
 else
   bad "kubeconform rejected the post-rendered output:"
   grep -v '^Summary:' "$WORK/kc-gated.txt" | sed 's/^/        /'
 fi
 
-doc_by_name Deployment "$release-api" "$WORK/gated.yaml" > "$WORK/api-doc-gated.yaml"
+GATED_API="$WORK/api-doc-gated.yaml"
+doc_by_name Deployment "$release-api" "$WORK/gated.yaml" > "$GATED_API"
 container_block "$API" api                                    > "$WORK/api-container-chart.yaml"
-container_block "$WORK/api-doc-gated.yaml" api                > "$WORK/api-container-gated.yaml"
+container_block "$GATED_API" api                              > "$WORK/api-container-gated.yaml"
 CHART_API_CONTAINER="$WORK/api-container-chart.yaml"
 GATED_API_CONTAINER="$WORK/api-container-gated.yaml"
 if [ -s "$CHART_API_CONTAINER" ] && [ -s "$GATED_API_CONTAINER" ]; then
@@ -750,6 +982,60 @@ rport=$(probe_field "$GATED_API_CONTAINER" readinessProbe port)
 [ "$rpath" = "/health" ] && [ "$rport" = "8888" ] \
   && ok "readiness still $rpath on :$rport (database-backed, deliberately different from liveness)" \
   || bad "readiness is $rpath on :$rport, expected /health on :8888"
+
+# (d) H2-313: the api pod is REPLACED, not rolled.
+# H2-306 pinned HINDSIGHT_API_WORKER_ID to the constant `hindsight-api` so that a
+# new pod reclaims the operations a dead pod left in 'processing' - on startup a
+# worker only recovers tasks left under ITS OWN worker id. Two overlapping pods
+# would share that id and the new one would "recover" work the old one is still
+# running, so the Deployment is Recreate, and with Recreate the API rejects a
+# rollingUpdate block.
+# `rollingUpdate: null` in this render is NOT a leftover: helm-controller applies
+# with server-side apply, where an explicit null is the instruction that removes
+# the live field, which is exactly why the HelmRelease's own patch sets it. So the
+# assertion is on the semantic shape - type Recreate, and no rolling PARAMETERS
+# under it - rather than on the literal absence of a line, which a correct object
+# would fail.
+strategy_block() {
+  awk '
+    /^  strategy:[[:space:]]*$/ { print; inset = 1; next }
+    inset && /^  [^ ]/ { exit }
+    inset { print }
+  ' "$1"
+}
+# The rollingUpdate key alone: its own line plus any deeper-indented children,
+# and nothing at all when the key is absent. Reading to the end of the strategy
+# block instead would pull `type: Recreate` in and count it as a rolling
+# parameter.
+rolling_block() {
+  awk '
+    /^    rollingUpdate:/ { print; inru = 1; next }
+    inru && /^      / { print; next }
+    inru { exit }
+  ' "$1"
+}
+strategy_block "$GATED_API" > "$WORK/gated-strategy.txt"
+gated_strategy=$(sed -n 's/^    type:[[:space:]]*//p' "$WORK/gated-strategy.txt" | head -1 | tr -d '"')
+[ "$gated_strategy" = "Recreate" ] \
+  && ok "post-render spec.strategy.type = Recreate (never two api pods at once: they would share one \$HINDSIGHT_API_WORKER_ID and both 'recover' the same operations)" \
+  || bad "post-render spec.strategy.type is '${gated_strategy:-none}', expected Recreate"
+rolling_block "$WORK/gated-strategy.txt" > "$WORK/gated-rolling.txt"
+rolling_lines=$(grep -c . "$WORK/gated-rolling.txt")
+if [ "$rolling_lines" -eq 0 ]; then
+  ok "post-render spec.strategy carries no rollingUpdate at all - nothing can be rolled"
+elif [ "$rolling_lines" -eq 1 ] && grep -q '^    rollingUpdate:[[:space:]]*null[[:space:]]*$' "$WORK/gated-rolling.txt"; then
+  ok "post-render spec.strategy.rollingUpdate is exactly null - the server-side-apply removal signal, so no rolling parameter reaches the API (which refuses one alongside Recreate)"
+else
+  bad "post-render spec.strategy still carries rollingUpdate parameters - kubectl refuses them with Recreate:"
+  sed 's/^/        /' "$WORK/gated-rolling.txt"
+fi
+# The chart renders no strategy for this Deployment, so the Recreate above is the
+# postRenderer's doing and not something a chart bump could supply.
+if awk '/^  strategy:[[:space:]]*$/ { f = 1 } f { print }' "$API" | grep -q .; then
+  note "the pinned chart renders its own spec.strategy for the api Deployment - re-check which one wins after a chart bump"
+else
+  ok "the pinned chart renders no spec.strategy for the api Deployment (the Recreate above comes from the postRenderer, not from the chart)"
+fi
 
 head1 "6. wiring and secrets"
 # 6a. every manifest on disk is listed in the kustomization (tests/ is hand-run).
