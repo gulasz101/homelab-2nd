@@ -42,6 +42,13 @@ spec:
       GF_AUTH_GENERIC_OAUTH_AUTO_LOGIN: "false"
       GF_AUTH_GENERIC_OAUTH_USE_PKCE: "true"
       GF_AUTH_GENERIC_OAUTH_USE_REFRESH_TOKEN: "true"
+      # Role sync is ON: every login re-derives the Grafana role from Authentik.
+      # The mapping (GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH) lives in the SOPS
+      # secret grafana-oidc-client: `role == 'admin' && 'Admin' || 'Viewer'`.
+      # It must name the CLAIM `role`, which the Authentik scope mapping
+      # `homelab-role` emits ({"role": "admin"} for the homelab-admins group),
+      # NOT the scope name. Until 2026-10-19 it read `"homelab-role" == 'admin'`,
+      # never matched, and silently demoted every login to Viewer (no Explore).
       GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT: "false"
       GF_AUTH_GENERIC_OAUTH_SKIP_ORG_ROLE_SYNC: "false"
       # Disable local/basic logins; only Authentik OIDC remains.
