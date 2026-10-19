@@ -110,6 +110,12 @@ spec:
         # (gpt-oss-120b-hindsight, :nitro) and pin reasoning_effort=low for both
         # retain and consolidation to cut latency and cost.
         HINDSIGHT_API_LLM_MODEL: gpt-oss-120b-hindsight
+        # Consolidation is background work: latency does not matter, cost does.
+        # It uses the price-sorted OpenRouter route (same gpt-oss-120b, about
+        # half the per-token cost of :nitro, slower). Retain stays on :nitro
+        # because agents wait on it. Ollama Cloud was rejected for this: its
+        # subscription rate limiting is unpredictable (Supreme Leader, H2-306).
+        HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: gpt-oss-120b-openrouter
         # NO *_LLM_REASONING_EFFORT here: LiteLLM rejects it for this route with
         #   400 UnsupportedParamsError: openrouter does not support parameters:
         #   ['reasoning_effort'], for model=openai/gpt-oss-120b:nitro
