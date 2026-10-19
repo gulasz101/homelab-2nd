@@ -110,8 +110,11 @@ spec:
         # (gpt-oss-120b-hindsight, :nitro) and pin reasoning_effort=low for both
         # retain and consolidation to cut latency and cost.
         HINDSIGHT_API_LLM_MODEL: gpt-oss-120b-hindsight
-        HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT: low
-        HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT: low
+        # NO *_LLM_REASONING_EFFORT here: LiteLLM rejects it for this route with
+        #   400 UnsupportedParamsError: openrouter does not support parameters:
+        #   ['reasoning_effort'], for model=openai/gpt-oss-120b:nitro
+        # and every retain failed from 08:37 to the revert (H2-306, 2026-10-19).
+        # Reasoning control, if wanted, belongs in the LiteLLM model entry.
         HINDSIGHT_API_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
         # Consolidation death spiral (H2-306, 2026-10-19): on our hub-heavy banks
         # (entities like the owner or "homelab" sit on thousands of facts) the
