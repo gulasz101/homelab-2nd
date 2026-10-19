@@ -23,14 +23,13 @@
 #   internet with no login. That is the one combination guardrail 8 and plain
 #   sense both forbid. LAN-only NodePort, full stop.
 #
-# NODE SELECTION - the part that will bite later
-#   nodeRED is pinned to homelab-2nd by a postRenderer in its HelmRelease,
-#   because its /data lives on an OMV NFS export and only nodes with
-#   nfs-common can mount it (zigbee-node lacks nfs-common). So the pod always
-#   lands on homelab-2nd. A NodePort is nonetheless reachable through ANY node
-#   in the cluster - kube-proxy routes it to wherever the pod lives - so
-#   <any-node-ip>:30180 works. Point your bookmarks at 192.168.1.179 (the
-#   control plane, always on, always this address) rather than the pod's node.
+# NODE SELECTION - no longer a trap
+#   nodeRED is pinned to zigbee-node by a postRenderer in its HelmRelease.
+#   zigbee-node now has nfs-common installed, so the OMV NFS /data PV mounts fine.
+#   A NodePort is nonetheless reachable through ANY node in the cluster - kube-proxy
+#   routes it to wherever the pod lives - so <any-node-ip>:30180 works. Point your
+#   bookmarks at 192.168.1.179 (the control plane, always on, always this address)
+#   rather than the pod's node.
 #
 # PORT 30180 chosen outside the used set:
 #   30030 30069 30076 30078 30080 30089 30096 30114 30193 30195

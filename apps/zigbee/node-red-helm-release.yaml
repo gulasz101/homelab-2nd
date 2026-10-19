@@ -81,16 +81,8 @@ spec:
   upgrade:
     remediation:
       retries: 3
-  # Node-RED's /data is OMV NFS. The pod was landing on zigbee-node, which has NO
-  # nfs-common installed, and the mount failed with:
-  #   fsconfig() failed: NFS: mount program didn't pass remote address
-  # That is the documented trap for new k3s nodes: nfs-common must be installed
-  # before a node can mount an OMV export.
-  #
-  # Two ways out: install nfs-common on zigbee-node (needs root, not available to
-  # the agent) or place the pod where nfs-common already exists. Doing the
-  # second so the automation is self-contained, and leaving the first as a
-  # follow-up so the pin can be removed later.
+  # Node-RED's /data is OMV NFS. zigbee-node now has nfs-common installed, so the
+  # pod can land on the radio head alongside zigbee2mqtt and mosquitto.
   #
   # Done as a postRenderer rather than a chart value because the chart's values
   # schema is NOT in docs-mcp (the indexed node-red library is the application's
@@ -106,7 +98,23 @@ spec:
               - op: add
                 path: /spec/template/spec/nodeSelector
                 value:
-                  kubernetes.io/hostname: homelab-2nd
+                  kubernetes.io/hostname: zigbee-node
+              - op: add
+                path: /spec/template/spec/tolerations
+                value:
+                  - key: dedicated
+                    operator: Equal
+                    value: zigbee
+                    effect: NoSchedule
+              - op: replace
+                path: /spec/template/spec/containers/0/resources
+                value:
+                  requests:
+                    cpu: 100m
+                    memory: 128Mi
+                  limits:
+                    cpu: 500m
+                    memory: 384Mi
 
   values:
     image:
