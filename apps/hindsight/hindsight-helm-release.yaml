@@ -113,6 +113,21 @@ spec:
         HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT: low
         HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT: low
         HINDSIGHT_API_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
+        # Consolidation death spiral (H2-306, 2026-10-19): on our hub-heavy banks
+        # (entities like the owner or "homelab" sit on thousands of facts) the
+        # link-expansion graph query (`WITH seed_sources ...`) ran 45 s+ with six
+        # copies in parallel. LINK_EXPANSION_TIMEOUT (10 s) only stops the client
+        # waiting; Postgres kept running the abandoned query for up to
+        # DB_STATEMENT_TIMEOUT (default 600 s). They piled up, pegged the DB at its
+        # 2-CPU limit, and CNPG's liveness probe killed Postgres (6 restarts).
+        #   - DB_STATEMENT_TIMEOUT 60: Postgres itself cancels runaway statements.
+        #   - LINK_EXPANSION_PER_ENTITY_LIMIT 50 (default 200): caps the hub fan-out
+        #     that makes the query expensive in the first place.
+        #   - CONSOLIDATION_LLM_PARALLELISM 2 (default 4): fewer concurrent
+        #     consolidation recalls while the ~24k-fact backlog drains.
+        HINDSIGHT_API_DB_STATEMENT_TIMEOUT: "60"
+        HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT: "50"
+        HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM: "2"
         # MCP auth ON: the tenant extension makes the API require the tenant key
         # that arrives via envFrom (HINDSIGHT_API_TENANT_API_KEY).
         HINDSIGHT_API_TENANT_EXTENSION: "hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension"
