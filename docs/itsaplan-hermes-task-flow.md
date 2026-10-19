@@ -5,7 +5,11 @@ How a delegated issue in Itsaplan project **H2** reaches the Mac Hermes profile
 [ADR-017](./adr/adr-017-itsaplan-h2-reconstruction.md) (H2 reconstruction) and
 [ADR-018](./adr/adr-018-openchamber-worker-on-t460.md) (OpenChamber worker).
 
-**Status:** verified against the repo and the live API on 2026-09-15.
+**Status:** verified against the repo and the live API on 2026-09-15; re-verified
+end-to-end on 2026-10-19 (H2-322, agent run 156 — the issue was created and delegated
+by the **Andrzej** agent identity, claimed by the OpenChamber runner after the 120 s
+delegation delay, executed as an OpenChamber session, and wrote back to the board
+authored as OpenChamber).
 
 ## Topology
 
@@ -99,6 +103,35 @@ Done, keep the board truthful on failure, and close with per-criterion evidence.
 The bridge prefixes the session prompt with
 `[itsaplan issue_id=<n> identifier=<H2-n> run_id=<n> trigger=<t>]` so the skill
 knows which issue it runs.
+
+### Wiring snapshot (verified H2-322, 2026-10-19)
+
+The knobs that must move together, and where the live state was checked against `main`:
+
+- **Runner:** `openchamber-itsaplan-runner` Deployment, nodeSelector `t460`,
+  `@itsaplan/runner@0.5.0`, `pollIntervalMs 5000`, `concurrency 1`.
+- **Bridge pin:** pod-template annotation `openchamber.dev/itsaplan-bridge-revision: "2"`
+  ↔ `bridge.js @ 2bd5180`. bridge.js is mounted via subPath, so ConfigMap edits without
+  an annotation bump never reach the pod (observed 2026-10-04).
+- **Model lane:** env `OPENCHAMBER_PROVIDER=litellm` + `OPENCHAMBER_MODEL=qwen3.8-flash`
+  (since 3073f15, H2-313, 2026-10-19). Reason: OpenCode's own stored OpenCode-Go
+  credential intermittently answers `provider.auth 401 "Upstream request failed:
+  Invalid credential"` while LiteLLM's copy of the same subscription key works — one
+  credential in one place. Bare model ids only; OpenCode rejects unknown ids before any
+  HTTP call. (This replaced ADR-018 decision #6's direct `opencode-go`/`baseURL` setup
+  for the H2 runner.)
+- **Worker prompt:** ConfigMap `openchamber-config`, agent `itsaplan-worker`,
+  `seed-version: "8"` — MUST equal the `openchamber` Deployment's pod annotation
+  `homelab.voitech.dev/opencode-seed-version: "8"`; the pod annotation is what actually
+  rolls the pod. Bump both together or the new prompt never deploys.
+- **Skill:** ConfigMap `openchamber-itsaplan-skill` mounted at
+  `/storage/opencode-config/skill/itsaplan-tasks`.
+- **Identity:** external agent `OpenChamber` (username `openchamber`,
+  `runnerScope: project`, `delegationDelaySec 120`), key SOPS
+  `openchamber-itsaplan-agent-key`. Delegations from the Andrzej agent on the H2 board
+  are claimed by this runner like any other delegation — run 156 (H2-322 itself) is the
+  proof — so the bridge already carries agent-to-agent hand-offs, which is what the
+  M1 Air orchestration plan (and later Paperclip) builds on.
 
 The bridge still posts the run outcome back to the issue itself:
 - on success: `@admin Deliverable — OpenChamber session <id>` + the final assistant text
