@@ -42,8 +42,11 @@ SQLite databases in WAL mode — a file copy is not a valid snapshot.
    These are Mac-local by nature: the data only exists on the Mac.
 6. **The watchdog alerts to Mattermost** (the andrzej home channel, via `hermes send`) when the
    memory provider is not `hindsight`, when `hindsight` is disabled, when zdzislaw's bank id drifts,
-   when the newest Hindsight document is over 24 h old, or when the backup log fails to show all
-   five profiles succeeding. At most one alert per condition per 24 h.
+   when the newest Hindsight document is over 24 h old, when the backup log fails to show all five
+   profiles succeeding, or when a Hindsight operation has been stuck in `processing` for more than
+   3 h (read-only over `ssh homelab-2nd` → `sudo k3s kubectl -n hindsight exec hindsight-db-1 -c
+   postgres -- psql`; a tripwire that cannot read alerts instead of staying silent). At most one
+   alert per condition per 24 h.
 
 ## Consequences
 
