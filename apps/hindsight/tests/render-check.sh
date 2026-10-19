@@ -978,6 +978,60 @@ rport=$(probe_field "$GATED_API_CONTAINER" readinessProbe port)
   && ok "readiness still $rpath on :$rport (database-backed, deliberately different from liveness)" \
   || bad "readiness is $rpath on :$rport, expected /health on :8888"
 
+# (d) H2-313: the api pod is REPLACED, not rolled.
+# H2-306 pinned HINDSIGHT_API_WORKER_ID to the constant `hindsight-api` so that a
+# new pod reclaims the operations a dead pod left in 'processing' - on startup a
+# worker only recovers tasks left under ITS OWN worker id. Two overlapping pods
+# would share that id and the new one would "recover" work the old one is still
+# running, so the Deployment is Recreate, and with Recreate the API rejects a
+# rollingUpdate block.
+# `rollingUpdate: null` in this render is NOT a leftover: helm-controller applies
+# with server-side apply, where an explicit null is the instruction that removes
+# the live field, which is exactly why the HelmRelease's own patch sets it. So the
+# assertion is on the semantic shape - type Recreate, and no rolling PARAMETERS
+# under it - rather than on the literal absence of a line, which a correct object
+# would fail.
+strategy_block() {
+  awk '
+    /^  strategy:[[:space:]]*$/ { print; inset = 1; next }
+    inset && /^  [^ ]/ { exit }
+    inset { print }
+  ' "$1"
+}
+# The rollingUpdate key alone: its own line plus any deeper-indented children,
+# and nothing at all when the key is absent. Reading to the end of the strategy
+# block instead would pull `type: Recreate` in and count it as a rolling
+# parameter.
+rolling_block() {
+  awk '
+    /^    rollingUpdate:/ { print; inru = 1; next }
+    inru && /^      / { print; next }
+    inru { exit }
+  ' "$1"
+}
+strategy_block "$GATED_API" > "$WORK/gated-strategy.txt"
+gated_strategy=$(sed -n 's/^    type:[[:space:]]*//p' "$WORK/gated-strategy.txt" | head -1 | tr -d '"')
+[ "$gated_strategy" = "Recreate" ] \
+  && ok "post-render spec.strategy.type = Recreate (never two api pods at once: they would share one \$HINDSIGHT_API_WORKER_ID and both 'recover' the same operations)" \
+  || bad "post-render spec.strategy.type is '${gated_strategy:-none}', expected Recreate"
+rolling_block "$WORK/gated-strategy.txt" > "$WORK/gated-rolling.txt"
+rolling_lines=$(grep -c . "$WORK/gated-rolling.txt")
+if [ "$rolling_lines" -eq 0 ]; then
+  ok "post-render spec.strategy carries no rollingUpdate at all - nothing can be rolled"
+elif [ "$rolling_lines" -eq 1 ] && grep -q '^    rollingUpdate:[[:space:]]*null[[:space:]]*$' "$WORK/gated-rolling.txt"; then
+  ok "post-render spec.strategy.rollingUpdate is exactly null - the server-side-apply removal signal, so no rolling parameter reaches the API (which refuses one alongside Recreate)"
+else
+  bad "post-render spec.strategy still carries rollingUpdate parameters - kubectl refuses them with Recreate:"
+  sed 's/^/        /' "$WORK/gated-rolling.txt"
+fi
+# The chart renders no strategy for this Deployment, so the Recreate above is the
+# postRenderer's doing and not something a chart bump could supply.
+if awk '/^  strategy:[[:space:]]*$/ { f = 1 } f { print }' "$API" | grep -q .; then
+  note "the pinned chart renders its own spec.strategy for the api Deployment - re-check which one wins after a chart bump"
+else
+  ok "the pinned chart renders no spec.strategy for the api Deployment (the Recreate above comes from the postRenderer, not from the chart)"
+fi
+
 head1 "6. wiring and secrets"
 # 6a. every manifest on disk is listed in the kustomization (tests/ is hand-run).
 missing=0
