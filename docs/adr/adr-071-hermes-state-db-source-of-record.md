@@ -35,7 +35,11 @@ SQLite databases in WAL mode — a file copy is not a valid snapshot.
    `s3:GetObject`, `s3:ListBucket` on that bucket only. Credentials live only in
    `~/.config/hermes-state-backup/minio.env` (mode 600) on the Mac — never in git, never in a log,
    never in a ticket. The user deliberately cannot delete: retention belongs to ILM, not to the
-   uploader.
+   uploader. That "exactly one copy" claim is enforced, not assumed: the backup script runs `mc`
+   with an ephemeral `MC_CONFIG_DIR` so `mc alias set` cannot leave a second copy of the secret in
+   `~/.mc/config.json`, and `hermes-state-backup-rotate.sh` re-mints the secret with the new value
+   travelling to MinIO on stdin (never argv, which `ps` exposes). Any credential from this user that
+   reaches a transcript, a log or a chat gets rotated, not shrugged at.
 5. **Automation is host-side, not cluster-side**: a LaunchAgent `com.gulasz101.hermes-state-backup`
    (daily 03:30) runs `~/.hermes/scripts/hermes-state-backup.sh`; a second LaunchAgent
    `com.gulasz101.hermes-memory-watchdog` (hourly) runs `~/.hermes/scripts/hermes-memory-watchdog.sh`.
