@@ -392,7 +392,12 @@ spec:
               # HINDSIGHT_API_WORKER_ID below, two overlapping pods would share
               # one worker id and the new pod would "recover" tasks the old pod
               # is still running. The old pod must be gone first.
+              # `rollingUpdate: null` is required: helm-controller uses server-side
+              # apply, which otherwise keeps the live object's rollingUpdate block
+              # and the API rejects it ("may not be specified when strategy type
+              # is Recreate"); an explicit null removes the field.
               - op: replace
                 path: /spec/strategy
                 value:
                   type: Recreate
+                  rollingUpdate: null
