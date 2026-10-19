@@ -72,6 +72,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-069 | Go-lane cross-account fallback keeps the model: `deepseek-v4.1-flash-openrouter` before gpt-oss | Accepted (amended by ADR-070) | 2026-10-17 |
 | ADR-070 | Go-lane fallback tries Ollama Cloud (`deepseek-v4.1-flash-ollama`) before OpenRouter (amends ADR-069) | Accepted | 2026-10-17 |
 | ADR-071 | Hermes `state.db` is the agent-memory source of record; nightly backup to OMV MinIO | Accepted | 2026-10-19 |
+| ADR-072 | Live databases are pinned to homelab-2nd; zigbee-node is dedicated to the Zigbee stack | Accepted | 2026-10-19 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,
