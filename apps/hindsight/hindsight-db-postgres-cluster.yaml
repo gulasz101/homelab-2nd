@@ -27,12 +27,17 @@ spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:16
 
-  # Same modest trio as the proven honcho-db cluster on the same node.
+  # Bumped from 256MB / 512MB after consolidation graph queries (link_expansion.py)
+  # timed out under the previous 1 CPU / 2Gi limits. 512MB shared_buffers + 1536MB
+  # effective_cache_size fit the new 3Gi memory limit and reduce I/O on the entity
+  # link tables during backlog consolidation. See H2-307.
   postgresql:
     parameters:
       max_connections: "100"
-      shared_buffers: "256MB"
-      effective_cache_size: "512MB"
+      shared_buffers: "512MB"
+      effective_cache_size: "1536MB"
+      work_mem: "16MB"
+      maintenance_work_mem: "256MB"
 
   # Generation 1 bootstraps fresh from initdb. `postInitApplicationSQL` runs as
   # the SUPERUSER against the application database immediately after init —
@@ -96,14 +101,14 @@ spec:
         compression: gzip
     retentionPolicy: "30d"
 
-  # 520Mi steady state, but OOMKilled at 1Gi under the florian/default batch migration
-  # load (H2-290, 2026-10-15 04:10): conc=2 x 24-item retain calls drive parallel
-  # extraction + big transactions + embedding writes. 2Gi gives honest headroom.
-  # CPU unchanged: node's CPU requests already ~78% committed.
+  # Memory bumped to 3Gi and CPU limit to 2000m to unblock consolidation
+  # (H2-307). The pod was CPU-throttled ~56% at 1 core while running the graph
+  # link_expansion queries, causing TimeoutError on every consolidation. Requests
+  # stay low so scheduling is not affected.
   resources:
     requests:
       memory: "512Mi"
       cpu: "250m"
     limits:
-      memory: "2Gi"
-      cpu: "1000m"
+      memory: "3Gi"
+      cpu: "2000m"
