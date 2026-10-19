@@ -54,10 +54,18 @@ spec:
               value: http://openchamber.openchamber.svc.cluster.local:3000
             - name: OPENCHAMBER_WORKDIR
               value: /storage/workspaces/homelab-2nd
+            # Through LiteLLM, like the SOU runner (2026-10-19, H2-313). The direct
+            # `opencode-go` provider started failing every task within seconds:
+            # OpenCode's own stored Go credential answers
+            #   provider.auth 401 "Upstream request failed: Invalid credential"
+            # while LiteLLM's copy of the same subscription key still works. One
+            # credential in one place (LiteLLM) instead of two copies drifting.
+            # BARE model id (see the SOU runner): OpenCode rejects unknown ids
+            # such as `qwen3.8-flash-go` before any HTTP call.
             - name: OPENCHAMBER_PROVIDER
-              value: opencode-go
+              value: litellm
             - name: OPENCHAMBER_MODEL
-              value: deepseek-v4.1-flash
+              value: qwen3.8-flash
             - name: OPENCHAMBER_AGENT
               value: itsaplan-worker
             # Bridge wait-loop budget: delegated tasks may run up to 4 hours
