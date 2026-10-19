@@ -145,6 +145,13 @@ spec:
         #     several work_mem buffers; 100 busy connections pushed the DB to its
         #     memory limit during the backfill (H2-306).
         HINDSIGHT_API_DB_POOL_MAX_SIZE: "30"
+        # Stable worker id (H2-306). On startup a worker only recovers tasks left
+        # in 'processing' under ITS OWN worker_id, which defaults to the hostname,
+        # i.e. the pod name, and that changes on every rollout. So every restart
+        # orphaned the in-flight consolidations and blocked those banks for good
+        # (5 days on 10-14..10-19). A fixed id lets each new pod reclaim them.
+        # Safe only with ONE replica and the Recreate strategy (postRenderer below).
+        HINDSIGHT_API_WORKER_ID: hindsight-api
         # MCP auth ON: the tenant extension makes the API require the tenant key
         # that arrives via envFrom (HINDSIGHT_API_TENANT_API_KEY).
         HINDSIGHT_API_TENANT_EXTENSION: "hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension"
@@ -381,3 +388,11 @@ spec:
                   periodSeconds: 10
                   timeoutSeconds: 5
                   failureThreshold: 30
+              # Recreate, not RollingUpdate (H2-306): with the stable
+              # HINDSIGHT_API_WORKER_ID below, two overlapping pods would share
+              # one worker id and the new pod would "recover" tasks the old pod
+              # is still running. The old pod must be gone first.
+              - op: replace
+                path: /spec/strategy
+                value:
+                  type: Recreate
