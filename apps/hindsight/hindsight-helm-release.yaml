@@ -135,12 +135,12 @@ spec:
         #   - CONSOLIDATION_LLM_PARALLELISM: was 2 while the DB was on zigbee-node;
         #     6 since the DB moved to homelab-2nd (3 CPU / 6Gi). Each Hermes session
         #     is its own tag group, so a ~48k-fact backlog parallelises well.
-        #   - CONSOLIDATION_LLM_BATCH_SIZE 16 (default 8): half the LLM calls per
-        #     fact, so cheaper per fact; each call is somewhat longer.
+        #   - CONSOLIDATION_LLM_BATCH_SIZE stays at the default 8: at 16, ~10% of
+        #     consolidation calls failed validation (gpt-oss dropped required
+        #     fields like source_fact_ids in the longer structured answers).
         HINDSIGHT_API_DB_STATEMENT_TIMEOUT: "60"
         HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT: "50"
         HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM: "6"
-        HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE: "16"
         #   - DB_POOL_MAX_SIZE 30 (default 100): each Postgres backend can use
         #     several work_mem buffers; 100 busy connections pushed the DB to its
         #     memory limit during the backfill (H2-306).

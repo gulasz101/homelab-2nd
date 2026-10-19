@@ -105,13 +105,15 @@ spec:
 
   # homelab-2nd sizing. 3Gi was not enough during the H2-306 backfill plus the
   # first real consolidation in five days: the pod sat at 3065Mi/3Gi and 1.8 CPU,
-  # stopped answering its liveness probe and was killed. 6Gi / 3 CPU on a 31 GB,
-  # 8-core node; the memory request is raised to 2Gi so the scheduler accounts
-  # for it. CPU requests stay low because the node is ~78% CPU-committed.
+  # stopped answering its liveness probe and was killed. 6Gi on a 31 GB node; the
+  # memory request is raised to 2Gi so the scheduler accounts for it. CPU limit 5:
+  # at 3 the DB sat pinned at 3002m during backfill + consolidation and the API's
+  # DB-backed readiness probe timed out (node itself at 58%). CPU requests stay
+  # low because the node is ~78% CPU-committed.
   resources:
     requests:
       memory: "2Gi"
       cpu: "250m"
     limits:
       memory: "6Gi"
-      cpu: "3000m"
+      cpu: "5000m"
