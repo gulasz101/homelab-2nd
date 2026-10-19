@@ -27,17 +27,18 @@ spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:16
 
-  # Bumped from 256MB / 512MB after consolidation graph queries (link_expansion.py)
-  # timed out under the previous 1 CPU / 2Gi limits. 512MB shared_buffers + 1536MB
-  # effective_cache_size fit the new 3Gi memory limit and reduce I/O on the entity
-  # link tables during backlog consolidation. See H2-307.
+  # INCIDENT (H2-306, 2026-10-19): this cluster's local-path PV is pinned to
+  # `zigbee-node`, an ARM Allwinner board with 2 GB RAM, NOT homelab-2nd's NVMe
+  # (nothing pinned it when it was first scheduled). H2-307 sized it for
+  # homelab-2nd (3Gi / 512MB shared_buffers) and the board went NotReady under
+  # backfill load. Sized back to fit 2 GB until the DB moves to homelab-2nd.
   postgresql:
     parameters:
       max_connections: "100"
-      shared_buffers: "512MB"
-      effective_cache_size: "1536MB"
-      work_mem: "16MB"
-      maintenance_work_mem: "256MB"
+      shared_buffers: "256MB"
+      effective_cache_size: "768MB"
+      work_mem: "8MB"
+      maintenance_work_mem: "128MB"
 
   # Generation 1 bootstraps fresh from initdb. `postInitApplicationSQL` runs as
   # the SUPERUSER against the application database immediately after init —
@@ -101,14 +102,13 @@ spec:
         compression: gzip
     retentionPolicy: "30d"
 
-  # Memory bumped to 3Gi and CPU limit to 2000m to unblock consolidation
-  # (H2-307). The pod was CPU-throttled ~56% at 1 core while running the graph
-  # link_expansion queries, causing TimeoutError on every consolidation. Requests
-  # stay low so scheduling is not affected.
+  # See the INCIDENT note above: limits must fit a 2 GB / 4-core ARM board and
+  # leave room for its kubelet and zigbee2mqtt/mosquitto. 1.25Gi stays above
+  # the 1Gi that OOMKilled under migration load (H2-290).
   resources:
     requests:
       memory: "512Mi"
       cpu: "250m"
     limits:
-      memory: "3Gi"
-      cpu: "2000m"
+      memory: "1280Mi"
+      cpu: "1500m"
