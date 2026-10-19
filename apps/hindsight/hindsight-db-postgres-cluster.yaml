@@ -13,10 +13,10 @@
 # choice and same reason as the live apps/honcho/postgres-cluster.yaml.
 #
 # Barman `serverName` generation convention: see
-# docs/cnpg-backup-servername-generations.md. This is generation 1, so both the
-# archiver target and the recovery source name `hindsight-db`. A rebuild must
-# bump the archiver target to `hindsight-db-gen2` and leave the recovery source
-# on `hindsight-db` — never one side alone.
+# docs/cnpg-backup-servername-generations.md. This is generation 2 (H2-306): it
+# recovered from `hindsight-db` and archives into `hindsight-db-gen2`. The next
+# rebuild recovers from `hindsight-db-gen2` and archives into `hindsight-db-gen3`
+# — always both sides together.
 # ============================================================
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
@@ -27,39 +27,40 @@ spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:16
 
-  # INCIDENT (H2-306, 2026-10-19): this cluster's local-path PV is pinned to
-  # `zigbee-node`, an ARM Allwinner board with 2 GB RAM, NOT homelab-2nd's NVMe
-  # (nothing pinned it when it was first scheduled). H2-307 sized it for
-  # homelab-2nd (3Gi / 512MB shared_buffers) and the board went NotReady under
-  # backfill load. Sized back to fit 2 GB until the DB moves to homelab-2nd.
+  # Pinned to homelab-2nd (architecture: live DB PVCs on its NVMe). Generation 1
+  # had no pin, so local-path bound its PV to `zigbee-node` (2 GB ARM board) and
+  # every Hindsight timeout/restart from 10-13 to 10-19 traced back to that
+  # (H2-306). A local-path PV is node-bound for life, so the pin must exist
+  # BEFORE the first pod is scheduled; this is why generation 2 exists.
+  affinity:
+    nodeSelector:
+      kubernetes.io/hostname: homelab-2nd
+
+  # Sized for homelab-2nd (8c/31GB). H2-307 measured ~56% CPU throttling at 1
+  # core during backlog consolidation.
   postgresql:
     parameters:
       max_connections: "100"
-      shared_buffers: "256MB"
-      effective_cache_size: "768MB"
-      work_mem: "8MB"
-      maintenance_work_mem: "128MB"
+      shared_buffers: "512MB"
+      effective_cache_size: "1536MB"
+      work_mem: "16MB"
+      maintenance_work_mem: "256MB"
 
-  # Generation 1 bootstraps fresh from initdb. `postInitApplicationSQL` runs as
-  # the SUPERUSER against the application database immediately after init —
-  # verified against the CNPG docs (cloudnative-pg.io/docs/bootstrap "Executing
-  # Queries After Initialization"). It is the only place the `vector` extension
-  # can be created: the application role `hindsight` is not a superuser, so
-  # without this line Hindsight's API crash-loops on its migrations and the
-  # whole epic stalls.
+  # Generation 2 (H2-306, 2026-10-19): recovered from generation 1's base backup
+  # + WAL in OMV MinIO (`serverName: hindsight-db`). The restored database
+  # already contains the `vector` extension, which generation 1 created via
+  # initdb `postInitApplicationSQL` (the app role `hindsight` is not a superuser).
+  # A from-scratch rebuild without a backup would need that initdb block back.
   bootstrap:
-    initdb:
+    recovery:
+      source: origin
       database: hindsight
       owner: hindsight
       secret:
         name: hindsight-db-credentials
-      postInitApplicationSQL:
-        - CREATE EXTENSION IF NOT EXISTS vector;
 
-  # The recovery source for the post-rebuild path. Inert while `bootstrap` is
-  # `initdb` (nothing recovers from it today), but it is the generation-1
-  # history the rebuild runbook points at, so the destination is declared here
-  # and does not have to be invented during an incident.
+  # The recovery source: generation 1's history, which generation 2 was restored
+  # from. CNPG only reads it at bootstrap, so it is inert on a running cluster.
   externalClusters:
     - name: origin
       barmanObjectStore:
@@ -90,7 +91,7 @@ spec:
       destinationPath: s3://cnpg-backups/hindsight
       endpointURL: http://openmediavault.local:9000
       # Current generation (archiver target); bump to "<name>-genN" (fresh) on rebuild.
-      serverName: hindsight-db
+      serverName: hindsight-db-gen2
       s3Credentials:
         accessKeyId:
           name: hindsight-minio-backup-creds
@@ -102,13 +103,12 @@ spec:
         compression: gzip
     retentionPolicy: "30d"
 
-  # See the INCIDENT note above: limits must fit a 2 GB / 4-core ARM board and
-  # leave room for its kubelet and zigbee2mqtt/mosquitto. 1.25Gi stays above
-  # the 1Gi that OOMKilled under migration load (H2-290).
+  # homelab-2nd sizing (H2-307): 2 CPU / 3Gi limits; requests stay low because
+  # the node's CPU requests are already ~78% committed.
   resources:
     requests:
       memory: "512Mi"
       cpu: "250m"
     limits:
-      memory: "1280Mi"
-      cpu: "1500m"
+      memory: "3Gi"
+      cpu: "2000m"
