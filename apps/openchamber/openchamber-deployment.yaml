@@ -34,6 +34,11 @@ spec:
         # rollout declarative (the prepare init container re-seeds on version
         # mismatch). H2-95: docs-mcp URL moved /sse -> /mcp (seed v3).
         homelab.voitech.dev/opencode-seed-version: "8"
+        # Bump this whenever openchamber-syncthing-config changes. Syncthing
+        # reads config.xml once at startup; a ConfigMap edit alone does NOT
+        # roll the pod, so without this marker a new peer address silently
+        # sits unused until the next unrelated restart.
+        homelab.voitech.dev/syncthing-config-version: "2"
     spec:
       # Service links would inject OPENCHAMBER_PORT (and OPENCHAMBER_SERVICE_*)
       # from the Service named "openchamber", clobbering the app's own vars.
