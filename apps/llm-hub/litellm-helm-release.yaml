@@ -312,6 +312,15 @@ spec:
             # on every retain. See docs/adr/adr-054-*.md and H2-284.
             model: openrouter/openai/gpt-oss-120b
             api_key: "os.environ/OPENROUTER_API_KEY"
+        # H2-307: dedicated high-throughput OpenRouter route for Hindsight.
+        # :nitro tells OpenRouter to sort providers by throughput rather than
+        # price, which cuts the average retain from 42 s down to the target
+        # range. A separate model_name keeps the existing gpt-oss-120b-openrouter
+        # (price-sorted) intact for other callers and their fallback chains.
+        - model_name: gpt-oss-120b-hindsight
+          litellm_params:
+            model: openrouter/openai/gpt-oss-120b:nitro
+            api_key: "os.environ/OPENROUTER_API_KEY"
         - model_name: deepseek-v4.1-flash-openrouter
           litellm_params:
             # DeepSeek v4.1 Flash via OpenRouter (paid credits), added 2026-10-17.
