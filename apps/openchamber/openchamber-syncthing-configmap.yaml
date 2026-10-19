@@ -29,7 +29,12 @@ metadata:
 data:
   config.xml: |
     <configuration version="52">
-      <folder id="jtpyv-hjzfc" label="wojtek.second.brain.obsidian.vault" path="/vault" type="sendreceive" rescanIntervalS="3600" fsWatcherEnabled="true" fsWatcherDelayS="10" ignorePerms="true" autoNormalize="true" markPeerNewer="false" pauseWhenOffline="false">
+      <!-- rescanIntervalS=300 because /vault is NFS: inotify events never fire
+           on NFS, so fsWatcherEnabled is decorative here and the periodic
+           rescan is the only way pod-side writes (agent tracking notes) get
+           noticed. 1h was too slow; 5 min keeps the vault fresh without
+           hammering 9.8k NFS stats. -->
+      <folder id="jtpyv-hjzfc" label="wojtek.second.brain.obsidian.vault" path="/vault" type="sendreceive" rescanIntervalS="300" fsWatcherEnabled="true" fsWatcherDelayS="10" ignorePerms="true" autoNormalize="true" markPeerNewer="false" pauseWhenOffline="false">
         <device id="LNJYHYO-4DX4VJA-Y4UCAZQ-NEJPCAR-5QFZJTX-D26CJLH-RSAB5ZL-2YIVRQI" introducedBy="">
           <address>dynamic</address>
         </device>

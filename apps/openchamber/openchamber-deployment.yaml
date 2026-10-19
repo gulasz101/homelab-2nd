@@ -38,7 +38,7 @@ spec:
         # reads config.xml once at startup; a ConfigMap edit alone does NOT
         # roll the pod, so without this marker a new peer address silently
         # sits unused until the next unrelated restart.
-        homelab.voitech.dev/syncthing-config-version: "2"
+        homelab.voitech.dev/syncthing-config-version: "3"
     spec:
       # Service links would inject OPENCHAMBER_PORT (and OPENCHAMBER_SERVICE_*)
       # from the Service named "openchamber", clobbering the app's own vars.
