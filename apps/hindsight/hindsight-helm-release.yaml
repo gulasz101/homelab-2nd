@@ -110,12 +110,14 @@ spec:
         # (gpt-oss-120b-hindsight, :nitro) and pin reasoning_effort=low for both
         # retain and consolidation to cut latency and cost.
         HINDSIGHT_API_LLM_MODEL: gpt-oss-120b-hindsight
-        # Consolidation is background work: latency does not matter, cost does.
-        # It uses the price-sorted OpenRouter route (same gpt-oss-120b, about
-        # half the per-token cost of :nitro, slower). Retain stays on :nitro
-        # because agents wait on it. Ollama Cloud was rejected for this: its
-        # subscription rate limiting is unpredictable (Supreme Leader, H2-306).
-        HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: gpt-oss-120b-openrouter
+        # Consolidation runs on the OpenCode Go subscription (flat fee) instead of
+        # paid OpenRouter credit: LiteLLM alias `hindsight-consolidation-go` =
+        # free minimax-m3.1-flash, falling back to deepseek-v4.1-flash on Go and
+        # only then to gpt-oss-120b on OpenRouter. Replay-tested on 8 real
+        # consolidation prompts: both Go models 8/8 valid, faster than gpt-oss
+        # (H2-306, 2026-10-19). Ollama Cloud stays rejected (rate limiting).
+        # Retain stays on :nitro (gpt-oss-120b-hindsight) because agents wait on it.
+        HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: hindsight-consolidation-go
         # NO *_LLM_REASONING_EFFORT here: LiteLLM rejects it for this route with
         #   400 UnsupportedParamsError: openrouter does not support parameters:
         #   ['reasoning_effort'], for model=openai/gpt-oss-120b:nitro

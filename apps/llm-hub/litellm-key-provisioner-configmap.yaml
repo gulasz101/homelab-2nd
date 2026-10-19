@@ -99,6 +99,8 @@ data:
         "mimo-v2.6-pro-go",
         "minimax-m2.5-go",
         "minimax-m3-go",
+        "minimax-m3.1-flash-free-go",
+        "hindsight-consolidation-go",
         "omen-alpha-go",
         "qwen3.6-plus-go",
         "qwen3.7-max-go",

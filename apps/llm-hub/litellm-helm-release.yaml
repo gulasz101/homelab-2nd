@@ -646,6 +646,28 @@ spec:
             model: openai/minimax-m3
             api_base: "https://opencode.ai/zen/go/v1"
             api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        # Free on the Go plan (2026-10-19). Unlike minimax-m2.7, plain
+        # chat-completions work (probed 2026-10-19: 1.3 s).
+        - model_name: minimax-m3.1-flash-free-go
+          litellm_params:
+            model: openai/minimax-m3.1-flash-free
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        # Hindsight consolidation route (H2-306, 2026-10-19). Same deployment as
+        # minimax-m3.1-flash-free-go under a purpose name, with its own fallback
+        # chain (router_settings.fallbacks): free MiniMax -> DeepSeek v4.1 flash on
+        # Go -> paid OpenRouter gpt-oss-120b as last resort. The `-go` SUFFIX IS
+        # LOAD-BEARING: the session normalizer only stamps `x-opencode-session`
+        # (which Go requires) on names ending in -go or listed in
+        # OPENCODE_GO_UNSUFFIXED.
+        # Replay of 8 real consolidation prompts (2026-10-19): MiniMax 8/8 and
+        # DeepSeek 8/8 schema-valid with real fact ids; gpt-oss 7/8 (one cited a
+        # non-existent id). MiniMax: 3-5 s typical, one 72 s outlier (8.5k tokens).
+        - model_name: hindsight-consolidation-go
+          litellm_params:
+            model: openai/minimax-m3.1-flash-free
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
         - model_name: omen-alpha-go
           litellm_params:
             model: openai/omen-alpha
@@ -752,6 +774,7 @@ spec:
           - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
           - {"deepseek-v4.1-flash-go": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
           - {"qwen3.8-flash-go": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"hindsight-consolidation-go": ["deepseek-v4.1-flash-go", "gpt-oss-120b-openrouter"]}
         content_policy_fallbacks:
           - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
           - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
