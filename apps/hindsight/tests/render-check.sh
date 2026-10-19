@@ -722,6 +722,18 @@ fi
 # reconcile. Which is why this section does not just grep the YAML: it replays the
 # patch out of the HelmRelease through `kubectl kustomize` over the chart render,
 # so what is asserted is the object that actually reaches the cluster.
+#
+# H2-313 - the replay used to be at the mercy of `helm template`'s empty
+# documents. helm emits one document per TEMPLATE FILE, so a template that
+# renders nothing (chart 0.10.3's pdb.yaml while podDisruptionBudget is off)
+# still lands in the render as a separator plus its `# Source:` comment, and
+# kustomize cannot name a document like that:
+#   accumulating resources from 'render.yaml': missing Resource metadata
+# and this whole section then reported `none` for every probe it asserts. The
+# render now goes through strip_nonresources() first. The drop is printed, never
+# silent, and it is asserted to lose no rendered object, to be idempotent, and to
+# behave correctly on a synthetic input (the self-test below), so the fix cannot
+# hide a failure of its own.
 head1 "5m. H2-275: the api startup gate (postRenderer)"
 
 # Print the postRenderers' kustomize `patches:` list out of a HelmRelease,
@@ -809,9 +821,64 @@ grep -q "name: ${release}-api" "$PRP" \
   && ok "the postRenderer targets Deployment ${release}-api" \
   || bad "the postRenderer does not name Deployment ${release}-api as its target (a bare kind target would hit the TEI and control-plane Deployments too)"
 
-# Replay the chart render through the patch, exactly as helm-controller does.
+# Replay the chart render through the patch, exactly as helm-controller does -
+# with the identity-less documents helm emits for templates that render nothing
+# removed first (H2-313, see strip_nonresources above).
 mkdir -p "$WORK/gate"
-cp "$R" "$WORK/gate/render.yaml"
+strip_nonresources "$R" "$WORK/gate/filter.txt" > "$WORK/gate/render.yaml"
+dropped=$(sed -n 's/^dropped //p' "$WORK/gate/filter.txt")
+kinds_before=$(grep -c '^kind:' "$R")
+kinds_after=$(grep -c '^kind:' "$WORK/gate/render.yaml")
+if [ "${dropped:-0}" -gt 0 ]; then
+  ok "dropped $dropped identity-less document(s) before handing the render to kustomize (helm emits one for every template that renders nothing):"
+  sed -n '2,$p' "$WORK/gate/filter.txt" | sed 's/^/        /'
+else
+  note "the chart render carries no identity-less document - nothing for the filter to drop"
+fi
+if [ "$kinds_before" = "$kinds_after" ]; then
+  ok "the filter lost nothing renderable: $kinds_before rendered object(s) before it, $kinds_after after"
+else
+  bad "the document filter dropped a rendered object ($kinds_before -> $kinds_after '^kind:' lines) - the replay below would be validating fewer manifests than the chart renders"
+fi
+# The filter is TESTED here, not trusted. An identity-less document must go, and
+# real objects must stay: a filter that dropped everything would make every
+# assertion below pass vacuously, which is the same class of defect as the gate
+# that let H2-271 through. The first document below is the shape that kills the
+# replay outright ("missing Resource metadata"), the second is what helm emits
+# for a template that renders nothing.
+cat > "$WORK/filter-selftest.yaml" <<'SELFTEST'
+---
+# Source: chart/templates/empty.yaml
+foo: bar
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: before-the-junk
+---
+# Source: chart/templates/empty2.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: after-the-junk
+SELFTEST
+strip_nonresources "$WORK/filter-selftest.yaml" "$WORK/filter-selftest.txt" > "$WORK/filter-selftest.out"
+st_dropped=$(sed -n 's/^dropped //p' "$WORK/filter-selftest.txt")
+st_kept=$(grep -c '^kind:' "$WORK/filter-selftest.out")
+if [ "${st_dropped:-x}" = "2" ] && [ "$st_kept" = "2" ] \
+   && grep -q 'name: before-the-junk' "$WORK/filter-selftest.out" \
+   && grep -q 'name: after-the-junk' "$WORK/filter-selftest.out"; then
+  ok "filter self-test: the identity-less document ('foo: bar') and the empty template document were both dropped, and the real objects on either side of them were kept"
+else
+  bad "filter self-test failed: dropped=${st_dropped:-none} (expected 2), kept=$st_kept object(s) (expected 2)"
+fi
+strip_nonresources "$WORK/gate/render.yaml" "$WORK/gate/filter2.txt" > /dev/null
+st_again=$(sed -n 's/^dropped //p' "$WORK/gate/filter2.txt")
+[ "${st_again:-x}" = "0" ] \
+  && ok "the filter is idempotent: a second pass over the filtered render drops 0 documents" \
+  || bad "the filter is not idempotent: a second pass dropped ${st_again:-none} document(s)"
+
 {
   printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n'
   printf 'resources:\n  - render.yaml\n'
@@ -824,16 +891,19 @@ else
   sed 's/^/        /' "$WORK/gate.err"
   cp "$R" "$WORK/gated.yaml"   # keep going so the probe checks below still report what is missing
 fi
-if "${KUBECONFORM[@]}" "$WORK/gated.yaml" > "$WORK/kc-gated.txt" 2>&1; then
+if [ "$HAVE_KUBECONFORM" -eq 0 ]; then
+  bad "kubeconform missing - the post-rendered output was not validated (section 0 prints the one-line install command)"
+elif "${KUBECONFORM[@]}" "$WORK/gated.yaml" > "$WORK/kc-gated.txt" 2>&1; then
   ok "kubeconform on the post-rendered output: $(tail -1 "$WORK/kc-gated.txt")"
 else
   bad "kubeconform rejected the post-rendered output:"
   grep -v '^Summary:' "$WORK/kc-gated.txt" | sed 's/^/        /'
 fi
 
-doc_by_name Deployment "$release-api" "$WORK/gated.yaml" > "$WORK/api-doc-gated.yaml"
+GATED_API="$WORK/api-doc-gated.yaml"
+doc_by_name Deployment "$release-api" "$WORK/gated.yaml" > "$GATED_API"
 container_block "$API" api                                    > "$WORK/api-container-chart.yaml"
-container_block "$WORK/api-doc-gated.yaml" api                > "$WORK/api-container-gated.yaml"
+container_block "$GATED_API" api                              > "$WORK/api-container-gated.yaml"
 CHART_API_CONTAINER="$WORK/api-container-chart.yaml"
 GATED_API_CONTAINER="$WORK/api-container-gated.yaml"
 if [ -s "$CHART_API_CONTAINER" ] && [ -s "$GATED_API_CONTAINER" ]; then
