@@ -64,6 +64,25 @@ spec:
     remediation:
       retries: 3
 
+  # zigbee-node carries the taint `dedicated=zigbee:NoSchedule` (H2-306,
+  # 2026-10-19) so general workloads stay off the 2 GB board; it went NotReady
+  # when the Hindsight DB landed there. This workload belongs on it, so it
+  # tolerates the taint. A postRenderer patch, because the chart's StatefulSet
+  # values are not relied on for tolerations (same pattern as node-red's pin).
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: StatefulSet
+            patch: |
+              - op: add
+                path: /spec/template/spec/tolerations
+                value:
+                  - key: dedicated
+                    operator: Equal
+                    value: zigbee
+                    effect: NoSchedule
+
   # ONLY the Zigbee network key and PAN IDs travel this way. Everything else is
   # plain config and lives in the values block below, readable in Git.
   valuesFrom:

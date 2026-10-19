@@ -28,6 +28,14 @@ spec:
   values:
     mode: daemonset
 
+    # Collect logs on the dedicated zigbee-node too (taint `dedicated=zigbee:
+    # NoSchedule`, H2-306): guardrail 9 needs zigbee2mqtt's logs in Loki.
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: zigbee
+        effect: NoSchedule
+
     image:
       repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib
       tag: ""
