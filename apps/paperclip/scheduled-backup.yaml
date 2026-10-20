@@ -1,0 +1,17 @@
+---
+# Daily scheduled backup of the Paperclip Postgres cluster
+# Uses the Barman Cloud CNPG-I plugin.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: paperclip-db-daily
+  namespace: paperclip
+spec:
+  schedule: "0 0 3 * * *"  # Daily at 03:00 (six-field cron with seconds)
+  backupOwnerReference: self
+  cluster:
+    name: paperclip-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  immediate: true  # Take a backup right away when first created

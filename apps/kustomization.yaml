@@ -499,6 +499,13 @@ resources:
   # ============================================================
   - star-office/
 
+  # ============================================================
+  # Paperclip namespace (H2-329)
+  # Durable backing services: CNPG Postgres + Barman Cloud plugin backups
+  # to OMV MinIO, plus dedicated MinIO bucket/user for app storage.
+  # ============================================================
+  - paperclip/
+
   # hindsight namespace (H2-232)
   # Self-hosted Hindsight (agent memory) replacing Honcho + OpenViking.
   # Nested kustomization, like zigbee/ and arr-stack/, so this group has

@@ -1,0 +1,42 @@
+---
+# CloudNativePG cluster for Paperclip — single instance on local-path NVMe
+# WAL + base backups via the Barman Cloud CNPG-I plugin to OMV MinIO
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: paperclip-db
+  namespace: paperclip
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie
+
+  enableSuperuserAccess: true
+
+  bootstrap:
+    initdb:
+      database: paperclip
+      owner: paperclip
+      secret:
+        name: paperclip-db-credentials
+
+  storage:
+    storageClass: local-path
+    size: 10Gi
+
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: paperclip-db-backups
+        serverName: paperclip-db
+
+  backup:
+    retentionPolicy: "30d"
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"

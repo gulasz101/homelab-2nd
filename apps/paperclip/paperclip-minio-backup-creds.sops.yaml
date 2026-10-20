@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: paperclip-minio-backup-creds
+    namespace: paperclip
+type: Opaque
+stringData:
+    ACCESS_KEY_ID: ENC[AES256_GCM,data:tlfcpE/IHyFhQVq8P57Ks0s=,iv:FIuNvVm7R1t2sChGOfApsF79G6wHK2aNyaniHfqozrw=,tag:ojqJtwOOXGJeMK22mj+ZtQ==,type:str]
+    ACCESS_SECRET_KEY: ENC[AES256_GCM,data:fla9WemsBFffCoTLNrtFX1AuFztaIqb+BEhu3JS/VcI=,iv:muipDowYb7gZAqlvSYOGtXsVo4sZv6KRNfptNbFWvUg=,tag:rAPtN1j7DPKyKncIlBjLaA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBkdDZxamV6bXVpeTdnVi85
+            TlVFcG9kSldWWEV6V2hOcnB2aVVMMTkrTkF3Cm1ITllWZ2xrNE5qdXE3V1BJd0xp
+            eHljVTdFMHFxYWwwWUZhVjlxZ3dwcEkKLS0tIHM1TUpSMG5mN2p5SkFwcldDQzlJ
+            MnhmWFovMWRxenJSRmE1RzNwYzVFM0kK9VhEmgpzuS/OzLlyU9XbeiAI+oKGYDpu
+            RCIUaW8pUGu7HKyMzwinMEPZe5ehrhMr0U0UsGXyUddEDuu5asyHcw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-20T11:16:24Z"
+    mac: ENC[AES256_GCM,data:62X4/yn+va4cbanf7wTTCwAt1CC6KLvMS0dEo+oC6o7o/78RGWN1p7JxNFXLHF60v8WhBTe1YrksojIAKnpQeYqrAZg9QYdTcyG8SXPOe9wNN8OkLdwy0OqvaYSbwSim4YK2e2t6x4DBe4kn+W8tbv9E+DlDKMA7CA2me3EnanI=,iv:8IDod9sYQZiyQYnLQ68W2sFBSw/y2HhHAitkRF5t9Oo=,tag:IXafXk72zRtwkt8fpYR9dw==,type:str]
+    version: 3.13.3
