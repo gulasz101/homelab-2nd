@@ -51,6 +51,10 @@ Two facts shaped the move:
 - The Air must auto-login as `paperclip` after a reboot, or the gateway (a GUI-domain
   LaunchAgent) never starts. On 2026-10-20 autologin still named the old, removed user.
 - Two gateways must never run against the same bot tokens: the Max's copy must stay stopped.
+- Some plugins are symlinks out of `~/.hermes`: every profile's `plugins/star-office` points at
+  `~/Projects/hermes-star-office-reporter`. It wasn't copied at first, so no agent reported to the
+  Star Office dashboard after the move until it was. A future move must copy symlink targets
+  (`find -L ~/.hermes -type l` on the target lists what dangles).
 
 ## Alternatives considered
 
