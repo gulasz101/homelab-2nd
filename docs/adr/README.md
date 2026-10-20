@@ -75,6 +75,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-072 | Live databases are pinned to homelab-2nd; zigbee-node is dedicated to the Zigbee stack | Accepted | 2026-10-19 |
 | ADR-073 | Hermes runs on the M1 Air; the Max's copy is a retired standby | Accepted | 2026-10-20 |
 | ADR-074 | Agent orchestration control plane on the M1 Air (Paperclip) | Accepted | 2026-10-20 |
+| ADR-075 | Paperclip org chart, agent runtimes and the "plan big, execute cheap" split | Accepted | 2026-10-20 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,
