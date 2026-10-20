@@ -68,6 +68,11 @@ problems and one goal:
 - More config lives only on the Air (`~/.pi`, `~/.config/opencode`, `~/agent-skills`,
   `~/paperclip-agents`, symlinked skills). A host move must copy these and their symlink targets.
 - Claude Code needs one interactive `claude` login on the Air before its Paperclip runs work.
+- The `claude_local` adapter passes `--strict-mcp-config`, which hides user-scope MCP servers;
+  Claude Code's `extraArgs` add `--mcp-config ~/paperclip-agents/claude-code/mcp-docs.json`
+  (repeated `--mcp-config` flags accumulate).
+- The Air and the Max talk both ways over LAN SSH (Air key `id_ed25519.paperclip-to-m1max`,
+  alias `m1max`), so Air-hosted agents can use the Max's GPU (FLUX) and services.
 
 ## Alternatives considered
 
