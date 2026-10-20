@@ -38,7 +38,7 @@ authored as OpenChamber).
    signed with HMAC-SHA256 (hex) over `` `${timestamp}.${body}` ``, headers
    `X-Webhook-Timestamp` (unix seconds) and `X-Webhook-Signature-V2`, `Content-Type: application/json`.
 6. `WEBHOOK_URL` / `WEBHOOK_SECRET` come from SOPS `itsaplan-andrzej-webhook-creds`; the
-   webhook target is the Mac at `192.168.1.129:8644` (ADR-017).
+   webhook target is the Hermes gateway on the M1 Air at `192.168.1.191:8644` (ADR-017, ADR-073).
 7. Mac Hermes routes it to `itsaplan-andrzej` and answers
    `{"status":"accepted","route":"itsaplan-andrzej"}` (ADR-017, verified on H2-13).
 

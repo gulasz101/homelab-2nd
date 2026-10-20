@@ -13,6 +13,9 @@ spec:
       app.kubernetes.io/name: itsaplan-szarik-runner
   template:
     metadata:
+      annotations:
+        # Bump to roll the pod when the webhook secret changes (no reloader in-cluster).
+        voitech.dev/webhook-target: m1-air-paperclip-2026-10-20
       labels:
         app.kubernetes.io/name: itsaplan-szarik-runner
     spec:

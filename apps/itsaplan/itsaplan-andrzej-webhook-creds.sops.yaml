@@ -5,7 +5,7 @@ metadata:
     namespace: itsaplan
 stringData:
     WEBHOOK_SECRET: ENC[AES256_GCM,data:02bec+Cv6uYM+Pv32Bb0her8VvuOHz7fUQKGVeb4NSTBaNL0UUwG6eNv1YA+1z7h,iv:2TD61m+S0BhBw5ET0OPHrkHThZJHWyI99G3sgNJNM18=,tag:NfPAXz9EDLfrbLweD3TdPQ==,type:str]
-    WEBHOOK_URL: ENC[AES256_GCM,data:5u4KmdVZ/ujuCRdLug8cPCXy/HGLWTlfJ2OHz4bZPorjlUnUnfrZMtJ4tNEPQP0egddMoLzGs4orEkytoA==,iv:XiPqY+CXScRYpaQziB7B3YCAnF72F7yYXtFUMYYcmzg=,tag:NJoh2mv+CwPsKRTw5kYS7A==,type:str]
+    WEBHOOK_URL: ENC[AES256_GCM,data:pvIrrpkuZuAFtG4/8ib+wMGO2LZjtE41N8D4Y90VMa56dHDhYnW4FZ2Ybf5NI1dxdhKNe82jYOS7pSnzQQ==,iv:9p3pj1qgXaHX7rZwVBPqg+m1lXeMPy3e+T/1r4/JakY=,tag:Wpa5lcLXcZf+y7igUo/SnA==,type:str]
 type: Opaque
 sops:
     age:
@@ -19,6 +19,6 @@ sops:
             -----END AGE ENCRYPTED FILE-----
           recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-10-16T13:02:47Z"
-    mac: ENC[AES256_GCM,data:u+GcAjSbrok0gqkTDTs7BoluRFoCBynpMD1OPUsZoH7SW6ovIV47jHbgZwfekQtQxExGLg2EKJ3zZ7RT0VxOx11gx8OH2StG5/W/vT6L2WqFSE+5l6QGZdwMks0qpdBwi1a7R1vRLSBlaHTrmKRdU98jb526TXBuuCFRo3mIBP4=,iv:OD+K8/dcFLBTu8Sl6+SvC1OQC0ZeTRnBkkXLSioHQ0Q=,tag:UHMwEbwxeVEdm84XRIUPLg==,type:str]
+    lastmodified: "2026-10-20T09:22:46Z"
+    mac: ENC[AES256_GCM,data:HIic5JOgvwxTlHJjICTjrzfSv51msP5j+uU59E+CIJaqlNTIPh8G5XSzWdjYcdczTUtSW/9wakM0aC4/5UE9A6TxpiBEqbEluTlUb4gK0MbpYag7gx7Nqv/wEaaqSzNm8JRx6kn0qQOTqHqreOlWpNqozfjDiake0j/LNMug/lA=,iv:j9P9RxgmZKxlZ2oIQuV6hTAiO2y8UXH2bfI1Jx+KRhA=,tag:vPFSSJtIeeBj/88uYZx5Ww==,type:str]
     version: 3.13.1
