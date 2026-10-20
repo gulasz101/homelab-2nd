@@ -53,7 +53,13 @@ problems and one goal:
 6. **OpenChamber stays in Itsaplan, not Paperclip.** It is resource-heavy; OpenCode on the Air
    covers the cheap-coder lane. While Itsaplan lives, Andrzej and Szarik can still delegate to its
    OpenChamber runners.
-7. **Charters** for the non-Hermes agents live in `~/paperclip-agents/<agent>/AGENTS.md` on the
+7. **Hindsight memory for every agent.** Hermes profiles already auto-recall and auto-retain into
+   `hermes-<profile>` banks. Pi, OpenCode and Claude Code on the Air use the official
+   `@vectorize-io/hindsight-coding-agents` (0.8.2) in self-hosted mode
+   (`~/.hindsight/coding-agent.json`, 600, the fleet's Hindsight token): one shared bank per repo,
+   `coding-agent::<repo>`, so what one engineer learns in a repo the others recall. Claude Code's
+   Paperclip runs also get the read-mostly `hindsight-fleet` MCP (all `hermes-*` banks).
+8. **Charters** for the non-Hermes agents live in `~/paperclip-agents/<agent>/AGENTS.md` on the
    Air (role plus house rules: docs first, SOPS, GitOps, no gateway restarts, verify).
 
 ## Consequences
@@ -71,6 +77,12 @@ problems and one goal:
 - The `claude_local` adapter passes `--strict-mcp-config`, which hides user-scope MCP servers;
   Claude Code's `extraArgs` add `--mcp-config ~/paperclip-agents/claude-code/mcp-docs.json`
   (repeated `--mcp-config` flags accumulate).
+- Paperclip's `pi_local` passes `--tools read,bash,edit,write,grep,find,ls`, which hides extension
+  and MCP tools; Pi's `extraArgs` add a second, winning `--tools ...,hindsight_*,mcp__docs__*`, and
+  the docs MCP server is set to `exposure: direct` in `~/.pi/agent/mcp.json`.
+- Paperclip runs under launchd with `PWD=/`, and OpenCode trusts `$PWD` over the real cwd (bank
+  `coding-agent::unknown`, shell in `/`). The OpenCode agent's `command` is a wrapper,
+  `~/paperclip-agents/opencode/opencode`, that resets `PWD` before exec.
 - The Air and the Max talk both ways over LAN SSH (Air key `id_ed25519.paperclip-to-m1max`,
   alias `m1max`), so Air-hosted agents can use the Max's GPU (FLUX) and services.
 
