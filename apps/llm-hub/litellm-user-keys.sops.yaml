@@ -11,6 +11,7 @@ stringData:
     memory-honcho-key: ENC[AES256_GCM,data:KbQBe/b8X1QgDLYk63yLucZKQtJUldlwtg==,iv:MXSvfmoxgnHY4WnA/rLgsxTYZn5rYYconMchRAP6PYM=,tag:4ZaF5ONwEFvWRnsVXnDV1Q==,type:str]
     hermes-bill-cipher-key: ENC[AES256_GCM,data:Be4XO5P2zYKYQ9nDbCGpa3KrJ4hX72V9IA==,iv:rtQTGbCdKsQawD9E3ZfiTLFONFuiqDLvkxi9NY6aTsU=,tag:a5u6RffmFj5u3iwdXo1LYQ==,type:str]
     openviking-key: ENC[AES256_GCM,data:uDHr/jLR9poFY3CE3Mdm0V/RW5my8KRMMA==,iv:9HcjlPkrtUoYEtapueueUHFa/k7cpF5LILTdQcBUiQw=,tag:KkJPFiicwCm5TiTX/pC7sw==,type:str]
+    paperclip-coders-key: ENC[AES256_GCM,data:aN+awNAPWXku1n8ngZ9kV5mGj3Bo0rv5l59mH8flv/v1cvcBd8OLi2yWi4Ct1owykMcT,iv:X+KBUKJKPvQgRhsAfpwLPcYdsCsRbo/NDZ6OOMxqMgg=,tag:GVZzrFxvyGoDQBZFsYhhqw==,type:str]
 sops:
     age:
         - enc: |
@@ -23,6 +24,6 @@ sops:
             -----END AGE ENCRYPTED FILE-----
           recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-09-13T13:58:31Z"
-    mac: ENC[AES256_GCM,data:hFQ+rVudmVH0yRvkTf3uEmTc3vn7eRQtofKEQ0zuqN6qc550EMs+tWIAHFfogFTXv1VPLvtvJeT0fmyEFufBvrwxvw3rr3yXr05ID5STr8BHZTQB0sf1MaSd1Oyald97RQb96VB8xRHTwn3d/+VlQSuhrMSzkkHBo22c5W9zakI=,iv:ME965lAlkDn93K7uvdyyS0ZrUUVKSC9g0Vceps3wBj0=,tag:dkwfLmsGKhXVzwBDlKgq8g==,type:str]
+    lastmodified: "2026-10-20T19:06:19Z"
+    mac: ENC[AES256_GCM,data:3h0Y5LniugwDBxpXcBLL1qgYU/mftL/pioD4doMMAHuHQaaO9fWu00jz/HAQTBS3UkfD6TZm1BkL2w2Uo62h/mUlF4P14sNyrc5NlpcVZunp9qKN1nzxeDunTWokGOeegfom3g+3r5HvTinGGmWe1TOaudVXkdeGgyLaU1eyCCA=,iv:2PkUSLCOjJP5WyBdrtW4IDMtiHX0BiJyV8EbfM/BZQ4=,tag:kvnt9ogD4RO17lmwlcMYxQ==,type:str]
     version: 3.13.3
