@@ -45,8 +45,9 @@ Two facts shaped the move:
   went stale.
 - The symlink is load-bearing: removing `/Users/wojciechgula` on the Air breaks Hermes. It is
   documented in the `hermes` skill and here.
-- Itsaplan's webhooks must target the Air (`192.168.1.191:8644`); until changed they hit the dead
-  Max listener.
+- Itsaplan delivers to the Air (`192.168.1.191:8644`): the target is `WEBHOOK_URL` in the SOPS
+  secrets `apps/itsaplan/itsaplan-{andrzej,szarik}-webhook-creds.sops.yaml` (9df118e). A future
+  host move has to change those too.
 - The Air must auto-login as `paperclip` after a reboot, or the gateway (a GUI-domain
   LaunchAgent) never starts. On 2026-10-20 autologin still named the old, removed user.
 - Two gateways must never run against the same bot tokens: the Max's copy must stay stopped.
