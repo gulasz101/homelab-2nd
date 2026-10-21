@@ -23,11 +23,15 @@ spec:
         app.kubernetes.io/part-of: star-office
         app.kubernetes.io/component: ingest
       annotations:
-        # Secret volume contents do NOT refresh in a running pod. When the
-        # sou-ingest-tokens secret changes, the pod keeps the old tokens.json
-        # until it is recreated - and the symptom is a 403/401 on every
-        # star-office push. Bump this counter to roll the pod.
+        # Secret-backed env vars (secretKeyRef) and Secret volumes do NOT
+        # refresh in a running pod. When star-office-db-credentials changes,
+        # the pod keeps the old DATABASE_URL until it is recreated - and the
+        # symptom is a 500/connection error on every star-office push. Bump
+        # this counter to roll the pod.
         # GUL-74: bumped for the hermes-matejko token.
+        # GUL-76: the token map is gone (ADR-078) - the registry is the
+        # database table `ingest_tokens`, read per request, so a token
+        # change needs no roll. The counter now guards the DB credentials.
         secret-version: "2"
     spec:
       nodeSelector:
@@ -55,14 +59,18 @@ spec:
                 secretKeyRef:
                   name: star-office-db-credentials
                   key: ingest_database_url
-            - name: SOU_INGEST_TOKENS
-              value: /run/secrets/sou/tokens.json
             - name: SOU_MIGRATE
               value: "1"
-          volumeMounts:
-            - name: sou-ingest-tokens
-              mountPath: /run/secrets/sou
-              readOnly: true
+          # No SOU_INGEST_TOKENS here on purpose (ADR-078). The per-agent
+          # token registry is the database table `ingest_tokens`
+          # (sha256(token) -> agent), read per request by the ingest face.
+          # The old env map was a second, stale source that shadowed the
+          # database and made `tokens.py revoke` a no-op for every agent it
+          # still listed. With SOU_MODE=ingest and no map, the door stays
+          # LOCKED: only a registered database token opens it.
+          # Register a new agent with:
+          #   kubectl -n star-office exec deploy/sou-ingest -- \
+          #     sh -c 'cd /app/backend && python3 tokens.py register <agent>'
           livenessProbe:
             httpGet:
               path: /health
@@ -91,10 +99,5 @@ spec:
             capabilities:
               drop:
                 - ALL
-      volumes:
-        - name: sou-ingest-tokens
-          secret:
-            secretName: sou-ingest-tokens
-            items:
-              - key: tokens.json
-                path: tokens.json
+      # No volumes: the ingest face reads nothing from a Secret volume any
+      # more (ADR-078). The token registry is the database.

@@ -78,6 +78,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-075 | Paperclip org chart, agent runtimes and the "plan big, execute cheap" split | Accepted | 2026-10-20 |
 | ADR-076 | Paperclip is the record for chat requests; one Paperclip identity per agent | Accepted | 2026-10-21 |
 | ADR-077 | Speech-to-text lives in k3s (Speaches + `speaches-api-lan` NodePort), not on each host | Accepted | 2026-10-21 |
+| ADR-078 | Star Office ingest tokens live in the database registry; the env map is gone | Accepted | 2026-10-21 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,
