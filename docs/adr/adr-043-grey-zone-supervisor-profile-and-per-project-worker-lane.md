@@ -30,6 +30,10 @@ Meanwhile the grey-zone Anthropic reseller keys had just been wired into LiteLLM
 homelab access to Opus 5.5 at reseller prices — the first time a genuinely strong model was
 affordable for unattended work.
 
+**Update 2026-10-21:** Szarik's primary model is now `qwen3.8-flash-go`. The Opus reseller
+experiment was retired after it proved to be a model-substitution scam ($151.30 burned, ADR-042
+countermanded for this profile).
+
 ## Decision
 
 **Two decisions, taken together, because neither is useful alone.**
@@ -37,7 +41,7 @@ affordable for unattended work.
 ### 1. The grey-zone supervisor is a dedicated Hermes profile: `szarik`
 
 A **separate profile** (`szarik`), not a modified Andrzej and not a shared escalation route on an
-existing profile. It runs `claude-opus-5-5-oneprovider` through LiteLLM, owns:
+existing profile. It runs `qwen3.8-flash-go` through LiteLLM, owns:
 
 - its own LiteLLM virtual key (`hermes-szarik`, scoped to the 11 grey routes),
 - its own OpenViking user (`szarik` in account `homelab`) with its own key,
@@ -82,8 +86,8 @@ still supervises and a cheap fast model still grinds; only the worker's model na
 
 **Positive**
 
-- The experiment is now measurable: Opus 5.5 supervises, `qwen3.8-flash-go` grinds, and LiteLLM
-  `/metrics` attributes every token to `api_key_alias="hermes-szarik"` vs the worker's key.
+- The experiment is now measurable: `qwen3.8-flash-go` supervises, `deepseek-v4.1-flash` grinds, and
+  LiteLLM `/metrics` attributes every token to `api_key_alias="hermes-szarik"` vs the worker's key.
 - SOU work no longer silently stalls. A SOU delegation now produces a run row, is claimed, and
   reports back on the SOU ticket.
 - Blast radius is contained: the grey-zone keys are trust-unknown, and a compromised or lying provider
@@ -131,8 +135,8 @@ still supervises and a cheap fast model still grinds; only the worker's model na
 
 ## When to revisit
 
-- **If the reseller routes die or get pricier than first-party.** Szarik becomes pointless as an Opus
-  5.5 harness; switch its `model.default` to a first-party model or fold it back into Andrzej.
+- **If the reseller routes die or get pricier than first-party.** Szarik becomes pointless as a
+  supervisor harness; switch its `model.default` to a first-party model or fold it back into Andrzej.
 - **If the two lanes starve each other on the t460 node.** At that point either serialise them with a
   shared lock or give the fork lane its own OpenChamber instance.
 - **If `@itsaplan/runner` gains per-project filtering** — one lane could serve both queues and the
