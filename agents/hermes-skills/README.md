@@ -13,13 +13,24 @@ in this repo. Decision record: [ADR-076](../../docs/adr/adr-076-paperclip-is-the
 
 ```text
 ~/agent-skills/homelab-2nd/                 # clone of this repo, on main
-~/agent-skills/hermes-paperclip/            # in skills.external_dirs of all 6 profiles
+~/agent-skills/hermes-paperclip/            # listed in skills.external_dirs of each profile
 ├── paperclip-chat-intake -> ~/agent-skills/homelab-2nd/agents/hermes-skills/paperclip-chat-intake
 └── paperclip             -> ~/.paperclip/cli/current/node_modules/@paperclipai/server/skills/paperclip
 ```
 
-Hermes follows symlinks when it scans skill directories, and a profile-local skill with the
-same name shadows an external one: the profiles must not carry their own `paperclip*` skills.
+Each of the 6 profiles (`~/.hermes/config.yaml` and `~/.hermes/profiles/<name>/config.yaml`)
+carries:
+
+```yaml
+skills:
+  external_dirs:
+    - ~/agent-skills/hermes-paperclip
+```
+
+Check a profile with `hermes -p <name> config get skills.external_dirs`; a new profile needs the
+same entry. Hermes follows symlinks when it scans skill directories, and a profile-local skill
+with the same name shadows an external one, so the profiles carry no `paperclip*` skills of
+their own.
 
 ## Updating
 
