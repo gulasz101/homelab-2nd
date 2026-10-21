@@ -1,0 +1,54 @@
+---
+# ============================================================
+# LAN/Netbird NodePort exposure for Speaches (STT/TTS) — GUL-74
+#
+# Why this file exists at all: the Hermes hosts (M1 Air, M1 Max) run
+# OUTSIDE the cluster, so a ClusterIP is no use to them. The chart
+# is not used here (raw Deployment + Service), so the Service is
+# ClusterIP and this companion NodePort selects the same pods on a
+# fixed port. Same shape as apps/hindsight/hindsight-service.yaml
+# (hindsight-api-lan) and apps/star-office/sou-ingest-service.yaml
+# (sou-ingest-lan).
+#
+# Reachable at (LAN)        192.168.1.179:30274   Speaches OpenAI-compatible API
+# and on the node's Netbird address (100.96.90.128), same port.
+#
+# NOT published: no Ingress, no Cloudflare tunnel, no public hostname
+# for the STT API - ever. Speech is private; a tunnel would put an
+# OpenAI-compatible API with a static API key on the public internet.
+#
+# Port choice, read from the live list in this repo on 2026-10-21
+# (the repo is the source of truth, guardrail 1):
+#     30180 zigbee-node-red-lan    30195 openchamber-syncthing
+#     30181 zigbee2mqtt-lan        30239 hindsight-api-lan
+#     30188 mosquitto-lan          30240 hindsight-control-plane-lan
+#     30193 openviking             30250 firecrawl-api-lan
+#     30260 sou-ingest-lan
+#   -> 30274 is free and deliberately carries the ticket number (GUL-74),
+#      the same "API keeps the ticket number" rule the hindsight pair uses.
+#
+# Why a NodePort and not a per-host whisper server: see
+# docs/adr/adr-077-speech-to-text-in-k3s-speaches.md
+# ============================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: speaches-api-lan
+  namespace: voice
+  labels:
+    app.kubernetes.io/name: speaches
+    app.kubernetes.io/component: stt
+    app.kubernetes.io/part-of: voice
+spec:
+  type: NodePort
+  selector:
+    # Must match the Deployment's pod template labels
+    # (apps/voice/speaches-deployment.yaml) - same rule as the
+    # hindsight-api-lan companion.
+    app.kubernetes.io/name: speaches
+    app.kubernetes.io/component: stt
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      nodePort: 30274

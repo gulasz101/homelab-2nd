@@ -41,6 +41,8 @@ resources:
   # Speaches deployment + service
   - voice/speaches-deployment.yaml
   - voice/speaches-service.yaml
+  # LAN/Netbird NodePort for the Speaches STT API (GUL-74, ADR-077)
+  - voice/speaches-service-lan.yaml
   # Observability
   - voice/voice-prometheus-rules.yaml
   - voice/voice-alertmanager-config.yaml
