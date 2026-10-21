@@ -22,6 +22,13 @@ spec:
         app.kubernetes.io/name: sou-ingest
         app.kubernetes.io/part-of: star-office
         app.kubernetes.io/component: ingest
+      annotations:
+        # Secret volume contents do NOT refresh in a running pod. When the
+        # sou-ingest-tokens secret changes, the pod keeps the old tokens.json
+        # until it is recreated - and the symptom is a 403/401 on every
+        # star-office push. Bump this counter to roll the pod.
+        # GUL-74: bumped for the hermes-matejko token.
+        secret-version: "2"
     spec:
       nodeSelector:
         kubernetes.io/arch: amd64
