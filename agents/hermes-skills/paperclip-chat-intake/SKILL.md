@@ -7,7 +7,7 @@ license: MIT
 metadata:
   hermes:
     tags: [paperclip, mattermost, tracking, intake]
-    related_skills: [paperclip]
+    related_skills: [paperclip, deadline-bound-task-scope]
 ---
 
 # Paperclip chat intake
@@ -112,6 +112,11 @@ Done when the API answer carries an `identifier` and you posted
 
 The woken run works the issue with the `paperclip` skill, then posts a short result and the
 GUL link to that channel with `send_message`.
+
+A hand-off runs on someone else's wall clock. Put the scope constraint **in the description**,
+not in the chat: state what the deliverable is, what is out of scope, and any prior work to
+reuse. A run with a hard budget that is not told what to skip will go and verify the world —
+see [deadline-bound-task-scope](../deadline-bound-task-scope/SKILL.md).
 
 ## Agents
 
