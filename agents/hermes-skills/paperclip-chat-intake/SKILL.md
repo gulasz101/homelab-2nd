@@ -1,7 +1,7 @@
 ---
 name: paperclip-chat-intake
 description: "Wojtek asks you for work in Mattermost or another chat: triage it, then record it in Paperclip (GUL) or hand it off as a Paperclip task."
-version: 1.0.0
+version: 1.1.0
 author: Claude Code (GUL-48)
 license: MIT
 metadata:
@@ -19,11 +19,12 @@ easier on his phone. You work with him in the chat, and Paperclip keeps the trac
 Two Paperclip rules shape the flow:
 
 - Outside a Paperclip run you can **create** and **read** issues only. Every agent comment or
-  update needs the `X-Paperclip-Run-Id` of a real run, or Paperclip answers
-  `403 Cross-issue writes need a run`. Run ids come only from a Paperclip wake prompt.
-- An issue you create assigned to an agent starts a Paperclip run for that agent, unless its
-  status is `done` or `cancelled`. Paperclip cancels the run it queues for those before the
-  run starts, so creating them costs nothing.
+  update needs the `X-Paperclip-Run-Id` of a real run, or Paperclip answers 403 with
+  `details.code: cross_issue_influence_run_context_required`. Run ids come only from a
+  Paperclip wake prompt.
+- An issue you create with an assignee queues a Paperclip run for that agent, except in
+  `backlog`. For `done` and `cancelled`, Paperclip cancels the queued run before it starts,
+  so creating a record costs nothing.
 
 So chat work gets one **record**, created when the work ends. Work that should run without
 the chat gets a **hand-off**: a `todo` task that Paperclip runs.
@@ -46,14 +47,15 @@ Done when you know which row applies.
 
 When the work is finished, or abandoned, create one issue:
 
-- `assigneeAgentId`: your own agent id (from `/api/agents/me`).
-- `status`: `done`, or `cancelled` with the reason when the work was abandoned or declined.
+- `assigneeAgentId`: your own agent id (from `/api/agents/me`, or the agent table below).
+- `status`: `done`; or `cancelled` when the work was abandoned or declined. A cancelled record
+  states the reason in the first line of its `## Result`: there is no separate field for it.
 - `projectId`: from the project table below.
 - `title`: the outcome, imperative, at most 80 characters ("Bump the Loki chart to 6.30.1").
 - `description`: this template.
 
 ```markdown
-Origin: Mattermost, <channel>, <YYYY-MM-DD>. Handled in chat by <your name>.
+Origin: <Mattermost or the chat app>, <channel>, <YYYY-MM-DD>. Handled in chat by <your name>.
 
 ## Request
 > <Wojtek's words, verbatim: every message that defined the task>
@@ -77,21 +79,47 @@ Done when the API answer carries an `identifier` and you posted
 
 ## 3. Hand-off: Paperclip runs it
 
-Create the issue with `status: "todo"`, assigned to yourself or to the colleague who owns
-that kind of work (Andrzej: homelab and hosts; Szarik: Star Office UI and Mac-side work;
-Florian: blog; Zdzisław: personal brand; Matejko: images; Claude Code: planning and reviews).
-The run starts in a fresh session that never sees this chat, so the description carries:
+Create the issue with `status: "todo"`, assigned to yourself or to the agent who owns that
+kind of work (agent table below). The run starts in a fresh session that never sees this
+chat, so the description follows this template:
 
-- Wojtek's request, quoted verbatim;
-- the context the run needs: links, findings so far, constraints;
-- acceptance criteria the run can check;
-- the line `Origin: Mattermost <channel name> (channel id <id>). Post the result there when done.`
+```markdown
+Origin: <Mattermost or the chat app>, <channel name> (channel id <id>), <YYYY-MM-DD>.
+Handed off by <your name>. Post the result there when done.
+
+## Request
+> <Wojtek's words, verbatim: every message that defined the task>
+
+## Context
+- <links, findings so far, constraints, what was already tried>
+
+## Done when
+- <acceptance criteria the run can check>
+```
+
+The channel id comes from the incoming chat message. When your context doesn't show it, write
+the channel name alone and leave out the `(channel id ...)` part.
 
 Done when the API answer carries an `identifier` and you posted
 `Handed to Paperclip as GUL-<n>: <link>. The result will be posted here.` in the chat.
 
 The woken run works the issue with the `paperclip` skill, then posts a short result and the
-GUL link to that Mattermost channel with `send_message`.
+GUL link to that channel with `send_message`.
+
+## Agents
+
+Take assignee ids from this table. For an agent missing here, list them with the agents call
+in the API section.
+
+| Agent | id | Owns |
+|---|---|---|
+| Bill Cipher | `7b52b09f-113e-4481-a1d2-d643a02e4086` | CEO: fleet-wide decisions |
+| Claude Code | `97efeb2d-5b3a-4110-b893-6cbcbb29164c` | coding work (plans it, then delegates to Pi and OpenCode), reviews |
+| Andrzej | `e12b834d-5e42-491a-9cd6-f4ddef2e97f8` | homelab: cluster, GitOps, hosts, network |
+| Szarik | `b9cf4e60-2800-4686-a3c7-e38b0ed7432f` | Star Office UI, Mac-side work |
+| Florian | `88647850-ccf0-4b25-8216-f3708315db4e` | blog |
+| Zdzisław | `676cc93b-a08d-465f-8f59-0a564e5ff71f` | personal brand |
+| Matejko | `332563dd-7ce2-4bad-8bb9-6b61f3f7221e` | images |
 
 ## Projects
 
@@ -107,26 +135,37 @@ GUL link to that Mattermost channel with `send_message`.
 ## API
 
 Your Paperclip identity is the key in your own profile `.env`. Shell variables do not survive
-between terminal calls, so load the key inside every command, and keep it out of output:
+between terminal calls, so every command below loads the URL and key itself; keep the key out
+of output. The URL lines strip a trailing `/api`, so both `.env` styles work.
+
+Check who you are, and list the agents:
 
 ```bash
-PC_URL=$(sed -n 's/^PAPERCLIP_API_URL=//p' "$HERMES_HOME/.env" | tail -1)
+PC_URL=$(sed -n 's/^PAPERCLIP_API_URL=//p' "$HERMES_HOME/.env" | tail -1); PC_URL=${PC_URL%/}; PC_URL=${PC_URL%/api}
 PC_KEY=$(sed -n 's/^PAPERCLIP_API_KEY=//p' "$HERMES_HOME/.env" | tail -1)
 curl -s "$PC_URL/api/agents/me" -H "Authorization: Bearer $PC_KEY" | jq '{id, name, companyId}'
+curl -s "$PC_URL/api/companies/0e2eb054-4cb6-4ea1-a2e7-2b1894285d8c/agents" \
+  -H "Authorization: Bearer $PC_KEY" | jq -r '.[] | "\(.name)\t\(.id)"'
 ```
 
-Create an issue: write the description to a file first, so newlines survive.
+Create a record or hand-off in one command. The description goes through a private temp file
+so newlines survive:
 
 ```bash
-PC_URL=$(sed -n 's/^PAPERCLIP_API_URL=//p' "$HERMES_HOME/.env" | tail -1)
+PC_URL=$(sed -n 's/^PAPERCLIP_API_URL=//p' "$HERMES_HOME/.env" | tail -1); PC_URL=${PC_URL%/}; PC_URL=${PC_URL%/api}
 PC_KEY=$(sed -n 's/^PAPERCLIP_API_KEY=//p' "$HERMES_HOME/.env" | tail -1)
-jq -n --arg title "<title>" --rawfile description /tmp/gul-record.md \
-  --arg assignee "<agent id>" --arg project "<project id>" --arg status "done" \
+DESC=$(mktemp "${TMPDIR:-/tmp}/gul-issue.XXXXXX")
+cat > "$DESC" <<'EOF'
+<the filled-in record or hand-off template>
+EOF
+jq -n --arg title "<title>" --rawfile description "$DESC" \
+  --arg assignee "<agent id>" --arg project "<project id>" --arg status "<done|cancelled|todo>" \
   '{title: $title, description: $description, status: $status, priority: "medium",
     assigneeAgentId: $assignee, projectId: $project}' \
 | curl -s -X POST "$PC_URL/api/companies/0e2eb054-4cb6-4ea1-a2e7-2b1894285d8c/issues" \
     -H "Authorization: Bearer $PC_KEY" -H "Content-Type: application/json" --data @- \
 | jq '{identifier, status, error}'
+rm -f "$DESC"
 ```
 
 An answer with `error` instead of `identifier` means nothing was saved: tell Wojtek in the
