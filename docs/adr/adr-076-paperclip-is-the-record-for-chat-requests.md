@@ -53,6 +53,10 @@ An audit on 2026-10-21 found:
 - Negative: chat work has no live status in Paperclip; the record appears when the work ends.
   For live status, ask for a hand-off.
 - Negative: each record creation leaves a cancelled run in the agent's run list.
+- Negative: Paperclip accepts any earlier run id of the same agent on a write and only counts it
+  against that run's cross-issue cap. During verification Bill reused yesterday's run id to edit
+  a chat record (GUL-59). The skill now says a record is final and a run id belongs to the
+  current run only; Paperclip itself does not enforce it.
 - Negative: the boundary is behavioural. Hermes runs as the same macOS user as Paperclip and
   can read the board login; the skills and SOUL rules keep agents away from it, the OS does
   not.
