@@ -7,6 +7,7 @@ in this repo. Decision record: [ADR-076](../../docs/adr/adr-076-paperclip-is-the
 | Skill | Source | For |
 |---|---|---|
 | `paperclip-chat-intake` | this directory | Wojtek asks for work in Mattermost: no issue, a closed record, or a Paperclip hand-off |
+| `deadline-bound-task-scope` | this directory | A run with a hard wall-clock budget: deliver the artifact before investigating |
 | `paperclip` | the installed Paperclip (`~/.paperclip/cli/current/node_modules/@paperclipai/server/skills/paperclip`), linked, not copied | Paperclip woke the agent for a GUL issue |
 
 ## How Hermes loads them
