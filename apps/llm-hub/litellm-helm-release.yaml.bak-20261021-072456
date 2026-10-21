@@ -1,0 +1,884 @@
+---
+# LiteLLM Proxy HelmRelease
+# - Central AI gateway with virtual keys, spend tracking, model routing.
+# - Uses external Postgres via CloudNativePG (not chart-bundled Postgres).
+# - Prometheus metrics enabled via ServiceMonitor.
+# - Internal ClusterIP only; public ingress via dedicated Cloudflare Tunnel.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: litellm
+  namespace: llm-hub
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: litellm-helm
+      version: "1.85.7"
+      sourceRef:
+        kind: HelmRepository
+        name: litellm
+        namespace: flux-system
+      interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  valuesFrom:
+    # DB connection pieces come from SOPS-encrypted secret
+    - kind: Secret
+      name: litellm-db-credentials
+      valuesKey: externalConnectionString
+      targetPath: db.url
+  values:
+    replicaCount: 1
+
+    image:
+      repository: ghcr.io/berriai/litellm-database
+      pullPolicy: IfNotPresent
+      # Chart default appVersion is fine; pin only if needed
+      tag: "v1.85.7"
+
+    nameOverride: "litellm"
+
+    # Use our CNPG Postgres, not the bundled Bitnami one
+    db:
+      useExisting: true
+      deployStandalone: false
+      endpoint: litellm-db-rw.llm-hub.svc.cluster.local
+      database: litellm
+      # db.url is injected via valuesFrom above; username/password from secret
+      secret:
+        name: litellm-db-credentials
+        usernameKey: username
+        passwordKey: password
+        endpointKey: host
+
+    # Master key from SOPS-encrypted secret
+    masterkeySecretName: "litellm-master-key"
+    masterkeySecretKey: "master-key"
+
+    # Provider API keys are injected via environmentSecrets below
+    # and referenced in proxy_config with os.environ/<VAR>
+    extraEnvVars:
+      - name: LITELLM_SALT_KEY
+        valueFrom:
+          secretKeyRef:
+            name: litellm-master-key
+            key: salt-key
+      # LiteLLM's native Z.AI provider expects ZAI_API_KEY.
+      # The SOPS secret currently stores the same credential as GLM_API_KEY,
+      # so alias it without duplicating the secret.
+      - name: ZAI_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: litellm-provider-keys
+            key: GLM_API_KEY
+      # OpenRouter provider expects OPENROUTER_API_KEY.
+      - name: OPENROUTER_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: litellm-provider-keys
+            key: OPENROUTER_API_KEY
+      # OpenCode Go subscription provider (Zen Go endpoint)
+      - name: OPENCODE_GO_SUBSCRIPTION_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: litellm-provider-keys
+            key: OPENCODE_GO_SUBSCRIPTION_API_KEY
+      # Google Gemini (AI Pro subscription key) — native gemini/ provider
+      - name: GEMINI_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: litellm-provider-keys
+            key: GEMINI_API_KEY
+      # Local LM Studio model does not need a real API key; LiteLLM still
+      # sends an Authorization header so give it a non-empty placeholder
+      - name: DUMMY_API_KEY
+        value: "lm-studio-local-dummy-key"
+      # SSO via Generic OIDC (Authentik) — Admin UI login only
+      - name: GENERIC_CLIENT_ID
+        valueFrom:
+          secretKeyRef:
+            name: litellm-oidc-client
+            key: client_id
+      - name: GENERIC_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: litellm-oidc-client
+            key: client_secret
+      - name: GENERIC_AUTHORIZATION_ENDPOINT
+        valueFrom:
+          secretKeyRef:
+            name: litellm-oidc-client
+            key: authorization_endpoint
+      - name: GENERIC_TOKEN_ENDPOINT
+        valueFrom:
+          secretKeyRef:
+            name: litellm-oidc-client
+            key: token_endpoint
+      - name: GENERIC_USERINFO_ENDPOINT
+        valueFrom:
+          secretKeyRef:
+            name: litellm-oidc-client
+            key: userinfo_endpoint
+      - name: PROXY_BASE_URL
+        value: "https://llm.voitech.dev"
+      # Allowed email domains for SSO
+      - name: ALLOWED_EMAIL_DOMAINS
+        value: "voitech.dev"
+      # Auto-redirect the UI login page straight to SSO (hides classic form)
+      - name: AUTO_REDIRECT_UI_LOGIN_TO_SSO
+        value: "true"
+      # Log the resolved session id and its source. Set to "0" to quiet it
+      # once the wiring is proven; useful evidence during rollout.
+      - name: OPENCODE_HOOK_DEBUG
+        value: "1"
+
+    # Pod template annotation used ONLY to force a rollout when the
+    # litellm-session-callbacks ConfigMap changes. The callback module is
+    # imported at LiteLLM startup, and the chart mounts it via subPath (which
+    # does not update in place), so a ConfigMap-only change neither reloads the
+    # module nor restarts the pod. BUMP THIS VALUE whenever custom_callbacks.py
+    # changes, or the change will not take effect.
+    podAnnotations:
+      litellm.session-callbacks-revision: "3"
+
+    # Pre-call hook that normalizes the OpenCode Go session header (ADR-029).
+    # LiteLLM loads a callback named in litellm_settings.callbacks by file path
+    # RELATIVE TO THE CONFIG FILE (get_instance_fn: dirname(config)/module.py),
+    # and the chart mounts the config at /etc/litellm/config.yaml — so the
+    # module MUST live at /etc/litellm/custom_callbacks.py. (PYTHONPATH does
+    # not help here; the loader reads the file directly.)
+    volumes:
+      - name: litellm-session-callbacks
+        configMap:
+          name: litellm-session-callbacks
+    volumeMounts:
+      - name: litellm-session-callbacks
+        mountPath: /etc/litellm/custom_callbacks.py
+        subPath: custom_callbacks.py
+
+    # proxy_config is rendered into a ConfigMap and mounted as /etc/litellm/config.yaml
+    proxy_config:
+      model_list:
+        - model_name: kimi-k2.7-code
+          litellm_params:
+            model: openai/kimi-k2.7-code
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: glm-5.2-ollama
+          litellm_params:
+            model: openai/glm-5.2
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: glm-5.3-ollama
+          litellm_params:
+            model: openai/glm-5.3
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: glm-5.3-flash-ollama
+          litellm_params:
+            model: openai/glm-5.3-flash
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: glm-5.1-ollama
+          litellm_params:
+            model: openai/glm-5.1
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: kimi-k2.7-code-ollama
+          litellm_params:
+            model: openai/kimi-k2.7-code
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: kimi-k2.6-ollama
+          litellm_params:
+            model: openai/kimi-k2.6
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: kimi-k3-ollama
+          litellm_params:
+            model: openai/kimi-k3
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: minimax-m2.7-ollama
+          litellm_params:
+            model: openai/minimax-m2.7
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: minimax-m3-ollama
+          litellm_params:
+            model: openai/minimax-m3
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: deepseek-v4-pro-ollama
+          litellm_params:
+            model: openai/deepseek-v4-pro
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: deepseek-v4-flash-ollama
+          litellm_params:
+            model: openai/deepseek-v4-flash
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: deepseek-v4-flash-0731-ollama
+          litellm_params:
+            model: "openai/deepseek-v4-flash:0731"
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: deepseek-v4.1-flash-ollama
+          litellm_params:
+            model: openai/deepseek-v4.1-flash
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+            # Ollama Cloud accepts reasoning_effort; allow the openai provider to
+            # forward it (LiteLLM blocks unknown params otherwise).
+            allowed_openai_params:
+              - reasoning_effort
+        - model_name: qwen3.5-397b-ollama
+          litellm_params:
+            model: "openai/qwen3.5:397b"
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: gemma4-31b-ollama
+          litellm_params:
+            model: openai/gemma4:31b
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: mistral-large-3-675b-ollama
+          litellm_params:
+            model: openai/mistral-large-3:675b
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: nemotron-3-super-ollama
+          litellm_params:
+            model: openai/nemotron-3-super
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: nemotron-3-ultra-ollama
+          litellm_params:
+            model: openai/nemotron-3-ultra
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: nemotron-3-nano-30b-ollama
+          litellm_params:
+            model: openai/nemotron-3-nano:30b
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: gpt-oss-20b-ollama
+          litellm_params:
+            model: openai/gpt-oss:20b
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: gpt-oss-120b-ollama
+          litellm_params:
+            model: openai/gpt-oss:120b
+            api_base: "https://ollama.com/v1"
+            api_key: "os.environ/OLLAMA_API_KEY"
+        - model_name: glm-5.2-zai
+          litellm_params:
+            # z.ai markets this as glm-5.2, but LiteLLM's provider map only knows zai/glm-5.
+            # Alias keeps the user-facing name while routing to the recognised slug.
+            # Suffix -zai distinguishes from the Ollama-hosted glm-5.2-ollama variant.
+            model: zai/glm-5
+            api_key: "os.environ/ZAI_API_KEY"
+        - model_name: glm-4.7-zai
+          litellm_params:
+            # Z.AI's flagship GLM-4.7 model (200K context, reasoning)
+            # Suffix -zai distinguishes from any future Ollama-hosted variant.
+            model: zai/glm-4.7
+            api_key: "os.environ/ZAI_API_KEY"
+        - model_name: mistral-3.5-middle
+          litellm_params:
+            model: mistral/mistral-medium-latest
+            api_key: "os.environ/MISTRAL_API_KEY"
+        - model_name: hy3-free
+          litellm_params:
+            # Tencent Hybrid 3 (MoE) via OpenRouter free tier
+            model: openrouter/tencent/hy3:free
+            api_key: "os.environ/OPENROUTER_API_KEY"
+        - model_name: gpt-oss-120b-openrouter
+          litellm_params:
+            # OpenAI gpt-oss-120b via OpenRouter (paid credits), added 2026-10-14
+            # to unblock the OpenViking -> Hindsight migration. The Ollama Cloud
+            # route (gpt-oss-120b-ollama, same slug different provider) is a
+            # separate model_name; keeping both lets us compare providers.
+            # Reason: Hindsight's fact extraction saturated LiteLLM's concurrent
+            # request slots against ollama.com, producing
+            #   429 'timed out waiting for a concurrent request slot'
+            # on every retain. See docs/adr/adr-054-*.md and H2-284.
+            model: openrouter/openai/gpt-oss-120b
+            api_key: "os.environ/OPENROUTER_API_KEY"
+        # H2-307: dedicated high-throughput OpenRouter route for Hindsight.
+        # :nitro tells OpenRouter to sort providers by throughput rather than
+        # price, which cuts the average retain from 42 s down to the target
+        # range. A separate model_name keeps the existing gpt-oss-120b-openrouter
+        # (price-sorted) intact for other callers and their fallback chains.
+        - model_name: gpt-oss-120b-hindsight
+          litellm_params:
+            model: openrouter/openai/gpt-oss-120b:nitro
+            api_key: "os.environ/OPENROUTER_API_KEY"
+        - model_name: deepseek-v4.1-flash-openrouter
+          litellm_params:
+            # DeepSeek v4.1 Flash via OpenRouter (paid credits), added 2026-10-17.
+            # Same model as the Zen Go deepseek-v4.1-flash lanes on a different
+            # billing account: first cross-account hop for every OpenCode Go
+            # lane, so a Go weekly wall keeps the model instead of dropping to
+            # gpt-oss. See docs/adr/adr-069-*.md.
+            model: openrouter/deepseek/deepseek-v4.1-flash
+            api_key: "os.environ/OPENROUTER_API_KEY"
+
+        # ── "Grey zone" Anthropic reseller endpoints (2026-10-09) ──
+        # Two reseller keys dropped in for evaluation: OneProvider
+        # (USD 250 quota, expires 2027-01-07) and claudeapikey (USD 100
+        # balance). Both speak the Anthropic-native Messages API, so we use
+        # LiteLLM's anthropic/ provider with an api_base override; LiteLLM
+        # appends /v1/messages automatically (confirmed in LiteLLM docs).
+        # Suffixed per provider so the two routes can be compared head to head.
+        # NOT covered by any SLA — could vanish without notice. See
+        # docs/adr/adr-042-grey-zone-anthropic-providers.md.
+        - model_name: claude-opus-5-5-oneprovider
+          litellm_params:
+            model: anthropic/claude-opus-5-5
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-opus-5-oneprovider
+          litellm_params:
+            model: anthropic/claude-opus-5
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-opus-4-8-oneprovider
+          litellm_params:
+            model: anthropic/claude-opus-4-8
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-sonnet-5-5-oneprovider
+          litellm_params:
+            model: anthropic/claude-sonnet-5-5
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-sonnet-5-oneprovider
+          litellm_params:
+            model: anthropic/claude-sonnet-5
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-haiku-4-5-oneprovider
+          litellm_params:
+            model: anthropic/claude-haiku-4-5
+            api_base: "https://api.oneprovider.dev"
+            api_key: "os.environ/ONEPROVIDER_API_KEY"
+        - model_name: claude-opus-5-5-claudeapikey
+          litellm_params:
+            model: anthropic/claude-opus-5-5
+            api_base: "https://claudeapikey.dev"
+            api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
+        - model_name: claude-opus-5-claudeapikey
+          litellm_params:
+            model: anthropic/claude-opus-5
+            api_base: "https://claudeapikey.dev"
+            api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
+        - model_name: claude-opus-4-8-claudeapikey
+          litellm_params:
+            model: anthropic/claude-opus-4-8
+            api_base: "https://claudeapikey.dev"
+            api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
+        - model_name: claude-sonnet-5-claudeapikey
+          litellm_params:
+            model: anthropic/claude-sonnet-5
+            api_base: "https://claudeapikey.dev"
+            api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
+        - model_name: claude-haiku-4-5-claudeapikey
+          litellm_params:
+            model: anthropic/claude-haiku-4-5
+            api_base: "https://claudeapikey.dev"
+            api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
+
+        # ── Google Gemini via AI Pro subscription key (GEMINI_API_KEY) ──
+        # Probe-verified 2026-09-25: legacy gemini-2.5-* models are gated off
+        # ("no longer available to new users"); image/TTS/music endpoints are
+        # not chat models. 3.5/3.7/3.8-flash returned 503 "high demand" on
+        # launch day — routed anyway, expected to recover Google-side.
+        - model_name: gemini-3.1-flash-lite
+          litellm_params:
+            model: gemini/gemini-3.1-flash-lite
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-3.5-flash-lite
+          litellm_params:
+            model: gemini/gemini-3.5-flash-lite
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-3.6-flash
+          litellm_params:
+            model: gemini/gemini-3.6-flash
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-3.7-flash
+          litellm_params:
+            # thinking model; allow large max_tokens client-side
+            model: gemini/gemini-3.7-flash
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemini-3.8-flash
+          litellm_params:
+            model: gemini/gemini-3.8-flash
+            api_key: "os.environ/GEMINI_API_KEY"
+        # ── removed 2026-09-26 after 48h of every-call failures ──
+        # gemini-pro-latest, gemini-3.1-pro-preview, gemini-3.1-pro-preview-customtools:
+        #   429 "You exceeded your current quota" from Google on EVERY call, even
+        #   hours after the Pacific-midnight quota reset. The AI Pro subscription
+        #   key has no usable Pro-tier API allowance. Verified 2026-09-26 via
+        #   master-key smoke test + /spend/logs (0 quota consumed). Do not
+        #   re-add unless Google changes subscription API entitlements.
+        # gemini-3.8-flash-lite-tts: returns HTTP 200 with EMPTY text in chat
+        #   (TTS endpoint wired as chat). Dead weight in the dropdown.
+        - model_name: gemini-flash-latest
+          litellm_params:
+            # Google-managed rolling alias — always points at newest flash
+            model: gemini/gemini-flash-latest
+            api_key: "os.environ/GEMINI_API_KEY"
+        - model_name: gemma-4-26b-a4b-it
+          litellm_params:
+            # open-weight Gemma served through the Gemini API
+            model: gemini/gemma-4-26b-a4b-it
+            api_key: "os.environ/GEMINI_API_KEY"
+
+        # ── Local LM Studio model on the Hermes M1 Max (same LAN as the cluster) ──
+        - model_name: gemma-4-12b-uncensored
+          litellm_params:
+            # LM Studio on the M1 Max, reached over the LAN (NOT NetBird).
+            # The Mac's address comes from an OPNsense DHCP lease (m1max.local);
+            # K8s pods cannot resolve `.local`, so pin the LAN IP here. If the
+            # address ever changes it must be updated in ONE place: this line.
+            # NOTE 2026-09-19: the lease is NOT truly static — it moved .148 → .129
+            # and broke this route (connection refused). Set a static DHCP
+            # reservation on OPNsense to stop this recurring.
+            # Reachable from homelab-2nd; no real API key required.
+            model: openai/gemma4-12b-qat-uncensored-hauhaucs-balanced
+            api_base: "http://192.168.1.119:1234/v1"
+            api_key: "os.environ/DUMMY_API_KEY"
+
+        # Qwen3.8-9B heretic-uncensored (MLX 4-bit) — LM Studio on the M1 Max,
+        # same LAN route/caveats as the gemma entry above (pinned DHCP IP).
+        # NOTE: reasoning model — emits reasoning_content; test prompts need
+        # generous max_tokens or content comes back empty (reasoning burn).
+        # ⚠ DEPRECATED 2026-10-03: lineage runaway-think trap (9B-Distill has no
+        # documented enable_thinking path). Prefer qwen3.8-27b-mlx.
+        - model_name: qwen3.8-9b-heretic-uncensored
+          litellm_params:
+            model: openai/qwen3.8-9b-heretic-uncensored-mtplx
+            api_base: "http://192.168.1.119:1234/v1"
+            api_key: "os.environ/DUMMY_API_KEY"
+          # Advertise the real native window (ADR-036 pattern). Qwen3.8-9B
+          # Distill is Qwen3.5-arch with 262,144 native context (HF model
+          # card, confirmed 2026-10-05). Without this LiteLLM omits
+          # max_input_tokens and clients silently guess 131072. CAVEAT: the
+          # engine only honours 262k if LM Studio's load setting matches AND
+          # the MLX runtime escapes the auto-fit bug (pin 1.8.5, see
+          # qwen3.8-27b-mlx note / H2-129).
+          model_info:
+            max_input_tokens: 262144
+            max_output_tokens: 32768
+
+        # Qwen3.8-27B MLX 4-bit (lmstudio-community, official weights) — LM
+        # Studio on the M1 Max. Chosen over the 9B distills because the
+        # official chat template ships a REAL thinking kill switch
+        # (chat_template_kwargs.enable_thinking=false pre-emits an empty
+        # think block) — verified live on 2026-10-03: loop-trap with 4000
+        # max_tokens completed clean, finish=stop, no runaway deliberation.
+        # Two aliases WERE planned: passthrough + nothink (route-side kill
+        # switch). PROBE 2026-10-03 after deploy: chat_template_kwargs is
+        # DROPPED on the way — LiteLLM does not forward it, and even a direct
+        # curl to LM Studio's /v1 with enable_thinking=false still returns
+        # reasoning_content. The kill switch only works inside the LM Studio
+        # UI/engine, not via its OpenAI-compatible API. Aliases removed;
+        # disable thinking from the LM Studio UI if you want it off globally.
+        # Sampling note: never greedy-decode this family (documented
+        # repetition loops): temp 0.7, top_p 0.8, top_k 20, presence 1.5.
+        - model_name: qwen3.8-27b-mlx
+          litellm_params:
+            model: openai/qwen3.8-27b-mlx
+            api_base: "http://192.168.1.119:1234/v1"
+            api_key: "os.environ/DUMMY_API_KEY"
+          # Advertise the real context window (ADR-036). Without this, LiteLLM
+          # omits max_input_tokens for the openai/ passthrough and clients
+          # (Hermes) fall back to a 131072 default — which is why the nightly
+          # karakeep digest "could not shrink" a ~28k-token session. LM Studio
+          # now serves this model at 262144 (MLX runtime pinned to 1.8.5).
+          model_info:
+            max_input_tokens: 262144
+            max_output_tokens: 32768
+
+        # ── OpenCode Go subscription models (all with -go suffix) ──────
+        # Line-up refreshed 2026-10-02 against the LIVE endpoint
+        # (GET https://opencode.ai/zen/go/v1/models -> 36 ids), then every id
+        # was probed with a minimal chat completion: 29 returned OK, 7 failed
+        # and are deliberately NOT configured:
+        #   gpt-6-luna, gpt-5.6-luna, grok-4.6, grok-4.7, minimax-m2.7:
+        #     HTTP 400 ModelProtocolUnsupported on plain chat-completions
+        #     (streaming too) - these need OpenCode-native request framing.
+        #   muse-spark-1.2-contributor, muse-spark-1.3-contributor:
+        #     HTTP 400 "This Go model trains on request data. Allow paid
+        #     endpoints that train on request data in your workspace's
+        #     Privacy settings" - not enabled without owner sign-off.
+        # Removed stale routes (no longer on the endpoint):
+        #   kimi-k2.5-go, glm-5-go, qwen3.5-plus-go, mimo-v2-pro-go,
+        #   mimo-v2-omni-go, grok-4.5-go, hy3-preview-go (renamed hy3-go).
+        #
+        # SESSION-HEADER NORMALIZATION (2026-10-03, supersedes ADR-026):
+        # the Go gateway enforces a stable per-conversation
+        # `x-opencode-session` header on every chat request. LiteLLM does not
+        # emit one and clients vary in what they send. A pre-call hook
+        # (custom_callbacks.opencode_go_session_normalizer, mounted from the
+        # litellm-session-callbacks ConfigMap) now resolves ONE session id per
+        # conversation from whatever the client provides and injects it ONLY
+        # when the client did not send the header itself. The previous static
+        # fallback ("h2-litellm-fallback-session") was removed because config
+        # extra_headers merge AFTER forwarded client headers and therefore
+        # masked every real per-session id. See
+        # docs/adr/adr-029-litellm-opencode-go-session-normalizer.md.
+        - model_name: deepseek-flash-go
+          litellm_params:
+            model: openai/deepseek-flash
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: deepseek-v4-flash-go
+          litellm_params:
+            model: openai/deepseek-v4-flash
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: deepseek-v4-flash-vision-exp-go
+          litellm_params:
+            model: openai/deepseek-v4-flash-vision-exp
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: deepseek-v4-pro-go
+          litellm_params:
+            model: openai/deepseek-v4-pro
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: deepseek-v4.1-flash-go
+          litellm_params:
+            model: openai/deepseek-v4.1-flash
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: glm-5.1-go
+          litellm_params:
+            model: openai/glm-5.1
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: glm-5.2-go
+          litellm_params:
+            model: openai/glm-5.2
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: glm-5.3-go
+          litellm_params:
+            model: openai/glm-5.3
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: glm-5.3-flash-go
+          litellm_params:
+            model: openai/glm-5.3-flash
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: hy3-go
+          litellm_params:
+            model: openai/hy3
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: hy4-preview-go
+          litellm_params:
+            model: openai/hy4-preview
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: kimi-k2.6-go
+          litellm_params:
+            model: openai/kimi-k2.6
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: kimi-k2.7-code-go
+          litellm_params:
+            model: openai/kimi-k2.7-code
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: kimi-k3-go
+          litellm_params:
+            model: openai/kimi-k3
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: longcat-2.0-go
+          litellm_params:
+            model: openai/longcat-2.0
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: longcat-2.5-preview-free-go
+          litellm_params:
+            model: openai/longcat-2.5-preview-free
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: mimo-v2.5-go
+          litellm_params:
+            model: openai/mimo-v2.5
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: mimo-v2.5-pro-go
+          litellm_params:
+            model: openai/mimo-v2.5-pro
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: mimo-v2.6-flash-go
+          litellm_params:
+            model: openai/mimo-v2.6-flash
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: mimo-v2.6-pro-go
+          litellm_params:
+            model: openai/mimo-v2.6-pro
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: minimax-m2.5-go
+          litellm_params:
+            model: openai/minimax-m2.5
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: minimax-m3-go
+          litellm_params:
+            model: openai/minimax-m3
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        # Free on the Go plan (2026-10-19). Unlike minimax-m2.7, plain
+        # chat-completions work (probed 2026-10-19: 1.3 s).
+        - model_name: minimax-m3.1-flash-free-go
+          litellm_params:
+            model: openai/minimax-m3.1-flash-free
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        # Hindsight consolidation route (H2-306, 2026-10-19). Same deployment as
+        # minimax-m3.1-flash-free-go under a purpose name, with its own fallback
+        # chain (router_settings.fallbacks): free MiniMax -> DeepSeek v4.1 flash on
+        # Go -> paid OpenRouter gpt-oss-120b as last resort. The `-go` SUFFIX IS
+        # LOAD-BEARING: the session normalizer only stamps `x-opencode-session`
+        # (which Go requires) on names ending in -go or listed in
+        # OPENCODE_GO_UNSUFFIXED.
+        # Replay of 8 real consolidation prompts (2026-10-19): MiniMax 8/8 and
+        # DeepSeek 8/8 schema-valid with real fact ids; gpt-oss 7/8 (one cited a
+        # non-existent id). MiniMax: 3-5 s typical, one 72 s outlier (8.5k tokens).
+        - model_name: hindsight-consolidation-go
+          litellm_params:
+            model: openai/minimax-m3.1-flash-free
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: omen-alpha-go
+          litellm_params:
+            model: openai/omen-alpha
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: qwen3.6-plus-go
+          litellm_params:
+            model: openai/qwen3.6-plus
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: qwen3.7-max-go
+          litellm_params:
+            model: openai/qwen3.7-max
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: qwen3.7-plus-go
+          litellm_params:
+            model: openai/qwen3.7-plus
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        # Bare alias for the native OpenCode Go model id. OpenCode's `opencode-go`
+        # provider resolves model ids against its OWN catalogue and rejects an
+        # unknown id BEFORE any HTTP call — so a lane configured with the
+        # `-go`-suffixed alias fails instantly with "produced no assistant text"
+        # and never reaches LiteLLM. The working H2 lane uses the bare
+        # `deepseek-v4.1-flash` name, which is why this route exists for it.
+        # Mirrors the deepseek pattern: bare name + `-go` alias, same upstream.
+        - model_name: qwen3.8-flash
+          litellm_params:
+            model: openai/qwen3.8-flash
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: qwen3.8-flash-go
+          litellm_params:
+            model: openai/qwen3.8-flash
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: qwen3.8-max-go
+          litellm_params:
+            model: openai/qwen3.8-max
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        - model_name: space-bunny-free-go
+          litellm_params:
+            model: openai/space-bunny-free
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+        # OpenChamber worker model. Named WITHOUT the -go suffix on purpose:
+        # OpenChamber's OpenCode uses the NATIVE `opencode-go` provider, which
+        # emits the real per-conversation `x-opencode-session` header. The
+        # pre-call hook passes an existing header through untouched (it only
+        # injects when the header is absent), and scoped forwarding in
+        # litellm_settings.model_group_settings carries it to the Go endpoint.
+        # NO config extra_headers here - they would clobber the client's real
+        # per-session header (config extras merge last).
+        - model_name: deepseek-v4.1-flash
+          litellm_params:
+            model: openai/deepseek-v4.1-flash
+            api_base: "https://opencode.ai/zen/go/v1"
+            api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+
+      router_settings:
+        # Fallback chain for the OpenChamber runner lanes (SOU-104 fix, 2026-10-15).
+        # The Alibaba-hosted qwen3.8-flash behind the OpenCode Go gateway
+        # intermittently rejects task texts with HTTP 400:
+        #   [data_inspection_failed] InternalError.Algo.DataInspectionFailed:
+        #   "Input text data may contain inappropriate content"
+        # LiteLLM does NOT classify that error as ContentPolicyViolationError
+        # (no pattern in exception_mapping_utils.py matches data_inspection_failed),
+        # so it surfaces as a generic BadRequestError and ONLY the generic
+        # `fallbacks` path can rescue it. Both mappings are set on purpose:
+        #   - fallbacks            -> catches the observed BadRequestError(400)
+        #   - content_policy_fallbacks -> catches a properly-classified CPV in case
+        #     upstream/mapping changes ever surface it as such
+        # deepseek-v4.1-flash lives on the SAME gateway and subscription key, so
+        # cost profile and auth are unchanged. The OpenCode session pre-call hook
+        # is fallback-safe: it injects x-opencode-session only when absent, and
+        # the header already on the request kwargs is carried into the fallback
+        # call untouched (deepseek-v4.1-flash is in OPENCODE_GO_UNSUFFIXED).
+        # Scope: plain per-lane mappings, no wildcard - no other model's routing
+        # behaviour changes. Fallback responses arrive labelled deepseek-v4.1-flash
+        # while the client keeps its qwen3.8-flash model string; that is the
+        # intended resilience semantics (see ADR-052).
+        # 2026-10-17 (SOU-267): the same-gateway fallback proved useless against
+        # an ACCOUNT-level wall. At 01:51:22Z the Zen Go workspace
+        # (wrk_01KXTGFFFC4XBA5T9P8TVVQTB8) exhausted its WEEKLY usage limit:
+        #   429 GoUsageLimitError 'Go usage limit exceeded' (limitName: weekly)
+        # qwen3.8-flash 429'd and its fallback deepseek-v4.1-flash 429'd too -
+        # same gateway, same subscription key, same weekly bucket. The
+        # OpenChamber bridge translated the empty session into "produced no
+        # assistant text" (runs 124-126 on SOU-223/523) and the SOU lane sat
+        # dead for 5+ hours. Fix: every OpenCode Go lane terminates its chain
+        # on gpt-oss-120b-openrouter - different vendor, different billing
+        # account, immune to a Zen Go quota. Fallback traffic is rare (only
+        # when BOTH Zen Go models fail) and rides Wojtek's OpenRouter credits;
+        # quality drops for the affected turns but the session SURVIVES. See
+        # ADR-068 (this) and ADR-063 (original same-account chain).
+        # 2026-10-17 (ADR-069): the cross-account hop now tries the SAME model
+        # on OpenRouter first (deepseek-v4.1-flash-openrouter), so a Go wall no
+        # longer drops agent sessions to a weaker model; gpt-oss-120b-openrouter
+        # stays as the last resort.
+        fallbacks:
+          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash-go": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"qwen3.8-flash-go": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"hindsight-consolidation-go": ["deepseek-v4.1-flash-go", "gpt-oss-120b-openrouter"]}
+        content_policy_fallbacks:
+          - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+          - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
+
+      litellm_settings:
+        callbacks:
+          - "prometheus"
+          # Pre-call hook that normalizes the OpenCode Go session header.
+          # Mounted from the litellm-session-callbacks ConfigMap at
+          # /etc/litellm/custom_callbacks.py (loaded relative to the config
+          # file by get_instance_fn).
+          - "custom_callbacks.opencode_go_session_normalizer"
+        require_auth_for_metrics_endpoint: false
+        # Forward the client's own session headers upstream ONLY for models
+        # routed to OpenCode Go (the only provider that needs them). `*-go`
+        # matches every standard Go route; the bare name is the OpenChamber
+        # worker's unsuffixed native route. Replaces the global
+        # general_settings.forward_client_headers_to_llm_api flag (closes the
+        # ADR-018 "when to revisit" item; see ADR-029).
+        model_group_settings:
+          forward_client_headers_to_llm_api:
+            - "*-go"
+            - "deepseek-v4.1-flash"
+            # Fork lane (SOU). Same reasoning as deepseek-v4.1-flash above: the
+            # OpenChamber worker's native opencode-go provider emits the real
+            # per-conversation x-opencode-session header, but OpenCode resolves
+            # model ids from ITS OWN catalogue, which knows the BARE name only -
+            # a '-go'-suffixed alias never even produces a request. So the route
+            # must be named bare AND scoped here, or the Go gateway rejects it
+            # with MissingSessionID.
+            - "qwen3.8-flash"
+
+      general_settings:
+        # master_key is also supplied via env var from the secret
+        master_key: "os.environ/PROXY_MASTER_KEY"
+        database_url: "os.environ/DATABASE_URL"
+        # Client x-* header forwarding for the OpenCode Go routes is scoped in
+        # litellm_settings.model_group_settings above, NOT global: client
+        # headers must not leak to unrelated providers (Ollama/Gemini/Z.AI).
+        # The pre-call hook is the primary source of the `x-opencode-session`
+        # value; scoped forwarding is the belt-and-braces path for clients
+        # that already send a real header (see ADR-029).
+        # Restrict UI to admins only; combined with no UI_USERNAME/UI_PASSWORD
+        # this hides the local login form, leaving only the SSO button
+        ui_access_mode: "admin_only"
+
+    # The chart creates a proxyConfigMap by default; leave it on
+    proxyConfigMap:
+      create: true
+
+    migrationJob:
+      enabled: false
+
+    service:
+      type: ClusterIP
+      port: 4000
+
+    ingress:
+      enabled: false
+
+    # Prometheus scraping via ServiceMonitor
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: prometheus-stack
+      interval: 15s
+      scrapeTimeout: 10s
+
+    resources:
+      requests:
+        cpu: "1"
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+    livenessProbe:
+      path: /health/liveliness
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 5
+
+    readinessProbe:
+      path: /health/readiness
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+
+    startupProbe:
+      path: /health/readiness
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 30
+
+    # Pass the provider-key secrets into the pod as environment variables too
+    environmentSecrets:
+      - litellm-provider-keys
+      # Grey-zone reseller keys (ONEPROVIDER_API_KEY, CLAUDEAPIKEY_API_KEY).
+      # Kept in their own secret so rotating a reseller key never touches the
+      # core provider keys.
+      - litellm-grey-provider-keys

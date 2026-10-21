@@ -1,0 +1,210 @@
+---
+# ConfigMap for the LiteLLM virtual-key model-whitelist provisioner.
+# The script runs inside a CronJob and ensures every declared user key has
+# access to the same model list that is configured in the LiteLLM proxy.
+# Uses only Python stdlib, so no runtime package installs are needed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-key-provisioner
+  namespace: llm-hub
+data:
+  provision.py: |
+    import json
+    import os
+    import sys
+    import urllib.error
+    import urllib.request
+
+    LITELLM_URL = os.environ.get("LITELLM_URL", "http://litellm:4000")
+    MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
+    DESIRED_MODELS = [
+        "kimi-k2.7-code",
+        # Ollama Cloud models (all with -ollama suffix)
+        "glm-5.2-ollama",
+        "glm-5.3-ollama",
+        "glm-5.3-flash-ollama",
+        "glm-5.1-ollama",
+        "kimi-k2.7-code-ollama",
+        "kimi-k2.6-ollama",
+        "kimi-k3-ollama",
+        "minimax-m2.7-ollama",
+        "minimax-m3-ollama",
+        "deepseek-v4-pro-ollama",
+        "deepseek-v4-flash-ollama",
+        "deepseek-v4-flash-0731-ollama",
+        "deepseek-v4.1-flash-ollama",
+        "qwen3.5-397b-ollama",
+        "gemma4-31b-ollama",
+        "mistral-large-3-675b-ollama",
+        "nemotron-3-super-ollama",
+        "nemotron-3-ultra-ollama",
+        "nemotron-3-nano-30b-ollama",
+        "gpt-oss-20b-ollama",
+        "gpt-oss-120b-ollama",
+        # z.ai models
+        "glm-5.2-zai",
+        "glm-4.7-zai",
+        "mistral-3.5-middle",
+        "hy3-free",
+        "gpt-oss-120b-openrouter",
+        "gpt-oss-120b-hindsight",
+        "deepseek-v4.1-flash-openrouter",
+        # Google Gemini (AI Pro subscription key)
+        # NOTE 2026-09-26: removed gemini-pro-latest, gemini-3.1-pro-preview,
+        # gemini-3.1-pro-preview-customtools (429 quota on every call — AI Pro
+        # key has no Pro-tier API allowance) and gemini-3.8-flash-lite-tts
+        # (TTS model, empty chat replies). Stale whitelist entries on existing
+        # virtual keys are harmless — routes no longer exist in model_list.
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.7-flash",
+        "gemini-3.8-flash",
+        "gemini-flash-latest",
+        "gemma-4-26b-a4b-it",
+        # Local LM Studio model on Hermes host
+        "gemma-4-12b-uncensored",
+        "qwen3.8-9b-heretic-uncensored",
+        "qwen3.8-27b-mlx",
+        # Honcho deriver/summary/dream/dialectic models
+        "nemotron-3-nano-30b-ollama",
+        "openai/nemotron-3-nano-30b-ollama",
+        "nemotron-3-super-ollama",
+        "openai/nemotron-3-super-ollama",
+        "nemotron-3-ultra-ollama",
+        "openai/nemotron-3-ultra-ollama",
+        # OpenCode Go subscription models (2026-10-02: 29 verified live
+        # + deepseek-v4.1-flash OpenChamber native route; 7 endpoint ids
+        # excluded - chat-completions 400s, see litellm-helm-release.yaml)
+        "deepseek-flash-go",
+        "deepseek-v4-flash-go",
+        "deepseek-v4-flash-vision-exp-go",
+        "deepseek-v4-pro-go",
+        "deepseek-v4.1-flash-go",
+        "glm-5.1-go",
+        "glm-5.2-go",
+        "glm-5.3-go",
+        "glm-5.3-flash-go",
+        "hy3-go",
+        "hy4-preview-go",
+        "kimi-k2.6-go",
+        "kimi-k2.7-code-go",
+        "kimi-k3-go",
+        "longcat-2.0-go",
+        "longcat-2.5-preview-free-go",
+        "mimo-v2.5-go",
+        "mimo-v2.5-pro-go",
+        "mimo-v2.6-flash-go",
+        "mimo-v2.6-pro-go",
+        "minimax-m2.5-go",
+        "minimax-m3-go",
+        "minimax-m3.1-flash-free-go",
+        "hindsight-consolidation-go",
+        "omen-alpha-go",
+        "qwen3.6-plus-go",
+        "qwen3.7-max-go",
+        "qwen3.7-plus-go",
+        "qwen3.8-flash",
+        "qwen3.8-flash-go",
+        "qwen3.8-max-go",
+        "space-bunny-free-go",
+        "deepseek-v4.1-flash",
+        # Grey-zone Anthropic resellers (2026-10-09). Two reseller endpoints
+        # (OneProvider, claudeapikey) exposed as per-provider suffixed routes.
+        # See docs/adr/adr-042-grey-zone-anthropic-providers.md.
+        "claude-opus-5-5-oneprovider",
+        "claude-opus-5-oneprovider",
+        "claude-opus-4-8-oneprovider",
+        "claude-sonnet-5-5-oneprovider",
+        "claude-sonnet-5-oneprovider",
+        "claude-haiku-4-5-oneprovider",
+        "claude-opus-5-5-claudeapikey",
+        "claude-opus-5-claudeapikey",
+        "claude-opus-4-8-claudeapikey",
+        "claude-sonnet-5-claudeapikey",
+        "claude-haiku-4-5-claudeapikey",
+    ]
+
+    def expand_models(models):
+        # LiteLLM clients may pass either the bare model name or an
+        # openai/ prefixed name. Allow both forms so keys work regardless
+        # of how the caller names the model.
+        expanded = set()
+        for m in models:
+            expanded.add(m)
+            if not m.startswith("openai/"):
+                expanded.add(f"openai/{m}")
+        return sorted(expanded)
+
+    # Kubernetes maps secret keys like 'hermes-andrzej-key' to env vars
+    # HERMES_ANDRZEJ_KEY. This list must match the keys in the
+    # litellm-user-keys Secret.
+    KEY_ENV_NAMES = [
+        "WIFE_KEY",
+        "WOJTEK_KEY",
+        "HERMES_ANDRZEJ_KEY",
+        "MEMORY_HONCHO_KEY",
+        "HERMES_BILL_CIPHER_KEY",
+        "OPENVIKING_KEY",
+        # Pi + OpenCode engineers in Paperclip on the M1 Air (ADR-075)
+        "PAPERCLIP_CODERS_KEY",
+    ]
+
+    def api_request(path, token=None, method="GET", data=None):
+        url = f"{LITELLM_URL}{path}"
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        body = None
+        if data is not None:
+            body = json.dumps(data).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            err = e.read().decode("utf-8")
+            print(f"ERROR {method} {path}: HTTP {e.code} {err}")
+            raise
+
+
+    def main():
+        if not MASTER_KEY:
+            print("LITELLM_MASTER_KEY not set; aborting")
+            sys.exit(1)
+
+        desired_models = expand_models(DESIRED_MODELS)
+        desired_sorted = sorted(desired_models)
+
+        for env_name in KEY_ENV_NAMES:
+            token = os.environ.get(env_name)
+            if not token:
+                print(f"Skipping {env_name}: no token")
+                continue
+
+            key_alias = env_name.replace("_", "-").lower()
+            print(f"Checking {key_alias}...")
+
+            try:
+                info = api_request("/key/info", token=token)
+            except urllib.error.HTTPError:
+                print(f"WARN: could not read info for {key_alias}")
+                continue
+
+            current_models = sorted(info.get("info", {}).get("models", []))
+            if current_models != desired_sorted:
+                print(f"Updating {key_alias}: {current_models} -> {desired_sorted}")
+                api_request(
+                    "/key/update",
+                    token=MASTER_KEY,
+                    method="POST",
+                    data={"key": token, "models": desired_models},
+                )
+                print(f"{key_alias} updated")
+            else:
+                print(f"{key_alias} already correct")
+
+
+    if __name__ == "__main__":
+        main()

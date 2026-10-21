@@ -1,0 +1,278 @@
+---
+# Open WebUI HelmRelease
+# - Chat frontend for the homelab LLM hub.
+# - Connects exclusively to LiteLLM proxy at its internal service URL.
+# - Uses external Postgres via CloudNativePG and S3 (OMV MinIO) for uploads.
+# - OTel metrics/traces/logs shipped to the OTel Collector DaemonSet.
+# - Public ingress via dedicated Cloudflare Tunnel.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: open-webui
+  namespace: llm-hub
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: open-webui
+      version: ">=0.5.0"
+      sourceRef:
+        kind: HelmRepository
+        name: open-webui
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  valuesFrom:
+    - kind: Secret
+      name: openwebui-db-credentials
+      valuesKey: databaseUrl
+      targetPath: databaseUrl
+  values:
+    # Single replica to keep migrations simple in the homelab.
+    # Open WebUI docs require scaling to 1 before upgrades anyway.
+    replicaCount: 1
+
+    image:
+      repository: ghcr.io/open-webui/open-webui
+      tag: ""
+      pullPolicy: IfNotPresent
+
+    # Use chart-native OpenAI backend settings so it doesn't default to Pipelines.
+    enableOpenaiApi: true
+    openaiBaseApiUrl: "http://litellm.llm-hub.svc.cluster.local:4000/v1"
+    # Dedicated secret naming the LiteLLM API key from Open WebUI's perspective.
+    openaiApiKeyExistingSecret: "openwebui-litellm-api-key"
+    openaiApiKeyExistingSecretKey: "api-key"
+
+    pipelines:
+      enabled: false
+
+    # Disable bundled Ollama and Tika
+    ollama:
+      enabled: false
+    tika:
+      enabled: false
+
+    # Use our CNPG Postgres
+    # databaseUrl injected via valuesFrom above
+
+    # Redis for WebSocket / session coordination (chart deploys it inline)
+    websocket:
+      enabled: true
+      manager: redis
+      redis:
+        enabled: true
+
+    # MinIO on OMV for file uploads
+    persistence:
+      enabled: true
+      provider: s3
+      s3:
+        bucket: "openwebui-files"
+        region: "us-east-1"
+        endpointUrl: "http://openmediavault.local:9000"
+        accessKeyExistingSecret: "openwebui-minio-creds"
+        accessKeyExistingAccessKey: "ACCESS_KEY_ID"
+        secretKeyExistingSecret: "openwebui-minio-creds"
+        secretKeyExistingSecretKey: "ACCESS_SECRET_KEY"
+
+    # No Ingress; Cloudflare Tunnel handles public access
+    ingress:
+      enabled: false
+
+    # Headless admin account + secret key from SOPS secrets
+    extraEnvVars:
+      - name: WEBUI_SECRET_KEY
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-secret-key
+            key: secret-key
+      - name: WEBUI_ADMIN_EMAIL
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-admin-credentials
+            key: email
+      - name: WEBUI_ADMIN_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-admin-credentials
+            key: password
+      - name: ENABLE_SIGNUP
+        value: "false"
+      - name: ENABLE_LOGIN_FORM
+        value: "false"
+      - name: ENABLE_PASSWORD_AUTH
+        value: "false"
+      - name: ENABLE_PERSISTENT_CONFIG
+        value: "false"
+      # Built-in personalization memory OFF (2026-10-15): Hindsight is the ONLY memory
+      # system. OWUI's native search_memories/add_memory tools would otherwise inject in
+      # every chat (env default True) and compete with hindsight-recall - the exact
+      # "two memory systems in one prompt" conflict the integration docs warn about.
+      - name: ENABLE_MEMORIES
+        value: "false"
+      - name: BYPASS_MODEL_ACCESS_CONTROL
+        value: "true"
+      - name: ENABLE_OAUTH_SIGNUP
+        value: "true"
+      - name: OAUTH_PROVIDER_NAME
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-oidc-client
+            key: oauth_provider_name
+      - name: OAUTH_CLIENT_ID
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-oidc-client
+            key: oauth_client_id
+      - name: OAUTH_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-oidc-client
+            key: oauth_client_secret
+      - name: OPENID_PROVIDER_URL
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-oidc-client
+            key: openid_provider_url
+      - name: OAUTH_SCOPES
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-oidc-client
+            key: oauth_scopes
+      - name: OPENID_REDIRECT_URI
+        value: "https://ai-chat.voitech.dev/oauth/oidc/callback"
+      - name: OAUTH_MERGE_ACCOUNTS_BY_EMAIL
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-oidc-client
+            key: oauth_merge_accounts_by_email
+      - name: ENABLE_OAUTH_ROLE_MANAGEMENT
+        value: "true"
+      - name: OAUTH_ROLES_CLAIM
+        value: "homelab-role"
+      - name: OAUTH_ADMIN_ROLES
+        value: "admin"
+      - name: OAUTH_ALLOWED_ROLES
+        value: "admin,user"
+      - name: WEBUI_URL
+        value: "https://ai-chat.voitech.dev"
+      - name: DEFAULT_USER_ROLE
+        value: "user"
+      - name: DEFAULT_MODELS
+        value: "gemma-4-12b-uncensored"
+      - name: DEFAULT_PINNED_MODELS
+        value: "gemma-4-12b-uncensored,glm-5.2-zai,mistral-3.5-middle,kimi-k2.7-code,glm-5.3-ollama,glm-5.3-flash-ollama"
+      # Use LiteLLM proxy for small background tasks too
+      - name: TASK_MODEL_EXTERNAL
+        value: "glm-5.2-zai"
+      # Vector DB: use pgvector on the same CNPG cluster
+      - name: VECTOR_DB
+        value: "pgvector"
+      - name: PGVECTOR_DB_URL
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-db-credentials
+            key: databaseUrl
+      # Single worker per pod (let K8s handle scaling)
+      - name: UVICORN_WORKERS
+        value: "1"
+      # Embeddings via the shared GPU-accelerated Ollama service in gpu-embedding.
+      # Ollama exposes an OpenAI-compatible /v1/embeddings endpoint on the same port.
+      - name: RAG_EMBEDDING_ENGINE
+        value: "openai"
+      - name: RAG_OPENAI_API_BASE_URL
+        value: "http://ollama-embeddings.gpu-embedding.svc.cluster.local:11434/v1"
+      - name: RAG_EMBEDDING_MODEL
+        value: "nomic-embed-text"
+      # OpenTelemetry → OTel Collector
+      - name: ENABLE_OTEL
+        value: "true"
+      - name: ENABLE_OTEL_TRACES
+        value: "true"
+      - name: ENABLE_OTEL_METRICS
+        value: "true"
+      - name: ENABLE_OTEL_LOGS
+        value: "true"
+      - name: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: "http://opentelemetry-collector.observability.svc.cluster.local:4317"
+      - name: OTEL_METRICS_EXPORTER_OTLP_ENDPOINT
+        value: "http://opentelemetry-collector.observability.svc.cluster.local:4317"
+      - name: OTEL_LOGS_EXPORTER_OTLP_ENDPOINT
+        value: "http://opentelemetry-collector.observability.svc.cluster.local:4317"
+      - name: OTEL_EXPORTER_OTLP_INSECURE
+        value: "true"
+      - name: OTEL_SERVICE_NAME
+        value: "open-webui"
+      # Route voice STT to the dedicated Speaches service in the voice namespace.
+      - name: AUDIO_STT_ENGINE
+        value: "openai"
+      - name: AUDIO_STT_OPENAI_API_BASE_URL
+        value: "http://speaches.voice.svc.cluster.local:8000/v1"
+      - name: AUDIO_STT_OPENAI_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-speaches-api-key
+            key: api-key
+      - name: AUDIO_STT_MODEL
+        value: "Systran/faster-distil-whisper-small.en"
+      # Self-hosted Firecrawl web search
+      - name: ENABLE_WEB_SEARCH
+        value: "true"
+      - name: WEB_SEARCH_ENGINE
+        value: "firecrawl"
+      - name: FIRECRAWL_API_BASE_URL
+        value: "http://api.firecrawl.svc.cluster.local:3002"
+      - name: FIRECRAWL_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-firecrawl-api-key
+            key: FIRECRAWL_API_KEY
+      - name: FIRECRAWL_TIMEOUT
+        value: "60000"
+      # Native MCP tool servers over Streamable HTTP:
+      #   1. hindsight-chat-memory  — per-turn sync_retain into the dedicated 'open-webui' bank
+      #   2. hindsight-fleet-memory — read-only recall across ALL agent banks (multi-bank root /mcp/)
+      #   3. docs-mcp-server        — homelab indexed docs (read-only tool list)
+      # The full connections JSON (incl. the Hindsight tenant key) lives in the SOPS-encrypted
+      # Secret openwebui-hindsight-mcp — NEVER inline it here, this repo is public.
+      # Both hindsight endpoints use auth_type "bearer" with the tenant API key; Open WebUI's
+      # build_tool_server_headers() turns that into `Authorization: Bearer <key>`, which is
+      # exactly what Hindsight's ApiKeyTenantExtension requires.
+      # Destructive tools (delete_bank, clear_memories, invalidate_memory, update_bank, ...) are
+      # deliberately filtered out per connection by function_name_filter_list. access_grants: []
+      # keeps all three connections admin-only (Open WebUI's own default) — fine while Wojtek is
+      # the only human user. Revisit per-user access_grants before onboarding anyone else.
+      - name: TOOL_SERVER_CONNECTIONS
+        valueFrom:
+          secretKeyRef:
+            name: openwebui-hindsight-mcp
+            key: TOOL_SERVER_CONNECTIONS
+      # Structured JSON logs for Loki
+      - name: GLOBAL_LOG_LEVEL
+        value: "INFO"
+      - name: LOG_LEVEL
+        value: "INFO"
+
+    # Allow in-place rolling updates on a single-node cluster with tight CPU headroom.
+    # maxSurge: 0 means no extra pod is scheduled before the old one terminates.
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+
+    service:
+      type: ClusterIP
+      port: 8080
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 1Gi
+      limits:
+        memory: 2Gi
