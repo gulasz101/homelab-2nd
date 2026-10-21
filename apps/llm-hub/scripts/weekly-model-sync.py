@@ -3,14 +3,12 @@
 
 GitOps-native: edits the repo, commits, pushes, and lets Flux reconcile. New models are
 probed with a real chat completion before being added. Stale models are only removed when
-explicitly allowed and after confirming no consumer references them. The first run also
-repoints Bill Cipher (default Hermes profile) to minimax-m3.1-flash-ollama.
+explicitly allowed and after confirming no consumer references them.
 """
 
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import re
@@ -33,8 +31,9 @@ REPO = Path.home() / "Projects" / "homelab-2nd"
 LITELLM_RELEASE = REPO / "apps" / "llm-hub" / "litellm-helm-release.yaml"
 PROVISIONER_CM = REPO / "apps" / "llm-hub" / "litellm-key-provisioner-configmap.yaml"
 OPENWEBUI_RELEASE = REPO / "apps" / "llm-hub" / "openwebui-helm-release.yaml"
-BILL_CONFIG = Path.home() / ".hermes" / "config.yaml"
-BILL_RELOAD_SCRIPT = Path.home() / ".hermes" / "profiles" / "andrzej" / "cache" / "scratch" / "bill-reload.sh"
+
+CACHE_DIR = Path.home() / ".cache" / "weekly-model-sync"
+BACKUP_DIR = CACHE_DIR / "backups"
 
 # ---------------------------------------------------------------------------
 # Upstream sources
@@ -52,8 +51,6 @@ GO_BARE_ROUTES = {"deepseek-v4.1-flash", "qwen3.8-flash"}
 # Derived / purpose-built Go routes that are not generated from the upstream catalogue.
 GO_DERIVED_ROUTES = {"hindsight-consolidation-go"}
 
-# Ollama Cloud upstream ids that are known to be *chat* models we want to expose.
-# Anything with a ":" gets the colon replaced by a dash before adding the -ollama suffix.
 
 def map_ollama_name(upstream_id: str) -> str:
     return upstream_id.replace(":", "-") + "-ollama"
@@ -64,8 +61,6 @@ def map_go_name(upstream_id: str) -> set[str]:
     names = set()
     suffixed = upstream_id + "-go"
     names.add(suffixed)
-    # Some ids need a bare alias as well because OpenChamber's native provider
-    # resolves model ids from its own catalogue and rejects the -go suffix.
     if upstream_id in GO_BARE_ROUTES:
         names.add(upstream_id)
     return names
@@ -77,6 +72,14 @@ def is_ollama_model(name: str) -> bool:
 
 def is_go_model(name: str) -> bool:
     return name.endswith("-go") or name in GO_BARE_ROUTES or name in GO_DERIVED_ROUTES
+
+
+def model_category(name: str) -> str:
+    if is_ollama_model(name):
+        return "ollama"
+    if is_go_model(name):
+        return "go"
+    return "other"
 
 
 # ---------------------------------------------------------------------------
@@ -110,9 +113,10 @@ yaml = YAML()
 yaml.preserve_quotes = True
 
 
-def load_yaml(path: Path, backup: bool = True) -> tuple[dict, Path | None]:
+def load_yaml(path: Path, *, backup: bool = True) -> tuple[dict, Path | None]:
     if backup:
-        bkp = path.with_suffix(path.suffix + f".bak-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}")
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        bkp = BACKUP_DIR / f"{path.name}.bak-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
         shutil.copy2(path, bkp)
     else:
         bkp = None
@@ -165,6 +169,106 @@ def desired_model_names(ollama_ids: set[str], go_ids: set[str]) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# Key-provisioner ConfigMap editing (preserves Python comments inside DESIRED_MODELS)
+# ---------------------------------------------------------------------------
+_BLOCK_RE = re.compile(r"(DESIRED_MODELS\s*=\s*\[)(.*?)(\n\s*\])", re.DOTALL)
+_MODEL_LINE_RE = re.compile(r'^(\s*)"((?:openai/)?[^"]+)"(\s*,?)(\s*(?:#.*)?)$')
+
+
+def _parse_desired_models_block(text: str) -> tuple[str, str, str, list[dict]]:
+    """Return (before, opening, closing, entries) for the DESIRED_MODELS block."""
+    m = _BLOCK_RE.search(text)
+    if not m:
+        raise RuntimeError("Could not locate DESIRED_MODELS block in provision.py")
+    before = text[: m.start()]
+    opening = m.group(1)
+    closing = m.group(3)
+    block = m.group(2)
+
+    entries: list[dict] = []
+    for raw_line in block.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            entries.append({"kind": "other", "line": raw_line})
+            continue
+        mo = _MODEL_LINE_RE.match(line)
+        if not mo:
+            entries.append({"kind": "other", "line": raw_line})
+            continue
+        model_name = mo.group(2)
+        entries.append({"kind": "model", "model": model_name, "line": raw_line, "indent": mo.group(1)})
+    return before, opening, closing, entries
+
+
+def current_provisioner_models(path: Path) -> set[str]:
+    """Read the current DESIRED_MODELS set from the provisioner ConfigMap."""
+    text = path.read_text(encoding="utf-8")
+    _, _, _, entries = _parse_desired_models_block(text)
+    return {e["model"] for e in entries if e["kind"] == "model"}
+
+
+def update_key_provisioner(text: str, desired: set[str]) -> str:
+    """Rewrite the DESIRED_MODELS block while keeping all existing comments and ordering."""
+    m = _BLOCK_RE.search(text)
+    if not m:
+        raise RuntimeError("Could not locate DESIRED_MODELS block in provision.py")
+    before = text[: m.start()]
+    opening = m.group(1)
+    closing = m.group(3)
+    after = text[m.end() :]
+    block = m.group(2).lstrip("\n")
+
+    entries: list[dict] = []
+    for raw_line in block.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            entries.append({"kind": "other", "line": raw_line})
+            continue
+        mo = _MODEL_LINE_RE.match(line)
+        if not mo:
+            entries.append({"kind": "other", "line": raw_line})
+            continue
+        entries.append(
+            {
+                "kind": "model",
+                "model": mo.group(2),
+                "line": raw_line,
+                "indent": mo.group(1),
+            }
+        )
+
+    existing = {e["model"] for e in entries if e["kind"] == "model"}
+    to_add = desired - existing
+    to_remove = existing - desired
+
+    kept = [e for e in entries if not (e["kind"] == "model" and e["model"] in to_remove)]
+
+    for cat in ("other", "ollama", "go"):
+        adds = sorted(m for m in to_add if model_category(m) == cat)
+        if not adds:
+            continue
+        last_idx = -1
+        default_indent = "        "
+        for i, e in enumerate(kept):
+            if e["kind"] == "model":
+                default_indent = e.get("indent") or default_indent
+                if model_category(e["model"]) == cat:
+                    last_idx = i
+        insert_idx = len(kept) if last_idx == -1 else last_idx + 1
+        for m in adds:
+            kept.insert(
+                insert_idx,
+                {"kind": "model", "model": m, "line": f'{default_indent}"{m}",'},
+            )
+            insert_idx += 1
+
+    new_block = "\n".join(e["line"] for e in kept)
+    return before + opening + "\n" + new_block + closing + after
+
+
+# ---------------------------------------------------------------------------
 # Consumer reference scanning (no brain-death)
 # ---------------------------------------------------------------------------
 def scan_hermes_profiles() -> set[str]:
@@ -174,13 +278,6 @@ def scan_hermes_profiles() -> set[str]:
     profiles_dir = Path.home() / ".hermes" / "profiles"
     if profiles_dir.exists():
         paths.extend(p / "config.yaml" for p in profiles_dir.iterdir() if p.is_dir())
-
-    model_key_paths = [
-        ("model", "default"),
-        ("fallback_providers", None),  # list of dicts
-        ("auxiliary", None),           # recursive scan
-        ("custom_providers", None),     # list of dicts
-    ]
 
     for path in paths:
         if not path.exists():
@@ -196,8 +293,6 @@ def scan_hermes_profiles() -> set[str]:
 
 def _collect_model_strings(obj, protected: set[str]) -> None:
     if isinstance(obj, str):
-        # Any string that looks like a model name we manage ends up protected.
-        # Heuristic: contains a dash and a digit/family name; too broad but safe.
         protected.add(obj)
     elif isinstance(obj, dict):
         for v in obj.values():
@@ -345,16 +440,11 @@ def probe_model(model_name: str, upstream_id: str, provider: str, key: str) -> d
 # ---------------------------------------------------------------------------
 def build_model_entry(model_name: str) -> dict:
     if is_ollama_model(model_name):
-        # Reverse-engineer upstream id from model_name: strip -ollama, replace last dash back to colon if needed.
         upstream = model_name.removesuffix("-ollama")
-        # For ids like deepseek-v4.1-flash:1017, the colon was replaced with dash.
-        # We do not know which dashes were colons; we try common tag patterns.
         candidates = [
             upstream,
             upstream.rsplit("-", 1)[0] + ":" + upstream.rsplit("-", 1)[1] if "-" in upstream else upstream,
         ]
-        # Prefer the candidate that exists in Ollama catalogue; fallback to the first.
-        # (We keep a reference to the catalogue in the caller.)
         return {
             "model_name": model_name,
             "litellm_params": {
@@ -364,7 +454,6 @@ def build_model_entry(model_name: str) -> dict:
             },
         }
     if is_go_model(model_name):
-        # For -go suffixed names, the upstream id is model_name without -go.
         upstream = model_name.removesuffix("-go") if model_name.endswith("-go") else model_name
         return {
             "model_name": model_name,
@@ -381,12 +470,10 @@ def fix_ollama_model_string(entry: dict, ollama_ids: set[str]) -> None:
     """Ensure the openai/<id> string matches the real upstream id (including colons)."""
     model_name = entry["model_name"]
     upstream = model_name.removesuffix("-ollama")
-    # Try exact upstream first, then with colon reconstruction
     candidates = [upstream]
     if "-" in upstream:
         base, tag = upstream.rsplit("-", 1)
         candidates.append(f"{base}:{tag}")
-    # Also try second-to-last dash if the tag itself contains dashes
     parts = upstream.split("-")
     if len(parts) >= 3:
         candidates.append(f"{'-'.join(parts[:-1])}:{parts[-1]}")
@@ -403,18 +490,15 @@ def fix_ollama_model_string(entry: dict, ollama_ids: set[str]) -> None:
 def update_litellm_model_list(data, ollama_ids: set[str], go_ids: set[str], add: set[str], remove: set[str]) -> None:
     model_list = data["spec"]["values"]["proxy_config"]["model_list"]
 
-    # Remove stale entries
     if remove:
         model_list[:] = [entry for entry in model_list if entry["model_name"] not in remove]
 
-    # Add new entries in the right section
     new_ollama = sorted(n for n in add if is_ollama_model(n))
     new_go = sorted(n for n in add if is_go_model(n))
 
     for name in new_ollama:
         entry = build_model_entry(name)
         fix_ollama_model_string(entry, ollama_ids)
-        # Insert before the first Go section comment / first non-ollama entry.
         insert_idx = len(model_list)
         for i, e in enumerate(model_list):
             if not is_ollama_model(e["model_name"]):
@@ -424,45 +508,17 @@ def update_litellm_model_list(data, ollama_ids: set[str], go_ids: set[str], add:
 
     for name in new_go:
         entry = build_model_entry(name)
-        # Insert after the last Go entry.
         insert_idx = len(model_list)
         for i, e in enumerate(model_list):
             if not (is_ollama_model(e["model_name"]) or is_go_model(e["model_name"])):
                 insert_idx = i
                 break
-        # If there are new ollama entries already inserted, the boundary is later.
         model_list.insert(insert_idx, entry)
-
-
-def update_key_provisioner(cm_data, desired: set[str]) -> None:
-    """Rewrite DESIRED_MODELS in the embedded provision.py to match the desired model names."""
-    provision_py = cm_data["data"]["provision.py"]
-
-    # Expand with openai/ variants to keep the provisioner behaviour identical.
-    expanded: set[str] = set()
-    for m in sorted(desired):
-        expanded.add(m)
-        if not m.startswith("openai/"):
-            expanded.add(f"openai/{m}")
-
-    models_lines = [f'        "{m}",' for m in sorted(expanded)]
-    new_block = "DESIRED_MODELS = [\n" + "\n".join(models_lines) + "\n    ]"
-
-    replaced, count = re.subn(
-        r"DESIRED_MODELS\s*=\s*\[.*?\]",
-        new_block,
-        provision_py,
-        flags=re.DOTALL,
-        count=1,
-    )
-    if count != 1:
-        raise RuntimeError("Could not locate DESIRED_MODELS block in provision.py")
-    cm_data["data"]["provision.py"] = replaced
 
 
 def update_openwebui_pins(data, newly_added: set[str]) -> set[str]:
     """Auto-pin newly added models whose names contain 'flash'. Returns the new pinned set."""
-    env_vars = data["spec"]["values"]["extraEnvVars"]
+    env_vars = data["spec"]["values"].get("extraEnvVars", [])
     pinned_var = None
     for ev in env_vars:
         if ev.get("name") == "DEFAULT_PINNED_MODELS":
@@ -524,74 +580,6 @@ def proxy_advertises(model_name: str, master_key: str) -> bool:
     return model_name in ids
 
 
-def key_can_access(key: str, model_name: str) -> bool:
-    req = urllib.request.Request(
-        f"{PROXY_URL}/key/info",
-        headers={"Authorization": f"Bearer {key}", "User-Agent": "homelab-weekly-model-sync/1.0"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        print(f"  /key/info failed: HTTP {e.code}", file=sys.stderr)
-        return False
-    models = data.get("info", {}).get("models", [])
-    return model_name in models or f"openai/{model_name}" in models
-
-
-def get_bill_cipher_key() -> str:
-    cmd = [
-        "ssh", "homelab-2nd",
-        "sudo", "kubectl", "-n", "llm-hub", "get", "secret", "litellm-user-keys",
-        "-o", "jsonpath={.data.hermes-bill-cipher-key}", "|", "base64", "-d",
-    ]
-    return run(cmd, capture=True).strip()
-
-
-# ---------------------------------------------------------------------------
-# Bill Cipher brain swap
-# ---------------------------------------------------------------------------
-def bill_cipher_default_model() -> str:
-    if not BILL_CONFIG.exists():
-        return ""
-    with open(BILL_CONFIG, "r", encoding="utf-8") as f:
-        cfg = yaml.load(f)
-    return cfg.get("model", {}).get("default", "")
-
-
-def set_bill_cipher_default(model_name: str, dry_run: bool) -> None:
-    if dry_run:
-        print(f"[DRY-RUN] Would set Bill Cipher default model to {model_name}")
-        return
-    data, backup = load_yaml(BILL_CONFIG)
-    current = data.get("model", {}).get("default", "")
-    if current == model_name:
-        print(f"Bill Cipher default already {model_name}; no change.")
-        return
-    if "model" not in data:
-        data["model"] = {}
-    data["model"]["default"] = model_name
-    save_yaml(data, BILL_CONFIG)
-    print(f"Updated Bill Cipher default model to {model_name} (backup: {backup})")
-
-
-def restart_default_gateway(dry_run: bool) -> None:
-    """Restart the default Hermes gateway from outside its own process (osascript escape)."""
-    if dry_run:
-        print("[DRY-RUN] Would restart default Hermes gateway via osascript+nohup")
-        return
-    BILL_RELOAD_SCRIPT.parent.mkdir(parents=True, exist_ok=True)
-    script = f"""#!/usr/bin/env bash
-set -euo pipefail
-nohup hermes -p default gateway restart > /tmp/bill-reload.log 2>&1 &
-echo "Gateway restart dispatched at $(date -Iseconds)"
-"""
-    BILL_RELOAD_SCRIPT.write_text(script, encoding="utf-8")
-    BILL_RELOAD_SCRIPT.chmod(0o755)
-    run(["osascript", "-e", f'do shell script "nohup bash {BILL_RELOAD_SCRIPT} > /tmp/bill-reload-osascript.log 2>&1 &"'], check=True)
-    print("Default gateway restart dispatched via osascript+nohup.")
-
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -599,7 +587,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Weekly LLM model-list sync")
     parser.add_argument("--dry-run", action="store_true", help="Show diff but do not commit or mutate cluster")
     parser.add_argument("--allow-removals", action="store_true", help="Allow removal of unreferenced stale models")
-    parser.add_argument("--skip-bill-cipher", action="store_true", help="Skip the Bill Cipher model swap")
     args = parser.parse_args()
 
     print(f"=== Weekly LLM model-list sync — {'DRY-RUN' if args.dry_run else 'LIVE'} ===")
@@ -623,30 +610,38 @@ def main() -> int:
     # Load current configs
     # ------------------------------------------------------------------
     litellm_data, _ = load_yaml(LITELLM_RELEASE, backup=not args.dry_run)
-    provisioner_data, _ = load_yaml(PROVISIONER_CM, backup=not args.dry_run)
     openwebui_data, _ = load_yaml(OPENWEBUI_RELEASE, backup=not args.dry_run)
 
     current = set(current_model_list(litellm_data))
-    desired = desired_model_names(ollama_ids, go_ids)
+    upstream_desired = desired_model_names(ollama_ids, go_ids)
 
-    # Preserve non-Ollama/non-Go routes (z.ai, OpenRouter, Gemini, LM Studio, etc.)
-    desired.update({m for m in current if not (is_ollama_model(m) or is_go_model(m))})
+    # Preserve non-Ollama/non-Go routes in the LiteLLM model list (z.ai, OpenRouter, Gemini, etc.)
+    litellm_desired = upstream_desired | {m for m in current if not (is_ollama_model(m) or is_go_model(m))}
 
-    additions = desired - current
-    removals = current - desired
+    # Preserve manual routes in the key-provisioner whitelist (openai/ variants, etc.)
+    provisioner_current = current_provisioner_models(PROVISIONER_CM)
+    manual_provisioner = provisioner_current - upstream_desired
+    provisioner_desired = upstream_desired | manual_provisioner
+
+    litellm_additions = litellm_desired - current
+    litellm_removals = current - litellm_desired
+    provisioner_additions = provisioner_desired - provisioner_current
+    provisioner_removals = provisioner_current - provisioner_desired
 
     print(f"\nCurrent models in proxy: {len(current)}")
-    print(f"Desired models:          {len(desired)}")
-    print(f"Additions:               {len(additions)}")
-    print(f"Removals:                {len(removals)}")
-    if additions:
-        for m in sorted(additions):
+    print(f"Desired models:          {len(litellm_desired)}")
+    print(f"LiteLLM additions:       {len(litellm_additions)}")
+    print(f"LiteLLM removals:        {len(litellm_removals)}")
+    print(f"Key provisioner additions: {len(provisioner_additions)}")
+    print(f"Key provisioner removals:  {len(provisioner_removals)}")
+    if litellm_additions:
+        for m in sorted(litellm_additions):
             print(f"  + {m}")
-    if removals:
-        for m in sorted(removals):
+    if litellm_removals:
+        for m in sorted(litellm_removals):
             print(f"  - {m}")
 
-    if args.dry_run and not additions and not removals:
+    if args.dry_run and not litellm_additions and not litellm_removals and not provisioner_additions and not provisioner_removals:
         print("\nNo changes. Exiting dry-run.")
         return 0
 
@@ -659,9 +654,9 @@ def main() -> int:
     verified_additions: set[str] = set()
     failed_additions: dict[str, str] = {}
 
-    if additions:
-        print("\n-- Probing additions (upstream directly) --")
-        for m in sorted(additions):
+    if litellm_additions:
+        print("\n-- Probing LiteLLM additions (upstream directly) --")
+        for m in sorted(litellm_additions):
             probe_info = upstream_id_for_model(m, ollama_ids, go_ids)
             if not probe_info:
                 print(f"  Skipping {m}: cannot determine upstream id")
@@ -680,10 +675,6 @@ def main() -> int:
     else:
         verified_additions = set()
 
-    if not verified_additions and not removals:
-        print("\nNo verified additions and no removals; nothing to do.")
-        return 0
-
     # ------------------------------------------------------------------
     # Brain-death safety: check consumer references before removals
     # ------------------------------------------------------------------
@@ -694,7 +685,7 @@ def main() -> int:
     safe_removals: set[str] = set()
     blocked_removals: dict[str, set[str]] = {}
     if args.allow_removals:
-        for m in removals:
+        for m in litellm_removals:
             if m in protected:
                 blocked_removals[m] = {"referenced by consumer config"}
             else:
@@ -707,16 +698,18 @@ def main() -> int:
         print("Removals disabled (use --allow-removals to enable). Stale models kept in config.")
         safe_removals = set()
 
+    if not verified_additions and not safe_removals:
+        print("\nNo changes.")
+        return 0
+
     if args.dry_run:
         print("\n-- DRY-RUN diff summary --")
         print(f"Would add:    {sorted(verified_additions)}")
         print(f"Would remove: {sorted(safe_removals)}")
         print(f"Would skip (failed probe): {sorted(failed_additions)}")
         print(f"Would skip (protected):    {sorted(blocked_removals)}")
-        return 0
-
-    if not verified_additions and not safe_removals:
-        print("\nNo verified additions or safe removals; nothing to commit.")
+        if not verified_additions and not safe_removals:
+            print("No changes.")
         return 0
 
     # ------------------------------------------------------------------
@@ -724,14 +717,18 @@ def main() -> int:
     # ------------------------------------------------------------------
     print("\n-- Updating configs --")
     update_litellm_model_list(litellm_data, ollama_ids, go_ids, verified_additions, safe_removals)
-    update_key_provisioner(provisioner_data, desired - safe_removals)
     newly_pinned = update_openwebui_pins(openwebui_data, verified_additions)
     if newly_pinned:
         print(f"Auto-pinned in Open WebUI: {', '.join(sorted(newly_pinned))}")
 
+    # Key provisioner is edited as text so the embedded Python comments survive.
+    provisioner_text = PROVISIONER_CM.read_text(encoding="utf-8")
+    new_provisioner_desired = (provisioner_desired - safe_removals) | verified_additions
+    new_provisioner_text = update_key_provisioner(provisioner_text, new_provisioner_desired)
+
     save_yaml(litellm_data, LITELLM_RELEASE)
-    save_yaml(provisioner_data, PROVISIONER_CM)
     save_yaml(openwebui_data, OPENWEBUI_RELEASE)
+    PROVISIONER_CM.write_text(new_provisioner_text, encoding="utf-8")
 
     # ------------------------------------------------------------------
     # Commit and push
@@ -776,52 +773,12 @@ Blocked removals (still referenced):
     # ------------------------------------------------------------------
     # Verify
     # ------------------------------------------------------------------
-    print("\n-- Verifying proxy and keys --")
+    print("\n-- Verifying proxy --")
     for m in sorted(verified_additions):
         if proxy_advertises(m, master_key):
             print(f"  {m}: advertised ✓")
         else:
             print(f"  {m}: NOT advertised ✗", file=sys.stderr)
-
-    bill_key = get_bill_cipher_key()
-    target = "minimax-m3.1-flash-ollama"
-    if target in verified_additions or target in current:
-        if key_can_access(bill_key, target):
-            print(f"  Bill Cipher key can access {target} ✓")
-        else:
-            print(f"  Bill Cipher key CANNOT access {target} ✗", file=sys.stderr)
-            return 1
-
-    # ------------------------------------------------------------------
-    # Bill Cipher brain swap (first run only, idempotent)
-    # ------------------------------------------------------------------
-    if not args.skip_bill_cipher:
-        print("\n-- Bill Cipher brain swap --")
-        current_bill = bill_cipher_default_model()
-        print(f"Current Bill Cipher default: {current_bill}")
-        if current_bill != target:
-            if target in verified_additions or target in current:
-                # Final live test through Bill Cipher's own key
-                bill_upstream = upstream_id_for_model(target, ollama_ids, go_ids)
-                if not bill_upstream:
-                    print(f"Cannot determine upstream id for {target}; skipping probe.", file=sys.stderr)
-                    return 1
-                bill_upstream_id, bill_provider = bill_upstream
-                bill_key_for_probe = provider_keys.get("OLLAMA_API_KEY" if bill_provider == "ollama" else "OPENCODE_GO_SUBSCRIPTION_API_KEY", "")
-                result = probe_model(target, bill_upstream_id, bill_provider, bill_key_for_probe)
-                if result["ok"]:
-                    print(f"Bill Cipher probe {target} OK: {result['content'][:60]!r}")
-                    set_bill_cipher_default(target, dry_run=False)
-                    restart_default_gateway(dry_run=False)
-                else:
-                    print(f"Bill Cipher probe {target} failed: {result['error']}", file=sys.stderr)
-                    print("Skipping brain swap; fix the route and retry.", file=sys.stderr)
-                    return 1
-            else:
-                print(f"Target model {target} not available; skipping brain swap.", file=sys.stderr)
-                return 1
-        else:
-            print(f"Bill Cipher default already {target}; no swap needed.")
 
     print("\n=== Sync complete ===")
     return 0
