@@ -1,7 +1,7 @@
 ---
 name: paperclip-chat-intake
 description: "Wojtek asks you for work in Mattermost or another chat: triage it, then record it in Paperclip (GUL) or hand it off as a Paperclip task."
-version: 1.1.0
+version: 1.2.0
 author: Claude Code (GUL-48)
 license: MIT
 metadata:
@@ -16,12 +16,17 @@ Paperclip (`https://paperclip.voitech.dev`, company "Gulasz101 Homelab", prefix 
 record of everything Wojtek asks the agents for. He often asks in Mattermost because it is
 easier on his phone. You work with him in the chat, and Paperclip keeps the trace.
 
-Two Paperclip rules shape the flow:
+Three Paperclip rules shape the flow:
 
-- Outside a Paperclip run you can **create** and **read** issues only. Every agent comment or
-  update needs the `X-Paperclip-Run-Id` of a real run, or Paperclip answers 403 with
-  `details.code: cross_issue_influence_run_context_required`. Run ids come only from a
-  Paperclip wake prompt.
+- In a chat you **create** and **read** issues; nothing more. Every agent comment or update
+  needs `X-Paperclip-Run-Id`, or Paperclip answers 403 with
+  `details.code: cross_issue_influence_run_context_required`. That header carries only the
+  `Run ID` of the Paperclip run you are in right now, from this session's wake prompt; a chat
+  session has none. A run id from your history belongs to that run's issue: using it for a
+  chat write falsifies the audit trail.
+- A record is **final** once created. Write the whole description before the POST. It never
+  mentions its own GUL number: the issue page shows it, and the `Recorded as GUL-<n>` line
+  belongs in the chat.
 - An issue you create with an assignee queues a Paperclip run for that agent, except in
   `backlog`. For `done` and `cancelled`, Paperclip cancels the queued run before it starts,
   so creating a record costs nothing.
@@ -72,7 +77,9 @@ Origin: <Mattermost or the chat app>, <channel>, <YYYY-MM-DD>. Handled in chat b
 ```
 
 A follow-up in the same thread after its record exists gets a new record whose description
-starts with `Follow-up to GUL-<n>`.
+starts with `Follow-up to GUL-<n>`. A record with a mistake gets a new record whose description
+starts with `Correction to GUL-<n>`, and the original stays as it is: deleting issues is
+Wojtek's call.
 
 Done when the API answer carries an `identifier` and you posted
 `Recorded as GUL-<n>: https://paperclip.voitech.dev/GUL/issues/GUL-<n>` in the chat.
