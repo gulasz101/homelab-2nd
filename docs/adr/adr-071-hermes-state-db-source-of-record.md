@@ -1,10 +1,10 @@
 # ADR-071: Hermes `state.db` is the agent-memory source of record; nightly backup to OMV MinIO
 
 **Date:** 2026-10-19
-**Status:** Accepted
+**Status:** Accepted (amended by ADR-080: the watchdog reads the backup job's exit status, not just its log)
 **Deciders:** Wojtek Gula; implemented by Andrzej (Hermes agent)
 **Project:** hermes / agent memory (epic H2-232)
-**Related:** H2-306 (findings), H2-308 (this work), ADR-052/053/054 (Hindsight), ADR-030 (nightly config backups)
+**Related:** H2-306 (findings), H2-308 (this work), ADR-052/053/054 (Hindsight), ADR-030 (nightly config backups), ADR-080 (the watchdog also watches the backup job)
 
 ## Context
 
@@ -50,7 +50,10 @@ SQLite databases in WAL mode — a file copy is not a valid snapshot.
    profiles succeeding, or when a Hindsight operation has been stuck in `processing` for more than
    3 h (read-only over `ssh homelab-2nd` → `sudo k3s kubectl -n hindsight exec hindsight-db-1 -c
    postgres -- psql`; a tripwire that cannot read alerts instead of staying silent). At most one
-   alert per condition per 24 h.
+   alert per condition per 24 h. **Amended by ADR-080:** the backup conditions also cover the
+   backup *job* — a non-zero `launchctl` exit code, a run that started and never finished, a
+   schedule that did not fire — because the log's contents alone cannot distinguish a fresh
+   success from a stale one.
 
 ## Consequences
 
