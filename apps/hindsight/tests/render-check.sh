@@ -445,6 +445,14 @@ for pair in "embedding:$EMB:8091" "reranker:$RER:8090"; do
     && ok "TEI $comp is reachable through its Service on port $port" \
     || bad "TEI $comp is not on port $port"
 done
+# GUL-93: the reranker's slot pool must match the API's TEI concurrency
+# (MAX_CONCURRENT 8 x BATCH_SIZE 128 = 1024 slots), not TEI's default 512, or a
+# full pool rejects work the reranker has capacity to do (the docs' "Sizing a
+# TEI reranker" warning). Asserted on the reranker deployment specifically.
+has "$RER" '"--max-concurrent-requests"' && has "$RER" '"1024"' \
+  && ok "the reranker runs --max-concurrent-requests 1024 (>= 8x128, not TEI's default 512)" \
+  || bad "the reranker does not set --max-concurrent-requests 1024:"
+grep -n -- 'max-concurrent-requests\|--auto-truncate' "$RER" | sed 's/^/        /'
 has "$API" 'name: HINDSIGHT_API_EMBEDDINGS_PROVIDER' && has "$API" 'value: "tei"' \
   && ok "HINDSIGHT_API_EMBEDDINGS_PROVIDER is tei" \
   || bad "HINDSIGHT_API_EMBEDDINGS_PROVIDER is not tei"
@@ -468,14 +476,16 @@ has "$API" 'HINDSIGHT_API_EMBEDDINGS_TEI_URL' && has "$API" 'HINDSIGHT_API_RERAN
 for kv in \
   'HINDSIGHT_API_LLM_PROVIDER: openai' \
   'HINDSIGHT_API_LLM_MODEL: gpt-oss-120b-hindsight' \
-  'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: gpt-oss-120b-openrouter' \
+  'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: hindsight-consolidation-go' \
   'HINDSIGHT_API_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
   'HINDSIGHT_API_TENANT_EXTENSION: hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension' \
   'HINDSIGHT_API_DB_STATEMENT_TIMEOUT: 60' \
   'HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT: 50' \
   'HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM: 6' \
   'HINDSIGHT_API_DB_POOL_MAX_SIZE: 30' \
-  'HINDSIGHT_API_WORKER_ID: hindsight-api'
+  'HINDSIGHT_API_WORKER_ID: hindsight-api' \
+  'HINDSIGHT_API_RERANKER_MAX_CANDIDATES_LOW: 100' \
+  'HINDSIGHT_API_RERANKER_MAX_CANDIDATES_MID: 100'
 do
   key=${kv%%: *}; want=${kv#*: }
   got=$(env_value "$API" "$key")
