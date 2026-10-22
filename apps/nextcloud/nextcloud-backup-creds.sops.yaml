@@ -5,20 +5,20 @@ metadata:
     namespace: nextcloud
 type: Opaque
 stringData:
-    ACCESS_KEY_ID: ENC[AES256_GCM,data:Gt+7waVA/NByGIWQWhREn35+Oeg=,iv:mU4C5sdMGZTNWcqQXtj7rK+e/U3ZvGABTWN9h2lebVk=,tag:KcHYyTa2KVRdeSDclB0nKQ==,type:str]
-    SECRET_ACCESS_KEY: ENC[AES256_GCM,data:wv/YpXemd/Wr2v/+H8ioVMowckaTpRPzuu/2QxaxcwQq4nZrVU+p+Q==,iv:TjMbyAVcivd6If/1agckmMYxt4Tp1TKVVtyw7GCOYCg=,tag:Fz2A7LHohb3uiDOdRv2wuA==,type:str]
+    ACCESS_KEY_ID: ENC[AES256_GCM,data:nV2Hu2bcfilnhVB7ZE5iA+M=,iv:istvg+uEPC89SXL46LGTbzkdUt0Dvsaxwrp+sNQb7O0=,tag:J3WRdU5KNNz1fUIzWsQJwA==,type:str]
+    SECRET_ACCESS_KEY: ENC[AES256_GCM,data:PJSVqGc64wLOtkq102BnO3b7ZJFoiDCdJHzERgpGK7f/irPZoERmpA==,iv:mcrAt1EKP7/VlYzN7NYBOSinr+5PLapPyiPuGxbBsX0=,tag:1IAbuAxs0n5/XlEMZ72ZlA==,type:str]
 sops:
     age:
         - enc: |
             -----BEGIN AGE ENCRYPTED FILE-----
-            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA4VENOUVVVYmcyTk8xRmRF
-            UzlWZVBxcThSYUVUM2U4ZG44aTJtOHFua1hFCkwveFJubjY5cU43T1VZdWE0U3BW
-            eVkxTFFOTlFQRmdiL1pvVE1KWUc4cHcKLS0tIHp2SjNJT3lNa0FUSCtrZDkxQ3lK
-            TTE3VmFESWFvcElNQThwQURBSGZ6ZEUKBhMgC0l/jGuFSq5VOmqv71uJDkWqVuS/
-            BG7KES+xMtv7bKPBpyN4VLT9B3UI8b7PbQ5+zRdEFkupJvzLj4ub8w==
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBWa0hMSk0wcDRlUnNZVUxu
+            SVlCU1VLYkFMMjFGbE1zSDIvUkx1Tm9rMHdrClAxczMvcDZwd2JXS0RyTEtRbC9n
+            NmNXTXM5N2ZQSEZFYWFMRlJZUGRST0UKLS0tIHVwM2oweW15NWlrV3pVQnltNElk
+            aDRDVWRsaDI4eU5wSXgxT1NOQUVIZGMKbcV+GxUONmrfyzwoYJ0PAiCiG1mZy8iT
+            zSDzaDHcuSsLdhetiL8UEXkXHepUjh/pnGXeifdqOkGR1M1tV3UADQ==
             -----END AGE ENCRYPTED FILE-----
           recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-08-31T09:33:41Z"
-    mac: ENC[AES256_GCM,data:4f3z5/M/DPBhedrYo5bQ7aLuMqOeWHSlgKauERMWrRZDtEPWNKGdYsae6oxapyUfRAuVvikc8A6Q6tk//hFsBzueAEFzANVNdVfC/P3GpD8RrESuwkbABWHxzFS3qw0peHAYER6l1xxr2jH7Xh9Rnrl2FFuRRWsqR20WxItBXfE=,iv:L/G5FeCfyyNkITiIaDd/lLzHy8GsMooIkj7nxOPcvHI=,tag:rDnDnv4J8CbqxPiyP4jwXA==,type:str]
-    version: 3.13.1
+    lastmodified: "2026-10-22T04:06:48Z"
+    mac: ENC[AES256_GCM,data:JMQzfM4MfP7x9oHG+InbnmXFwnUZ+A8aVmzCcJXz/gfbn5JrWWYIlLl6bbR2Nxp2eRLuAOp9LvMziesXL7+s+wWjpLMiZTmfvdH7LknnFI4wSDXiJ3cnMfyuOZ6O2F2NLJMxUf9cH3zV/cgXeyUwTRGr0CvL1N3p27Qkscz3EBM=,iv:gM3xFC8Kt2v/3aN/qJt2iLcAqepJthJU2Hb+6zlDlHo=,tag:mwYsWe83GFC4dFIUrUCx0A==,type:str]
+    version: 3.13.3
