@@ -707,6 +707,26 @@ spec:
           model: openai/minimax-m3.1-flash-free
           api_base: "https://opencode.ai/zen/go/v1"
           api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+          # GUL-97 (2026-10-22): give up on MiniMax BEFORE Hindsight gives up on
+          # LiteLLM, so the deepseek-v4.1-flash-go fallback below actually runs.
+          # Without a timeout LiteLLM used its default request_timeout of 6000 s
+          # (constants.DEFAULT_REQUEST_TIMEOUT_SECONDS, verified in the running
+          # v1.85.7 pod), while Hindsight cancelled the call at 120 s - so the
+          # fallback chain was NEVER reached: zero deepseek/gpt-oss fallbacks in
+          # 2 h of logs, and every slow consolidation batch was cancelled and
+          # retried from scratch until `after 4 attempts`.
+          # Live request-latency histogram for this route: 35% of calls take
+          # >120 s (p65 = 120 s), and the tail runs to 600 s+. DeepSeek on the
+          # Go plan answers 94% in under 60 s, so hopping at 60 s is both faster
+          # and keeps the OpenRouter model (paid) as the untouched last resort.
+          # num_retries MUST be 0: retries happen inside the model group BEFORE
+          # fallbacks and default to 2, so a timeout alone would burn
+          # 3 x 60 s = 180 s and outlive the caller again.
+          # Invariant: this timeout must stay below
+          # HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT in apps/hindsight (150 s;
+          # asserted by apps/hindsight/tests/render-check.sh).
+          timeout: 60
+          num_retries: 0
       - model_name: omen-alpha-go
         litellm_params:
           model: openai/omen-alpha

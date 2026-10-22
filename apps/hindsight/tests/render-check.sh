@@ -477,6 +477,7 @@ for kv in \
   'HINDSIGHT_API_LLM_PROVIDER: openai' \
   'HINDSIGHT_API_LLM_MODEL: gpt-oss-120b-hindsight' \
   'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: hindsight-consolidation-go' \
+  'HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT: 150' \
   'HINDSIGHT_API_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
   'HINDSIGHT_API_TENANT_EXTENSION: hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension' \
   'HINDSIGHT_API_DB_STATEMENT_TIMEOUT: 60' \
@@ -495,6 +496,55 @@ do
     bad "$key is '${got:-unset}', expected $want"
   fi
 done
+
+# 5h-bis. GUL-97: the consolidation timeout contract across the two apps.
+# Hindsight calls LiteLLM, and LiteLLM only falls back to DeepSeek if IT gives up
+# first. The failure this guards against is silent: with no `timeout` in the
+# LiteLLM route, LiteLLM waits its default 6000 s while Hindsight cancels at its
+# own budget - the fallback never fires, the error looks like a Hindsight
+# TimeoutError, and the consolidation backlog stalls. So the ordering of the two
+# numbers is asserted here, next to the value that must not drift below it.
+# Both numbers are read from the manifests (never hardcoded), and the read is
+# guarded against a vacuous pass: an extraction that finds nothing FAILS.
+LITELLM_RELEASE="$ROOT/apps/llm-hub/litellm-helm-release.yaml"
+# One scalar of the `hindsight-consolidation-go` model entry. The route block
+# ends at the next `- model_name:` at the same indentation, so a timeout added
+# to a neighbouring route can never be mistaken for this one.
+llm_route_field() {
+  awk -v key="$2" '
+    /^      - model_name: hindsight-consolidation-go[[:space:]]*$/ { inroute = 1; next }
+    inroute && /^      - model_name:/ { inroute = 0 }
+    inroute && $0 ~ "^          " key ":[[:space:]]*" {
+      v = $2; gsub(/"/, "", v); print v; exit
+    }
+  ' "$1"
+}
+if [ -f "$LITELLM_RELEASE" ]; then
+  ok "read the LiteLLM release ($(basename "$LITELLM_RELEASE")) for the consolidation route contract"
+  route_timeout=$(llm_route_field "$LITELLM_RELEASE" timeout)
+  route_retries=$(llm_route_field "$LITELLM_RELEASE" num_retries)
+  hs_timeout=$(env_value "$API" HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT)
+  case "${route_timeout:-x}${hs_timeout:-x}" in
+    *[!0-9]*)
+      bad "cannot compare the timeouts (LiteLLM route timeout='${route_timeout:-missing}', Hindsight consolidation timeout='${hs_timeout:-missing}') - an unreadable pair must fail, not pass" ;;
+    *)
+      if [ "$route_timeout" -lt "$hs_timeout" ]; then
+        ok "LiteLLM route hindsight-consolidation-go times out at ${route_timeout}s, below Hindsight's ${hs_timeout}s consolidation budget - the deepseek fallback runs while the caller is still waiting"
+      else
+        bad "LiteLLM route timeout ${route_timeout}s is NOT below Hindsight's ${hs_timeout}s consolidation budget - Hindsight would cancel the call before LiteLLM can fall back (GUL-97)"
+      fi ;;
+  esac
+  if [ "$route_retries" = "0" ]; then
+    ok "the consolidation route sets num_retries: 0 (retries happen before fallbacks; the default 2 would burn 3 x ${route_timeout:-?}s and outlive the caller)"
+  else
+    bad "the consolidation route has num_retries '${route_retries:-unset}', expected 0 - same-model retries run before fallbacks and would exhaust Hindsight's budget first (GUL-97)"
+  fi
+  grep -qF -- '- {"hindsight-consolidation-go": ["deepseek-v4.1-flash-go", "gpt-oss-120b-openrouter"]}' "$LITELLM_RELEASE" \
+    && ok "the consolidation fallback chain stays Go-plan DeepSeek first and paid OpenRouter gpt-oss last (cost boundary)" \
+    || bad "the consolidation fallback chain changed - expected [deepseek-v4.1-flash-go, gpt-oss-120b-openrouter] with OpenRouter LAST (GUL-97)"
+else
+  bad "$LITELLM_RELEASE is missing - cannot check the consolidation timeout contract"
+fi
 
 # The knobs that must stay ABSENT - absence is a behaviour here, so it is
 # asserted positively, in the api container and then over the whole render:
