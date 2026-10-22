@@ -109,7 +109,14 @@ spec:
         # tokens/call). Switch to the dedicated throughput-sorted route
         # (gpt-oss-120b-hindsight, :nitro) and pin reasoning_effort=low for both
         # retain and consolidation to cut latency and cost.
-        HINDSIGHT_API_LLM_MODEL: gpt-oss-120b-hindsight
+        # GUL-112 (2026-10-22): OpenRouter credits exhausted (GUL-114) killed every
+        # retain/reflect. Move the fact-extraction model onto the OpenCode Go
+        # subscription (flat-rate, no per-token OpenRouter spend): LiteLLM alias
+        # `beam-free-go` = openai/beam-free on opencode.ai/zen/go/v1. Verified
+        # answering "OK" through the memory-hindsight key. The key's model list was
+        # widened to include beam-free-go (LiteLLM /key/update). Consolidation stays
+        # on hindsight-consolidation-go (Go plan, unaffected).
+        HINDSIGHT_API_LLM_MODEL: beam-free-go
         # Consolidation runs on the OpenCode Go subscription (flat fee) instead of
         # paid OpenRouter credit: LiteLLM alias `hindsight-consolidation-go` =
         # free minimax-m3.1-flash, falling back to deepseek-v4.1-flash on Go and
