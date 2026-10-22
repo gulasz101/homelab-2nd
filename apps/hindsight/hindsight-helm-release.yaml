@@ -154,6 +154,25 @@ spec:
         # (5 days on 10-14..10-19). A fixed id lets each new pod reclaim them.
         # Safe only with ONE replica and the Recreate strategy (postRenderer below).
         HINDSIGHT_API_WORKER_ID: hindsight-api
+        # ------------------------------------------------------------------
+        # Reranker saturation (GUL-93 / GUL-88): cap the cross-encoder pool.
+        # ------------------------------------------------------------------
+        # The single TEI reranker (1 replica, 2 CPU, default 512 slots) is
+        # saturated by the internal worker's consolidation backlog. Every
+        # consolidation recall (budget=low) and every interactive recall
+        # (budget=mid) reranks up to 300 candidates, i.e. 3 x 128-text TEI
+        # batches. Six consolidation recalls in flight (CONSOLIDATION_LLM_
+        # PARALLELISM 6) queue behind each other, and interactive recalls
+        # exceed the 30 s TEI HTTP timeout ("TEI rerank request failed:
+        # Timeout on reading data from socket", ~125 s observed).
+        #
+        # MAX_CANDIDATES_LOW / _MID = 100 cut that to ONE batch per recall,
+        # both for the consolidation recalls that saturate the pool and for
+        # the interactive mid-budget recalls that were timing out. Default is
+        # 0, which falls back to MAX_CANDIDATES=300. HIGH stays at the default
+        # (comprehensive reasoning keeps the full pool).
+        HINDSIGHT_API_RERANKER_MAX_CANDIDATES_LOW: "100"
+        HINDSIGHT_API_RERANKER_MAX_CANDIDATES_MID: "100"
         # MCP auth ON: the tenant extension makes the API require the tenant key
         # that arrives via envFrom (HINDSIGHT_API_TENANT_API_KEY).
         HINDSIGHT_API_TENANT_EXTENSION: "hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension"
@@ -314,6 +333,16 @@ spec:
           - "--auto-truncate"
       reranker:
         enabled: true
+        # GUL-93: right-size the TEI slot pool. TEI reserves one slot per text
+        # in a rerank request and refuses work once its pool is full. The API
+        # defaults send up to MAX_CONCURRENT(8) x BATCH_SIZE(128) = 1024 texts,
+        # but TEI's own default is 512 slots - half that. The docs call this out
+        # explicitly: start with at least 1024 slots (--max-concurrent-requests).
+        # args REPLACES the chart's default [--auto-truncate], so it is repeated.
+        args:
+          - "--auto-truncate"
+          - "--max-concurrent-requests"
+          - "1024"
 
     # ------------------------------------------------------------------
     # Metrics: the API's /metrics endpoint into the homelab Prometheus
