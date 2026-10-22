@@ -3,3 +3,29 @@ kind: Kustomization
 resources:
 - gotk-components.yaml
 - gotk-sync.yaml
+# CPU requests for the Flux controllers, measured against 7 days of Prometheus
+# data (GUL-103). notification-controller peaked at 5m CPU over the week while
+# booking 100m, so give it a 25m request. The other controllers are left at
+# their bootstrap values: helm-controller (100m) peaked at 427m, and
+# kustomize/source-controller (100m/50m) peaked at 249m/217m - they are not
+# over-booked, so their requests stay put. Limits are untouched; this only
+# changes the scheduler booking. Patches on the bootstrap-generated manifests
+# are the documented Flux customisation path; gotk-components.yaml itself is
+# never edited by hand.
+patches:
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: notification-controller
+      spec:
+        template:
+          spec:
+            containers:
+              - name: manager
+                resources:
+                  requests:
+                    cpu: 25m
+    target:
+      kind: Deployment
+      name: notification-controller

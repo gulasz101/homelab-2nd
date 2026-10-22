@@ -80,7 +80,7 @@ spec:
     # Resource sizing for a single-node homelab
     resources:
       requests:
-        cpu: 50m
+        cpu: 20m
         memory: 128Mi
       limits:
         cpu: 500m

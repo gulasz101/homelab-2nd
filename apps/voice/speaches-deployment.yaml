@@ -86,7 +86,7 @@ spec:
               value: "0"
           resources:
             requests:
-              cpu: 100m
+              cpu: 30m
               memory: 256Mi
             limits:
               cpu: "2"
