@@ -475,7 +475,7 @@ has "$API" 'HINDSIGHT_API_EMBEDDINGS_TEI_URL' && has "$API" 'HINDSIGHT_API_RERAN
 # punctuation of whichever render it was read from.
 for kv in \
   'HINDSIGHT_API_LLM_PROVIDER: openai' \
-  'HINDSIGHT_API_LLM_MODEL: gpt-oss-120b-hindsight' \
+  'HINDSIGHT_API_LLM_MODEL: beam-free-go' \
   'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: hindsight-consolidation-go' \
   'HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT: 210' \
   'HINDSIGHT_API_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
