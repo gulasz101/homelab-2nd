@@ -165,7 +165,7 @@ spec:
     - name: DEFAULT_MODELS
       value: "gemma-4-12b-uncensored"
     - name: DEFAULT_PINNED_MODELS
-      value: "deepseek-v4.1-flash-1017-ollama,gemma-4-12b-uncensored,glm-5.2-zai,glm-5.3-flash-ollama,glm-5.3-ollama,kimi-k2.7-code,minimax-m3.1-flash-ollama,mistral-3.5-middle"
+      value: "deepseek-v4.1-flash-1017-ollama,gemma-4-12b-uncensored,glm-5.2-zai,glm-5.3-flash-ollama,glm-5.3-ollama,kimi-k2.7-code,minimax-m3.1-flash-go,minimax-m3.1-flash-ollama,mistral-3.5-middle"
       # Use LiteLLM proxy for small background tasks too
     - name: TASK_MODEL_EXTERNAL
       value: "glm-5.2-zai"
