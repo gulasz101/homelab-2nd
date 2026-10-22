@@ -717,7 +717,7 @@ spec:
           #   minimax-m3  8/8 schema-valid (7 with actions plus one valid empty
           #               batch - _ConsolidationBatchResponse defaults all three
           #               lists to []), median 14.2 s, max 21.8 s: well inside the
-          #               60 s route timeout below.
+          #               120 s route timeout below (GUL-108 raised it from 60 s).
           # minimax-m3 is NOT a cost win - it draws the same Go weekly allowance
           # as DeepSeek (ADR-068) - but it puts a live primary back in front of
           # the paid OpenRouter last resort instead of routing 100% of
@@ -736,17 +736,28 @@ spec:
           # fallback chain was NEVER reached: zero deepseek/gpt-oss fallbacks in
           # 2 h of logs, and every slow consolidation batch was cancelled and
           # retried from scratch until `after 4 attempts`.
-          # Live request-latency histogram for this route: 35% of calls take
-          # >120 s (p65 = 120 s), and the tail runs to 600 s+. DeepSeek on the
-          # Go plan answers 94% in under 60 s, so hopping at 60 s is both faster
-          # and keeps the OpenRouter model (paid) as the untouched last resort.
+          # The original 60 s hop was tuned on the retired
+          # minimax-m3.1-flash-free. GUL-108 (2026-10-22) re-measured the live
+          # route on pod litellm-6d649d8686-48qt6: 17 primary 200s vs 16
+          # deepseek-v4.1-flash-go fallbacks in its first ~8 min (~48%), every
+          # fallback landing 60-65 s after request start with no exception.
+          # Hindsight's own batch log showed those calls completing in 77-106 s
+          # total (60 s primary + 10-46 s DeepSeek), with minimax-m3 generating
+          # ~100 tok/s once past prefill. The large (8-fact, 12-18 k-token)
+          # batches were being cut just before finishing, not failing.
+          # 120 s gives minimax-m3 room for those thinking-heavy batches while
+          # preserving DeepSeek's 90 s window inside Hindsight's 210 s outer
+          # budget. A 60 s hop is NOT faster when half the calls take it:
+          # 60 s primary + 10-46 s DeepSeek is usually slower than finishing
+          # the primary at 70-100 s, and it burns the metered Go hop.
           # num_retries MUST be 0: retries happen inside the model group BEFORE
           # fallbacks and default to 2, so a timeout alone would burn
-          # 3 x 60 s = 180 s and outlive the caller again.
+          # 3 x 120 s = 360 s and outlive the caller again.
           # Invariant: this timeout must stay below
-          # HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT in apps/hindsight (150 s;
-          # asserted by apps/hindsight/tests/render-check.sh).
-          timeout: 60
+          # HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT in apps/hindsight (210 s =
+          # 120 s primary + 90 s DeepSeek fallback; asserted by
+          # apps/hindsight/tests/render-check.sh).
+          timeout: 120
           num_retries: 0
       - model_name: omen-alpha-go
         litellm_params:
