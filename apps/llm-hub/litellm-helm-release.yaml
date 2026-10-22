@@ -908,9 +908,24 @@ spec:
       interval: 15s
       scrapeTimeout: 10s
 
+    # GUL-100 (2026-10-22): CPU request right-sized from 1 core to 200m.
+    # The HelmRelease could not roll out: Flux's upgrade needs one SURGE pod
+    # beside the running one (RollingUpdate, replicaCount 1), and `cpu: 1`
+    # had no home on this cluster - homelab-2nd had ~0.2-0.6 core free,
+    # t460 ~0.9, and arr-box (the only node with real CPU headroom) was
+    # ~350 MiB short of memory for the 1Gi memory request. Result: a loop of
+    # UpgradeFailed -> RollbackSucceeded -> new Pending pod -> UpgradeFailed
+    # every ~5 min, so the GUL-97 route timeout never went live.
+    # 200m is measured, not guessed: `kubectl top pod -n llm-hub` reports the
+    # running proxy at ~75m CPU (1.4 GiB RSS) - a Python proxy that waits on
+    # providers, so its CPU is bursty and small. The request only drives
+    # scheduling and CFS share; the 2-core limit is unchanged, so bursts still
+    # get a full core or more whenever the node has idle CPU. Memory request is
+    # untouched (1Gi request / 4Gi limit) - memory was NOT the constraint on
+    # the two nodes with CPU to spare.
     resources:
       requests:
-        cpu: "1"
+        cpu: 200m
         memory: 1Gi
       limits:
         cpu: "2"
