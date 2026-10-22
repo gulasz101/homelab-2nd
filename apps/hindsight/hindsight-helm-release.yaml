@@ -119,16 +119,20 @@ spec:
         # Retain stays on :nitro (gpt-oss-120b-hindsight) because agents wait on it.
         HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: hindsight-consolidation-go
         # GUL-97 (2026-10-22): outer budget for ONE consolidation LLM call.
-        # LiteLLM now gives MiniMax 60 s and then falls back to DeepSeek on the
+        # LiteLLM gives MiniMax 120 s and then falls back to DeepSeek on the
         # Go plan (apps/llm-hub/litellm-helm-release.yaml, route
-        # hindsight-consolidation-go). 150 s covers that 60 s primary plus a
-        # 90 s fallback, so Hindsight stops cancelling calls LiteLLM is about to
-        # rescue. The inherited default of 120 s used to fire while LiteLLM was
-        # still waiting on MiniMax with its own 6000 s default - the fallback
-        # never ran and the slow tail (35% of calls need >120 s) was cancelled
-        # and retried from scratch forever. Keep this ABOVE the LiteLLM route
-        # timeout; apps/hindsight/tests/render-check.sh asserts the ordering.
-        HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT: "150"
+        # hindsight-consolidation-go). 210 s = 120 s primary + 90 s fallback,
+        # so Hindsight stops cancelling calls LiteLLM is about to rescue.
+        # GUL-108 (2026-10-22) raised the primary budget from 60 s after the
+        # live route measured p95 53.5 s and ~48% of consolidation calls
+        # hopping to deepseek-v4.1-flash-go at the 60 s cliff; Hindsight's
+        # batch log showed those calls completing in 77-106 s total. The
+        # inherited default of 120 s used to fire while LiteLLM was still
+        # waiting on MiniMax with its own 6000 s default - the fallback never
+        # ran and the slow tail was cancelled and retried from scratch forever.
+        # Keep this ABOVE the LiteLLM route timeout; render-check.sh asserts
+        # the ordering and the >=90 s fallback window.
+        HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT: "210"
         # NO *_LLM_REASONING_EFFORT here: LiteLLM rejects it for this route with
         #   400 UnsupportedParamsError: openrouter does not support parameters:
         #   ['reasoning_effort'], for model=openai/gpt-oss-120b:nitro

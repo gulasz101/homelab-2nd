@@ -477,7 +477,7 @@ for kv in \
   'HINDSIGHT_API_LLM_PROVIDER: openai' \
   'HINDSIGHT_API_LLM_MODEL: gpt-oss-120b-hindsight' \
   'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: hindsight-consolidation-go' \
-  'HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT: 150' \
+  'HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT: 210' \
   'HINDSIGHT_API_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
   'HINDSIGHT_API_TENANT_EXTENSION: hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension' \
   'HINDSIGHT_API_DB_STATEMENT_TIMEOUT: 60' \
@@ -497,13 +497,19 @@ do
   fi
 done
 
-# 5h-bis. GUL-97: the consolidation timeout contract across the two apps.
-# Hindsight calls LiteLLM, and LiteLLM only falls back to DeepSeek if IT gives up
-# first. The failure this guards against is silent: with no `timeout` in the
-# LiteLLM route, LiteLLM waits its default 6000 s while Hindsight cancels at its
-# own budget - the fallback never fires, the error looks like a Hindsight
+# 5h-bis. GUL-97 + GUL-108: the consolidation timeout contract across the two
+# apps. Hindsight calls LiteLLM, and LiteLLM only falls back to DeepSeek if IT
+# gives up first. The failure this guards against is silent: with no `timeout`
+# in the LiteLLM route, LiteLLM waits its default 6000 s while Hindsight cancels
+# at its own budget - the fallback never fires, the error looks like a Hindsight
 # TimeoutError, and the consolidation backlog stalls. So the ordering of the two
 # numbers is asserted here, next to the value that must not drift below it.
+# GUL-108 added two more clauses to the same contract: the primary must get at
+# least 120 s (the live minimax-m3 p95 was 53.5 s and ~48% of consolidation
+# calls hit the old 60 s cliff), and the remainder above the route timeout must
+# still leave DeepSeek its 90 s window. 120/150 would pass the ordering check
+# but starve the fallback; 60/210 would pass both and put half the traffic back
+# on the metered hop.
 # Both numbers are read from the manifests (never hardcoded), and the read is
 # guarded against a vacuous pass: an extraction that finds nothing FAILS.
 LITELLM_RELEASE="$ROOT/apps/llm-hub/litellm-helm-release.yaml"
@@ -532,6 +538,23 @@ if [ -f "$LITELLM_RELEASE" ]; then
         ok "LiteLLM route hindsight-consolidation-go times out at ${route_timeout}s, below Hindsight's ${hs_timeout}s consolidation budget - the deepseek fallback runs while the caller is still waiting"
       else
         bad "LiteLLM route timeout ${route_timeout}s is NOT below Hindsight's ${hs_timeout}s consolidation budget - Hindsight would cancel the call before LiteLLM can fall back (GUL-97)"
+      fi ;;
+  esac
+  # GUL-108: the primary needs the measured 120 s, and the fallback needs 90 s
+  # of its own AFTER that. Both checks compare the numbers read above.
+  case "${route_timeout:-x}${hs_timeout:-x}" in
+    *[!0-9]*) : ;;
+    *)
+      if [ "$route_timeout" -ge 120 ]; then
+        ok "the consolidation primary gets at least the GUL-108 120s budget (${route_timeout}s)"
+      else
+        bad "LiteLLM route timeout ${route_timeout}s is below the GUL-108 120s primary budget - minimax-m3's thinking-heavy 8-fact batches were cut at 60s and ~48% fell back"
+      fi
+      fallback_budget=$((hs_timeout - route_timeout))
+      if [ "$fallback_budget" -ge 90 ]; then
+        ok "the DeepSeek fallback still has ${fallback_budget}s inside Hindsight's ${hs_timeout}s budget (GUL-97/GUL-108)"
+      else
+        bad "Hindsight's ${hs_timeout}s budget leaves only ${fallback_budget}s for the DeepSeek fallback after the ${route_timeout}s primary - expected >=90s (GUL-97/GUL-108)"
       fi ;;
   esac
   if [ "$route_retries" = "0" ]; then
