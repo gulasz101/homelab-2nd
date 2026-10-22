@@ -106,6 +106,48 @@ def git_clean() -> bool:
     return out.strip() == ""
 
 
+def git_branch() -> str:
+    """Return the current branch name."""
+    return run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=REPO, check=True).strip()
+
+
+def preflight() -> bool:
+    """Fail fast unless the checkout can safely receive an automated commit.
+
+    The sync commits and pushes on the operator's behalf, so it must own a clean
+    `main` that matches `origin/main`. Running it on a feature branch once left a
+    stray commit on that branch and then pushed a stale `main`, which was rejected
+    as non-fast-forward (GUL-109).
+    """
+    if not git_clean():
+        print(
+            "Working tree is dirty. Commit or stash your changes before running the sync.",
+            file=sys.stderr,
+        )
+        return False
+
+    branch = git_branch()
+    if branch != "main":
+        print(
+            f"Refusing to run on branch '{branch}'. Check out main first "
+            f"(git checkout main) - the sync commits and pushes to main itself.",
+            file=sys.stderr,
+        )
+        return False
+
+    run(["git", "fetch", "origin", "main"], cwd=REPO, check=True)
+    head = run(["git", "rev-parse", "HEAD"], cwd=REPO, check=True).strip()
+    remote = run(["git", "rev-parse", "origin/main"], cwd=REPO, check=True).strip()
+    if head != remote:
+        print(
+            "Local main is behind origin/main. Run `git pull --ff-only origin main` first.",
+            file=sys.stderr,
+        )
+        return False
+
+    return True
+
+
 # ---------------------------------------------------------------------------
 # YAML helpers (ruamel.yaml preserves comments)
 # ---------------------------------------------------------------------------
@@ -657,6 +699,12 @@ def main() -> int:
         return 1
 
     # ------------------------------------------------------------------
+    # Preflight: the sync owns the commit and the push to main
+    # ------------------------------------------------------------------
+    if not args.dry_run and not preflight():
+        return 1
+
+    # ------------------------------------------------------------------
     # Fetch upstream catalogues
     # ------------------------------------------------------------------
     print("\n-- Fetching Ollama Cloud catalogue --")
@@ -823,8 +871,13 @@ Removals:
 
 Blocked removals (still referenced):
 {chr(10).join(f"- {m}" for m in sorted(blocked_removals)) or "- none"}
+
+Co-Authored-By: Paperclip <noreply@paperclip.ing>
 """
-    run(["git", "add", "-A"], cwd=REPO, check=True)
+    # Stage only the three files this script owns. `git add -A` would sweep in
+    # whatever WIP another agent left in the tree.
+    for path in (LITELLM_RELEASE, OPENWEBUI_RELEASE, PROVISIONER_CM):
+        run(["git", "add", "--", str(path)], cwd=REPO, check=True)
     run(["git", "commit", "-m", commit_msg, "-m", commit_body], cwd=REPO, check=True)
     run(["git", "push", "origin", "main"], cwd=REPO, check=True)
     print(f"\nCommitted and pushed: {commit_msg}")
