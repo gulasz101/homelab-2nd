@@ -48,7 +48,7 @@ spec:
                   key: database
           resources:
             requests:
-              cpu: 50m
+              cpu: 30m
               memory: 256Mi
             limits:
               cpu: 500m
