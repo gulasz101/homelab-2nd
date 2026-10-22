@@ -1,10 +1,10 @@
 ---
 # Daily scheduled base backup for the Hindsight CNPG cluster (H2-232).
 #
-# Same shape as the live apps/honcho/scheduled-backup.yaml: the in-tree
-# `backup.barmanObjectStore` on the Cluster is the method, so there is
-# deliberately NO `method: plugin` / `pluginConfiguration` here (the plugin
-# clusters look different on purpose).
+# Uses the Barman Cloud CNPG-I plugin (ADR-081), same shape as the other eleven
+# clusters: `method: plugin` + `pluginConfiguration` names the WAL archiver
+# plugin, and the ObjectStore (`hindsight-db-objectstore.yaml`) holds the
+# destination and retention.
 #
 # `immediate: true` takes the first base backup as soon as this lands, so the
 # s3://cnpg-backups/hindsight tree is populated before the restore ticket
@@ -21,4 +21,7 @@ spec:
   backupOwnerReference: self
   cluster:
     name: hindsight-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
   immediate: true

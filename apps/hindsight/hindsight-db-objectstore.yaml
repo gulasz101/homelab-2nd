@@ -1,0 +1,58 @@
+---
+# ============================================================
+# ObjectStore for the Barman Cloud CNPG-I plugin — Hindsight backups to OMV
+# MinIO (ADR-081, GUL-90).
+#
+# This is the plugin replacement for the in-tree
+# `spec.backup.barmanObjectStore` block that used to live on the Cluster. The
+# destination and the serverName generation are deliberately UNCHANGED:
+# `s3://cnpg-backups/hindsight` + `hindsight-db-gen2` is the archive the in-tree
+# archiver was already writing, and the plugin reads the same barman layout.
+# Migrating is not a rebuild, so it must not start a new generation — that would
+# leave the gen2 WAL chain frozen at migration time and the newest restore point
+# would age from then on.
+#
+# The bucket prefix is shared with generation 1 (`hindsight-db`), which is what
+# `externalClusters` in the Cluster restores from. Same ObjectStore, different
+# serverName — the documented exception to "do not share an ObjectStore between
+# backup and recovery": the unique serverName is what prevents the overwrite.
+#
+# Credentials: the existing `hindsight-minio-backup-creds` SOPS secret. Its user
+# already carries the house three-ARN policy on cnpg-backups/hindsight — this
+# migration needs no MinIO change (GUL-86 audit).
+#
+# retentionPolicy lives here, not on the Cluster: that is one of the two
+# differences between the in-tree and plugin APIs (the other is the ObjectStore
+# itself). Keep it at 30d to match every other cluster.
+# ============================================================
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: hindsight-db-backups
+  namespace: hindsight
+spec:
+  configuration:
+    destinationPath: s3://cnpg-backups/hindsight
+    endpointURL: http://openmediavault.local:9000
+    s3Credentials:
+      accessKeyId:
+        name: hindsight-minio-backup-creds
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: hindsight-minio-backup-creds
+        key: ACCESS_SECRET_KEY
+    data:
+      compression: gzip
+    wal:
+      compression: gzip
+  retentionPolicy: "30d"
+  # The sidecar shares the instance pod, so these are pod resources on
+  # homelab-2nd's 8c/31GB budget. Same sizing as the other eleven clusters.
+  instanceSidecarConfiguration:
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"

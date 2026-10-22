@@ -32,9 +32,9 @@ empty destination and hides real misconfiguration.
 
 Give every rebuild its own object-store namespace:
 
-- `plugins[].parameters.serverName` (plugin) / `backup.barmanObjectStore.serverName`
-  (in-tree, honcho) is the **current generation** and must point at a **fresh,
-  empty** destination when the cluster is created.
+- `plugins[].parameters.serverName` (plugin) /
+  `backup.barmanObjectStore.serverName` (in-tree) is the **current generation**
+  and must point at a **fresh, empty** destination when the cluster is created.
 - `externalClusters[].plugin.parameters.serverName` /
   `externalClusters[].barmanObjectStore.serverName` is the **previous
   generation** and points at the history being recovered.
@@ -100,17 +100,20 @@ PVC / letting CNPG bootstrap an empty instance:
 > Do **not** bump only one side. If target == source and the target is
 > non-empty, recovery/archiving aborts with `Expected empty archive`.
 
-### In-tree (honcho)
+### In-tree (retired)
 
-`honcho-db` uses the deprecated in-tree `backup.barmanObjectStore` instead of a
-plugin. The same rules apply, using the `serverName` field it supports:
+The in-tree `backup.barmanObjectStore` path is retired from this repo: it was
+used by `honcho-db` (deleted 2026-10-15) and by `hindsight-db` until ADR-081
+migrated it to the plugin on 2026-10-22. No cluster carries it any more, so the
+field names below are kept as history only. The same generation rules applied,
+using the `serverName` field it supports:
 
-- current: `spec.backup.barmanObjectStore.serverName: honcho-db`
-- previous: `spec.externalClusters[].barmanObjectStore.serverName: honcho-db`
-- rebuild: current `honcho-db-gen2`, previous `honcho-db`.
+- current: `spec.backup.barmanObjectStore.serverName`
+- previous: `spec.externalClusters[].barmanObjectStore.serverName`
 
-`honcho-db` currently omits `serverName`, which defaults to the cluster name;
-the manifests spell it out explicitly so the convention is visible.
+A migration to the plugin is **not** a rebuild: keep the existing `serverName`
+so the plugin continues the archive instead of starting a fresh, empty
+generation (ADR-081).
 
 ## Auditing current state
 
