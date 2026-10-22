@@ -7,10 +7,11 @@
 # below (guardrail 4: OMV is the only durable store, this node is rebuildable).
 #
 # IMAGE CHOICE: the DEFAULT `postgresql:16` flavour, deliberately not
-# `-minimal`/`-standard`. It is the only CNPG operand image that ships BOTH
-# pgvector (Hindsight's schema needs the `vector` extension) and `barman-cloud`
-# (the in-tree `backup.barmanObjectStore` needs it inside the operand). Same
-# choice and same reason as the live apps/honcho/postgres-cluster.yaml.
+# `-minimal`/`-standard`, because the schema needs pgvector (the `vector`
+# extension). Since ADR-081 the barman-cloud tooling comes from the plugin
+# sidecar, not the operand, so a future rebuild could move to
+# `postgresql:16-minimal-trixie` + an `extensions:` pgvector image; that image
+# change is deliberately NOT part of the backup migration (GUL-90).
 #
 # Barman `serverName` generation convention: see
 # docs/cnpg-backup-servername-generations.md. This is generation 2 (H2-306): it
@@ -61,47 +62,37 @@ spec:
 
   # The recovery source: generation 1's history, which generation 2 was restored
   # from. CNPG only reads it at bootstrap, so it is inert on a running cluster.
+  # Plugin form since ADR-081; same ObjectStore as the archiver, different
+  # serverName (generation 1 = the un-suffixed cluster name).
   externalClusters:
     - name: origin
-      barmanObjectStore:
-        destinationPath: s3://cnpg-backups/hindsight
-        endpointURL: http://openmediavault.local:9000
-        # Previous generation (recovery source); bump to the prior genN on rebuild.
-        serverName: hindsight-db
-        s3Credentials:
-          accessKeyId:
-            name: hindsight-minio-backup-creds
-            key: ACCESS_KEY_ID
-          secretAccessKey:
-            name: hindsight-minio-backup-creds
-            key: ACCESS_SECRET_KEY
-        data:
-          compression: gzip
-        wal:
-          compression: gzip
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: hindsight-db-backups
+          # Previous generation (recovery source); bump to the prior genN on rebuild.
+          serverName: hindsight-db
 
   # Storage — local-path on the homelab-2nd NVMe (fast, NOT durable).
   storage:
     storageClass: local-path
     size: 10Gi
 
-  # Backup + WAL archiving -> OMV MinIO S3 (the durable copy).
-  backup:
-    barmanObjectStore:
-      destinationPath: s3://cnpg-backups/hindsight
-      endpointURL: http://openmediavault.local:9000
-      # Current generation (archiver target); bump to "<name>-genN" (fresh) on rebuild.
-      serverName: hindsight-db-gen2
-      s3Credentials:
-        accessKeyId:
-          name: hindsight-minio-backup-creds
-          key: ACCESS_KEY_ID
-        secretAccessKey:
-          name: hindsight-minio-backup-creds
-          key: ACCESS_SECRET_KEY
-      data:
-        compression: gzip
-    retentionPolicy: "30d"
+  # Backup + WAL archiving -> OMV MinIO S3 (the durable copy), through the
+  # barman-cloud CNPG-I plugin since ADR-081. The in-tree
+  # `backup.barmanObjectStore` API is deprecated (CNPG >= 1.26) and mutually
+  # exclusive with plugins; retentionPolicy lives in the ObjectStore.
+  #
+  # serverName stays `hindsight-db-gen2`: this is a migration, not a rebuild, so
+  # the plugin must continue the same archive the in-tree archiver was writing.
+  # See docs/cnpg-backup-servername-generations.md.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: hindsight-db-backups
+        # Current generation (archiver target); bump to "<name>-genN" (fresh) on rebuild.
+        serverName: hindsight-db-gen2
 
   # homelab-2nd sizing. 3Gi was not enough during the H2-306 backfill plus the
   # first real consolidation in five days: the pod sat at 3065Mi/3Gi and 1.8 CPU,

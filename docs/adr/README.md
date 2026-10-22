@@ -81,6 +81,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-078 | Star Office ingest tokens live in the database registry; the env map is gone | Accepted | 2026-10-21 |
 | ADR-079 | LaunchAgents on the Air reach LAN services through loopback relays, never directly | Accepted | 2026-10-22 |
 | ADR-080 | The memory watchdog reads the backup JOB's exit status, not just its log | Accepted | 2026-10-22 |
+| ADR-081 | `hindsight-db` backups move to the barman-cloud plugin, continuing the same archive | Accepted | 2026-10-22 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,

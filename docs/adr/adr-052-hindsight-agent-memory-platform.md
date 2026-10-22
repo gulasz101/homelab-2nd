@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted — 2026-10-13. **Epic:** H2-232 (*Replace Honcho + OpenViking with self-hosted Hindsight:
+Accepted — 2026-10-13. **Amended by ADR-081:** backups moved from the in-tree
+`barmanObjectStore` to the barman-cloud CNPG-I plugin on 2026-10-22, continuing the same
+`s3://cnpg-backups/hindsight` archive under `serverName: hindsight-db-gen2`. **Epic:** H2-232 (*Replace Honcho + OpenViking with self-hosted Hindsight:
 deploy → migrate → retire*). **Tracking note:** `homelab/tracking/2026-10-12-hindsight-deployment-planning.md`
 (vault).
 
@@ -91,7 +93,7 @@ the source.
 | Owner / database | `hindsight` / `hindsight`, credentials from `hindsight-db-credentials` |
 | Chart DB | `postgresql.enabled: false`; host `hindsight-db-rw.hindsight.svc.cluster.local:5432` |
 | pgvector | `bootstrap.initdb.postInitApplicationSQL: ["CREATE EXTENSION IF NOT EXISTS vector;"]` |
-| Backups | barman → `s3://cnpg-backups/hindsight` on OMV MinIO, `retentionPolicy: 30d`, daily `ScheduledBackup` with `immediate: true`, generation 1 |
+| Backups | barman-cloud plugin (ADR-081) → `s3://cnpg-backups/hindsight` on OMV MinIO, `retentionPolicy: 30d` on the `hindsight-db-backups` ObjectStore, daily `ScheduledBackup` with `immediate: true`, archiver generation 2 (`hindsight-db-gen2`, recovered from generation 1) |
 | Chart secret | `existingSecret: hindsight-secrets`, which **must** also carry the `postgres-password` key |
 
 Three details are load-bearing and were found by reading the templates and the CNPG docs rather than
@@ -221,8 +223,10 @@ change to the Hermes side beyond the `andrzej` pilot are out of scope for this A
   trigger to revisit is measured latency, not impatience.
 - **pgvector is created by a bootstrap hook, not by a chart or an operator.** `postInitApplicationSQL`
   runs once, at `initdb`. A cluster rebuilt by recovery does not re-run it, so a recovery runbook has
-  to re-create the extension if it is ever absent — and it is the second reason this cluster cannot use
-  a minimal CNPG operand image (the first being `barman-cloud`).
+  to re-create the extension if it is ever absent — and it is the reason this cluster cannot use a
+  minimal CNPG operand image while the extension is installed that way. (The other historical
+  reason, the in-tree `barman-cloud` binary in the operand, disappeared with ADR-081: the plugin
+  sidecar carries the tooling now.)
 - **The `existingSecret` ↔ `postgres-password` coupling is a live trap.** The SOPS bundle must carry a
   key for a secret the chart claims not to manage; trimming it later yields a crash-looping api with no
   obvious cause.

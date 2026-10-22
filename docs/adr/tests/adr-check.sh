@@ -185,8 +185,9 @@ check_fact "$HS/hindsight-helm-release.yaml" 'nemotron-3-nano-30b-ollama' "LLM m
 check_fact "$HS/hindsight-helm-release.yaml" 'HINDSIGHT_API_LLM_PROVIDER' "LLM provider is set explicitly"
 check_fact "$HS/hindsight-helm-release.yaml" 'hindsight-db-rw.hindsight.svc.cluster.local' "chart points at the CNPG service"
 check_fact "$HS/hindsight-db-postgres-cluster.yaml" 'CREATE EXTENSION IF NOT EXISTS vector;' "pgvector is created at bootstrap"
-check_fact "$HS/hindsight-db-postgres-cluster.yaml" 's3://cnpg-backups/hindsight' "backups go to the OMV MinIO bucket"
-check_fact "$HS/hindsight-db-postgres-cluster.yaml" 'retentionPolicy: "30d"' "backup retention is 30d"
+check_fact "$HS/hindsight-db-objectstore.yaml" 's3://cnpg-backups/hindsight' "backups go to the OMV MinIO bucket"
+check_fact "$HS/hindsight-db-objectstore.yaml" 'retentionPolicy: "30d"' "backup retention is 30d"
+check_fact "$HS/hindsight-db-postgres-cluster.yaml" 'barman-cloud.cloudnative-pg.io' "the cluster backs up through the barman-cloud plugin (ADR-081)"
 check_fact "$HS/hindsight-service.yaml" 'nodePort: 30239' "API exposes NodePort 30239"
 check_fact "$HS/hindsight-service.yaml" 'nodePort: 30240' "Control Plane exposes NodePort 30240"
 

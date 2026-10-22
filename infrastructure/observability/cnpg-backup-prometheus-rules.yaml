@@ -2,10 +2,14 @@
 # PrometheusRule: alert on CloudNativePG base-backup and WAL-archiving health.
 #
 # Two metric families cover the CNPG clusters in this repo:
-#   * barman_cloud_cloudnative_pg_io_* — emitted by the barman-cloud plugin,
-#     used by every cluster except honcho-db.
-#   * cnpg_collector_last_{available,failed}_backup_timestamp — the legacy
-#     in-tree barman object store, still used by honcho-db.
+#   * barman_cloud_cloudnative_pg_io_* — emitted by the barman-cloud plugin.
+#     Every cluster uses the plugin since hindsight-db migrated on 2026-10-22
+#     (ADR-081); hindsight-db was the last in-tree one.
+#   * cnpg_collector_last_{available,failed}_backup_timestamp — emitted by the
+#     legacy in-tree barman object store. No cluster uses it any more; the
+#     branch stays because the collector latches its last value and because a
+#     cluster rolled back to the in-tree API must still alert. Do not treat a
+#     non-zero value here as proof that a cluster is still in-tree.
 #   * cnpg_pg_stat_archiver_* and cnpg_collector_pg_wal_archive_status — WAL
 #     archiving state exposed by the instance manager.
 apiVersion: monitoring.coreos.com/v1
