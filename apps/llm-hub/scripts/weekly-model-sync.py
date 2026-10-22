@@ -168,6 +168,67 @@ def desired_model_names(ollama_ids: set[str], go_ids: set[str]) -> set[str]:
     return desired
 
 
+def upstream_refs(data) -> list[tuple[str, str, str]]:
+    """Return (model_name, upstream_id, provider) for every catalogue-backed route."""
+    refs: list[tuple[str, str, str]] = []
+    for entry in data["spec"]["values"]["proxy_config"]["model_list"]:
+        params = entry.get("litellm_params") or {}
+        raw = str(params.get("model", ""))
+        upstream_id = raw.split("/", 1)[1] if raw.startswith("openai/") else raw
+        api_base = str(params.get("api_base", ""))
+        if "opencode.ai" in api_base:
+            provider = "go"
+        elif "ollama.com" in api_base:
+            provider = "ollama"
+        else:
+            continue  # z.ai, OpenRouter, Gemini, oneprovider... own catalogues, out of scope
+        refs.append((entry["model_name"], upstream_id, provider))
+    return refs
+
+
+def dead_upstream_routes(data, ollama_ids: set[str], go_ids: set[str]) -> list[tuple[str, str, str]]:
+    """Routes the sync does NOT own that point at an upstream id the catalogue no longer serves.
+
+    The sync regenerates its own routes from the catalogue (`map_go_name` / `map_ollama_name`),
+    so a retired model behind one of those is cleaned up by the weekly removals - loud enough
+    already. The dangerous case is a hand-written route: its name no longer matches any
+    catalogue pattern, so nothing regenerates it and nothing notices when the upstream
+    withdraws the model. GUL-105: `minimax-m3.1-flash-free` was retired while a PR was in
+    review, `hindsight-consolidation-go` kept "working" by failing over to its metered
+    fallback, and the sync said nothing for a whole week.
+    """
+    dead: list[tuple[str, str, str]] = []
+    for name, upstream_id, provider in upstream_refs(data):
+        if provider == "go":
+            live = upstream_id in go_ids
+            sync_owned = name in map_go_name(upstream_id)
+        else:
+            live = upstream_id in ollama_ids or map_ollama_name(upstream_id).removesuffix("-ollama") in {
+                i.replace(":", "-") for i in ollama_ids
+            }
+            sync_owned = name == map_ollama_name(upstream_id)
+        if not live and not sync_owned:
+            dead.append((name, upstream_id, provider))
+    return dead
+
+
+def report_dead_upstream_routes(dead: list[tuple[str, str, str]]) -> None:
+    """Print the dead-route block loudly enough that a red job gets read."""
+    if not dead:
+        print("\n-- Upstream reference check --")
+        print("OK: every catalogue-backed route points at a model the catalogue still serves.")
+        return
+    print("\n" + "!" * 78)
+    print("!! DEAD UPSTREAM ROUTES - a route points at a model the catalogue no longer lists.")
+    for name, upstream_id, provider in dead:
+        print(f"!!   {name}  ->  {provider}/{upstream_id}")
+    print("!! These routes still answer, because LiteLLM silently falls through to the next")
+    print("!! model in router_settings.fallbacks - usually a metered or weaker one. Point them")
+    print("!! at a live model in apps/llm-hub/ and retire the dead id from the key provisioner.")
+    print("!! (GUL-105: minimax-m3.1-flash-free was retired under a route that never noticed.)")
+    print("!" * 78)
+
+
 # ---------------------------------------------------------------------------
 # Key-provisioner ConfigMap editing (preserves Python comments inside DESIRED_MODELS)
 # ---------------------------------------------------------------------------
@@ -615,6 +676,13 @@ def main() -> int:
     current = set(current_model_list(litellm_data))
     upstream_desired = desired_model_names(ollama_ids, go_ids)
 
+    # Routes the sync does not regenerate still have to point at something real.
+    dead_upstreams = dead_upstream_routes(litellm_data, ollama_ids, go_ids)
+
+    def exit_code() -> int:
+        """3 when a dead upstream reference survived the run, so the CronJob goes red."""
+        return 3 if dead_upstreams else 0
+
     # Preserve non-Ollama/non-Go routes in the LiteLLM model list (z.ai, OpenRouter, Gemini, etc.)
     litellm_desired = upstream_desired | {m for m in current if not (is_ollama_model(m) or is_go_model(m))}
 
@@ -641,9 +709,11 @@ def main() -> int:
         for m in sorted(litellm_removals):
             print(f"  - {m}")
 
+    report_dead_upstream_routes(dead_upstreams)
+
     if args.dry_run and not litellm_additions and not litellm_removals and not provisioner_additions and not provisioner_removals:
         print("\nNo changes. Exiting dry-run.")
-        return 0
+        return exit_code()
 
     # ------------------------------------------------------------------
     # Probe additions
@@ -700,7 +770,7 @@ def main() -> int:
 
     if not verified_additions and not safe_removals:
         print("\nNo changes.")
-        return 0
+        return exit_code()
 
     if args.dry_run:
         print("\n-- DRY-RUN diff summary --")
@@ -710,7 +780,7 @@ def main() -> int:
         print(f"Would skip (protected):    {sorted(blocked_removals)}")
         if not verified_additions and not safe_removals:
             print("No changes.")
-        return 0
+        return exit_code()
 
     # ------------------------------------------------------------------
     # Mutate configs
@@ -735,7 +805,7 @@ def main() -> int:
     # ------------------------------------------------------------------
     if git_clean():
         print("\nWorking tree clean after mutations; nothing to commit.")
-        return 0
+        return exit_code()
 
     commit_msg = f"feat(llm-hub): weekly model sync — add {len(verified_additions)} model(s)"
     if safe_removals:
@@ -781,7 +851,7 @@ Blocked removals (still referenced):
             print(f"  {m}: NOT advertised ✗", file=sys.stderr)
 
     print("\n=== Sync complete ===")
-    return 0
+    return exit_code()
 
 
 if __name__ == "__main__":
