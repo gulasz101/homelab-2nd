@@ -124,7 +124,12 @@ spec:
         # consolidation prompts: both Go models 8/8 valid, faster than gpt-oss
         # (H2-306, 2026-10-19). Ollama Cloud stays rejected (rate limiting).
         # Retain stays on :nitro (gpt-oss-120b-hindsight) because agents wait on it.
-        HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: hindsight-consolidation-go
+        # GUL-112 follow-up (2026-10-23): the OpenCode Go subscription hit its weekly
+        # limit (minimax-m3.1-flash blocked, fallbacks on Go also blocked). Move
+        # consolidation onto beam-free-go (free Go model, verified working + JSON
+        # mode) so memory building stops draining the subscription. beam-free-go
+        # is fast, so the 210 s ceiling is now a safety net, not a rescue window.
+        HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: beam-free-go
         # GUL-97 (2026-10-22): outer budget for ONE consolidation LLM call.
         # LiteLLM gives MiniMax 120 s and then falls back to DeepSeek on the
         # Go plan (apps/llm-hub/litellm-helm-release.yaml, route

@@ -476,7 +476,7 @@ has "$API" 'HINDSIGHT_API_EMBEDDINGS_TEI_URL' && has "$API" 'HINDSIGHT_API_RERAN
 for kv in \
   'HINDSIGHT_API_LLM_PROVIDER: openai' \
   'HINDSIGHT_API_LLM_MODEL: beam-free-go' \
-  'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: hindsight-consolidation-go' \
+  'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: beam-free-go' \
   'HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT: 210' \
   'HINDSIGHT_API_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
   'HINDSIGHT_API_TENANT_EXTENSION: hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension' \
