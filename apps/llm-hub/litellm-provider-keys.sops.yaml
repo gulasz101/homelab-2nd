@@ -1,28 +1,14 @@
-apiVersion: v1
-kind: Secret
-metadata:
-    name: litellm-provider-keys
-    namespace: llm-hub
-stringData:
-    OPENCODE_GO_SUBSCRIPTION_API_KEY: ENC[AES256_GCM,data:e9I6Azx87ZsxALSKwXo+fNPs0vXgP6H9CqV56E6s8ssHsfdAVC2dO5eDulv/XBNc79+G,iv:8apIJdZ4AK4w85FbuM3G8qs3eT+7FpLkWLzMpSjAwuw=,tag:qqtEqrlDL8c5UkSFq2QYfg==,type:str]
-    GLM_API_KEY: ENC[AES256_GCM,data:QXvCObqTUp2a0vjgKMoCZqSqh8uHSHNs0HjNiYhTJKQzHSRfoWndy+8srtpT9Mlhzg==,iv:NA4AUWgm4v1Z689dg0x8O2q/jZ+N5aSrnvsp/x2e9PM=,tag:xge6wb29KG4+srGssYkDLA==,type:str]
-    MISTRAL_API_KEY: ENC[AES256_GCM,data:1Flu2fgjYMTe2BUweohZxff/hs+ntLOP2RpURjnaWI4=,iv:43kBapnh3tpDX0ku55QiOMX74aaJJ23giEmpPaqx5r8=,tag:KiAgPxSaq80QzX2zuSpfUg==,type:str]
-    OLLAMA_API_KEY: ENC[AES256_GCM,data:FSRH3+4mLPGA75rZIXNOxk2fwdCJ6b+XUON3NYZyOoeP2ypfGWcJ5xT+kN0JjGXEe6F0Uar/iGQF,iv:XxYMFstm0oLTgwC/Av+XveK9206RWtNuek+VRKcthYE=,tag:xvZh6LTzWABDPrIaeZ775A==,type:str]
-    GEMINI_API_KEY: ENC[AES256_GCM,data:qQVSTy+qyc8MGSokQgKHfPCIfThMZW+oPATRALvcK0VJq41Bs6Dd80KBb64PV4oyp8yP7mk=,iv:fhifxBnKXcrCrq00MGoyQemfkPSB9nGTGG2XwEuPzmk=,tag:iyjBmQxZeIWrdpnEqXHG9w==,type:str]
-    OPENROUTER_API_KEY: ENC[AES256_GCM,data:4FbWDW7Yo7CzSerQBnj//5hKUwrfK1ztqUhaSekpTCB5X0z64NeGjjZWiI5gWJkHXs1HRaWZus+zu06WTXCrAWYGFqfgqUdLUA==,iv:93+ivP0NstWuaD8QbtZct+P5lR7gFidREFaZOaveb+g=,tag:ho/wSfyQrRJNbp2ICGMt+g==,type:str]
-type: Opaque
-sops:
-    age:
-        - enc: |
-            -----BEGIN AGE ENCRYPTED FILE-----
-            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBNalhuSTMxTUJHNnc5cUx4
-            ZjBVd2NGSFVjei9YeWZJcS9Hckh2TUtBQkVzCjAxUENwaEIwdUVNaTc5WERoSWQ1
-            akg2UnFpSGFEd2Y1bXJwdGNpUG8zV00KLS0tIDFEdnlEOU5pdlFseEs4Y1h6OHJs
-            WVU4Q1BwUzFqRk43UUJiekVxRTB1RlEKYLqXxzXFlIsRz6xK0jiS0U+hjDd7iG4l
-            oDki9ULvtP7dQqwOhsPS3ku82EauND+mUMnCbq5chq8nB1JeFrkz0A==
-            -----END AGE ENCRYPTED FILE-----
-          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
-    encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-10-19T17:28:46Z"
-    mac: ENC[AES256_GCM,data:m/15PRBU+RkNB8apnOnD9k6DjTUEvajBYK8ZiPx3qjWP4mHixnVJ3BtNke/hDD96JqXVX5EiQCruLfghuioDUvFszMheWzHNlQvEsDxPlaCNIT76PX1SA/bCxDR9od0hFIBUZt3/1rdDfTcU5cEHj4cqNuYf0p1+8f29jsGoX3s=,iv:f20Q9Huww+rqKy1wHlwnE448PFkgzLSMfqK6O+L+IS8=,tag:3QUSJoEch+n1JvX6oaTIlg==,type:str]
-    version: 3.13.3
+{
+	"data": "ENC[AES256_GCM,data:jn9KWT/y/xLHk0Nf5zI5sImrNxInKOccADLxJqaQ5VqpNF+UvI+ikEs3UFAW/14E9yvLAzM53hEkq/PCnwPl2et2T3nEOLWFGSKsdEIl0GEn4gpGyXIestfW2jgJm6viBJEFCpgYCYHyRoX66LIT7S4gYdPzo1gTvmUYtosAoQmEVZq3l3/JEuNMmzcnI+nkmGJd3w08E+1BEFDQOOSgwo3zf76TeAMAhJeMFkmmo2CpXl8XR39AkUTvomJJ1JK6IVjEljyLHEB5xuIebq6U3fxrRhFkw8d+l0xGDTAtIGQ89/swy0gvrn/cYzado1IXUfKKKl7FGzsdkctmlD0T2FJbY33AFj0flRrQYUfWA1PakMwl34kX/hSqwMGgXCykhRk6jW0mkVx5jlWbesTwC3G8Af2L9e3J4hKzHHU/PdqUxG2cPr+ix8N6zlhuYb1pBtWPCuoZN1vy/vlCAgXD+SeXiWezOvyHezxJ6T4TY5LdFNDABnzuEUFyd9CHDgxF/4nrXLWQi2IFOjQcLlA5tdVtJw9w2djr0J8ZNgpx94aZ87e0qSwXUIuKd5L16If1PoY4V4Yw4SYb+BebCn1qhu9ydRjFNGA2a24RarMPrNvX6K2w7Q/HVH2V6JRIocxTqNTm0y6NZ3E0iyyB6+NnvIpXz5DZvyncMVB2aLAMef4kqpcxwXRRiYOnJhi+7AeEtzvU1FkXzuyett9jz8bX3KIi6IDzy8KbyZSHSOV0Zt+tp4RfKgg/TTVVQ3yStB6nnhC9,iv:Cgt4jcWsL/yKG05UEoZV1s+5SBQoZSM97/Bkj09LSPs=,tag:GnG3tZ1WOEZKc0RVNQCY4w==,type:str]",
+	"sops": {
+		"age": [
+			{
+				"enc": "-----BEGIN AGE ENCRYPTED FILE-----\nYWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBVUHoxR3FGOUl0bGhyVG1y\nc3MyR3NRS1pvalgyMEFnUXJTWWdzOGNEekRRCnlrWmNDNGJVM3A0Y0hTVHIzU0NR\nRVBPOTkyVXZvQUIvQlRSVWVQV00yM2MKLS0tIEZ6SnQwaGJWODFNb01ZMEw0V2hp\nejZsY3MyWHMzaG1CY2d5dEhCN3JyWjAK4mEGGS2/Zk1DuHSrbhjD6TOmbWKw8hEX\ntVa/F0iTN7IxmJiOfO5chc3shFXuYVxAubxzXstoJb7vtG9NiJIwew==\n-----END AGE ENCRYPTED FILE-----\n",
+				"recipient": "age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s"
+			}
+		],
+		"lastmodified": "2026-10-23T12:31:30Z",
+		"mac": "ENC[AES256_GCM,data:9bAtLdn9qfz5ldkFmGC7SXiFtFfNlx7m0xbN6Y8qcufBcTzDPtNJWuEZHfEXLNUsnZx8GqcOS6kfoX6oxMl5tb4DiFOvm0OXbbzBYzMad01FYyxFf1s/lKHJbaK7WtfnH0l1Yq2QInmJ4pg+V0ZgUPEBAaFs2pbOX5YN06XOhTs=,iv:La6VsxOr6wlbp1JP7B/9nKm16R3Kjt4bpDrXcIQAdko=,tag:P3x/UnGyhExti4GKLYvZwg==,type:str]",
+		"version": "3.13.3"
+	}
+}

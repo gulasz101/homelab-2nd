@@ -374,6 +374,10 @@ spec:
             # gpt-oss. See docs/adr/adr-069-*.md.
           model: openrouter/deepseek/deepseek-v4.1-flash
           api_key: "os.environ/OPENROUTER_API_KEY"
+      - model_name: free-openrouter
+        litellm_params:
+          model: openrouter/free
+          api_key: "os.environ/OPENROUTER_API_KEY"
 
         # ── "Grey zone" Anthropic reseller endpoints (2026-10-09) ──
         # Two reseller keys dropped in for evaluation: OneProvider
