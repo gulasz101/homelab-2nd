@@ -475,10 +475,10 @@ has "$API" 'HINDSIGHT_API_EMBEDDINGS_TEI_URL' && has "$API" 'HINDSIGHT_API_RERAN
 # punctuation of whichever render it was read from.
 for kv in \
   'HINDSIGHT_API_LLM_PROVIDER: openai' \
-  'HINDSIGHT_API_LLM_MODEL: free-openrouter' \
-  'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: free-openrouter' \
+  'HINDSIGHT_API_LLM_MODEL: auto' \
+  'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: auto' \
   'HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT: 210' \
-  'HINDSIGHT_API_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
+  'HINDSIGHT_API_LLM_BASE_URL: http://freellmapi.freellmapi.svc.cluster.local:3001/v1' \
   'HINDSIGHT_API_TENANT_EXTENSION: hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension' \
   'HINDSIGHT_API_DB_STATEMENT_TIMEOUT: 60' \
   'HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT: 50' \
@@ -497,76 +497,28 @@ do
   fi
 done
 
-# 5h-bis. GUL-97 + GUL-108: the consolidation timeout contract across the two
-# apps. Hindsight calls LiteLLM, and LiteLLM only falls back to DeepSeek if IT
-# gives up first. The failure this guards against is silent: with no `timeout`
-# in the LiteLLM route, LiteLLM waits its default 6000 s while Hindsight cancels
-# at its own budget - the fallback never fires, the error looks like a Hindsight
-# TimeoutError, and the consolidation backlog stalls. So the ordering of the two
-# numbers is asserted here, next to the value that must not drift below it.
-# GUL-108 added two more clauses to the same contract: the primary must get at
-# least 120 s (the live minimax-m3 p95 was 53.5 s and ~48% of consolidation
-# calls hit the old 60 s cliff), and the remainder above the route timeout must
-# still leave DeepSeek its 90 s window. 120/150 would pass the ordering check
-# but starve the fallback; 60/210 would pass both and put half the traffic back
-# on the metered hop.
-# Both numbers are read from the manifests (never hardcoded), and the read is
-# guarded against a vacuous pass: an extraction that finds nothing FAILS.
-LITELLM_RELEASE="$ROOT/apps/llm-hub/litellm-helm-release.yaml"
-# One scalar of the `hindsight-consolidation-go` model entry. The route block
-# ends at the next `- model_name:` at the same indentation, so a timeout added
-# to a neighbouring route can never be mistaken for this one.
-llm_route_field() {
-  awk -v key="$2" '
-    /^      - model_name: hindsight-consolidation-go[[:space:]]*$/ { inroute = 1; next }
-    inroute && /^      - model_name:/ { inroute = 0 }
-    inroute && $0 ~ "^          " key ":[[:space:]]*" {
-      v = $2; gsub(/"/, "", v); print v; exit
-    }
-  ' "$1"
-}
-if [ -f "$LITELLM_RELEASE" ]; then
-  ok "read the LiteLLM release ($(basename "$LITELLM_RELEASE")) for the consolidation route contract"
-  route_timeout=$(llm_route_field "$LITELLM_RELEASE" timeout)
-  route_retries=$(llm_route_field "$LITELLM_RELEASE" num_retries)
-  hs_timeout=$(env_value "$API" HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT)
-  case "${route_timeout:-x}${hs_timeout:-x}" in
-    *[!0-9]*)
-      bad "cannot compare the timeouts (LiteLLM route timeout='${route_timeout:-missing}', Hindsight consolidation timeout='${hs_timeout:-missing}') - an unreadable pair must fail, not pass" ;;
-    *)
-      if [ "$route_timeout" -lt "$hs_timeout" ]; then
-        ok "LiteLLM route hindsight-consolidation-go times out at ${route_timeout}s, below Hindsight's ${hs_timeout}s consolidation budget - the deepseek fallback runs while the caller is still waiting"
-      else
-        bad "LiteLLM route timeout ${route_timeout}s is NOT below Hindsight's ${hs_timeout}s consolidation budget - Hindsight would cancel the call before LiteLLM can fall back (GUL-97)"
-      fi ;;
-  esac
-  # GUL-108: the primary needs the measured 120 s, and the fallback needs 90 s
-  # of its own AFTER that. Both checks compare the numbers read above.
-  case "${route_timeout:-x}${hs_timeout:-x}" in
-    *[!0-9]*) : ;;
-    *)
-      if [ "$route_timeout" -ge 120 ]; then
-        ok "the consolidation primary gets at least the GUL-108 120s budget (${route_timeout}s)"
-      else
-        bad "LiteLLM route timeout ${route_timeout}s is below the GUL-108 120s primary budget - minimax-m3's thinking-heavy 8-fact batches were cut at 60s and ~48% fell back"
-      fi
-      fallback_budget=$((hs_timeout - route_timeout))
-      if [ "$fallback_budget" -ge 90 ]; then
-        ok "the DeepSeek fallback still has ${fallback_budget}s inside Hindsight's ${hs_timeout}s budget (GUL-97/GUL-108)"
-      else
-        bad "Hindsight's ${hs_timeout}s budget leaves only ${fallback_budget}s for the DeepSeek fallback after the ${route_timeout}s primary - expected >=90s (GUL-97/GUL-108)"
-      fi ;;
-  esac
-  if [ "$route_retries" = "0" ]; then
-    ok "the consolidation route sets num_retries: 0 (retries happen before fallbacks; the default 2 would burn 3 x ${route_timeout:-?}s and outlive the caller)"
-  else
-    bad "the consolidation route has num_retries '${route_retries:-unset}', expected 0 - same-model retries run before fallbacks and would exhaust Hindsight's budget first (GUL-97)"
-  fi
-  grep -qF -- '- {"hindsight-consolidation-go": ["deepseek-v4.1-flash-go", "gpt-oss-120b-openrouter"]}' "$LITELLM_RELEASE" \
-    && ok "the consolidation fallback chain stays Go-plan DeepSeek first and paid OpenRouter gpt-oss last (cost boundary)" \
-    || bad "the consolidation fallback chain changed - expected [deepseek-v4.1-flash-go, gpt-oss-120b-openrouter] with OpenRouter LAST (GUL-97)"
+# 5h-bis. GUL-123 / ADR-085: Hindsight's LLM is FreeLLMAPI, not LiteLLM. The
+# old GUL-97/GUL-108 contract (Hindsight's 210 s budget must outlive the LiteLLM
+# route timeout so LiteLLM's fallback can run) moved with it: FreeLLMAPI does the
+# failover itself, inside FALLBACK_TIME_BUDGET_MS (upstream default 45 s), so the
+# budget only has to stay comfortably above that. Also asserted: the base URL
+# names a Service that exists in the repo, so a rename of the FreeLLMAPI Service
+# fails here instead of at the first retain.
+FREELLMAPI_SVC="$ROOT/apps/freellmapi/freellmapi-service.yaml"
+hs_timeout=$(env_value "$API" HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT)
+case "${hs_timeout:-x}" in
+  *[!0-9]*) bad "cannot read HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT ('${hs_timeout:-missing}') - an unreadable value must fail, not pass" ;;
+  *)
+    if [ "$hs_timeout" -ge 90 ]; then
+      ok "Hindsight's ${hs_timeout}s consolidation budget leaves FreeLLMAPI's 45s failover budget room for a slow first token"
+    else
+      bad "Hindsight's ${hs_timeout}s consolidation budget is below 90s - FreeLLMAPI failover (45s) plus a slow answer would be cancelled (GUL-123)"
+    fi ;;
+esac
+if [ -f "$FREELLMAPI_SVC" ] && grep -q '^  name: freellmapi$' "$FREELLMAPI_SVC" && grep -q '^  namespace: freellmapi$' "$FREELLMAPI_SVC" && grep -q 'port: 3001' "$FREELLMAPI_SVC"; then
+  ok "the base URL's Service freellmapi.freellmapi:3001 is defined in apps/freellmapi/"
 else
-  bad "$LITELLM_RELEASE is missing - cannot check the consolidation timeout contract"
+  bad "apps/freellmapi/freellmapi-service.yaml does not define Service freellmapi/freellmapi on port 3001 - HINDSIGHT_API_LLM_BASE_URL points at nothing (GUL-123)"
 fi
 
 # The knobs that must stay ABSENT - absence is a behaviour here, so it is

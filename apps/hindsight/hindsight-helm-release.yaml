@@ -123,7 +123,15 @@ spec:
         # left to the agents. Steady-state traffic is tens of calls/h, well under
         # the free tier's daily cap. Smoke-tested 4/4 valid strict json_schema
         # output, ~10 s each. No fallback on purpose (see the LiteLLM route).
-        HINDSIGHT_API_LLM_MODEL: free-openrouter
+        # GUL-123 / ADR-085 (2026-10-24): Hindsight leaves LiteLLM entirely. The
+        # owner split inference into "good" (LiteLLM: Ollama Cloud + OpenCode Go
+        # subscriptions only) and "cheap" (FreeLLMAPI: pooled free tiers - Groq,
+        # Google AI Studio, NVIDIA, Mistral, OpenRouter, Cerebras). Memory
+        # building is cheap work, so both roles call FreeLLMAPI's virtual model
+        # `auto`, which ranks every enabled free model and fails over on 429/5xx
+        # inside the free pool. Pre-switch test: 5/5 valid strict json_schema
+        # fact extractions, ~1 s each (one 60 s Gemini hang, then Groq rescued).
+        HINDSIGHT_API_LLM_MODEL: auto
         # Consolidation runs on the OpenCode Go subscription (flat fee) instead of
         # paid OpenRouter credit: LiteLLM alias `hindsight-consolidation-go` =
         # free minimax-m3.1-flash, falling back to deepseek-v4.1-flash on Go and
@@ -138,7 +146,8 @@ spec:
         # is fast, so the 210 s ceiling is now a safety net, not a rescue window.
         # GUL-122 (2026-10-24): consolidation follows retain onto free-openrouter
         # (route timeout 120 s, below the 210 s budget here).
-        HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: free-openrouter
+        # GUL-123: consolidation follows retain onto FreeLLMAPI `auto`.
+        HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: auto
         # GUL-97 (2026-10-22): outer budget for ONE consolidation LLM call.
         # LiteLLM gives MiniMax 120 s and then falls back to DeepSeek on the
         # Go plan (apps/llm-hub/litellm-helm-release.yaml, route
@@ -159,7 +168,11 @@ spec:
         #   ['reasoning_effort'], for model=openai/gpt-oss-120b:nitro
         # and every retain failed from 08:37 to the revert (H2-306, 2026-10-19).
         # Reasoning control, if wanted, belongs in the LiteLLM model entry.
-        HINDSIGHT_API_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
+        # GUL-123: FreeLLMAPI's in-cluster Service (OpenAI-compatible /v1). The
+        # key in hindsight-secrets (HINDSIGHT_API_LLM_API_KEY) is FreeLLMAPI's
+        # unified key, no longer a LiteLLM virtual key - regenerating it on the
+        # FreeLLMAPI Keys page breaks Hindsight until the SOPS secret is updated.
+        HINDSIGHT_API_LLM_BASE_URL: http://freellmapi.freellmapi.svc.cluster.local:3001/v1
         # Consolidation death spiral (H2-306, 2026-10-19): on our hub-heavy banks
         # (entities like the owner or "homelab" sit on thousands of facts) the
         # link-expansion graph query (`WITH seed_sources ...`) ran 45 s+ with six
