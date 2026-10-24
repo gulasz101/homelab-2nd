@@ -380,7 +380,9 @@ spec:
           api_key: "os.environ/OPENROUTER_API_KEY"
       - model_name: free-openrouter
         litellm_params:
-          model: openrouter/free
+          # LiteLLM strips the first "openrouter/" as the provider prefix, so
+          # the OpenRouter model id "openrouter/free" needs it twice.
+          model: openrouter/openrouter/free
           api_key: "os.environ/OPENROUTER_API_KEY"
 
         # ── "Grey zone" Anthropic reseller endpoints (2026-10-09) ──
