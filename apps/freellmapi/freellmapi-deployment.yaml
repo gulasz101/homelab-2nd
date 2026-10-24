@@ -61,6 +61,12 @@ spec:
               value: /app/server/data/freellmapi.db.backup
             - name: FREEAPI_DB_BACKUP_INTERVAL_MS
               value: "300000"
+            # Default is 120 /v1 requests per minute per client IP. In-cluster
+            # callers (Hindsight consolidation runs 6 in parallel) all come from a
+            # few pod IPs, so 120 would throttle the memory backlog in the proxy
+            # itself, before any provider quota matters.
+            - name: PROXY_RATE_LIMIT_RPM
+              value: "600"
           # ENCRYPTION_KEY (provider keys at rest) and FREEAPI_CONFIG_JSON (the
           # declarative config: admin account, so the unauthenticated first-run
           # setup window never opens; provider keys; routing strategy).
