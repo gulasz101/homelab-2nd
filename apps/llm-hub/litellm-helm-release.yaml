@@ -384,6 +384,11 @@ spec:
           # the OpenRouter model id "openrouter/free" needs it twice.
           model: openrouter/openrouter/free
           api_key: "os.environ/OPENROUTER_API_KEY"
+          # GUL-122: Hindsight's retain + consolidation model. Without a timeout
+          # LiteLLM waits its 6000 s default; keep this below Hindsight's 210 s
+          # consolidation budget. Deliberately NO fallback: a fallback onto
+          # beam-free-go would put Hindsight back on the agents' shared quota.
+          timeout: 120
 
         # ── "Grey zone" Anthropic reseller endpoints (2026-10-09) ──
         # Two reseller keys dropped in for evaluation: OneProvider

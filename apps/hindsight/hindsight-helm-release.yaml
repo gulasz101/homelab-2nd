@@ -116,7 +116,14 @@ spec:
         # answering "OK" through the memory-hindsight key. The key's model list was
         # widened to include beam-free-go (LiteLLM /key/update). Consolidation stays
         # on hindsight-consolidation-go (Go plan, unaffected).
-        HINDSIGHT_API_LLM_MODEL: beam-free-go
+        # GUL-122 (2026-10-24): the consolidation backlog drove beam-free-go into
+        # upstream 429s (100% failures from ~04:30Z), and every Paperclip agent
+        # shares that quota. Move Hindsight onto `free-openrouter`
+        # (openrouter/openrouter/free, OpenRouter's free-model router) so beam is
+        # left to the agents. Steady-state traffic is tens of calls/h, well under
+        # the free tier's daily cap. Smoke-tested 4/4 valid strict json_schema
+        # output, ~10 s each. No fallback on purpose (see the LiteLLM route).
+        HINDSIGHT_API_LLM_MODEL: free-openrouter
         # Consolidation runs on the OpenCode Go subscription (flat fee) instead of
         # paid OpenRouter credit: LiteLLM alias `hindsight-consolidation-go` =
         # free minimax-m3.1-flash, falling back to deepseek-v4.1-flash on Go and
@@ -129,7 +136,9 @@ spec:
         # consolidation onto beam-free-go (free Go model, verified working + JSON
         # mode) so memory building stops draining the subscription. beam-free-go
         # is fast, so the 210 s ceiling is now a safety net, not a rescue window.
-        HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: beam-free-go
+        # GUL-122 (2026-10-24): consolidation follows retain onto free-openrouter
+        # (route timeout 120 s, below the 210 s budget here).
+        HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: free-openrouter
         # GUL-97 (2026-10-22): outer budget for ONE consolidation LLM call.
         # LiteLLM gives MiniMax 120 s and then falls back to DeepSeek on the
         # Go plan (apps/llm-hub/litellm-helm-release.yaml, route

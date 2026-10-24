@@ -1,6 +1,6 @@
 # ADR-082: Hindsight fact-extraction LLM moved to beam-free-go (OpenCode Go, free)
 
-- **Status**: Accepted
+- **Status**: Superseded by ADR-083 (2026-10-24, Hindsight moved to `free-openrouter`)
 - **Date**: 2026-10-23
 - **Amends**: ADR-054 (Hindsight extraction model via OpenRouter) — §LLM backend only
 
