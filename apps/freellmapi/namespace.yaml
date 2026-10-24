@@ -1,0 +1,8 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: freellmapi
+  labels:
+    app.kubernetes.io/name: freellmapi
+    app.kubernetes.io/part-of: homelab

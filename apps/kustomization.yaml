@@ -531,3 +531,9 @@ resources:
   # those land.
   # ============================================================
   - zigbee/
+
+  # ============================================================
+  # FreeLLMAPI (GUL-123, ADR-084) — free-tier LLM aggregator, LAN/NetBird only.
+  # Nested kustomization; file list and rationale in apps/freellmapi/kustomization.yaml.
+  # ============================================================
+  - freellmapi/

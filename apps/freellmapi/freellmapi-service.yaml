@@ -1,0 +1,42 @@
+---
+# In-cluster endpoint (LiteLLM and other pods):
+#   http://freellmapi.freellmapi.svc.cluster.local:3001/v1
+apiVersion: v1
+kind: Service
+metadata:
+  name: freellmapi
+  namespace: freellmapi
+  labels:
+    app: freellmapi
+spec:
+  type: ClusterIP
+  selector:
+    app: freellmapi
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http
+      protocol: TCP
+---
+# LAN/NetBird face for the dashboard and for the Mac-side agents:
+#   http://192.168.1.179:30301
+# Deliberately NO Cloudflare Tunnel (ADR-084): upstream is single-user and says
+# it must not face the internet; the only things guarding it are the dashboard
+# login and the unified API key. Anything public goes through LiteLLM instead.
+apiVersion: v1
+kind: Service
+metadata:
+  name: freellmapi-lan
+  namespace: freellmapi
+  labels:
+    app: freellmapi
+spec:
+  type: NodePort
+  selector:
+    app: freellmapi
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http
+      nodePort: 30301
+      protocol: TCP

@@ -1,0 +1,20 @@
+---
+# FreeLLMAPI keeps everything in one SQLite file (freellmapi.db): the dashboard
+# account, the AES-256-GCM-encrypted provider keys, the fallback chain and the
+# request analytics. local-path on the homelab-2nd NVMe, like every live DB
+# here (guardrail 4). The disk is NOT the durable copy: the app writes an
+# encrypted, gzipped snapshot (freellmapi.db.backup) next to the DB every 5 min
+# and the freellmapi-backup CronJob ships that file to OMV MinIO daily.
+# Node-local volume, so the Deployment and the CronJob both pin homelab-2nd.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: freellmapi-data
+  namespace: freellmapi
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi

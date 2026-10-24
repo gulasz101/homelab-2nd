@@ -1,0 +1,32 @@
+---
+# ============================================================
+# FreeLLMAPI — free-tier LLM aggregator (GUL-123, ADR-084)
+# One OpenAI/Anthropic-compatible /v1 in front of the free tiers of ~34
+# providers. Upstream ships only an image (no Helm chart), so these are raw
+# manifests via Flux (guardrail 2). No Postgres (SQLite inside the app), so no
+# CNPG; durability = the app's encrypted snapshot shipped to OMV MinIO.
+# LAN/NetBird only (NodePort 30301); no Cloudflare Tunnel on purpose.
+# Nested kustomization so apps/kustomization.yaml carries one line.
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  # SOPS secrets first: the Deployment and CronJob consume them.
+  # freellmapi-secrets            : ENCRYPTION_KEY + FREEAPI_CONFIG_JSON (admin, keys, routing)
+  # freellmapi-minio-backup-creds : OMV MinIO user scoped to s3://freellmapi-backups
+  # freellmapi-mattermost-webhook-url : alert receiver
+  - freellmapi-secrets.sops.yaml
+  - freellmapi-minio-backup-creds.sops.yaml
+  - freellmapi-mattermost-webhook-url.sops.yaml
+  # App
+  - freellmapi-data-pvc.yaml
+  - freellmapi-deployment.yaml
+  - freellmapi-service.yaml
+  # Daily encrypted-snapshot upload to OMV MinIO
+  - freellmapi-backup-cronjob.yaml
+  # Observability (guardrail 9; upstream has no /metrics)
+  - freellmapi-prometheus-rules.yaml
+  - freellmapi-alertmanager-config.yaml
+  - freellmapi-loki-rule.yaml
+  - freellmapi-dashboard-configmap.yaml

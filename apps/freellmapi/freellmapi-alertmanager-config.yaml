@@ -1,0 +1,30 @@
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: freellmapi-mattermost-alerts
+  namespace: freellmapi
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: freellmapi-mattermost
+    matchers:
+      - name: namespace
+        value: freellmapi
+        matchType: "="
+  receivers:
+    - name: freellmapi-mattermost
+      slackConfigs:
+        - apiURL:
+            name: freellmapi-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.namespace }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.namespace }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

@@ -1,0 +1,100 @@
+---
+# FreeLLMAPI alerts (GUL-123, guardrail 9 — honest partial).
+# Upstream has NO Prometheus /metrics endpoint (source-checked at v0.16.9: no
+# prom-client, no /metrics route); its analytics live in SQLite behind the
+# dashboard login. So these rules cover what the shared LGTM stack can see:
+# availability, restarts, memory, the volume, and backup freshness. App-level
+# signals (upstream 429s, failover storms) come from the Loki rule instead.
+# Selector label is 'prometheus-stack' (NOT 'kube-prometheus-stack': the rules
+# and AlertmanagerConfig selectors differ, verified gotcha).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: freellmapi-alerts
+  namespace: freellmapi
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: freellmapi.availability
+      interval: 30s
+      rules:
+        - alert: FreeLLMAPINoAvailableReplica
+          expr: |
+            kube_deployment_status_replicas_available{namespace="freellmapi", deployment="freellmapi"} < 1
+          for: 5m
+          labels:
+            severity: critical
+            namespace: freellmapi
+          annotations:
+            summary: "FreeLLMAPI has no available replica"
+            description: "The single-replica freellmapi Deployment has had no ready pod for 5 minutes: http://192.168.1.179:30301 and every client routed through it are down."
+        - alert: FreeLLMAPIRestartLoop
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="freellmapi", container="freellmapi"}[15m]) > 2
+          for: 0m
+          labels:
+            severity: critical
+            namespace: freellmapi
+          annotations:
+            summary: "FreeLLMAPI restart loop"
+            description: "The freellmapi container restarted more than twice in 15 minutes (bad ENCRYPTION_KEY, broken declarative config, or OOM)."
+        - alert: FreeLLMAPIMemoryAbove85PercentLimit
+          expr: |
+            100 * sum by (pod) (container_memory_working_set_bytes{namespace="freellmapi", container="freellmapi"})
+              / sum by (pod) (kube_pod_container_resource_limits{namespace="freellmapi", container="freellmapi", resource="memory"}) > 85
+          for: 10m
+          labels:
+            severity: warning
+            namespace: freellmapi
+          annotations:
+            summary: "FreeLLMAPI memory above 85% of its limit"
+            description: "{{ $labels.pod }} has used more than 85% of its memory limit for 10 minutes; an OOM kill is next."
+        - alert: FreeLLMAPIVolumeFilling
+          expr: |
+            100 * kubelet_volume_stats_used_bytes{namespace="freellmapi", persistentvolumeclaim="freellmapi-data"}
+              / kubelet_volume_stats_capacity_bytes{namespace="freellmapi", persistentvolumeclaim="freellmapi-data"} > 80
+          for: 30m
+          labels:
+            severity: warning
+            namespace: freellmapi
+          annotations:
+            summary: "freellmapi-data PVC above 80%"
+            description: "The SQLite volume is above 80%. Request analytics are capped by REQUEST_ANALYTICS_MAX_ROWS; check the dashboard Backups page for piled-up dumps."
+    - name: freellmapi.backup
+      interval: 60s
+      rules:
+        - alert: FreeLLMAPIBackupStale
+          # Schedule 04:15 daily; 30h leaves a day of slack.
+          expr: |
+            (time() - kube_cronjob_status_last_successful_time{cronjob="freellmapi-backup"} > 30 * 3600)
+          for: 1h
+          labels:
+            severity: warning
+            namespace: freellmapi
+          annotations:
+            summary: "FreeLLMAPI backup has not succeeded recently"
+            description: "No successful freellmapi-backup run in 30 hours. The provider keys and routing config have no fresh copy in MinIO."
+        - alert: FreeLLMAPIBackupJobFailed
+          expr: |
+            kube_job_status_failed{namespace="freellmapi", job_name=~"freellmapi-backup-.+"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            namespace: freellmapi
+          annotations:
+            summary: "FreeLLMAPI backup job failed"
+            description: "Backup job {{ $labels.job_name }} failed: the app's snapshot is missing/stale, or the MinIO upload did not complete."
+        - alert: FreeLLMAPIBackupCronJobMissing
+          # kube_cronjob_info exists from creation, so this does not fire on a
+          # fresh install before the first successful run (unlike absent() on
+          # last_successful_time).
+          expr: |
+            absent(kube_cronjob_info{namespace="freellmapi", cronjob="freellmapi-backup"})
+          for: 1h
+          labels:
+            severity: warning
+            namespace: freellmapi
+          annotations:
+            summary: "FreeLLMAPI backup CronJob is gone"
+            description: "kube-state-metrics reports no freellmapi-backup CronJob: it was deleted or renamed, and nothing ships the DB snapshot to MinIO."

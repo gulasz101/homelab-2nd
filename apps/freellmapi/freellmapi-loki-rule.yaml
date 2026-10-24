@@ -1,0 +1,44 @@
+---
+# Loki Ruler rules for FreeLLMAPI (GUL-123). Logs reach Loki through the OTel
+# Collector DaemonSet (k8s_* labels), nothing to wire in the pod itself.
+# Matched on failure words only, never bare status digits (homelab lesson:
+# digit regexes page on latency numbers).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: freellmapi-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  freellmapi-errors.yaml: |
+    groups:
+      - name: freellmapi.logs
+        interval: 1m
+        rules:
+          - alert: FreeLLMAPIErrors
+            expr: |
+              sum by (k8s_pod_name) (
+                count_over_time(
+                  {k8s_namespace_name="freellmapi", k8s_container_name="freellmapi"}
+                    |~ "(?i)(unhandled|uncaught|fatal|EADDRINUSE|SQLITE_|could not restore)"
+                  [5m]
+                )
+              ) > 3
+            for: 2m
+            labels:
+              severity: warning
+              namespace: freellmapi
+            annotations:
+              summary: "FreeLLMAPI logging fatal/SQLite errors"
+              description: "{{ $labels.k8s_pod_name }} logged more than 3 fatal, uncaught or SQLite errors in 5 minutes."
+          - alert: FreeLLMAPIBackupPumpFailing
+            expr: |
+              sum(count_over_time({k8s_namespace_name="freellmapi", k8s_container_name="freellmapi"} |~ "\\[db-backup\\]" !~ "uploaded|restored" [30m])) > 0
+            for: 0m
+            labels:
+              severity: warning
+              namespace: freellmapi
+            annotations:
+              summary: "FreeLLMAPI could not write its DB snapshot"
+              description: "The in-app backup pump logged something other than a successful upload/restore (it logs only the raw error message on failure) in the last 30 minutes; the daily MinIO upload would ship a stale copy."
