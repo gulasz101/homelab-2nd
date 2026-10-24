@@ -1,6 +1,6 @@
 # ADR-083: Hindsight LLM (retain + consolidation) moved to free-openrouter
 
-- **Status**: Accepted
+- **Status**: Superseded by ADR-085 (Hindsight now calls FreeLLMAPI `auto` directly)
 - **Date**: 2026-10-24
 - **Supersedes**: ADR-082 (Hindsight fact-extraction LLM on beam-free-go)
 

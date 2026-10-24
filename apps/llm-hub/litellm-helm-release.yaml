@@ -67,32 +67,12 @@ spec:
         secretKeyRef:
           name: litellm-master-key
           key: salt-key
-      # LiteLLM's native Z.AI provider expects ZAI_API_KEY.
-      # The SOPS secret currently stores the same credential as GLM_API_KEY,
-      # so alias it without duplicating the secret.
-    - name: ZAI_API_KEY
-      valueFrom:
-        secretKeyRef:
-          name: litellm-provider-keys
-          key: GLM_API_KEY
-      # OpenRouter provider expects OPENROUTER_API_KEY.
-    - name: OPENROUTER_API_KEY
-      valueFrom:
-        secretKeyRef:
-          name: litellm-provider-keys
-          key: OPENROUTER_API_KEY
       # OpenCode Go subscription provider (Zen Go endpoint)
     - name: OPENCODE_GO_SUBSCRIPTION_API_KEY
       valueFrom:
         secretKeyRef:
           name: litellm-provider-keys
           key: OPENCODE_GO_SUBSCRIPTION_API_KEY
-      # Google Gemini (AI Pro subscription key) — native gemini/ provider
-    - name: GEMINI_API_KEY
-      valueFrom:
-        secretKeyRef:
-          name: litellm-provider-keys
-          key: GEMINI_API_KEY
       # Local LM Studio model does not need a real API key; LiteLLM still
       # sends an Authorization header so give it a non-empty placeholder
     - name: DUMMY_API_KEY
@@ -330,180 +310,6 @@ spec:
           model: openai/gpt-oss:120b
           api_base: "https://ollama.com/v1"
           api_key: "os.environ/OLLAMA_API_KEY"
-      - model_name: glm-5.2-zai
-        litellm_params:
-            # z.ai markets this as glm-5.2, but LiteLLM's provider map only knows zai/glm-5.
-            # Alias keeps the user-facing name while routing to the recognised slug.
-            # Suffix -zai distinguishes from the Ollama-hosted glm-5.2-ollama variant.
-          model: zai/glm-5
-          api_key: "os.environ/ZAI_API_KEY"
-      - model_name: glm-4.7-zai
-        litellm_params:
-            # Z.AI's flagship GLM-4.7 model (200K context, reasoning)
-            # Suffix -zai distinguishes from any future Ollama-hosted variant.
-          model: zai/glm-4.7
-          api_key: "os.environ/ZAI_API_KEY"
-      - model_name: mistral-3.5-middle
-        litellm_params:
-          model: mistral/mistral-medium-latest
-          api_key: "os.environ/MISTRAL_API_KEY"
-      - model_name: hy3-free
-        litellm_params:
-            # Tencent Hybrid 3 (MoE) via OpenRouter free tier
-          model: openrouter/tencent/hy3:free
-          api_key: "os.environ/OPENROUTER_API_KEY"
-      - model_name: gpt-oss-120b-openrouter
-        litellm_params:
-            # OpenAI gpt-oss-120b via OpenRouter (paid credits), added 2026-10-14
-            # to unblock the OpenViking -> Hindsight migration. The Ollama Cloud
-            # route (gpt-oss-120b-ollama, same slug different provider) is a
-            # separate model_name; keeping both lets us compare providers.
-            # Reason: Hindsight's fact extraction saturated LiteLLM's concurrent
-            # request slots against ollama.com, producing
-            #   429 'timed out waiting for a concurrent request slot'
-            # on every retain. See docs/adr/adr-054-*.md and H2-284.
-          model: openrouter/openai/gpt-oss-120b
-          api_key: "os.environ/OPENROUTER_API_KEY"
-        # H2-307: dedicated high-throughput OpenRouter route for Hindsight.
-        # :nitro tells OpenRouter to sort providers by throughput rather than
-        # price, which cuts the average retain from 42 s down to the target
-        # range. A separate model_name keeps the existing gpt-oss-120b-openrouter
-        # (price-sorted) intact for other callers and their fallback chains.
-      - model_name: gpt-oss-120b-hindsight
-        litellm_params:
-          model: openrouter/openai/gpt-oss-120b:nitro
-          api_key: "os.environ/OPENROUTER_API_KEY"
-      - model_name: deepseek-v4.1-flash-openrouter
-        litellm_params:
-            # DeepSeek v4.1 Flash via OpenRouter (paid credits), added 2026-10-17.
-            # Same model as the Zen Go deepseek-v4.1-flash lanes on a different
-            # billing account: first cross-account hop for every OpenCode Go
-            # lane, so a Go weekly wall keeps the model instead of dropping to
-            # gpt-oss. See docs/adr/adr-069-*.md.
-          model: openrouter/deepseek/deepseek-v4.1-flash
-          api_key: "os.environ/OPENROUTER_API_KEY"
-      - model_name: free-openrouter
-        litellm_params:
-          # LiteLLM strips the first "openrouter/" as the provider prefix, so
-          # the OpenRouter model id "openrouter/free" needs it twice.
-          model: openrouter/openrouter/free
-          api_key: "os.environ/OPENROUTER_API_KEY"
-          # GUL-122: Hindsight's retain + consolidation model. Without a timeout
-          # LiteLLM waits its 6000 s default; keep this below Hindsight's 210 s
-          # consolidation budget. Deliberately NO fallback: a fallback onto
-          # beam-free-go would put Hindsight back on the agents' shared quota.
-          timeout: 120
-
-        # ── "Grey zone" Anthropic reseller endpoints (2026-10-09) ──
-        # Two reseller keys dropped in for evaluation: OneProvider
-        # (USD 250 quota, expires 2027-01-07) and claudeapikey (USD 100
-        # balance). Both speak the Anthropic-native Messages API, so we use
-        # LiteLLM's anthropic/ provider with an api_base override; LiteLLM
-        # appends /v1/messages automatically (confirmed in LiteLLM docs).
-        # Suffixed per provider so the two routes can be compared head to head.
-        # NOT covered by any SLA — could vanish without notice. See
-        # docs/adr/adr-042-grey-zone-anthropic-providers.md.
-      - model_name: claude-opus-5-5-oneprovider
-        litellm_params:
-          model: anthropic/claude-opus-5-5
-          api_base: "https://api.oneprovider.dev"
-          api_key: "os.environ/ONEPROVIDER_API_KEY"
-      - model_name: claude-opus-5-oneprovider
-        litellm_params:
-          model: anthropic/claude-opus-5
-          api_base: "https://api.oneprovider.dev"
-          api_key: "os.environ/ONEPROVIDER_API_KEY"
-      - model_name: claude-opus-4-8-oneprovider
-        litellm_params:
-          model: anthropic/claude-opus-4-8
-          api_base: "https://api.oneprovider.dev"
-          api_key: "os.environ/ONEPROVIDER_API_KEY"
-      - model_name: claude-sonnet-5-5-oneprovider
-        litellm_params:
-          model: anthropic/claude-sonnet-5-5
-          api_base: "https://api.oneprovider.dev"
-          api_key: "os.environ/ONEPROVIDER_API_KEY"
-      - model_name: claude-sonnet-5-oneprovider
-        litellm_params:
-          model: anthropic/claude-sonnet-5
-          api_base: "https://api.oneprovider.dev"
-          api_key: "os.environ/ONEPROVIDER_API_KEY"
-      - model_name: claude-haiku-4-5-oneprovider
-        litellm_params:
-          model: anthropic/claude-haiku-4-5
-          api_base: "https://api.oneprovider.dev"
-          api_key: "os.environ/ONEPROVIDER_API_KEY"
-      - model_name: claude-opus-5-5-claudeapikey
-        litellm_params:
-          model: anthropic/claude-opus-5-5
-          api_base: "https://claudeapikey.dev"
-          api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
-      - model_name: claude-opus-5-claudeapikey
-        litellm_params:
-          model: anthropic/claude-opus-5
-          api_base: "https://claudeapikey.dev"
-          api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
-      - model_name: claude-opus-4-8-claudeapikey
-        litellm_params:
-          model: anthropic/claude-opus-4-8
-          api_base: "https://claudeapikey.dev"
-          api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
-      - model_name: claude-sonnet-5-claudeapikey
-        litellm_params:
-          model: anthropic/claude-sonnet-5
-          api_base: "https://claudeapikey.dev"
-          api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
-      - model_name: claude-haiku-4-5-claudeapikey
-        litellm_params:
-          model: anthropic/claude-haiku-4-5
-          api_base: "https://claudeapikey.dev"
-          api_key: "os.environ/CLAUDEAPIKEY_API_KEY"
-
-        # ── Google Gemini via AI Pro subscription key (GEMINI_API_KEY) ──
-        # Probe-verified 2026-09-25: legacy gemini-2.5-* models are gated off
-        # ("no longer available to new users"); image/TTS/music endpoints are
-        # not chat models. 3.5/3.7/3.8-flash returned 503 "high demand" on
-        # launch day — routed anyway, expected to recover Google-side.
-      - model_name: gemini-3.1-flash-lite
-        litellm_params:
-          model: gemini/gemini-3.1-flash-lite
-          api_key: "os.environ/GEMINI_API_KEY"
-      - model_name: gemini-3.5-flash-lite
-        litellm_params:
-          model: gemini/gemini-3.5-flash-lite
-          api_key: "os.environ/GEMINI_API_KEY"
-      - model_name: gemini-3.6-flash
-        litellm_params:
-          model: gemini/gemini-3.6-flash
-          api_key: "os.environ/GEMINI_API_KEY"
-      - model_name: gemini-3.7-flash
-        litellm_params:
-            # thinking model; allow large max_tokens client-side
-          model: gemini/gemini-3.7-flash
-          api_key: "os.environ/GEMINI_API_KEY"
-      - model_name: gemini-3.8-flash
-        litellm_params:
-          model: gemini/gemini-3.8-flash
-          api_key: "os.environ/GEMINI_API_KEY"
-        # ── removed 2026-09-26 after 48h of every-call failures ──
-        # gemini-pro-latest, gemini-3.1-pro-preview, gemini-3.1-pro-preview-customtools:
-        #   429 "You exceeded your current quota" from Google on EVERY call, even
-        #   hours after the Pacific-midnight quota reset. The AI Pro subscription
-        #   key has no usable Pro-tier API allowance. Verified 2026-09-26 via
-        #   master-key smoke test + /spend/logs (0 quota consumed). Do not
-        #   re-add unless Google changes subscription API entitlements.
-        # gemini-3.8-flash-lite-tts: returns HTTP 200 with EMPTY text in chat
-        #   (TTS endpoint wired as chat). Dead weight in the dropdown.
-      - model_name: gemini-flash-latest
-        litellm_params:
-            # Google-managed rolling alias — always points at newest flash
-          model: gemini/gemini-flash-latest
-          api_key: "os.environ/GEMINI_API_KEY"
-      - model_name: gemma-4-26b-a4b-it
-        litellm_params:
-            # open-weight Gemma served through the Gemini API
-          model: gemini/gemma-4-26b-a4b-it
-          api_key: "os.environ/GEMINI_API_KEY"
 
         # ── Local LM Studio model on the Hermes M1 Max (same LAN as the cluster) ──
       - model_name: gemma-4-12b-uncensored
@@ -884,21 +690,20 @@ spec:
         # on OpenRouter first (deepseek-v4.1-flash-openrouter), so a Go wall no
         # longer drops agent sessions to a weaker model; gpt-oss-120b-openrouter
         # stays as the last resort.
+        # GUL-123 / ADR-085 (2026-10-24): OpenRouter left LiteLLM (free tiers now
+        # live in FreeLLMAPI), so every chain ends at Ollama Cloud. Owner ruling:
+        # LiteLLM never silently routes paid-tier traffic into free providers;
+        # when Go AND Ollama are both walled, the caller gets the error. This
+        # supersedes the cross-account OpenRouter tail of ADR-068/ADR-069.
         fallbacks:
-        - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama",
-            "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
-        - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter",
-            "gpt-oss-120b-openrouter"]}
-        - {"deepseek-v4.1-flash-go": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter",
-            "gpt-oss-120b-openrouter"]}
-        - {"qwen3.8-flash-go": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter",
-            "gpt-oss-120b-openrouter"]}
-        - {"hindsight-consolidation-go": ["deepseek-v4.1-flash-go", "gpt-oss-120b-openrouter"]}
+        - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama"]}
+        - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama"]}
+        - {"deepseek-v4.1-flash-go": ["deepseek-v4.1-flash-ollama"]}
+        - {"qwen3.8-flash-go": ["deepseek-v4.1-flash-ollama"]}
+        - {"hindsight-consolidation-go": ["deepseek-v4.1-flash-go", "deepseek-v4.1-flash-ollama"]}
         content_policy_fallbacks:
-        - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama",
-            "deepseek-v4.1-flash-openrouter", "gpt-oss-120b-openrouter"]}
-        - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-openrouter",
-            "gpt-oss-120b-openrouter"]}
+        - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama"]}
+        - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama"]}
 
       litellm_settings:
         callbacks:
@@ -1014,7 +819,3 @@ spec:
     # Pass the provider-key secrets into the pod as environment variables too
     environmentSecrets:
     - litellm-provider-keys
-      # Grey-zone reseller keys (ONEPROVIDER_API_KEY, CLAUDEAPIKEY_API_KEY).
-      # Kept in their own secret so rotating a reseller key never touches the
-      # core provider keys.
-    - litellm-grey-provider-keys
