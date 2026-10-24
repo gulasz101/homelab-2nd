@@ -144,6 +144,10 @@ spec:
     # changes, or the change will not take effect.
     podAnnotations:
       litellm.session-callbacks-revision: "3"
+      # Provider keys come from the litellm-provider-keys Secret as env vars,
+      # read only at pod start. BUMP THIS after rotating a key in
+      # litellm-provider-keys.sops.yaml, or the pod keeps the old key.
+      litellm.provider-keys-revision: "1"
 
     # Pre-call hook that normalizes the OpenCode Go session header (ADR-029).
     # LiteLLM loads a callback named in litellm_settings.callbacks by file path
