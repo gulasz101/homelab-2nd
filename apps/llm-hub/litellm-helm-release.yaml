@@ -202,6 +202,10 @@ spec:
           model: openai/beam-free
           api_base: https://opencode.ai/zen/go/v1
           api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
+          # GUL-122: Pi (thinking: max) sends reasoning_effort, which LiteLLM
+          # rejects for openai/beam-free with 400 UnsupportedParamsError before
+          # the call goes upstream. beam reasons by default; drop the param.
+          drop_params: true
       - model_name: step-5-preview-go
         litellm_params:
           model: openai/step-5-preview
