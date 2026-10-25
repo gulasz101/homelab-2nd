@@ -231,11 +231,11 @@ spec:
             namespace: observability
           annotations:
             summary: "Hindsight LLM call failure rate above 20% for {{ $labels.model }}"
-            description: "More than one in five LLM calls to {{ $labels.model }} through the FreeLLMAPI gateway failed over 15 minutes. Check FreeLLMAPI's own metrics and the FreeLLMAPI backend behind the HINDSIGHT_API_LLM_API_KEY key."
+            description: "More than one in five LLM calls to {{ $labels.model }} through the FreeLLMAPI gateway failed over 15 minutes. Check the FreeLLMAPI alerts (FreeLLMAPIErrors, FreeLLMAPINoAvailableReplica) and the freellmapi namespace logs in Loki, where upstream 429s and failovers show up."
 
         - alert: HindsightLlmTokenBurnHigh
-          # Token burn per model. The model behind this is a local Ollama-served
-          # nemotron via LiteLLM, so this is not a cost alert - it is a runaway
+          # Token burn per model. The model behind this is FreeLLMAPI `auto`
+          # (free tiers, ADR-085), so this is not a cost alert - it is a runaway
           # detector (a retry loop, a pathological consolidation pass, or a
           # migration import left running). Read the real curve on the Hindsight
           # LLM Metrics dashboard before tuning the 5M/hour line.
