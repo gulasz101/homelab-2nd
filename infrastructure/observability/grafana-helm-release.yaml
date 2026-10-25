@@ -71,6 +71,13 @@ spec:
       userKey: admin-user
       passwordKey: admin-password
 
+    # Grafana stores its SQLite DB on the RWO local-path PVC bound to t460.
+    # A RollingUpdate leaves the old pod holding the volume/DB lock while the
+    # surge pod starts, so the upgrade never becomes Ready and Flux times out.
+    # Recreate terminates the old pod first, then starts the new one.
+    deploymentStrategy:
+      type: Recreate
+
     persistence:
       enabled: true
       type: pvc
