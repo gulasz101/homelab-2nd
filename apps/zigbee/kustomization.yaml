@@ -93,6 +93,9 @@ resources:
   - influxdb-helm-release.yaml
 
   # --- Observability (guardrail 9) ------------------------------------------
+  # Mattermost webhook for the AlertmanagerConfig below (GUL-136): was missing,
+  # which made prometheus-stack-kube-prom-operator reject the config.
+  - zigbee-mattermost-webhook-url.sops.yaml
   - zigbee-prometheus-rules.yaml
   - zigbee-alertmanager-config.yaml
   - zigbee-loki-rule.yaml

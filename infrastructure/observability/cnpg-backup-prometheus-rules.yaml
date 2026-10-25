@@ -54,16 +54,25 @@ spec:
 
         - alert: CNPGBaseBackupTooOld
           # Catches silent failures where backups simply stop happening and no
-          # failure timestamp is ever recorded. Guard on last_available > 0 for
-          # the legacy metric so plugin clusters (whose deprecated collector
-          # timestamp is always 0) do not false-positive.
+          # failure timestamp is ever recorded.
+          # Plugin clusters (all clusters since GUL-90) use the barman-cloud
+          # metric; the legacy in-tree collector timestamp is latched and must
+          # not be used for them, so the legacy branch is excluded for any
+          # cluster that still exports the plugin metric.
           expr: |
-            (time() - barman_cloud_cloudnative_pg_io_last_available_backup_timestamp > 30 * 3600)
+            (
+              (barman_cloud_cloudnative_pg_io_last_available_backup_timestamp > 0)
+              and
+              (time() - barman_cloud_cloudnative_pg_io_last_available_backup_timestamp > 30 * 3600)
+            )
             or
             (
-              (cnpg_collector_last_available_backup_timestamp > 0)
-              and
-              (time() - cnpg_collector_last_available_backup_timestamp > 30 * 3600)
+              (
+                (cnpg_collector_last_available_backup_timestamp > 0)
+                and
+                (time() - cnpg_collector_last_available_backup_timestamp > 30 * 3600)
+              )
+              unless on (cluster) barman_cloud_cloudnative_pg_io_last_available_backup_timestamp
             )
           for: 1h
           labels:
