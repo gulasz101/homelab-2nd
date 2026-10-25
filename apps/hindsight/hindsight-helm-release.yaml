@@ -148,6 +148,18 @@ spec:
         # (route timeout 120 s, below the 210 s budget here).
         # GUL-123: consolidation follows retain onto FreeLLMAPI `auto`.
         HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: auto
+        # GUL-143: reflect is driven by tool calls, but FreeLLMAPI `auto` can
+        # route to free models that do not support tool calling (or have no
+        # usable key), which makes reflect fail at the first tool-selection
+        # step. Pin reflect and the background mental-model refresh to
+        # gpt-oss-120b, which supports tool calls (verified against
+        # FreeLLMAPI). Retain and consolidation stay on `auto`.
+        HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b
+        # FreeLLMAPI calls take 40-60s; the 30s reflect default cancels them.
+        HINDSIGHT_API_REFLECT_LLM_TIMEOUT: "120"
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_TIMEOUT: "300"
+        HINDSIGHT_API_REFLECT_WALL_TIMEOUT: "600"
         # GUL-97 (2026-10-22): outer budget for ONE consolidation LLM call.
         # LiteLLM gives MiniMax 120 s and then falls back to DeepSeek on the
         # Go plan (apps/llm-hub/litellm-helm-release.yaml, route
