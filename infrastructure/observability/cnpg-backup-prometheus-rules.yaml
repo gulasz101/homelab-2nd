@@ -72,7 +72,7 @@ spec:
                 and
                 (time() - cnpg_collector_last_available_backup_timestamp > 30 * 3600)
               )
-              unless on (cluster) barman_cloud_cloudnative_pg_io_last_available_backup_timestamp
+              unless on (namespace, cluster) barman_cloud_cloudnative_pg_io_last_available_backup_timestamp
             )
           for: 1h
           labels:
