@@ -12,6 +12,10 @@ spec:
 
   enableSuperuserAccess: true
 
+  postgresql:
+    parameters:
+      shared_buffers: "256MB"
+
   bootstrap:
     initdb:
       database: paperclip
@@ -33,10 +37,11 @@ spec:
   backup:
     retentionPolicy: "30d"
 
+  # No CPU limit: with 500m the pod was CFS-throttled in 47% of periods and Paperclip
+  # page loads stalled on bursty queries (2026-10-25). Memory stays capped.
   resources:
     requests:
-      memory: "256Mi"
-      cpu: "100m"
-    limits:
       memory: "512Mi"
-      cpu: "500m"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
