@@ -16,6 +16,7 @@ spec:
         - alert: PiholePodNotReady
           expr: |
             kube_pod_status_ready{namespace="pihole", condition="true"} == 0
+            unless on (namespace, pod) kube_pod_owner{namespace="pihole", owner_kind="Job"}
           for: 5m
           labels:
             severity: critical

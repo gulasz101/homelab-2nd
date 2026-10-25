@@ -222,6 +222,21 @@ spec:
       hostRootFsMount:
         enabled: true
 
+    # k3s runs controller-manager, scheduler and kube-proxy inside the
+    # k3s binary, so kube-prometheus-stack's scrape targets for them do not
+    # exist. Disable both the targets and their alert rules (k3s embeds them).
+    kubeControllerManager:
+      enabled: false
+    kubeScheduler:
+      enabled: false
+    kubeProxy:
+      enabled: false
+    defaultRules:
+      rules:
+        kubeControllerManager: false
+        kubeProxy: false
+        kubeSchedulerAlerting: false
+
     # Keep CRDs; Flux/Helm will manage them.
     crds:
       enabled: true

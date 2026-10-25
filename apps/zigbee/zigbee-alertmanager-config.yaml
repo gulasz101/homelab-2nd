@@ -12,14 +12,8 @@
 # is why the Mattermost webhook lives here as `zigbee-mattermost-webhook-url`
 # and not in the observability namespace.
 #
-# SECRET CONTRACT - ACTION FOR H2-215:
-#   zigbee-mattermost-webhook-url (SOPS), key `url` = the Mattermost incoming
-#   webhook URL for the zigbee alerts channel.
-#   This secret is NOT in H2-215's title ("MQTT auth, fresh InfluxDB, Node-RED
-#   creds") - it is called out in the H2-214 result comment so it does not get
-#   forgotten. Until it exists the Alertmanager operator reports the config as
-#   invalid and these alerts have no receiver; the rules themselves still fire
-#   and are visible in the Prometheus UI.
+# The secret exists since GUL-136, key `url`.
+# It points at the shared alerts webhook that 12 other namespaces use.
 # ============================================================================
 apiVersion: monitoring.coreos.com/v1alpha1
 kind: AlertmanagerConfig
