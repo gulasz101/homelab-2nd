@@ -20,7 +20,7 @@ Docs are indexed in the homelab docs-mcp as library `hindsight@0.10.3`.
 | Chart DB | `postgresql.enabled: false` (never the chart's bundled Postgres) |
 | DB host for the chart | `hindsight-db-rw.hindsight.svc.cluster.local:5432` |
 | Secrets | `existingSecret: hindsight-secrets` — **must contain `postgres-password`** (the api deployment and worker statefulset read that exact key whenever `postgresql.enabled=false`), plus `HINDSIGHT_API_LLM_API_KEY` and `HINDSIGHT_API_TENANT_API_KEY` |
-| LLM | `HINDSIGHT_API_LLM_PROVIDER: openai` → `http://litellm.llm-hub.svc.cluster.local:4000/v1`, retain + consolidation model `free-openrouter` (OpenRouter free router, no fallback, ADR-083); key is the LiteLLM virtual key `memory-hindsight`. **`openai`, not `litellm`** — see the gotcha below |
+| LLM | `HINDSIGHT_API_LLM_PROVIDER: openai` → `http://freellmapi.freellmapi.svc.cluster.local:3001/v1`, retain + consolidation model `auto` (FreeLLMAPI, which does its own failover, ADR-085); API key from the `HINDSIGHT_API_LLM_API_KEY` key of secret `hindsight-secrets` (FreeLLMAPI's unified key). **`openai`, not `litellm`** — see the gotcha below |
 | Image | **slim** (`-slim`), because embeddings/reranking are served externally |
 | Embeddings | `HINDSIGHT_API_EMBEDDINGS_PROVIDER: tei` + the chart's `tei.embedding.enabled: true` (model `sentence-transformers/all-MiniLM-L6-v2`, 384-dim) |
 | Reranker | `HINDSIGHT_API_RERANKER_PROVIDER: tei` + the chart's `tei.reranker.enabled: true` (model `cross-encoder/ms-marco-MiniLM-L6-v2`) |
