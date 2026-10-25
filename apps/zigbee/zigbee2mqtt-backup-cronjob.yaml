@@ -32,6 +32,11 @@ spec:
           # volume lives.
           nodeSelector:
             kubernetes.io/hostname: zigbee-node
+          tolerations:
+            - key: dedicated
+              operator: Equal
+              value: zigbee
+              effect: NoSchedule
           containers:
             - name: backup
               # Pinned. This was originally minio/mc tagged with the version mc
