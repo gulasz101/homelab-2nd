@@ -30,6 +30,12 @@ resources:
   - observability/namespace.yaml
   - observability/helm-repositories.yaml
   - observability/grafana-admin-credentials.sops.yaml
+  # Read-only InfluxDB token for the Grafana datasource (token interpolated as
+  # ${INFLUX_TOKEN}). Referenced by grafana-helm-release.yaml envFromSecrets since
+  # d7a9e94 (2026-10-14) but never listed here, so the Secret was never created
+  # and the Grafana pod failed at container start with
+  # "secret grafana-influxdb-datasource not found" (GUL-168).
+  - observability/grafana-influxdb-datasource.sops.yaml
   - observability/grafana-oidc-client.sops.yaml
   - observability/grafana-tunnel-token.sops.yaml
   - observability/loki-minio-creds.sops.yaml
