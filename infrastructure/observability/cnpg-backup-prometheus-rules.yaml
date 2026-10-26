@@ -52,6 +52,28 @@ spec:
             summary: "CNPG backup failing for {{ $labels.cluster }}"
             description: "The most recent base backup attempt for CNPG cluster {{ $labels.cluster }} failed and no newer successful backup exists — the cluster has no fresh recovery point."
 
+        - alert: CNPGBackupObjectFailed
+          # Catches the case where the CNPG operator marks a Backup object
+          # `failed` (e.g. "no status found for target pod") but the barman-cloud
+          # plugin never records a failed-backup timestamp, so CNPGBackupFailed
+          # stays silent. kube-state-metrics customResourceState exposes every
+          # Backup object; we alert only on failures that terminated recently so
+          # old failed objects do not page forever.
+          expr: |
+            (
+              cnpg_backup_info{phase="failed"}
+              and on (namespace, name)
+              (cnpg_backup_reconciliation_terminated_at > (time() - 15 * 60))
+            ) > 0
+          for: 1m
+          labels:
+            severity: critical
+            alertgroup: cnpg-backup
+            namespace: observability
+          annotations:
+            summary: "CNPG Backup failed for {{ $labels.cluster }} ({{ $labels.namespace }})"
+            description: "CloudNativePG Backup {{ $labels.name }} in namespace {{ $labels.namespace }} (cluster {{ $labels.cluster }}) reached phase=failed within the last 15 minutes."
+
         - alert: CNPGBaseBackupTooOld
           # Catches silent failures where backups simply stop happening and no
           # failure timestamp is ever recorded.
