@@ -89,6 +89,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-086 | Agent run ceilings must exceed the slowest dependency wait | Accepted | 2026-10-26 |
 | ADR-087 | An hourly watchdog agent owns board triage | Accepted | 2026-10-26 |
 | ADR-088 | The PM is a morning reviewer; the watchdog runs the day | Accepted | 2026-10-26 |
+| ADR-090 | An agent's deny rules are enforced by OpenCode, not by the worker's good manners | Accepted | 2026-10-26 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,
