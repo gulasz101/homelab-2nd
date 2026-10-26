@@ -5,6 +5,7 @@
 - **Deciders:** Wojtek (owner), Andrzej (CTO, homelab-2nd)
 - **Tracked by:** GUL-197
 - **Amends:** ADR-087 (the watchdog's escalation ladder only; the hire and the routine stand)
+- **Amended by:** ADR-089 (the watchdog now clears recovery holds itself, through a narrow board tool)
 
 ## Context
 
