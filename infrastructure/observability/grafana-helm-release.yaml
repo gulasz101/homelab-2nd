@@ -33,6 +33,15 @@ spec:
       # interpolation). See grafana-influxdb-datasource.sops.yaml.
       - name: grafana-influxdb-datasource
 
+    # Grafana expands ${INFLUX_TOKEN} in the provisioning file at startup, so the
+    # container needs an env var with exactly that name. envFromSecrets alone
+    # exposes the secret under its own key (token), which Grafana does not see.
+    envValueFrom:
+      INFLUX_TOKEN:
+        secretKeyRef:
+          name: grafana-influxdb-datasource
+          key: token
+
     env:
       GF_SERVER_ROOT_URL: "https://grafana.voitech.dev"
       GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
