@@ -184,7 +184,45 @@ check_fact "$HS/hindsight-helm-release.yaml" 'version: "0.10.3"' "chart pinned 0
 check_fact "$HS/hindsight-helm-release.yaml" 'nemotron-3-nano-30b-ollama' "LLM model route is the LiteLLM one"
 check_fact "$HS/hindsight-helm-release.yaml" 'HINDSIGHT_API_LLM_PROVIDER' "LLM provider is set explicitly"
 check_fact "$HS/hindsight-helm-release.yaml" 'hindsight-db-rw.hindsight.svc.cluster.local' "chart points at the CNPG service"
-check_fact "$HS/hindsight-db-postgres-cluster.yaml" 'CREATE EXTENSION IF NOT EXISTS vector;' "pgvector is created at bootstrap"
+# pgvector. ADR-052 recorded the extension being created by the initdb hook
+# `postInitApplicationSQL`. Since the generation-2 rebuild (H2-306, 4278c3c) the
+# cluster is bootstrapped by `recovery`, so the manifest creates nothing: the
+# extension travels inside the database restored from generation 1. ADR-052's
+# own "Bad / accepted costs" note says a recovery does not re-run the hook, and
+# the gate must not pretend otherwise. What is still true, and worth gating:
+#   * a from-scratch (initdb) bootstrap MUST create the extension as superuser
+#     (the app role is not one), i.e. drop the recovery block without this line
+#     and the gate goes red again;
+#   * a recovery bootstrap MUST name a source that exists in externalClusters,
+#     because that is where the installed extension comes from;
+#   * the operand image MUST be a full `postgresql` flavour. The `-minimal`
+#     operands ship no pgvector control file, so a restored `vector` extension
+#     would have nothing to load (ADR-081).
+CLUSTER="$HS/hindsight-db-postgres-cluster.yaml"
+pgvector_why=''
+if [ -f "$CLUSTER" ]; then
+  boot=$(awk '/^  bootstrap:/{f=1;next} f&&/^  [^ ]/{exit} f&&/^    [a-z]+:/{sub(/^ +/,"");sub(/:.*/,"");print;exit}' "$CLUSTER")
+  case "$boot" in
+    initdb)
+      grep -qF 'CREATE EXTENSION IF NOT EXISTS vector;' "$CLUSTER" \
+        && pgvector_why='pgvector is created at bootstrap (initdb postInitApplicationSQL)'
+      ;;
+    recovery)
+      src=$(awk '/^  bootstrap:/{f=1;next} f&&/^  [^ ]/{exit} f&&/^      source:/{sub(/^ +source: */,"");print;exit}' "$CLUSTER")
+      if [ -n "$src" ] && grep -qxF "    - name: $src" "$CLUSTER"; then
+        pgvector_why="pgvector travels in the recovered database (recovery source '$src')"
+      fi
+      ;;
+  esac
+fi
+[ -n "$pgvector_why" ] \
+  && ok "$pgvector_why" \
+  || bad "pgvector would not be present: neither created by an initdb bootstrap nor recovered from a declared externalCluster"
+if [ -f "$CLUSTER" ] && grep -qE '^  imageName: [^ ]*/postgresql:[0-9][0-9.]*$' "$CLUSTER"; then
+  ok "operand image is a full postgresql flavour (ships the pgvector control file)"
+else
+  bad "operand image is not a full postgresql flavour - a minimal operand cannot load the vector extension"
+fi
 check_fact "$HS/hindsight-db-objectstore.yaml" 's3://cnpg-backups/hindsight' "backups go to the OMV MinIO bucket"
 check_fact "$HS/hindsight-db-objectstore.yaml" 'retentionPolicy: "30d"' "backup retention is 30d"
 check_fact "$HS/hindsight-db-postgres-cluster.yaml" 'barman-cloud.cloudnative-pg.io' "the cluster backs up through the barman-cloud plugin (ADR-081)"

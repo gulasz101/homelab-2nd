@@ -1,4 +1,4 @@
-# ADR-067 — SOU renderer v2: an engine-native isometric tilemap (Phaser 4)
+# ADR-067: SOU renderer v2: an engine-native isometric tilemap (Phaser 4)
 
 - **Status:** Accepted (2026-10-16, operator-directed; implementation begins on branch `sou-renderer-v2`)
 - **Supersedes:** the screen-space scene layout of SOU-88 (`frontend/nav.js`) and the
