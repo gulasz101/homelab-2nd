@@ -3,6 +3,8 @@
 - **Status**: Accepted
 - **Date**: 2026-10-24
 - **Issue**: GUL-123
+- **Amended by**: ADR-085 (no FreeLLMAPI routes in LiteLLM), ADR-091 (named free
+  routes are allowed again)
 
 ## Context
 

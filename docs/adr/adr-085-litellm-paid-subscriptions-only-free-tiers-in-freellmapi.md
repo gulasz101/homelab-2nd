@@ -7,6 +7,7 @@
   (grey-zone Anthropic routes)
 - **Amends**: ADR-068, ADR-069 and ADR-070 (the Go-lane fallback no longer ends on
   OpenRouter)
+- **Amended by**: ADR-091 (named FreeLLMAPI routes in LiteLLM are allowed)
 
 ## Context
 
@@ -33,7 +34,8 @@ quality inference and cheap stuff"*.
 - **FreeLLMAPI** takes the free tiers: Groq, Google AI Studio, NVIDIA, Mistral
   (key moved from LiteLLM into the SOPS declarative config), OpenRouter (new key)
   and Cerebras (as a custom provider). LiteLLM gets **no** routes to FreeLLMAPI.
-  Cheap consumers call it directly.
+  Cheap consumers call it directly. Amended by ADR-091 (2026-10-26): one named
+  free route, no fallback, in no paid chain.
 - **Fallback chains in LiteLLM end at Ollama Cloud.** When Go and Ollama are both
   walled, the caller gets the error. LiteLLM never silently hands paid-tier
   traffic to free providers.
