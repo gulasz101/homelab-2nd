@@ -170,7 +170,7 @@ spec:
         # (apps/freellmapi/), not a change to this file. Retain and
         # consolidation stay on `auto`.
         # See GUL-182; GUL-184 carries the same pool into llm-hub and writes
-        # ADR-086.
+        # the ADR covering both halves.
         HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b
         # FreeLLMAPI calls take 40-60s; the 30s reflect default cancels them.
