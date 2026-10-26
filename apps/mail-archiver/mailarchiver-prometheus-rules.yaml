@@ -102,6 +102,22 @@ spec:
             summary: "mailarchiver-db has no base backup in the last 26h"
             description: "No successful CloudNativePG base backup for mailarchiver-db within 26 hours (schedule: daily 03:00). The crown-jewel database has no fresh recovery copy in OMV MinIO."
 
+        - alert: MailArchiverCnpgPodRestarted
+          # Fires on any restart of the CNPG instance pod. A restart mid-backup
+          # kills the in-flight base backup (GUL-171, 2026-10-26) and the
+          # barman failure timestamp is not updated, so CNPGBackupFailed cannot
+          # catch it. This rule gives an immediate signal.
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="mail-archiver", pod=~"mailarchiver-db-.*", container="postgres"}[1h]) > 0
+          for: 0m
+          labels:
+            severity: warning
+            alertgroup: mail-archiver
+            namespace: observability
+          annotations:
+            summary: "mailarchiver-db CNPG instance pod restarted"
+            description: "The mailarchiver-db CNPG instance pod restarted within the last hour. A restart mid-backup kills the in-flight base backup and leaves no failure timestamp (GUL-171). Investigate kubelet liveness/eviction and node memory pressure on arr-box."
+
     - name: mail-archiver.storage
       interval: 60s
       rules:

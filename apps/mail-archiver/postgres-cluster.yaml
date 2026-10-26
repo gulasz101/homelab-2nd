@@ -59,6 +59,23 @@ spec:
   backup:
     retentionPolicy: "30d"
 
+  # Liveness probe tuning (stopgap until GUL-175 moves this DB to homelab-2nd).
+  # The live probe had timeoutSeconds: 5 (not the 1s default); barman-cloud runs
+  # in the plugin-barman-cloud sidecar, not in-process, but the instance manager
+  # still serves /healthz on :8000 and stalled when arr-box choked (CPU 93%,
+  # ~240 MiB free, IO pressure 65%) during the 4.6 GiB base backup. The probe
+  # failed 3x at 03:03:00Z (exactly the threshold) and kubelet SIGTERM'd
+  # Postgres at 03:02:20Z, 70s AFTER the operator had already failed the
+  # backup at 03:01:11Z. Softer probe buys time but does not fix the node.
+  probes:
+    liveness:
+      timeoutSeconds: 10
+      periodSeconds: 10
+      failureThreshold: 6
+      isolationCheck:
+        connectionTimeout: 5000
+        requestTimeout: 5000
+
   resources:
     requests:
       memory: "256Mi"
