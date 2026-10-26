@@ -127,7 +127,7 @@ spec:
       # Provider keys come from the litellm-provider-keys Secret as env vars,
       # read only at pod start. BUMP THIS after rotating a key in
       # litellm-provider-keys.sops.yaml, or the pod keeps the old key.
-      litellm.provider-keys-revision: "1"
+      litellm.provider-keys-revision: "2"
 
     # Pre-call hook that normalizes the OpenCode Go session header (ADR-029).
     # LiteLLM loads a callback named in litellm_settings.callbacks by file path
@@ -376,6 +376,22 @@ spec:
         model_info:
           max_input_tokens: 262144
           max_output_tokens: 32768
+
+        # ── FreeLLMAPI free-tier pool (GUL-184 / ADR-091) ──────────────
+        # GUL-184 / ADR-091 (2026-10-26): free gpt-oss-120b pool in FreeLLMAPI
+        # (GUL-182, route id `gpt-oss-120b` — a model group, not a provider).
+        # A free route on purpose: no fallback of its own, and it must never
+        # appear in any paid route's fallback chain. FreeLLMAPI fails over
+        # between providers itself, so LiteLLM must not retry (num_retries 0).
+        # Keep the name free of -go/-ollama suffixes, or
+        # scripts/weekly-model-sync.py treats it as a catalogue route.
+      - model_name: gpt-oss-120b-freellmapi
+        litellm_params:
+          model: openai/gpt-oss-120b
+          api_base: "http://freellmapi.freellmapi.svc.cluster.local:3001/v1"
+          api_key: "os.environ/FREELLMAPI_API_KEY"
+          timeout: 150
+          num_retries: 0
 
         # ── OpenCode Go subscription models (all with -go suffix) ──────
         # Line-up refreshed 2026-10-02 against the LIVE endpoint
@@ -695,6 +711,8 @@ spec:
         # LiteLLM never silently routes paid-tier traffic into free providers;
         # when Go AND Ollama are both walled, the caller gets the error. This
         # supersedes the cross-account OpenRouter tail of ADR-068/ADR-069.
+        # GUL-184 / ADR-091 (2026-10-26): the only free route,
+        # gpt-oss-120b-freellmapi, is in no chain below.
         fallbacks:
         - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama"]}
         - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama"]}
