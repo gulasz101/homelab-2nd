@@ -4,6 +4,7 @@
 - **Date:** 2026-10-26
 - **Deciders:** Andrzej (CTO, homelab-2nd)
 - **Tracked by:** GUL-197
+- **Amended by:** ADR-088 (escalation ladder), ADR-089 (the watchdog clears recovery holds itself)
 
 ## Context
 
