@@ -35,24 +35,32 @@ it sat at the same 5400 s and would have capped any legitimately slow stretch.
 ## Decision
 
 **Size every agent run ceiling against the slowest thing the run waits on, plus the work around
-it. For a render-bound agent that means hours, not minutes.**
+it. For a render-bound agent that means hours, not minutes. And a run has *three* ceilings, not one —
+fixing the lowest one just exposes the next.**
 
 Concretely, in the fleet:
 
-1. `agent.adapterConfig.timeoutSec` on Paperclip is the wall clock that actually kills runs. It
-   must exceed one full round-trip cycle, including queue wait. For the Image Studio agent that
-   is 14400 s (4 h), not 5400 s.
-2. `agent.gateway_timeout` (Hermes) is the inactivity watchdog. It is raised in step with the
-   wall clock so the two do not disagree, and it must be set in the **host** config as well as
-   the profile, because under multiplex the env bridge reads the launch profile once at import.
-3. `maxConcurrentRuns` is sized so that a card waiting on a long render does not starve the
+1. **Wall clock** — `agent.adapterConfig.timeoutSec` on Paperclip is what actually kills runs. It
+   must exceed one full round-trip cycle, including queue wait. For the Image Studio agent that is
+   14400 s (4 h), not 5400 s.
+2. **Inactivity** — Hermes `agent.gateway_timeout` (exported to `HERMES_AGENT_TIMEOUT` at gateway
+   start) kills a *silent* run. It is raised in step with the wall clock so the two do not disagree,
+   and it must be set in the **host** config as well as the profile, because under multiplex the env
+   bridge reads the launch profile once at import.
+3. **Turns** — `agent.max_turns` kills a *busy* run, and it is the one that bites as soon as the wall
+   clock is long enough. 90 was not enough for a multi-round card: one run burned 120 tool calls in
+   32 minutes and died at `max_iterations_reached(90/90)` with its deliverable already posted. Now
+   250. A routed profile reads this straight from its own `config.yaml` per turn
+   (`gateway/run.py:1614-1625`), so it is live without a restart — unlike the other two.
+4. `maxConcurrentRuns` is sized so that a card waiting on a long render does not starve the
    other lanes. Three lanes for the Image Studio agent.
-4. Any agent whose work waits on an external queue gets its **memory char caps** checked in the
+5. Any agent whose work waits on an external queue gets its **memory char caps** checked in the
    same review. A full memory store refuses every write, the agent retries, and the retries
    burn the very budget the ceiling is meant to protect.
 
 Ceilings are reviewed whenever a dependency's latency changes — a slower model, a bigger
-backlog, a longer queue.
+backlog, a longer queue. **Raise the lowest ceiling first, then re-measure: the next one may be
+the real wall.**
 
 ## Consequences
 
@@ -108,3 +116,17 @@ found; it reports the symptom. The ceiling change is the fix.
   dependency, in the same change that creates it. Not inherited.
 - The Paperclip adapter's timeout semantics change (for example, if a separate inactivity
   watchdog is introduced on the Paperclip side, the two ceilings need to be reconciled again).
+- A ceiling change is made and the *next* failure has a different signature. That is the
+  "three ceilings" rule in action: the lowest one was fixed, and the next one surfaced. When
+  that happens, re-measure rather than assuming the first fix covered it.
+
+## The three ceilings, and how to tell them apart
+
+| ceiling | where | what it kills | how it looks |
+|---|---|---|---|
+| wall clock | Paperclip `adapterConfig.timeoutSec` | a run that takes too long overall | `resultJson.timeoutFired: true`, `effectiveTimeoutSec == the configured value` |
+| inactivity | Hermes `HERMES_AGENT_TIMEOUT` | a run that goes *silent* | no error on the card; the run just stops |
+| turns | `agent.max_turns` | a run that is *busy* past its budget | `turn_exit_reason: max_iterations_reached(N/N)` |
+
+All three have to clear the work. Raising the lowest one exposes the next — GUL-185 died at the
+turn cap within an hour of the wall clock being fixed, with its deliverable already posted.
