@@ -1,4 +1,4 @@
-# ADR-090: An agent's deny rules are enforced by OpenCode, not by the worker's good manners
+# ADR-090: For `opencode_local`, an agent's deny rules are enforced by OpenCode, not by the worker's good manners
 
 - **Status:** Accepted
 - **Date:** 2026-10-26
@@ -32,11 +32,15 @@ through the adapter and therefore never saw the rewrite.
 ## Decision
 
 **Agent read-scope is enforced by OpenCode's permission layer, and that layer must survive the
-adapter. Set `dangerouslySkipPermissions: false` on every local agent, and prove it with a live
-Paperclip run, not a manual CLI invocation.**
+adapter. On the `opencode_local` adapter, set `dangerouslySkipPermissions: false`, and prove it with
+a live Paperclip run, not a manual CLI invocation.**
 
-- `dangerouslySkipPermissions: false` is a standing requirement for any agent on a local adapter.
-  It is not a per-task toggle and must not be flipped to unblock a run.
+- `dangerouslySkipPermissions: false` is a standing requirement for any agent on the `opencode_local`
+  adapter. It is not a per-task toggle and must not be flipped to unblock a run. `claude_local` is
+  excluded on purpose: it has the same setting, also defaulting to `true`
+  (`adapter-claude-local/dist/server/execute.js:275`), and Claude Code runs headless, so it cannot
+  answer a permission prompt — scoping this rule to it would stall every PM run. It needs its own
+  decision and its own live test.
 - The deny patterns live in `~/.config/opencode/opencode.json` as `permission.bash` entries, and must
   cover the wrapped forms — `*find /`, `*find / *`, `*grep * /`, `*grep * / *` — not just the bare
   commands. A rule that only matches `find /` is defeated by `true; find /`, `timeout 5 find /`,
@@ -62,13 +66,23 @@ and a write to `/tmp` raised no prompt — so the guard discriminates rather tha
 
 - Deny rules are a control again: they bind regardless of what the model decides or what the task
   prose says. The `AGENTS.md` rules stay as the first line, but they are no longer the only line.
-- `dangerouslySkipPermissions: false` costs prompts. A run can now block on an approval that `true`
-  would have auto-allowed, so run time and wake latency go up. This is the accepted price; a stalled
-  run is visible via the issue monitor, a silently over-privileged one is not.
+- `dangerouslySkipPermissions: false` costs prompts in theory, very few in practice. Per the
+  OpenCode permissions docs, most keys default to `allow`; only `doom_loop` and `external_directory`
+  default to `ask`, and `read` denies `.env` files by default. `~/.config/opencode/opencode.json`
+  sets both `external_directory` and `doom_loop` to `allow`, so in the GUL-183 run nothing prompted
+  and run time did not move. A prompt could still appear if one of those two keys is left unset, if
+  the config gains a new `ask` rule, or if a future adapter merge drops the overrides — a run blocked
+  that way is visible via the issue monitor. A silently over-privileged run is not.
+- Deny patterns match the **text** of the command line, not the command name, so a leading-`*` rule
+  fires on any command that merely mentions the forbidden string. In the same run, `e10c0101`, a
+  `cat > /tmp/gul183-comment.md <<'EOF' ... EOF` was refused because the markdown body contained the
+  text `find /`. OpenCode recovered by itself: write the body with the write tool, then send it with
+  `jq`/`curl --data @file`. Expect this whenever a task posts documentation about the guard; the
+  workaround is a file, never a heredoc on the command line.
 - Two failure modes now have to be distinguished when a guard "does not work": the rule is missing
   from `opencode.json`, or the rule is present and the adapter overwrote it. Checking the config
   file alone cannot tell them apart — only a run log can.
-- Every new agent on a local adapter inherits this as a checklist item, not a nice-to-have.
+- Every new agent on the `opencode_local` adapter inherits this as a checklist item, not a nice-to-have.
 
 ## Alternatives considered
 
