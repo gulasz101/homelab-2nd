@@ -86,6 +86,9 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-083 | Hindsight LLM (retain + consolidation) moved to free-openrouter (supersedes ADR-082) | Superseded by ADR-085 | 2026-10-24 |
 | ADR-084 | FreeLLMAPI as the homelab's free-tier LLM aggregator | Accepted | 2026-10-24 |
 | ADR-085 | LiteLLM carries paid subscriptions only; free tiers move to FreeLLMAPI | Accepted | 2026-10-24 |
+| ADR-086 | Agent run ceilings must exceed the slowest dependency wait | Accepted | 2026-10-26 |
+| ADR-087 | An hourly watchdog agent owns board triage | Accepted | 2026-10-26 |
+| ADR-088 | The PM is a morning reviewer; the watchdog runs the day | Accepted | 2026-10-26 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,

@@ -33,6 +33,15 @@ spec:
       # interpolation). See grafana-influxdb-datasource.sops.yaml.
       - name: grafana-influxdb-datasource
 
+    # Grafana expands ${INFLUX_TOKEN} in the provisioning file at startup, so the
+    # container needs an env var with exactly that name. envFromSecrets alone
+    # exposes the secret under its own key (token), which Grafana does not see.
+    envValueFrom:
+      INFLUX_TOKEN:
+        secretKeyRef:
+          name: grafana-influxdb-datasource
+          key: token
+
     env:
       GF_SERVER_ROOT_URL: "https://grafana.voitech.dev"
       GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
@@ -71,12 +80,18 @@ spec:
       userKey: admin-user
       passwordKey: admin-password
 
-    # Grafana stores its SQLite DB on the RWO local-path PVC bound to t460.
-    # A RollingUpdate leaves the old pod holding the volume/DB lock while the
-    # surge pod starts, so the upgrade never becomes Ready and Flux times out.
-    # Recreate terminates the old pod first, then starts the new one.
+    # Grafana keeps its SQLite DB on an RWO local-path PVC, so a surge pod
+    # cannot take the volume while the old pod holds it. maxSurge: 0 makes the
+    # rollout stop the old pod before starting the new one — the same safety
+    # Recreate gave — while keeping type: RollingUpdate, which is what the live
+    # Deployment already has. Recreate is unusable here: Helm 4 upgrades with
+    # server-side apply, and SSA cannot remove the API-server-defaulted
+    # rollingUpdate fields, so `type: Recreate` + `rollingUpdate` is rejected.
     deploymentStrategy:
-      type: Recreate
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
 
     persistence:
       enabled: true

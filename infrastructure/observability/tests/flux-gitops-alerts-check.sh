@@ -261,7 +261,7 @@ if helm template flux-check prometheus-community/kube-prometheus-stack \
   CRS=$(awk '/customresourcestate-config$/{f=1} f{print} f&&/^---$/{exit}' "$WORK/ps.render.yaml")
   printf '%s\n' "$CRS" | grep -qE '^[[:space:]]*spec:$' \
     && ok "  custom resource state ConfigMap renders" || bad "  no custom resource state ConfigMap in the render"
-  for k in Kustomization GitRepository HelmRelease; do
+  for k in Kustomization GitRepository HelmRelease Backup; do
     printf '%s\n' "$CRS" | grep -qE "^[[:space:]]*kind: ${k}$" \
       && ok "  exposes ${k}" || bad "  ${k} missing from the custom resource state config"
   done
@@ -300,8 +300,9 @@ if helm template flux-check prometheus-community/kube-prometheus-stack \
   grep -q -- '- kustomizations' "$WORK/ps.render.yaml" \
     && grep -q -- '- gitrepositories' "$WORK/ps.render.yaml" \
     && grep -q -- '- helmreleases' "$WORK/ps.render.yaml" \
-    && ok "  ClusterRole grants list/watch on the three Flux kinds" \
-    || bad "  ClusterRole does not grant the Flux resources"
+    && grep -q -- '- backups' "$WORK/ps.render.yaml" \
+    && ok "  ClusterRole grants list/watch on the Flux kinds and backups" \
+    || bad "  ClusterRole does not grant the required resources"
 else
   bad "helm template failed:"
   grep -v '^$' "$WORK/ps.render.err" | head -10 | sed 's/^/        /'

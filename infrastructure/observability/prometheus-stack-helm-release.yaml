@@ -193,6 +193,30 @@ spec:
                       chart_app_version: [status, history, "0", appVersion]
                       chart_ref_name: [spec, chartRef, name]
                       chart_source_name: [spec, chart, spec, sourceRef, name]
+              - groupVersionKind:
+                  group: postgresql.cnpg.io
+                  version: v1
+                  kind: Backup
+                metricNamePrefix: cnpg
+                labelsFromPath:
+                  namespace: [metadata, namespace]
+                  exported_namespace: [metadata, namespace]
+                  name: [metadata, name]
+                  cluster: [spec, cluster, name]
+                metrics:
+                  - name: "backup_info"
+                    help: "The current state of a CloudNativePG Backup resource."
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          phase: [status, phase]
+                  - name: "backup_reconciliation_terminated_at"
+                    help: "Unix timestamp when a CloudNativePG Backup reconciliation terminated (RFC3339)."
+                    each:
+                      type: Gauge
+                      gauge:
+                        path: [status, reconciliationTerminatedAt]
       rbac:
         extraRules:
           - apiGroups:
@@ -203,6 +227,11 @@ spec:
               - kustomizations
               - gitrepositories
               - helmreleases
+            verbs: ["list", "watch"]
+          - apiGroups:
+              - postgresql.cnpg.io
+            resources:
+              - backups
             verbs: ["list", "watch"]
 
     prometheus-node-exporter:
