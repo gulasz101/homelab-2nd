@@ -57,22 +57,32 @@ spec:
           # `failed` (e.g. "no status found for target pod") but the barman-cloud
           # plugin never records a failed-backup timestamp, so CNPGBackupFailed
           # stays silent. kube-state-metrics customResourceState exposes every
-          # Backup object; we alert only on failures that terminated recently so
-          # old failed objects do not page forever.
+          # Backup object. We fire while the newest Backup of a cluster is a
+          # failed one (its reconciliationTerminatedAt is newer than the newest
+          # completed Backup's), so the alert stays firing until a newer
+          # successful backup exists - it never self-resolves after 15 minutes.
+          # Old failed objects stay quiet because every cluster with a historical
+          # failure also has a newer completed backup. Known gap: a cluster that
+          # never had a completed Backup does not fire here; CNPGBaseBackupTooOld
+          # covers that case (no successful backup in 30h).
           expr: |
-            (
-              cnpg_backup_info{phase="failed"}
-              and on (namespace, name)
-              (cnpg_backup_reconciliation_terminated_at > (time() - 15 * 60))
-            ) > 0
+            max by (exported_namespace, cluster) (
+              cnpg_backup_reconciliation_terminated_at
+              and on (namespace, name) cnpg_backup_info{phase="failed"}
+            )
+            >
+            max by (exported_namespace, cluster) (
+              cnpg_backup_reconciliation_terminated_at
+              and on (namespace, name) cnpg_backup_info{phase="completed"}
+            )
           for: 1m
           labels:
             severity: critical
             alertgroup: cnpg-backup
             namespace: observability
           annotations:
-            summary: "CNPG Backup failed for {{ $labels.cluster }} ({{ $labels.namespace }})"
-            description: "CloudNativePG Backup {{ $labels.name }} in namespace {{ $labels.namespace }} (cluster {{ $labels.cluster }}) reached phase=failed within the last 15 minutes."
+            summary: "CNPG Backup failing for {{ $labels.cluster }} ({{ $labels.exported_namespace }})"
+            description: "The most recent Backup for CNPG cluster {{ $labels.cluster }} in namespace {{ $labels.exported_namespace }} is in phase=failed and no newer successful backup exists. Run `kubectl get backups -n {{ $labels.exported_namespace }}` to find the failed object."
 
         - alert: CNPGBaseBackupTooOld
           # Catches silent failures where backups simply stop happening and no
