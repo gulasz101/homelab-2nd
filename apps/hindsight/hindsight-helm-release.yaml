@@ -148,6 +148,40 @@ spec:
         # (route timeout 120 s, below the 210 s budget here).
         # GUL-123: consolidation follows retain onto FreeLLMAPI `auto`.
         HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: auto
+        # GUL-182: reflect and the background mental-model refresh are pinned to
+        # the FreeLLMAPI *model group* gpt-oss-120b, not to a single provider.
+        # FreeLLMAPI unifies every provider that serves the same model into one
+        # logical id and fails over strictly inside that group, so this id can
+        # only ever answer with gpt-oss-120b — never a different model. It does
+        # NOT promise tool calling: clod and dreamprompting are members and
+        # declare tool calling "no". Neither holds a key today, so nothing
+        # routes to them yet, and whether FreeLLMAPI skips tool-less members
+        # when a request carries `tools` is an open question (ADR-091). Do not
+        # add their keys while reflect depends on this pool.
+        # (GUL-143's reflect failures came from `auto`, which ranks by score,
+        # not by tool support.)
+        #
+        # The group holds eight catalog rows: groq (openai/gpt-oss-120b),
+        # cloudflare (@cf/openai/gpt-oss-120b), ollama (gpt-oss:120b), ovh
+        # (gpt-oss-120b, keyless), electronhub, dreamprompting, clod and the
+        # custom api.cerebras.ai endpoint. A member only takes traffic once its
+        # platform has an enabled key, so the pool widens by adding keys, not by
+        # editing this file. Measured 2026-10-26 (GUL-182): 20/20 tool_calls,
+        # every call served by gpt-oss-120b, all of them via groq — groq is the
+        # only healthy key in the group today, so there is nothing to fail over
+        # to yet. Cerebras' free tier is gone (402 payment_required), and its
+        # row still says enabled+healthy, which is why it never serves.
+        # Adding the keyless OVH member is a FREEAPI_CONFIG_JSON change
+        # (apps/freellmapi/), not a change to this file. Retain and
+        # consolidation stay on `auto`.
+        # See GUL-182; GUL-184 carries the same pool into llm-hub and writes
+        # the ADR covering both halves.
+        HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b
+        # FreeLLMAPI calls take 40-60s; the 30s reflect default cancels them.
+        HINDSIGHT_API_REFLECT_LLM_TIMEOUT: "120"
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_TIMEOUT: "300"
+        HINDSIGHT_API_REFLECT_WALL_TIMEOUT: "600"
         # GUL-97 (2026-10-22): outer budget for ONE consolidation LLM call.
         # LiteLLM gives MiniMax 120 s and then falls back to DeepSeek on the
         # Go plan (apps/llm-hub/litellm-helm-release.yaml, route
