@@ -46,6 +46,8 @@ data:
         # Anthropic resellers and Google Gemini left LiteLLM. LiteLLM now carries
         # paid subscriptions only (Ollama Cloud, OpenCode Go) plus the local LM
         # Studio models; free tiers live in FreeLLMAPI (apps/freellmapi/).
+        # ADR-091: one named free route into FreeLLMAPI's gpt-oss-120b pool.
+        "gpt-oss-120b-freellmapi",
         # Local LM Studio model on Hermes host
         "gemma-4-12b-uncensored",
         "qwen3.8-9b-heretic-uncensored",
