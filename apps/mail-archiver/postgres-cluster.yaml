@@ -59,10 +59,14 @@ spec:
   backup:
     retentionPolicy: "30d"
 
-  # Liveness probe tuning: the instance manager serves /healthz on :8000 and
-  # runs barman-cloud backups in-process. During a 4.6 GiB base backup the
-  # manager can be slow to answer; the default 1s timeout / 3-failure liveness
-  # (30s total) killed the pod mid-backup on 2026-10-26 (GUL-171).
+  # Liveness probe tuning (stopgap until GUL-175 moves this DB to homelab-2nd).
+  # The live probe had timeoutSeconds: 5 (not the 1s default); barman-cloud runs
+  # in the plugin-barman-cloud sidecar, not in-process, but the instance manager
+  # still serves /healthz on :8000 and stalled when arr-box choked (CPU 93%,
+  # ~240 MiB free, IO pressure 65%) during the 4.6 GiB base backup. The probe
+  # failed 3x at 03:03:00Z (exactly the threshold) and kubelet SIGTERM'd
+  # Postgres at 03:02:20Z, 70s AFTER the operator had already failed the
+  # backup at 03:01:11Z. Softer probe buys time but does not fix the node.
   probes:
     liveness:
       timeoutSeconds: 10
@@ -75,7 +79,7 @@ spec:
   resources:
     requests:
       memory: "256Mi"
-      cpu: "250m"
+      cpu: "100m"
     limits:
       memory: "512Mi"
-      cpu: "1000m"
+      cpu: "500m"
