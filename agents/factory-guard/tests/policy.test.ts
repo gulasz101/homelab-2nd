@@ -12,6 +12,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  committedDiffBase,
   decideToolCall,
   decideToolCallSafe,
   looksLikeTestPath,
@@ -310,6 +311,28 @@ test("turn cap reason is verbatim from the plan", () => {
 test("repeat guard text is verbatim from the plan", () => {
   // exact string returned by index.ts is asserted in the live test; policy keeps it documented here
   assert.ok(true);
+});
+
+// ---------- committed-violation diff base (GUL-424) ----------
+
+test("committed diff base: with a start SHA that is an ancestor, blame only this run", () => {
+  assert.equal(committedDiffBase("abc1234", true, "def5678"), "abc1234");
+});
+
+test("committed diff base: no start SHA (resumed session) falls back to the merge-base", () => {
+  assert.equal(committedDiffBase(null, false, "def5678"), "def5678");
+  assert.equal(committedDiffBase(null, true, "def5678"), "def5678");
+});
+
+test("committed diff base: branch switched under the run skips the scan, never falls back", () => {
+  // start SHA present but no longer an ancestor of HEAD: the work between is
+  // foreign to this run; diffing anyway would re-create the GUL-424 false positives.
+  assert.equal(committedDiffBase("abc1234", false, "def5678"), null);
+  assert.equal(committedDiffBase("abc1234", false, null), null);
+});
+
+test("committed diff base: repo without any usable ref yields no base", () => {
+  assert.equal(committedDiffBase(null, false, null), null);
 });
 
 // ---------- parser sanity ----------

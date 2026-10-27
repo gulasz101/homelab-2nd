@@ -849,7 +849,27 @@ export function decideToolCallSafe(
   }
 }
 
-/** Turn-cap block reason, verbatim from the plan. */
+/**
+ * Diff base for the committed-violation scan (GUL-424).
+ *
+ * Blame THIS RUN, not the branch: `headAtStart` is the SHA the guard saw at
+ * session_start. Use it when present AND still an ancestor of HEAD (this run's
+ * commits only). If the shared checkout was branch-switched mid-run the start
+ * SHA is no longer an ancestor and there is nothing honest to blame this run
+ * for — return null and the committed scan is skipped, NOT merged back into
+ * the fallback. Only with no start SHA at all (resumed session, session_start
+ * never seen) does the pre-GUL-424 merge-base fallback apply.
+ */
+export function committedDiffBase(
+  headAtStart: string | null,
+  startIsAncestor: boolean,
+  branchMergeBase: string | null,
+): string | null {
+  if (headAtStart) return startIsAncestor ? headAtStart : null;
+  return branchMergeBase;
+}
+
+/** Turn cap reason, verbatim from the plan. */
 export function turnCapReason(cap: number): string {
   return `factory-guard: turn cap ${cap} reached. Post a short comment with what is done and what is left, end it with "RESULT: stalled", and stop.`;
 }

@@ -14,6 +14,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import {
+  committedDiffBase,
   decideToolCallSafe,
   isProtectedPath,
   type GuardState,
@@ -99,6 +100,10 @@ export default function (pi: ExtensionAPI): void {
     continuationAsked: false,
     snapshots: new Map<string, { sha: string; copy: string | null }>(),
     scratchDir: "",
+    /** SHA of HEAD at session_start — the base for blaming this run (GUL-424). */
+    headAtStart: null as string | null,
+    /** committed-violation paths already logged this process (settle can fire twice). */
+    committedLogged: new Set<string>(),
   };
 
   function roleProfile(): RoleProfile | undefined {
@@ -137,8 +142,19 @@ export default function (pi: ExtensionAPI): void {
     state.failedCount = 0;
     state.continuationAsked = false;
     state.snapshots.clear();
+    state.committedLogged.clear();
     state.workspaceRootCwd = "";
     guardState(ctx.cwd);
+
+    // GUL-424: remember where this run started. The committed-violation scan
+    // at settle diffs from here, so a shared checkout that carries foreign
+    // commits on its branch no longer blames the executor for them.
+    state.headAtStart = null;
+    if (state.workspaceRoot) {
+      const h = git(state.workspaceRoot, ["rev-parse", "HEAD"]);
+      const sha = h.ok ? h.stdout.trim() : "";
+      if (/^[0-9a-f]{7,40}$/.test(sha)) state.headAtStart = sha;
+    }
 
     const files: string[] = [];
     const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(HOME, ".pi", "agent");
@@ -288,11 +304,22 @@ export default function (pi: ExtensionAPI): void {
             }
           }
         }
-        // committed violations since branch point: report only, never rewrite history
+        // Committed violations — blame THIS RUN, not the branch (GUL-424).
+        // Base: HEAD at session_start (this run's commits only). No start SHA
+        // (resumed session) -> old merge-base fallback. Start SHA present but
+        // no longer an ancestor of HEAD -> the branch got switched under the
+        // run: report nothing rather than re-flag foreign commits.
         let base = "";
-        for (const cand of ["origin/main", "main"]) {
-          const mb = git(repoRoot, ["merge-base", cand, "HEAD"]);
-          if (mb.ok && mb.stdout.trim()) { base = mb.stdout.trim(); break; }
+        if (state.headAtStart) {
+          const anc = git(repoRoot, ["merge-base", "--is-ancestor", state.headAtStart, "HEAD"]);
+          base = committedDiffBase(state.headAtStart, anc.ok, null) ?? "";
+        } else {
+          let mb: string | null = null;
+          for (const cand of ["origin/main", "main"]) {
+            const r = git(repoRoot, ["merge-base", cand, "HEAD"]);
+            if (r.ok && r.stdout.trim()) { mb = r.stdout.trim(); break; }
+          }
+          base = committedDiffBase(null, false, mb) ?? "";
         }
         if (base) {
           const ch = git(repoRoot, ["diff", "--name-only", `${base}..HEAD`]);
@@ -302,6 +329,9 @@ export default function (pi: ExtensionAPI): void {
               return decideToolCallSafe(role, "write", { path: abs }, gs, HOME) !== undefined;
             });
             for (const rel of committedViolations) {
+              // settle can fire twice (report + continuation): log each path once per run
+              if (state.committedLogged.has(rel)) continue;
+              state.committedLogged.add(rel);
               appendBlockLog({ role: roleName(), tool: "diff-guard", rule: "committed-violation", path: rel });
             }
           }
