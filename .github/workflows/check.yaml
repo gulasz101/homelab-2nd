@@ -44,6 +44,12 @@ jobs:
           BIN="$RUNNER_TEMP/bin"
           mkdir -p "$BIN"
           echo "$BIN" >> "$GITHUB_PATH"
+          # GITHUB_PATH only applies to LATER steps; export for this step's
+          # own verification below, and so $BIN shadows the runner's
+          # preinstalled kubectl. (Caught in CI run 40466925810: bare
+          # `kubectl` passed using the runner's image copy while the
+          # just-installed kubeconform was not on PATH.)
+          export PATH="$BIN:$PATH"
 
           fetch_raw() { # $1 url, $2 sha256 of the binary, $3 name
             curl -fsSL --retry 3 "$1" -o "$BIN/$3"
