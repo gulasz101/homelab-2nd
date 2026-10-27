@@ -34,13 +34,16 @@ closes — the certificate compromise was only the thing that exposed it.
 1. **Pin an explicit version tag** — `cloudflare/cloudflared:2026.10.3` — in every cloudflared
    Deployment. `latest` is banned for this component. The version a tunnel runs is now readable in
    Git and in the Pod spec, and the two can be diffed.
-2. **An upgrade is a tag bump through a PR**, one namespace per PR, merged by the owner and applied
-   by Flux. The tag change alters the Pod template, so the rollout pulls the new image — the pull
-   that `latest` never guaranteed. Restarting a Pod on an unchanged tag applies nothing.
-3. **Upgrade to the security floor, not to the newest release.** When this was written 2026.10.4
-   had been on GitHub for four hours with checksums and no changelog. 2026.10.3 is the floor for
-   every platform, Homebrew's stable, and already proven in this cluster. Chasing the newest tag is
-   a separate, calm activity; it is not part of an emergency.
+2. **An upgrade is a tag bump through a PR**, merged by the owner and applied by Flux. The tag change
+   alters the Pod template, so the rollout pulls the new image — the pull that `latest` never
+   guaranteed. Restarting a Pod on an unchanged tag applies nothing. From now on **Renovate opens
+   that PR** (GUL-315): one grouped PR covering all cloudflared manifests, never automerged.
+3. **Pin the newest published release, not a floor version.** A floor (`2026.10.2` here) is what makes
+   a version *unacceptable*; it is never the target. The owner's standing rule, stated 2026-10-27:
+   never `:latest`, always an explicit version, and that version is the newest release. The first
+   pass of this work pinned `2026.10.3` on the argument that `2026.10.4` was four hours old with no
+   changelog; a day later the obvious target is `2026.10.4` and the fleet moved there. Do not carry a
+   "floor" version once the newest is no longer fresh out of the oven.
 4. **Rolling, never simultaneous.** Two-replica tunnels (whiteboard, auth, karakeep, gist, keep,
    status, nextcloud) roll clean. Single-replica tunnels blink for a few seconds on merge; accepted
    for a security fix. Giving chat, auth and paperclip a second connector is tracked separately.
@@ -71,13 +74,15 @@ closes — the certificate compromise was only the thing that exposed it.
 - **Pin a digest (`@sha256:…`).** The strongest guarantee, but unreadable in review and impossible to
   reason about at a glance; with no dependency bot in place it buys nothing over a tag. Rejected for
   now; revisit if supply-chain requirements grow.
-- **Renovate (or equivalent) opening the bump PRs automatically.** The right long-term answer, but
-  it needs upgrade PRs to be routine and CI able to prove the diff first. Not the first move.
+- **Renovate opening the bump PRs automatically.** Adopted as the follow-up (GUL-315) rather than left
+  as an alternative: the manual fan-out proved the diff shape and the blast radius, so a bot can
+  repeat it. It groups one PR for all cloudflared manifests, because 17 separate merges for a single
+  version is the part that did not scale.
 
 ## When to revisit
 
-- A dependency bot reliably opens these bumps with a green diff → drop the manual per-namespace
-  fan-out and let the bot own the cadence.
+- Renovate stops delivering (expired token, disabled workflow, withdrawn repo permission) → the
+  manual per-namespace fan-out described above is the fallback.
 - Every tunnel runs two or more connectors → simultaneous rolling is already safe, and the
   per-namespace split is then only about review scope.
 - Cloudflare ships a release we must adopt beyond the floor faster than a calm cadence allows, or
