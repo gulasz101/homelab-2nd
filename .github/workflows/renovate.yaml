@@ -20,13 +20,27 @@ jobs:
       - name: Check the token
         env:
           RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -n "$RENOVATE_TOKEN" ]; then
             echo "Using the RENOVATE_TOKEN repository secret."
-          else
-            echo "::warning::RENOVATE_TOKEN is not set, falling back to GITHUB_TOKEN."
-            echo "::warning::GitHub Actions must be allowed to create pull requests: Settings -> Actions -> General -> Workflow permissions -> 'Allow GitHub Actions to create and approve pull requests'. Without that setting (or a RENOVATE_TOKEN with pull_requests: write) Renovate cannot open the PR."
+            exit 0
           fi
+          echo "::warning::RENOVATE_TOKEN is not set, falling back to GITHUB_TOKEN."
+          can_create=$(gh api "repos/${{ github.repository }}/actions/permissions/workflow" \
+            --jq '.can_approve_pull_request_reviews' 2>/dev/null || echo unknown)
+          case "$can_create" in
+            true)
+              echo "GitHub Actions may create pull requests."
+              ;;
+            false)
+              echo "::error::GitHub Actions may NOT create pull requests. Enable Settings -> Actions -> General -> Workflow permissions -> 'Allow GitHub Actions to create and approve pull requests', or add a RENOVATE_TOKEN secret with pull_requests: write."
+              exit 1
+              ;;
+            *)
+              echo "::warning::Could not read the Actions workflow permission setting. If Renovate fails with a 403, enable Settings -> Actions -> General -> Workflow permissions -> 'Allow GitHub Actions to create and approve pull requests', or add a RENOVATE_TOKEN secret with pull_requests: write."
+              ;;
+          esac
 
       - name: Checkout
         uses: actions/checkout@v4

@@ -11,7 +11,8 @@ merges the PR; a human does.
 - only the `image:` lines, through Renovate's `kubernetes` manager
 - `cloudflare/cloudflared` is grouped as `cloudflared tunnels`, so all 19 manifests land in one PR
 
-It does not touch `:latest`, digests, or any other image.
+It does not touch `:latest`, digests, or any other image. Other images in those folders are
+disabled for now; add another package rule in `renovate.json` to bring them in later.
 
 ## Run it by hand
 
