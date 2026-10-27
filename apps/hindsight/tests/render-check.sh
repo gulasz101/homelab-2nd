@@ -521,6 +521,62 @@ else
   bad "apps/freellmapi/freellmapi-service.yaml does not define Service freellmapi/freellmapi on port 3001 - HINDSIGHT_API_LLM_BASE_URL points at nothing (GUL-123)"
 fi
 
+# 5h-ter. GUL-263 / ADR-094: reflect and the mental-model refresh leave the
+# FreeLLMAPI pool and ride LiteLLM's paid `gpt-oss-120b-ollama` route through
+# llm-hub. The pool could not carry them: a real reflect prompt averages
+# 12,001 input tokens (max 55,692), groq - the one healthy member - allows
+# 8,000 TPM, and the Cloudflare key added on 2026-10-26 answered
+# `context_too_large` 153 times before exhausting its daily quota. Retain and
+# consolidation stay on FreeLLMAPI `auto` and are asserted above.
+#
+# The split needs no chart change: the base URL, model and key are per-operation
+# settings in config.py. What this block protects is the failure mode a future
+# edit would reintroduce - a reflect call that silently falls back to the
+# FreeLLMAPI base URL (and its small model) because a per-operation knob was
+# dropped, or a credential pasted into this public repo.
+for kv in \
+  'HINDSIGHT_API_REFLECT_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
+  'HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b-ollama' \
+  'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
+  'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-ollama'
+do
+  key=${kv%%: *}; want=${kv#*: }
+  got=$(env_value "$API" "$key")
+  if [ "$got" = "$want" ]; then
+    ok "$key = $got"
+  else
+    bad "$key is '${got:-unset}', expected $want - reflect would fall back to the FreeLLMAPI pool the model cannot work on (GUL-263)"
+  fi
+done
+
+# The Service the reflect base URL names must exist in the repo: the chart's
+# release is litellm in namespace llm-hub, so its Service is litellm:4000 there.
+LITELLM_HR="$ROOT/apps/llm-hub/litellm-helm-release.yaml"
+if [ -f "$LITELLM_HR" ] \
+  && grep -q '^  name: litellm$' "$LITELLM_HR" \
+  && grep -q '^  namespace: llm-hub$' "$LITELLM_HR"; then
+  ok "the reflect base URL's Service litellm.llm-hub:4000 comes from the litellm HelmRelease"
+else
+  bad "$LITELLM_HR does not declare HelmRelease litellm in namespace llm-hub - HINDSIGHT_API_REFLECT_LLM_BASE_URL points at nothing (GUL-263)"
+fi
+
+# The credential arrives through `hindsight-secrets` (envFrom), never as a
+# literal: an API key in a rendered container in a public repo is a leak.
+for k in HINDSIGHT_API_REFLECT_LLM_API_KEY HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_API_KEY; do
+  v=$(env_value "$API" "$k")
+  if [ -z "$v" ]; then
+    ok "$k is absent from the render (it arrives via hindsight-secrets envFrom)"
+  else
+    bad "$k is set literally in the rendered api container - a credential must never live in this repo"
+  fi
+  if grep -q "^    $k:" "$ROOT/apps/hindsight/hindsight-secrets.sops.yaml"; then
+    ok "$k is declared in hindsight-secrets (SOPS)"
+  else
+    bad "$k is missing from apps/hindsight/hindsight-secrets.sops.yaml - reflect would fall back to the FreeLLMAPI key and get 413s"
+  fi
+done
+
+
 # The knobs that must stay ABSENT - absence is a behaviour here, so it is
 # asserted positively, in the api container and then over the whole render:
 #   - *_LLM_REASONING_EFFORT: LiteLLM answers the dedicated :nitro route with

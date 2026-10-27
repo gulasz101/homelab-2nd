@@ -70,6 +70,12 @@ spec:
                     secretKeyRef:
                       name: litellm-user-keys
                       key: paperclip-coders-key
+                # GUL-263 / ADR-094: Hindsight reflect + mental-model refresh.
+                - name: HINDSIGHT_REFLECT_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: litellm-user-keys
+                      key: hindsight-reflect-key
               volumeMounts:
                 - name: scripts
                   mountPath: /scripts
