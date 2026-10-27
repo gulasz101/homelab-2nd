@@ -1,3 +1,12 @@
+# GUL-302: a custom gitleaks config REPLACES the default ruleset in v8 - with
+# only [allowlist] in this file, every scan had zero rules and always reported
+# "no leaks found" (a false green; proven against a test leak with 8.30.1).
+# useDefault re-enables the built-in rules; the allowlist keeps the single
+# historical commit (993240d, later SOPS-fixed by 1f8ea78) triaged away.
+# NB: `extend = true` is dead syntax in 8.30 - use the [extend] map.
+[extend]
+useDefault = true
+
 [allowlist]
 commits = [
   "993240d266a1c478035032f9cc930bf49fd562a9",
