@@ -49,11 +49,17 @@ head1() { printf '\n== %s\n' "$1"; }
 # Chart sources for the HelmRelease objects. Kept here so the check is
 # self-contained; the assertion below makes sure they still match
 # apps/zigbee/helm-repositories.yaml, so the table cannot silently drift.
-declare -A CHART_REPO=(
-  [zigbee2mqtt]="https://charts.zigbee2mqtt.io"
-  [node-red]="https://schwarzit.github.io/node-red-chart"
-  [influxdb2]="https://helm.influxdata.com"
-)
+# GUL-302 portability fix: `declare -A` needs bash 4. macOS ships bash 3.2
+# and died HERE on line 52 with "unbound variable" -- before the first check
+# section -- which made the whole gate exit 0 without testing anything.
+# A case function is bash 3.2-safe and tests identically.
+chart_repo_url() {
+  case "$1" in
+    zigbee2mqtt) printf 'https://charts.zigbee2mqtt.io' ;;
+    node-red)    printf 'https://schwarzit.github.io/node-red-chart' ;;
+    influxdb2)   printf 'https://helm.influxdata.com' ;;
+  esac
+}
 
 # Pull the `values:` block out of a HelmRelease and dedent it by 4 spaces.
 extract_values() {
@@ -112,7 +118,7 @@ for f in "$DIR"/*helm-release.yaml; do
   rel=$(basename "$f" | sed 's/-helm-release.yaml$//')
   chart=$(extract_chart_field "$f" chart)
   version=$(extract_chart_field "$f" version)
-  url=${CHART_REPO[$chart]:-}
+  url=$(chart_repo_url "$chart")
   [ -n "$chart" ] && [ -n "$version" ] || { bad "$(basename "$f"): chart/version not parsed"; continue; }
   [ -n "$url" ] || { bad "$(basename "$f"): no chart repo known for chart '$chart'"; continue; }
   grep -q "$url" "$DIR/helm-repositories.yaml" \
