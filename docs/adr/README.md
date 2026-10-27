@@ -93,6 +93,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-090 | For `opencode_local`, an agent's deny rules are enforced by OpenCode, not by the worker's good manners | Accepted | 2026-10-26 |
 | ADR-091 | The FreeLLMAPI gpt-oss-120b pool is also a LiteLLM route | Accepted | 2026-10-26 |
 | ADR-092 | Pin cloudflared image tags and ship tunnel upgrades as explicit tag bumps | Accepted | 2026-10-26 |
+| ADR-094 | Hindsight reflect rides the paid `gpt-oss-120b-ollama` route; retain stays free | Accepted | 2026-10-27 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,
