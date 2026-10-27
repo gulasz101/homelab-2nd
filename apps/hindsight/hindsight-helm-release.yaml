@@ -148,37 +148,43 @@ spec:
         # (route timeout 120 s, below the 210 s budget here).
         # GUL-123: consolidation follows retain onto FreeLLMAPI `auto`.
         HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: auto
-        # GUL-182: reflect and the background mental-model refresh are pinned to
-        # the FreeLLMAPI *model group* gpt-oss-120b, not to a single provider.
-        # FreeLLMAPI unifies every provider that serves the same model into one
-        # logical id and fails over strictly inside that group, so this id can
-        # only ever answer with gpt-oss-120b — never a different model. It does
-        # NOT promise tool calling: clod and dreamprompting are members and
-        # declare tool calling "no". Neither holds a key today, so nothing
-        # routes to them yet, and whether FreeLLMAPI skips tool-less members
-        # when a request carries `tools` is an open question (ADR-091). Do not
-        # add their keys while reflect depends on this pool.
-        # (GUL-143's reflect failures came from `auto`, which ranks by score,
-        # not by tool support.)
+        # GUL-263 (2026-10-27): reflect and the background mental-model refresh
+        # left the FreeLLMAPI pool and now ride LiteLLM's paid route
+        # `gpt-oss-120b-ollama`. The pin they leave behind was GUL-182's
+        # `gpt-oss-120b` model group, and it did not work: it answered 285 of
+        # 291 calls in the seven days before the pin and 1 of 54 after it, then
+        # 0 of 78. It failed on SIZE, not on accounts - groq, the one healthy
+        # group member, allows 8,000 TPM and a real reflect prompt averages
+        # 12,001 input tokens (max 55,692 measured). The Cloudflare key added
+        # on 2026-10-26 answered `context_too_large` (HTTP 413) 153 times and
+        # burned its daily free quota; 5 group members still hold no key.
         #
-        # The group holds eight catalog rows: groq (openai/gpt-oss-120b),
-        # cloudflare (@cf/openai/gpt-oss-120b), ollama (gpt-oss:120b), ovh
-        # (gpt-oss-120b, keyless), electronhub, dreamprompting, clod and the
-        # custom api.cerebras.ai endpoint. A member only takes traffic once its
-        # platform has an enabled key, so the pool widens by adding keys, not by
-        # editing this file. Measured 2026-10-26 (GUL-182): 20/20 tool_calls,
-        # every call served by gpt-oss-120b, all of them via groq — groq is the
-        # only healthy key in the group today, so there is nothing to fail over
-        # to yet. Cerebras' free tier is gone (402 payment_required), and its
-        # row still says enabled+healthy, which is why it never serves.
-        # Adding the keyless OVH member is a FREEAPI_CONFIG_JSON change
-        # (apps/freellmapi/), not a change to this file. Retain and
-        # consolidation stay on `auto`.
-        # See GUL-182; GUL-184 carries the same pool into llm-hub and writes
-        # the ADR covering both halves.
-        HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b
-        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b
-        # FreeLLMAPI calls take 40-60s; the 30s reflect default cancels them.
+        # Same model on Ollama Cloud, measured the way the workload actually
+        # sends: 14,912 input tokens with one tool definition -> valid
+        # tool_calls in 1.8 s; 20,427 tokens -> 1.5 s. Billing is $0.15/M in and
+        # $0.60/M out, about $0.0018 a call, roughly $8-16/month at the
+        # measured rate out of the Ollama usage credits already on the plan.
+        # Same model as the pin, so this is a capacity change, not a quality
+        # one (ADR-094).
+        #
+        # The route is `gpt-oss-120b-ollama` in apps/llm-hub/litellm-helm-release.yaml.
+        # The credential is the dedicated LiteLLM virtual key `hindsight-reflect`;
+        # its value reaches this pod only through `hindsight-secrets` (envFrom),
+        # never through this file. Retain and consolidation stay on FreeLLMAPI
+        # `auto`: they build memory with small prompts, they work, and they are
+        # free. Splitting the routes needs no chart change because the base URL
+        # and model are per-operation settings (`ENV_REFLECT_LLM_BASE_URL` and
+        # friends in config.py); the provider is inherited from the global
+        # `openai` and LiteLLM speaks the OpenAI API
+        # (memory_engine.py: reflect provider falls back to the memory provider).
+        HINDSIGHT_API_REFLECT_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
+        HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b-ollama
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-ollama
+        # Ollama answers a reflect call in ~2 s. The budgets stay generous on
+        # purpose: a cold start or an upstream queue is cheaper to wait out
+        # than to cancel and retry, because a cancelled reflect call becomes a
+        # re-queued operation.
         HINDSIGHT_API_REFLECT_LLM_TIMEOUT: "120"
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_TIMEOUT: "300"
         HINDSIGHT_API_REFLECT_WALL_TIMEOUT: "600"

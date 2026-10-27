@@ -1,0 +1,86 @@
+# GUL-302: CI runs exactly one thing - scripts/check.sh - so local runs on the
+# Air and CI cannot drift. The job is named `check` and that name is load-
+# bearing: Wojtek pins it as a required status check on main. Do not rename.
+#
+# Tool versions match the Air (kubectl v1.37.1, kubeconform v0.8.0,
+# helm v4.3.1, gitleaks 8.30.1, yq v4.54.1). Every binary's sha256 is verified
+# against the value published by the project (computed and cross-checked on
+# 2026-10-27). Third-party actions are pinned to full commit SHAs.
+#
+# This repo is public: no secrets here, none needed. check.sh never decrypts.
+name: check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # gitleaks scans only the commits of the change: base..head for a PR,
+      # origin/main..HEAD otherwise (matches check.sh's local default).
+      GITLEAKS_RANGE: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || 'origin/main..HEAD' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks needs the base..head range
+
+      - name: Install pinned tools
+        run: |
+          set -euo pipefail
+          BIN="$RUNNER_TEMP/bin"
+          mkdir -p "$BIN"
+          echo "$BIN" >> "$GITHUB_PATH"
+          # GITHUB_PATH only applies to LATER steps; export for this step's
+          # own verification below, and so $BIN shadows the runner's
+          # preinstalled kubectl. (Caught in CI run 40466925810: bare
+          # `kubectl` passed using the runner's image copy while the
+          # just-installed kubeconform was not on PATH.)
+          export PATH="$BIN:$PATH"
+
+          fetch_raw() { # $1 url, $2 sha256 of the binary, $3 name
+            curl -fsSL --retry 3 "$1" -o "$BIN/$3"
+            echo "$2  $BIN/$3" | sha256sum -c --status -
+            chmod +x "$BIN/$3"
+          }
+
+          fetch_tar() { # $1 url, $2 sha256 of the TARBALL, $3 member, $4 name
+            curl -fsSL --retry 3 "$1" -o "$RUNNER_TEMP/$4.tar.gz"
+            echo "$2  $RUNNER_TEMP/$4.tar.gz" | sha256sum -c --status -
+            tar -xzf "$RUNNER_TEMP/$4.tar.gz" -C "$RUNNER_TEMP" "$3"
+            mv "$RUNNER_TEMP/$3" "$BIN/$4"
+            chmod +x "$BIN/$4"
+          }
+
+          fetch_raw https://dl.k8s.io/v1.37.1/bin/linux/amd64/kubectl \
+            65691ff77eb6fa44c908b77a1082c9f092c3b9733b5cefabec0d1104890e21a8 kubectl
+          fetch_tar https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
+            9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883 kubeconform kubeconform
+          fetch_tar https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz \
+            0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b linux-amd64/helm helm
+          fetch_tar https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb gitleaks gitleaks
+          fetch_raw https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux_amd64 \
+            8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f yq
+
+          kubectl version --client
+          kubeconform -v
+          helm version --short
+          gitleaks --version
+          yq --version
+
+      - name: scripts/check.sh
+        run: bash scripts/check.sh

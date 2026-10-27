@@ -1,0 +1,29 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["kubernetes"],
+  "kubernetes": {
+    "managerFilePatterns": [
+      "/(^|/)apps/.+\\.ya?ml$/",
+      "/(^|/)infrastructure/.+\\.ya?ml$/"
+    ]
+  },
+  "automerge": false,
+  "pinDigests": false,
+  "dependencyDashboard": false,
+  "packageRules": [
+    {
+      "description": "Only cloudflared is in scope for now. Other images keep their current manual process.",
+      "matchPackageNames": ["!cloudflare/cloudflared"],
+      "enabled": false
+    },
+    {
+      "description": "One PR for every cloudflared tunnel bump: all manifests move together.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["cloudflare/cloudflared"],
+      "groupName": "cloudflared tunnels",
+      "separateMajorMinor": false,
+      "separateMinorPatch": false
+    }
+  ]
+}

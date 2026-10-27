@@ -1,0 +1,135 @@
+---
+# Enforce qBittorrent share limits (stop seeding at ratio) without touching the
+# config PVC by hand.
+#
+# Why a cronjob and not an env var: the linuxserver qbittorrent image only
+# understands WEBUI_PORT and TORRENTING_PORT (no <APP>__<SECTION>__<KEY> env
+# overrides), and the client's settings live in a local-path PVC outside Git.
+# So the desired state lives here (MAX_RATIO) and is re-asserted through the
+# qBittorrent WebUI API every 15 minutes. A change made in the web UI is
+# reverted at the next tick; change MAX_RATIO here instead.
+#
+# Safety: this only sets the global max_ratio preference. The share-limit
+# action stays "Stop" (pause torrent), so no torrent and no file is ever
+# removed by this job.
+#
+# Context: GUL-296. arr-box downloads share (1500Gi PV, 1.4T disk) hit 96%:
+# 77 completed torrents (909 GB) were still seeding with max_ratio=0
+# (unlimited), duplicating the library because imports are cross-mount copies.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qbittorrent-share-limit-enforcer
+  namespace: arr-stack
+data:
+  enforce.py: |
+    import json
+    import os
+    import sys
+    import urllib.parse
+    import urllib.request
+
+    QB = os.environ.get("QB_URL", "http://gluetun.arr-stack.svc:8080").rstrip("/")
+    DESIRED_RATIO = float(os.environ.get("MAX_RATIO", "1.5"))
+    OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+    def call(path, payload=None, timeout=15):
+        data = None
+        if payload is not None:
+            data = urllib.parse.urlencode({"json": json.dumps(payload)}).encode()
+        req = urllib.request.Request(
+            QB + path,
+            data=data,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": QB,
+            },
+            method="POST" if data is not None else "GET",
+        )
+        with OPENER.open(req, timeout=timeout) as resp:
+            return resp.status, resp.read()
+
+
+    try:
+        status, body = call("/api/v2/app/preferences")
+    except Exception as exc:  # noqa: BLE001 - cronjob wants a visible failure
+        print(f"qBittorrent API unreachable at {QB}: {exc}")
+        sys.exit(1)
+
+    if status != 200:
+        print(f"preferences returned HTTP {status}")
+        sys.exit(1)
+
+    current = json.loads(body).get("max_ratio")
+    print(f"max_ratio current={current} desired={DESIRED_RATIO}")
+
+    if current is not None and abs(float(current) - DESIRED_RATIO) < 1e-9:
+        print("already at desired value, nothing to do")
+        sys.exit(0)
+
+    try:
+        status, _ = call("/api/v2/app/setPreferences", {"max_ratio": DESIRED_RATIO})
+    except Exception as exc:  # noqa: BLE001
+        print(f"setPreferences failed: {exc}")
+        sys.exit(1)
+
+    print(f"setPreferences max_ratio={DESIRED_RATIO} -> HTTP {status}")
+    sys.exit(0 if status == 200 else 1)
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: qbittorrent-share-limit-enforcer
+  namespace: arr-stack
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 600
+      template:
+        spec:
+          restartPolicy: Never
+          # Not on arr-box: that node runs at ~92% of allocatable memory.
+          nodeSelector:
+            kubernetes.io/hostname: homelab-2nd
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: enforce
+              image: python:3.12-slim
+              command: ["python3", "/scripts/enforce.py"]
+              env:
+                - name: QB_URL
+                  value: http://gluetun.arr-stack.svc:8080
+                - name: MAX_RATIO
+                  value: "1.5"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                  readOnly: true
+          volumes:
+            - name: scripts
+              configMap:
+                name: qbittorrent-share-limit-enforcer

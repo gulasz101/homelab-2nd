@@ -138,6 +138,10 @@ data:
         "OPENVIKING_KEY",
         # Pi + OpenCode engineers in Paperclip on the M1 Air (ADR-075)
         "PAPERCLIP_CODERS_KEY",
+        # Hindsight reflect + mental-model refresh through llm-hub (GUL-263 /
+        # ADR-094). Its own key, so the model list stays GitOps-managed like
+        # every other service key instead of being a hand-scoped orphan.
+        "HINDSIGHT_REFLECT_KEY",
     ]
 
     def api_request(path, token=None, method="GET", data=None):

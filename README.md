@@ -29,3 +29,21 @@ GitOps-managed homelab cluster running on k3s + Flux.
 All secrets are SOPS-encrypted with age. The age public key is in `.sops.yaml`.
 The age private key is stored in the password manager and applied to the cluster
 as a Kubernetes secret during bootstrap.
+
+## Checks
+
+`scripts/check.sh` is the one entry point for every deterministic check in this
+repo: it renders and validates each Flux root, audits that every `Secret` is
+SOPS-encrypted, runs gitleaks over the commits of the change, and executes the
+per-service test gates. Exit code 0 means everything passed. Run it before
+opening a PR:
+
+    scripts/check.sh          # run everything (kubectl, kubeconform, helm, yq, gitleaks)
+    scripts/check.sh --list   # show what would run, run nothing
+
+Adding a check: drop a `*-check.sh` into your service's `tests/` dir — `apps/`,
+`infrastructure/`, `docs/`, `agents/` and `scripts/` are auto-discovered, no edit
+to `check.sh` needed. Checks that need the live cluster, SSH, the OMV host or
+decrypted secrets can't run in CI: they go on the SKIP list inside `check.sh`
+with a one-line reason. The same script runs in CI (`.github/workflows/check.yaml`),
+so local and CI cannot drift.
