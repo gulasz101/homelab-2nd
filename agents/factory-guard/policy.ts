@@ -115,7 +115,7 @@ function isSecretPath(raw: string, home: string): boolean {
   const segs = pathSegments(p);
   if (segs.includes(".ssh")) return true;
   // age key files: ~/.config/sops/age/**, house keys named age-*, *.age-key.*
-  if (/[/]age[/]/.test(p)) return true;
+  if (/[\/]age[\/]/.test(p)) return true;
   if (/^age[-._]/.test(base)) return true;
   if (/age[-._].*key|.*[-._]age[-._]key/i.test(base)) return true;
   if (base === "auth.json" && (p.includes(".paperclip/") || segs.includes("agent"))) return true;
@@ -296,7 +296,7 @@ export function scanBashLine(text: string, depth = 0): ScanResult {
       while (j < n && text[j] !== '"') {
         if (text[j] === "\\" && j + 1 < n) { inner += text[j + 1]; j += 2; continue; }
         if (text[j] === "$" && text[j + 1] === "(") {
-          const [content, end] = readParens(text, j);
+          const [content, end] = readParens(text, j + 1);
           substitutions.push(content); j = end; continue;
         }
         if (text[j] === "`") {
@@ -312,6 +312,13 @@ export function scanBashLine(text: string, depth = 0): ScanResult {
       substitutions.push(content); i = end; continue;
     }
     if (c === "$" && text[i + 1] === "(") {
+      const [content, end] = readParens(text, i + 1);
+      substitutions.push(content); i = end; continue;
+    }
+    if (c === "(") {
+      // subshell `( cmd )` and process substitution `<( cmd )` — the '<' was consumed
+      // as an input redirect marker, the parens body still needs recursion
+      flushWord();
       const [content, end] = readParens(text, i);
       substitutions.push(content); i = end; continue;
     }
@@ -405,9 +412,9 @@ function mergeScan(into: ScanResult, other: ScanResult): void {
   into.allWords.push(...other.allWords);
 }
 
-function readParens(text: string, start: number): [string, number] {
-  // text[start] === '$', text[start+1] === '('
-  let depthN = 0; let j = start + 1; let content = "";
+function readParens(text: string, parenIdx: number): [string, number] {
+  // text[parenIdx] === '(' — returns the inner content and the index after the close
+  let depth = 0; let j = parenIdx; let content = "";
   let inS = false; let inD = false;
   for (; j < text.length; j++) {
     const c = text[j];
@@ -420,8 +427,8 @@ function readParens(text: string, start: number): [string, number] {
     if (c === "'") { inS = true; content += c; continue; }
     if (c === '"') { inD = true; content += c; continue; }
     if (c === "\\") { content += c + (text[j + 1] ?? ""); j++; continue; }
-    if (c === "(") { depthN++; content += c; continue; }
-    if (c === ")") { depthN--; if (depthN === 0) { j++; break; } content += c; continue; }
+    if (c === "(") { depth++; if (depth === 1) continue; content += c; continue; }
+    if (c === ")") { depth--; if (depth === 0) { j++; break; } content += c; continue; }
     content += c;
   }
   return [content, j];
@@ -450,11 +457,13 @@ function normalizeSegment(argv: string[], redirs: string[], out: ScanResult): Si
     const c0 = baseName(argv[k]);
     if (PREFIX_CMDS.has(c0)) { k++; continue; }
     if (c0 === "env") {
+      const save = k;
       k++;
       while (k < argv.length && (argv[k].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[k]))) {
         if (["-S", "--split-string", "-u", "--unset"].includes(argv[k])) { k += 2; continue; }
         k++;
       }
+      if (k >= argv.length) { k = save; break; } // `env` alone: keep it visible to the env-dump rule
       continue;
     }
     if (c0 === "timeout") {
@@ -525,6 +534,8 @@ function isRootPath(word: string, home: string): boolean {
   const p = expandHome(word, home);
   if (!p.startsWith("/")) return false;
   const norm = p.length > 1 ? p.replace(/\/+$/, "") : p;
+  if (norm === home) return true; // $HOME / ~ are roots in their own right
+  if (norm.startsWith(home + "/")) return true;
   for (const root of SCAN_ROOTS) {
     const r = root.length > 1 ? root.replace(/\/+$/, "") : root;
     if (norm === r) return true;
@@ -564,8 +575,12 @@ function writerTargets(c0: string, args: string[]): string[] {
     case "truncate":
       return nonOpt;
     case "chmod":
-    case "chown":
-      return nonOpt.filter((a) => !/^[-+u ga*=]+$/test(a) && !/^[0-7]{3,4}$/.test(a) && !/^[ugoa]/.test(a));
+    case "chown": {
+      // mode args look like 644 / u+x / owner:group and never contain / or .
+      const looksLikeMode = (a: string) =>
+        !a.includes("/") && !a.includes(".") && (/^[0-7]{3,4}$/.test(a) || /^[-+u ga*:=Rc]+$/.test(a) || /^[ugoa]/.test(a));
+      return nonOpt.filter((a) => !looksLikeMode(a));
+    }
     case "ln":
       return nonOpt.length > 0 ? [nonOpt[nonOpt.length - 1]] : [];
     case "tee":
@@ -588,6 +603,8 @@ function decideBash(command: string, role: RoleProfile, state: GuardState, home:
   for (const w of scan.allWords) {
     if (isSecretPath(w, home)) return block("secrets-path", `access to ${w}`);
   }
+  // Rule 1: printenv anywhere (covers brace/function bodies the parser cannot run)
+  if (scan.allWords.some((w) => w === "printenv")) return block("env-dump", "printenv");
 
   for (const cmd of scan.commands) {
     const argv = cmd.argv;

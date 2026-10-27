@@ -277,7 +277,7 @@ export default function (pi: ExtensionAPI): void {
                 String(process.pid),
               );
               fs.mkdirSync(qdir, { recursive: true });
-              const dest = path.join(qdir, rel.replace(/[/\\]/g, "__"));
+              const dest = path.join(qdir, rel.replace(/[\/\\]/g, "__"));
               try { fs.renameSync(abs, dest); } catch { /* may already be gone */ }
               violations.push(`quarantined ${rel} -> ${dest}`);
               appendBlockLog({ role: roleName(), tool: "diff-guard", rule: "quarantine-" + d.ruleId, path: rel });
