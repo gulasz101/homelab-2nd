@@ -7,7 +7,7 @@ cd "$(cd "$(dirname "$0")/.." && pwd)"
 
 FAIL=0
 
-echo "== [1/2] unit tests (node --test) =="
+echo "== [1/3] unit tests (node --test) =="
 if node --test tests/policy.test.ts; then
   echo "unit: PASS"
 else
@@ -16,7 +16,7 @@ else
 fi
 
 echo
-echo "== [2/2] live test (real pi, print mode, scripted provider) =="
+echo "== [2/3] live test (real pi, print mode, scripted provider) =="
 if ! command -v pi >/dev/null 2>&1; then
   echo "SKIP live: pi not installed"
   exit 0
@@ -91,6 +91,78 @@ done
 if grep -qE '"command"|printenv \| grep' "$TMP/blocks.jsonl"; then echo "  FAIL command text in log"; FAIL=1; else echo "  ok  log free of command text"; fi
 # 5. pi must never have seen the real agent dir
 [ -z "$(ls -A "$TMP/agentdir" 2>/dev/null)" ] && echo "  ok  real ~/.pi untouched (temp agent dir unused too)" || echo "  note  temp agent dir has files (expected: session-free run)"
+
+echo
+echo "== [3/3] live: committed violations blame the RUN, not the branch (GUL-424) =="
+REPO2="$TMP/repo2"
+mkdir -p "$REPO2/.github/workflows" "$REPO2/src" "$TMP/agentdir2" "$TMP/scratch2"
+(
+  cd "$REPO2"
+  git init -q -b main .
+  git config user.email test@example.invalid
+  git config user.name "factory-guard test"
+  printf '# Agents\nkeep calm and build\n' > AGENTS.md
+  printf 'name: check\n' > .github/workflows/check.yaml
+  printf 'export const a = 1;\n' > src/a.ts
+  git add -A
+  git commit -qm base
+  git checkout -qb shared
+  # FOREIGN work on the branch, committed BEFORE this run exists: AGENTS.md is
+  # violated only here, check.yaml here and again in the run's own commit.
+  printf '# Agents\nkeep calm and build\nforeign\n' > AGENTS.md
+  printf 'name: check\n# foreign\n' > .github/workflows/check.yaml
+  git commit -qam "foreign violation committed by an earlier run"
+) || { echo "  FAIL (fixture repo2)"; FAIL=1; }
+
+cat > "$TMP/script2.json" <<'EOF'
+[
+ {"tools":[
+   {"name":"bash","arguments":{"command":"python3 -c \"open('.github/workflows/check.yaml','a').write('run-violation')\""}}
+ ]},
+ {"tools":[
+   {"name":"bash","arguments":{"command":"git add -A && git commit -qm run-violation"}}
+ ]},
+ {"text":"committed and done"},
+ {"text":"reporting guard results"}
+]
+EOF
+
+(
+  cd "$REPO2"
+  PI_CODING_AGENT_DIR="$TMP/agentdir2" \
+  FACTORY_GUARD_BLOCK_LOG="$TMP/blocks2.jsonl" \
+  PAPERCLIP_RUN_SCRATCH_DIR="$TMP/scratch2" \
+  FACTORY_GUARD_SCRIPT="$TMP/script2.json" \
+  pi --offline --no-session --no-extensions --no-mcp -nc --approve \
+    --extension "$EXT_DIR/index.ts" --extension "$EXT_DIR/tests/scripted-provider.ts" \
+    --factory-role executor --provider fgtest --model scripted \
+    --tools read,bash,edit,write \
+    --print "run the scripted plan" > "$TMP/pi2.out" 2> "$TMP/pi2.err"
+  exit $?
+)
+PI2_EXIT=$?
+if [ $PI2_EXIT -ne 0 ]; then
+  echo "  FAIL live committed-blame (pi exit $PI2_EXIT)"
+  sed -n '1,20p' "$TMP/pi2.err"
+  FAIL=1
+else
+  [ "$(git -C "$REPO2" log -1 --format=%s)" = "run-violation" ] \
+    && echo "  ok  run's own protected-path commit exists" \
+    || { echo "  FAIL scripted run did not commit"; FAIL=1; }
+  CV2="$TMP/blocks2.jsonl"
+  n_all=$(grep -cF '"rule":"committed-violation"' "$CV2" 2>/dev/null || true)
+  n_run=$(grep -cF '"rule":"committed-violation","path":".github/workflows/check.yaml"' "$CV2" 2>/dev/null || true)
+  n_foreign=$(grep -F '"rule":"committed-violation"' "$CV2" 2>/dev/null | grep -cF 'AGENTS.md' || true)
+  # the run committed check.yaml in violation: exactly ONE log line (settle fires
+  # twice with the continuation report - dedupe must hold)
+  [ "${n_all:-0}" = "1" ] && [ "${n_run:-0}" = "1" ] \
+    && echo "  ok  this run's commit logged once as committed-violation" \
+    || { echo "  FAIL committed-violation lines: all=${n_all:-?} run=${n_run:-?} (want 1/1)"; FAIL=1; }
+  # AGENTS.md was violated by an EARLIER commit on the branch: blame stays off
+  [ "${n_foreign:-0}" = "0" ] \
+    && echo "  ok  foreign branch commit not blamed on this run" \
+    || { echo "  FAIL foreign commit blamed on this run (${n_foreign} lines)"; FAIL=1; }
+fi
 
 echo
 if [ $FAIL -eq 0 ]; then

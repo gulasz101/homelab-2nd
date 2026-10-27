@@ -80,8 +80,15 @@ of real wakes and tighten the number.
   `$PAPERCLIP_RUN_SCRATCH_DIR/factory-guard-quarantine/` (OS temp fallback).
   Protected files outside any repo (`~/.pi/agent/*`, `~/paperclip-agents/*/`)
   are hash-snapshotted at `session_start` and restored from the snapshot copy
-  at settle. Committed violations since the branch point are never rewritten —
-  reported. Then at most one continuation asks the agent to paste the list of
+  at settle. Committed violations are blamed on THIS run (GUL-424): the base is
+  the `HEAD` SHA captured at `session_start`, so foreign commits already on the
+  branch when the run started are never logged against the executor. With no
+  start SHA (resumed session) the old `merge-base(origin|main, HEAD)` fallback
+  applies; if the shared checkout was branch-switched mid-run (start SHA no
+  longer an ancestor of HEAD) the committed scan is skipped rather than guessing.
+  Committed work is never rewritten — only reported, and each path is logged
+  once even though settle fires twice. Then at most one continuation asks the
+  agent to paste the list of
   restored/quarantined/committed items into its issue comment and end with
   `RESULT: guard-violation` when something was committed in violation.
   Deviation from the plan, on purpose: files that may hold credentials
