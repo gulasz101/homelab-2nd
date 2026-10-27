@@ -25,7 +25,7 @@ spec:
         kubernetes.io/hostname: t460
       containers:
         - name: cloudflared
-          image: cloudflare/cloudflared:latest
+          image: cloudflare/cloudflared:2026.10.4
           args:
             - tunnel
             - --no-autoupdate
