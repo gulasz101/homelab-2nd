@@ -22,7 +22,7 @@ spec:
         kubernetes.io/hostname: arr-box
       containers:
         - name: cloudflared
-          image: cloudflare/cloudflared:2026.10.3
+          image: cloudflare/cloudflared:2026.10.4
           args:
             - tunnel
             - --no-autoupdate
@@ -68,7 +68,7 @@ spec:
         kubernetes.io/hostname: arr-box
       containers:
         - name: cloudflared
-          image: cloudflare/cloudflared:2026.10.3
+          image: cloudflare/cloudflared:2026.10.4
           args:
             - tunnel
             - --no-autoupdate
