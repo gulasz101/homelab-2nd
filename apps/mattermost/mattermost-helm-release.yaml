@@ -68,7 +68,7 @@ spec:
       # when a Secret this Deployment consumes changes, so env-var consumers pick
       # up the new value without an imperative kubectl rollout restart.
       - name: SECRET_VERSION_ROLL
-        value: "minio-creds-20261015"
+        value: "mattermost-oidc-20261027"
       # File storage — OMV MinIO S3
       - name: MM_FILESETTINGS_DRIVERNAME
         value: "amazons3"
