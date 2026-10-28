@@ -8,6 +8,19 @@ Design rules:
 
 - Python 3 standard library only, run as `python3 -I agents/factory/factory.py <subcommand>`.
   JSON, not YAML: the system `python3` on the Air and in CI has no PyYAML.
+- **The script runs from a checkout of `main`, never from the work order's checkout**
+  (GUL-502, ADR-096). `agents/factory/factory-run.sh` — installed as
+  `~/.local/bin/factory` and `/Users/paperclip/factory/bin/factory` — force-moves the
+  tooling checkout `/Users/paperclip/factory/tooling` to `refs/remotes/origin/main` on
+  every call and executes the copy there. `start`, `decide` and `tick` are therefore
+  always the code on `main`: a stage check fixed and merged today decides today, and no
+  stage ever decides on a client frozen at the spec's `baseSha`. The work order's own
+  checkout (`ledger.cwd`) still runs the checks, because every check diffs its working
+  tree and the commits on its branch — it is data to the script, not the script. A
+  refresh that fails (no network, dirty tooling copy) is a setup error, exit 2: running
+  a stale copy silently is exactly the bug the wrapper removes. `start` refuses a
+  `cwd` equal to the tooling checkout, because a branch cut there would be moved off it
+  by the next call.
 - `git` is called through `subprocess` with an argument list, never through a
   shell string. The one deliberate exception: AC `check` commands (point 2),
   which are defined as shell commands and run with `bash -c` from the repo
@@ -21,6 +34,10 @@ Design rules:
   `urllib`). They never call `gh`, never `git push` themselves, and never read
   the board token file (GUL-297); auth is `PAPERCLIP_API_KEY` and
   `PAPERCLIP_RUN_ID` from the environment or the subcommand exits 2.
+  `PAPERCLIP_API_URL` is the base; when that base answers like the edge
+  (Cloudflare 1010, or nothing at all) the client falls back once to
+  `PAPERCLIP_API_FALLBACK_URL` (default `http://127.0.0.1:3100/api`) and stays
+  there for the rest of the run (GUL-496).
 - Output: every subcommand prints exactly one JSON line on stdout
   (`{"ok": true|false, "check": "<name>", "reasons": [...]"}` plus the fields
   named per subcommand) and a short human summary on stderr.
@@ -162,7 +179,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 | `check-findings --repo DIR --base SHA --findings FILE` | findings follow point 3; every `file` is in the diff SHA→worktree; every `line` exists in the new version (file readable, ≥ `line` lines) |
 | `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed` |
 | `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ maxDiffLines` |
-| `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only) |
+| `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only). A second run on a clean tree whose HEAD is already `factory(GUL-N): <stage>` is not an error: it passes and returns that HEAD sha, so a `decide` that died after its commit can be re-run (GUL-497) |
 | `open-pr --repo DIR --issue GUL-N --title T` | current branch is not `main`/`master` (refuse, exit 1); `git push -u origin <branch>` (never `--force`); `gh pr create` with body linking the work order: `Work order: [GUL-N](https://paperclip.voitech.dev/GUL/issues/GUL-N)`. JSON adds `"url": "<PR url>"`. Repo comes from `git remote get-url origin` |
 | `start GUL-N [--dry-run]` | point 9 below |
 | `decide GUL-M [--apply]` | point 9 below |
@@ -230,7 +247,10 @@ review stage to hand off to.
 `{version, workOrder, workOrderId, title, repo, base, baseSha, cwd, branch,
 projectId, stages: {<stage or stage:rN>: {issueId, identifier, round, attempts,
 sha}}, fixRounds, pr: {number, url} | null, outcome, escalated}`. Only `factory.py`
-writes it.
+writes it, and every write carries the document's `latestRevisionId` as
+`baseRevisionId` — Paperclip answers `409 Document update requires
+baseRevisionId` without it (GUL-496). A 409 on the write means a concurrent
+writer: the client re-reads the revision and retries once.
 
 **`decide GUL-M [--apply]`** — M is the stage issue; the stage comes from its
 `[stage]`/`[stage rN]` title. Runs the check for that stage against the spec and

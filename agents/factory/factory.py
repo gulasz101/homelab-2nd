@@ -677,6 +677,17 @@ def cmd_commit(args) -> int:
         if args.stage == "green" and is_test:
             reasons.append("green commit touches a test path: %s" % path)
     if not touched:
+        # A decide that died after its commit (Paperclip error, crash, cancelled
+        # run) is re-run against a clean tree. The stage's own commit IS HEAD
+        # then, so hand back that sha instead of refusing: otherwise a stage
+        # that already did its work can never be recorded, and the work order
+        # stalls with a null sha in the ledger (GUL-497).
+        head_subject = git(args.repo, "log", "-1", "--format=%s").strip() if head_exists(args.repo) else ""
+        wanted = "factory(%s): %s" % (args.issue, args.stage)
+        if head_subject == wanted:
+            emit(True, "commit", ["already committed: HEAD is this stage's commit"],
+                 {"sha": git(args.repo, "rev-parse", "HEAD").strip()})
+            return 0
         reasons.append("nothing to commit")
     if reasons:
         emit(False, "commit", reasons)
@@ -1035,6 +1046,15 @@ def cmd_factory_start(args) -> int:
         raise SetupError("spec document does not parse: %s" % "; ".join(spec_reasons))
 
     cwd = args.repo or work_order_cwd(api, work_order)
+    # The factory's own code now runs from a checkout of main (GUL-502, ADR-096).
+    # That checkout must never be a work order's workspace: `start` would cut the
+    # work order branch in it and the next invocation would move it back to main,
+    # leaving a ledger pointing at a tree that no longer holds the diff.
+    if os.path.realpath(cwd) == os.path.realpath(os.path.join(FACTORY_DIR, "..", "..")):
+        raise SetupError(
+            "refusing to start a work order in the factory's own tooling checkout (%s): "
+            "that copy must stay on main. The work order runs in its own workspace — "
+            "check the project workspace, or pass --repo" % cwd)
     project_id = work_order.get("projectId")
     busy = open_work_orders(api, company, cfg, work_order["id"], project_id)
     if busy:
@@ -1307,25 +1327,30 @@ def cmd_factory_decide(args) -> int:
         ledger["stages"].setdefault(key, {"issueId": stage_issue["id"], "round": round_no,
                                           "attempts": 0})
         ledger["stages"][key]["sha"] = (cparsed or {}).get("sha")
-        pcode, pparsed, pout = _run_self(["open-pr", "--repo", cwd,
-                                          "--issue", work_order["identifier"],
-                                          "--title", "factory(%s): %s" % (
-                                              work_order["identifier"], work_order.get("title", "")[:100])])
-        if pcode != 0:
-            raise SetupError("open-pr refused: %s" % ((pparsed or {}).get("reasons")))
-        url = (pparsed or {}).get("url")
-        number = None
-        match = re.search(r"/pull/([0-9]+)", url or "")
-        if match:
-            number = int(match.group(1))
-        ledger["pr"] = {"number": number, "url": url}
-        api.create_work_product(work_order["id"], {
-            "type": "pull_request", "provider": "github",
-            "title": "PR for %s" % work_order["identifier"],
-            "url": url, "externalId": str(number) if number else None,
-            "status": "ready_for_review", "isPrimary": True,
-            "reviewState": "needs_board_review",
-        })
+        existing_pr = ledger.get("pr") or {}
+        if existing_pr.get("number"):
+            # a decide re-run must not open a second PR for the same branch
+            pass
+        else:
+            pcode, pparsed, pout = _run_self(["open-pr", "--repo", cwd,
+                                              "--issue", work_order["identifier"],
+                                              "--title", "factory(%s): %s" % (
+                                                  work_order["identifier"], work_order.get("title", "")[:100])])
+            if pcode != 0:
+                raise SetupError("open-pr refused: %s" % ((pparsed or {}).get("reasons")))
+            url = (pparsed or {}).get("url")
+            number = None
+            match = re.search(r"/pull/([0-9]+)", url or "")
+            if match:
+                number = int(match.group(1))
+            ledger["pr"] = {"number": number, "url": url}
+            api.create_work_product(work_order["id"], {
+                "type": "pull_request", "provider": "github",
+                "title": "PR for %s" % work_order["identifier"],
+                "url": url, "externalId": str(number) if number else None,
+                "status": "ready_for_review", "isPrimary": True,
+                "reviewState": "needs_board_review",
+            })
         api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
     elif stage == "review":
         api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
