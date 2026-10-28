@@ -648,6 +648,34 @@ def case_edge_block_falls_back(stub):
         edge.close()
 
 
+def case_commit_is_idempotent(stub):
+    """GUL-497: re-running commit on a stage whose commit is already HEAD returns that sha."""
+    repo, _base = make_repo("idem-repo")
+    code, out, raw = run(stub, ["commit", "--repo", repo, "--stage", "red", "--issue", "GUL-995"],
+                         with_key=False)
+    check("commit: a clean tree still refuses with 'nothing to commit'",
+          code == 1 and (out or {}).get("reasons") == ["nothing to commit"], raw[-300:])
+
+    with open(os.path.join(repo, "tests", "ac.sh"), "w") as fh:
+        fh.write('#!/usr/bin/env bash\necho "AC-1: PASS"\nexit 0\n# red\n')
+    code, first, raw = run(stub, ["commit", "--repo", repo, "--stage", "red", "--issue", "GUL-995"],
+                           with_key=False)
+    sha1 = (first or {}).get("sha")
+    check("commit: the first run commits and returns a sha",
+          code == 0 and bool(sha1) and sha1 == git_out(repo, "rev-parse", "HEAD"), raw[-300:])
+
+    code, again, raw = run(stub, ["commit", "--repo", repo, "--stage", "red", "--issue", "GUL-995"],
+                           with_key=False)
+    check("commit: a second run on the same stage returns HEAD instead of refusing",
+          code == 0 and (again or {}).get("sha") == sha1
+          and git_out(repo, "rev-list", "--count", "HEAD") == "2", raw[-300:])
+
+    code, other, raw = run(stub, ["commit", "--repo", repo, "--stage", "green", "--issue", "GUL-995"],
+                           with_key=False)
+    check("commit: another stage on the same clean tree still refuses",
+          code == 1 and "nothing to commit" in ((other or {}).get("reasons") or [""]), raw[-300:])
+
+
 def main():
     global WORKDIR
     WORKDIR = tempfile.mkdtemp(prefix="factory-pc-tests-")
@@ -665,6 +693,7 @@ def main():
             case_tick(stub, base_sha, repo)
             case_write_document_carries_revision(stub)
             case_edge_block_falls_back(stub)
+            case_commit_is_idempotent(stub)
         finally:
             stub.close()
     finally:
