@@ -1046,6 +1046,15 @@ def cmd_factory_start(args) -> int:
         raise SetupError("spec document does not parse: %s" % "; ".join(spec_reasons))
 
     cwd = args.repo or work_order_cwd(api, work_order)
+    # The factory's own code now runs from a checkout of main (GUL-502, ADR-096).
+    # That checkout must never be a work order's workspace: `start` would cut the
+    # work order branch in it and the next invocation would move it back to main,
+    # leaving a ledger pointing at a tree that no longer holds the diff.
+    if os.path.realpath(cwd) == os.path.realpath(os.path.join(FACTORY_DIR, "..", "..")):
+        raise SetupError(
+            "refusing to start a work order in the factory's own tooling checkout (%s): "
+            "that copy must stay on main. The work order runs in its own workspace — "
+            "check the project workspace, or pass --repo" % cwd)
     project_id = work_order.get("projectId")
     busy = open_work_orders(api, company, cfg, work_order["id"], project_id)
     if busy:

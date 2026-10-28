@@ -407,6 +407,24 @@ def case_start_cuts_branch(stub):
         stub.state.issues[issue["id"]]["status"] = "done"
 
 
+def case_start_refuses_tooling_checkout(stub):
+    """GUL-502 (ADR-096): the factory's own code runs from a checkout of main. If
+    `start` were allowed to cut a work order branch there, the next invocation
+    would move that tree back to main and the ledger would point at a checkout
+    that no longer holds the diff."""
+    repo, base_sha = make_repo("repo-tooling")
+    tooling = os.path.abspath(os.path.join(os.path.dirname(FACTORY), "..", ".."))
+    wo = base_work_order(stub, base_sha, repo, identifier="GUL-905")
+    code, out, raw = run(stub, ["start", "GUL-905", "--repo", tooling])
+    check("start: refuses to cut a branch in the factory's own tooling checkout",
+          code == 2 and any("tooling checkout" in r for r in (out or {}).get("reasons", [])),
+          raw[-400:])
+    check("start: the tooling checkout keeps its branch (none created)",
+          git_out(tooling, "rev-parse", "--abbrev-ref", "HEAD") != "gul-905-add-the-fixture",
+          git_out(tooling, "rev-parse", "--abbrev-ref", "HEAD"))
+    stub.state.issues[wo["id"]]["status"] = "done"
+
+
 def case_start_creates_chain(stub, base_sha, repo):
     wo = base_work_order(stub, base_sha, repo)
     code, out, raw = run(stub, ["start", "GUL-900"])
@@ -843,6 +861,7 @@ def main():
         stub = Stub()
         try:
             case_start_cuts_branch(stub)
+            case_start_refuses_tooling_checkout(stub)
             case_start_creates_chain(stub, base_sha, repo)
             case_stop_blocks(stub, base_sha, repo)
             case_missing_key(stub)

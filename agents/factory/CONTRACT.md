@@ -8,6 +8,19 @@ Design rules:
 
 - Python 3 standard library only, run as `python3 -I agents/factory/factory.py <subcommand>`.
   JSON, not YAML: the system `python3` on the Air and in CI has no PyYAML.
+- **The script runs from a checkout of `main`, never from the work order's checkout**
+  (GUL-502, ADR-096). `agents/factory/factory-run.sh` — installed as
+  `~/.local/bin/factory` and `/Users/paperclip/factory/bin/factory` — force-moves the
+  tooling checkout `/Users/paperclip/factory/tooling` to `refs/remotes/origin/main` on
+  every call and executes the copy there. `start`, `decide` and `tick` are therefore
+  always the code on `main`: a stage check fixed and merged today decides today, and no
+  stage ever decides on a client frozen at the spec's `baseSha`. The work order's own
+  checkout (`ledger.cwd`) still runs the checks, because every check diffs its working
+  tree and the commits on its branch — it is data to the script, not the script. A
+  refresh that fails (no network, dirty tooling copy) is a setup error, exit 2: running
+  a stale copy silently is exactly the bug the wrapper removes. `start` refuses a
+  `cwd` equal to the tooling checkout, because a branch cut there would be moved off it
+  by the next call.
 - `git` is called through `subprocess` with an argument list, never through a
   shell string. The one deliberate exception: AC `check` commands (point 2),
   which are defined as shell commands and run with `bash -c` from the repo
