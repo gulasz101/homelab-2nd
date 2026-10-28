@@ -200,7 +200,9 @@ the stage briefs (`red`, `green`, `review`, `verify`, `gate`). Templates are
 self-contained: a stage agent may not be able to read the work order. Each brief
 ends with both hand-off payloads — the full `executionPolicy` on the first
 hand-off, `status` + `comment` only on a stage that already carries a
-`changes_requested` decision (GUL-471).
+`changes_requested` decision (GUL-471). The hand-off is always the last call of
+the run: it reassigns the issue and Paperclip cancels the sending run, so the
+stage report rides in its `comment` and nothing may follow it (GUL-472).
 
 **`start GUL-N [--dry-run]`**
 

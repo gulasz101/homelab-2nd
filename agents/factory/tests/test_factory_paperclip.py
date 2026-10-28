@@ -307,9 +307,10 @@ def case_start_creates_chain(stub, base_sha, repo):
     check("start: stage agents come from agents.json",
           [c["assigneeAgentId"] for c in children] == expected_agents,
           [c["assigneeAgentId"] for c in children])
-    check("start: red template ends with the exact hand-off",
+    check("start: red template's hand-off is the last step and carries the report",
           '"status": "in_review", "executionPolicy"' in children[0]["description"]
-          and "post a short comment after each step" in children[0]["description"])
+          and '"comment": "<the short report' in children[0]["description"]
+          and "before** the hand-off" in children[0]["description"])
     check("start: ledger records base, branch and cwd",
           all(k in stub.state.documents[(wo["id"], "ledger")]["body"]
               for k in (base_sha, "gul-900-add-the-fixture", repo)))

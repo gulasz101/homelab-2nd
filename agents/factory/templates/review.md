@@ -16,23 +16,34 @@ not the description of it.
 3. Do not edit code and do not commit. Review only. The factory script decides
    the stage from your document.
 
-post a short comment after each step.
+Post a short comment after each step, **before** the hand-off; this role cannot post a comment
+through the API, so the short comments are for the write stages and your report goes in the hand-off.
+The hand-off is the last call of this run: it reassigns the issue and Paperclip cancels the sending
+run, so nothing you send afterwards lands. Its `comment` is the report.
 
 When the findings document is written, hand off to the verify stage:
 
-The payload has two shapes and the wrong one is refused.
+The payload has two shapes and the wrong one is refused. Both carry the report in `comment`.
 
 **First hand-off** — no decision against this stage yet, send the full payload:
 
 ```
-PATCH /api/issues/<this issue> {"status": "in_review", "executionPolicy": {{handoffPatch}}}
+curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/$PAPERCLIP_TASK_ID" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+  -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "in_review", "executionPolicy": {{handoffPatch}}, "comment": "<the short report: the findings count and the blocking ones, one line each>"}'
 ```
 
 **Hand-off after a decision sent this stage back to you** — a `changes_requested` verdict is on this
 stage, so send `status` and `comment` only, never `executionPolicy`:
 
 ```
-PATCH /api/issues/<this issue> {"status": "in_review", "comment": "findings updated after the changes requested; <what changed>"}
+curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/$PAPERCLIP_TASK_ID" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+  -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "in_review", "comment": "findings updated after the changes requested; <what changed>"}'
 ```
 
 Why: this template's policy carries no stage ids, so re-sending it mints new ones, the stored
