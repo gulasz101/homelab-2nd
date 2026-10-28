@@ -5,8 +5,8 @@
   "stages": {
     "red": {"agentId": "placeholder-tester", "name": "Tester", "factoryRole": "tester"},
     "green": {"agentId": "placeholder-builder", "name": "Builder", "factoryRole": "builder"},
-    "review": {"agentId": "placeholder-reviewer", "name": "Reviewer", "factoryRole": "tester"},
-    "verify": {"agentId": "placeholder-verifier", "name": "Verifier", "factoryRole": "tester"},
+    "review": {"agentId": "placeholder-reviewer", "name": "Reviewer", "factoryRole": "readonly"},
+    "verify": {"agentId": "placeholder-verifier", "name": "Verifier", "factoryRole": "readonly"},
     "gate": {"agentId": "2df240b5-a5ea-4ebf-81ff-bf96758e8f80", "name": "Majster", "factoryRole": "readonly"}
   }
 }
