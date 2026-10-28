@@ -647,6 +647,10 @@ spec:
           model: openai/qwen3.8-max
           api_base: "https://opencode.ai/zen/go/v1"
           api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+          # GUL-480: Pi (thinking: max) sends reasoning_effort, which LiteLLM
+          # rejects for openai/qwen3.8-max with 400 UnsupportedParamsError before
+          # the call goes upstream. qwen3.8-max reasons by default; drop the param.
+          drop_params: true
       - model_name: space-bunny-free-go
         litellm_params:
           model: openai/space-bunny-free
