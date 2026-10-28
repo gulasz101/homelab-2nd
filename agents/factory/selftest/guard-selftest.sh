@@ -8,9 +8,19 @@
 #        bash "$FACTORY_GUARD_DIR/tests/guard-check.sh"   (all four roles)
 #      A live-test SKIP is a failure — on this machine pi exists, and a
 #      skipped matrix proves nothing.
-#   2. drift: the installed copy must be byte-identical to agents/factory-guard/
-#      on origin/main (node_modules and .DS_Store ignored). Drift is a failure;
-#      the fix is to re-copy (GUL-311 recipe), not to edit the installed copy.
+#   2. drift: the installed guard copy must be byte-identical to
+#      agents/factory-guard/ on origin/main (node_modules and .DS_Store
+#      ignored). Drift is a failure; the fix is to re-copy (GUL-311 recipe),
+#      not to edit the installed copy.
+#   3. drift: the INSTALLED ENTRY SCRIPT (what launchd actually runs) must be
+#      byte-identical to agents/factory/selftest/guard-selftest.sh on
+#      origin/main. The entry lives outside the shared checkout on purpose: a
+#      repo-path entry disappears whenever a concurrent run parks the checkout
+#      on a branch without it, and launchd then fails in silence (proved by
+#      GUL-437's first kickstart after merge #65).
+#   4. drift: the INSTALLED PLIST in ~/Library/LaunchAgents must be
+#      byte-identical to the repo one — what launchd loaded must be what Git
+#      says is scheduled.
 #
 # On any failure it writes $FACTORY_STATE_DIR/STOP (time, role, failing
 # assertion — never command text) and exits 1. It NEVER deletes or overwrites an
@@ -21,6 +31,8 @@
 #
 # Env overrides (used by tests):
 #   FACTORY_GUARD_DIR   installed guard dir   (default ~/paperclip-agents/pi/extensions/factory-guard)
+#   FACTORY_ENTRY_DIR   installed entry dir   (default ~/paperclip-agents/factory-selftest)
+#   FACTORY_PLIST_PATH  installed plist       (default ~/Library/LaunchAgents/dev.voitech.factory-guard-selftest.plist)
 #   FACTORY_STATE_DIR   STOP/log dir          (default ~/paperclip-agents/majster/factory)
 #   FACTORY_REPO_DIR    homelab-2nd checkout  (default ~/Projects/homelab-2nd)
 #   FACTORY_SELFTEST_REEXEC=1  run this exact copy (skip the origin/main re-exec; negative tests use it)
@@ -120,6 +132,31 @@ if git -C "$FACTORY_REPO_DIR" archive origin/main agents/factory-guard 2>/dev/nu
   fi
 else
   add_failure install "cannot extract agents/factory-guard from origin/main of $FACTORY_REPO_DIR (no repo, no ref, offline?)"
+fi
+
+# ---------- checks 3+4: the installed entry script and plist ----------
+# launchd runs the installed entry, and the schedule/PATH that fires is the
+# installed plist — so both are drift-checked against origin/main like the
+# guard. Extracted once; missing files count as drift (diff says so).
+mkdir -p "$WORK/selftest-ref"
+if git -C "$FACTORY_REPO_DIR" archive origin/main agents/factory/selftest 2>/dev/null | tar -x -C "$WORK/selftest-ref" 2>/dev/null \
+   && [ -f "$WORK/selftest-ref/agents/factory/selftest/guard-selftest.sh" ]; then
+  ENTRY_DIR="${FACTORY_ENTRY_DIR:-$HOME/paperclip-agents/factory-selftest}"
+  DIFF3="$WORK/entry-diff.txt"
+  diff -q "$WORK/selftest-ref/agents/factory/selftest/guard-selftest.sh" "$ENTRY_DIR/guard-selftest.sh" > "$DIFF3" 2>&1
+  if [ -s "$DIFF3" ]; then
+    D3=$(head -c 200 "$DIFF3" | tr '\n' ';')
+    add_failure install "installed self-test entry differs from origin/main — re-copy agents/factory/selftest/guard-selftest.sh from origin/main to $ENTRY_DIR/ (README has the commands): $D3"
+  fi
+  PLIST_LIVE="${FACTORY_PLIST_PATH:-$HOME/Library/LaunchAgents/dev.voitech.factory-guard-selftest.plist}"
+  DIFF4="$WORK/plist-diff.txt"
+  diff -q "$WORK/selftest-ref/agents/factory/selftest/dev.voitech.factory-guard-selftest.plist" "$PLIST_LIVE" > "$DIFF4" 2>&1
+  if [ -s "$DIFF4" ]; then
+    D4=$(head -c 200 "$DIFF4" | tr '\n' ';')
+    add_failure install "installed launchd plist differs from origin/main — reinstall it from origin/main to $PLIST_LIVE and reload the job (README has the commands): $D4"
+  fi
+else
+  add_failure install "cannot extract agents/factory/selftest from origin/main of $FACTORY_REPO_DIR (no repo, no ref, offline?)"
 fi
 
 # ---------- STOP + log ----------
