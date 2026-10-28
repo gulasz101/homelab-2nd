@@ -1,0 +1,12 @@
+{
+  "_comment": "Stage agents for the Pi code factory (GUL-439). The agents themselves are created in a separate issue; the ids below are placeholders until then. gate belongs to Majster.",
+  "majster": "2df240b5-a5ea-4ebf-81ff-bf96758e8f80",
+  "extension": "/Users/paperclip/paperclip-agents/pi/extensions/factory-guard/index.ts",
+  "stages": {
+    "red": {"agentId": "placeholder-tester", "name": "Tester", "factoryRole": "tester"},
+    "green": {"agentId": "placeholder-builder", "name": "Builder", "factoryRole": "builder"},
+    "review": {"agentId": "placeholder-reviewer", "name": "Reviewer", "factoryRole": "tester"},
+    "verify": {"agentId": "placeholder-verifier", "name": "Verifier", "factoryRole": "tester"},
+    "gate": {"agentId": "2df240b5-a5ea-4ebf-81ff-bf96758e8f80", "name": "Majster", "factoryRole": "readonly"}
+  }
+}
