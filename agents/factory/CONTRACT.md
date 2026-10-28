@@ -197,7 +197,10 @@ its execution workspace and a finished child wakes Majster, not the PM.
 `agents/factory/agents.json` holds Majster's id, the stage agent ids and the
 `--factory-role` each stage needs; `agents/factory/templates/<stage>.md` holds
 the stage briefs (`red`, `green`, `review`, `verify`, `gate`). Templates are
-self-contained: a stage agent may not be able to read the work order.
+self-contained: a stage agent may not be able to read the work order. Each brief
+ends with both hand-off payloads — the full `executionPolicy` on the first
+hand-off, `status` + `comment` only on a stage that already carries a
+`changes_requested` decision (GUL-471).
 
 **`start GUL-N [--dry-run]`**
 
