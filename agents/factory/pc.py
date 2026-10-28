@@ -9,7 +9,9 @@ read here (GUL-297).
 
 Base URL: PAPERCLIP_API_URL may be the bare origin (http://127.0.0.1:3100) or
 already carry /api. The public URL is not usable: Cloudflare answers urllib
-with 403 1010.
+with 403 1010. A run inherits whatever PAPERCLIP_API_URL the adapter was given,
+so an edge-shaped 403 (or an unreachable host) falls back once to the local
+API and is remembered for the rest of the run (GUL-496).
 """
 
 import json
@@ -18,6 +20,8 @@ import urllib.error
 import urllib.request
 
 DEFAULT_BASE = "http://127.0.0.1:3100/api"
+FALLBACK_ENV = "PAPERCLIP_API_FALLBACK_URL"
+USER_AGENT = "paperclip-factory/1 (factory.py)"
 
 
 class ApiError(Exception):
@@ -29,6 +33,12 @@ class ApiError(Exception):
 
 def base_url():
     raw = (os.environ.get("PAPERCLIP_API_URL") or DEFAULT_BASE).rstrip("/")
+    return raw if raw.endswith("/api") else raw + "/api"
+
+
+def fallback_base():
+    """The API to try when the configured one is behind a wall (GUL-496)."""
+    raw = (os.environ.get(FALLBACK_ENV) or DEFAULT_BASE).rstrip("/")
     return raw if raw.endswith("/api") else raw + "/api"
 
 
@@ -48,13 +58,16 @@ class Api:
         self.base = (base or base_url()).rstrip("/")
 
     # -- transport -------------------------------------------------------
-    def _request(self, method, path, body=None):
-        url = self.base + path
+    def _exchange(self, base, method, path, body):
+        """One HTTP exchange. Returns (status, parsed, raw). status 0 is a
+        connection-level failure, not an HTTP answer."""
+        url = base + path
         data = None
         headers = {
             "Authorization": "Bearer " + self.key,
             "X-Paperclip-Run-Id": self.run_id,
             "Accept": "application/json",
+            "User-Agent": USER_AGENT,
         }
         if body is not None:
             data = json.dumps(body).encode("utf-8")
@@ -67,14 +80,37 @@ class Api:
         except urllib.error.HTTPError as exc:
             status = exc.code
             raw = exc.read().decode("utf-8", "replace")
-        except urllib.error.URLError as exc:
-            raise ApiError(0, f"{method} {path}: {exc.reason}") from exc
+        except urllib.error.URLError:
+            return 0, None, ""
         parsed = None
         if raw.strip():
             try:
                 parsed = json.loads(raw)
             except ValueError:
                 parsed = raw
+        return status, parsed, raw
+
+    @staticmethod
+    def _wall(status, raw):
+        """True when the answer came from the edge, not from Paperclip: a
+        Cloudflare 1010 block page, or no connection at all."""
+        if status == 0:
+            return True
+        if status != 403:
+            return False
+        text = (raw or "")[:2000].lower()
+        return "1010" in text or "cloudflare" in text or text.lstrip().startswith("<")
+
+    def _request(self, method, path, body=None):
+        status, parsed, raw = self._exchange(self.base, method, path, body)
+        if self._wall(status, raw):
+            alt = fallback_base()
+            if alt.rstrip("/") != self.base.rstrip("/"):
+                status, parsed, raw = self._exchange(alt, method, path, body)
+                if not self._wall(status, raw):
+                    self.base = alt
+        if status == 0:
+            raise ApiError(0, f"{method} {path}: cannot reach {self.base}")
         return status, parsed
 
     def _call(self, method, path, body=None, ok=(200, 201)):
@@ -125,12 +161,37 @@ class Api:
         return payload if isinstance(payload, dict) else None
 
     def write_document(self, issue_id, key, body, title=None, change_summary=None):
-        payload = {"format": "markdown", "body": body}
-        if title:
-            payload["title"] = title
-        if change_summary:
-            payload["changeSummary"] = change_summary
-        return self.put(f"/issues/{issue_id}/documents/{key}", payload)
+        """PUT a document, carrying the revision it replaces (GUL-496).
+
+        Paperclip refuses an update that does not name the revision it was
+        based on (`409 Document update requires baseRevisionId`), so read the
+        document first and send its `latestRevisionId`; a first write sends
+        null. The body is a whole replacement built by factory.py, so a 409
+        means someone wrote in between: re-read once and retry on the fresh
+        revision before giving up.
+        """
+
+        def payload_for():
+            current = self.document(issue_id, key)
+            revision = current.get("latestRevisionId") if isinstance(current, dict) else None
+            payload = {"format": "markdown", "body": body, "baseRevisionId": revision}
+            if title:
+                payload["title"] = title
+            if change_summary:
+                payload["changeSummary"] = change_summary
+            return payload
+
+        path = f"/issues/{issue_id}/documents/{key}"
+        try:
+            response = self.put(path, payload_for())
+        except ApiError as exc:
+            if exc.status != 409:
+                raise
+            response = self.put(path, payload_for())
+        if isinstance(response, dict) and "document" not in response and response.get("id"):
+            # the live API echoes the document itself, not {"document": …}
+            return {"document": response}
+        return response
 
     def comment(self, issue_id, body):
         return self.post(f"/issues/{issue_id}/comments", {"body": body})
