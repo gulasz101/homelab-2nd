@@ -58,6 +58,9 @@ class State:
         self.counter = 700
         # {(issueId, key): n} — force the next n PUTs of that document to 409
         self.put_conflicts = {}
+        # {(issueId, key): n} — force the next n PUTs of that document to 500
+        # (GUL-497: a ledger write that fails after the stage's work is done)
+        self.put_failures = {}
         # the live API echoes the document bare; the stub can do either
         self.wrapped_documents = True
 
@@ -166,6 +169,10 @@ def make_handler(state):
             if parts[:2] == ["api", "issues"] and len(parts) == 5 and parts[3] == "documents":
                 slot = (parts[2], parts[4])
                 existing = state.documents.get(slot)
+                failures = state.put_failures.get(slot, 0)
+                if failures:
+                    state.put_failures[slot] = failures - 1
+                    return self._send(500, {"error": "stub: forced write failure"})
                 forced = state.put_conflicts.get(slot, 0)
                 if forced:
                     state.put_conflicts[slot] = forced - 1
@@ -694,6 +701,158 @@ def case_commit_is_idempotent(stub):
           code == 1 and "nothing to commit" in ((other or {}).get("reasons") or [""]), raw[-300:])
 
 
+def case_ledger_write_precedes_done(stub):
+    """GUL-497 part 2: a failed ledger write leaves the stage in_progress, not done."""
+    repo, base = make_repo("order-repo")
+    wo = base_work_order(stub, base, repo, identifier="GUL-905")
+    stage = stage_issue(stub, wo, "[red] GUL-905 — Add the fixture")
+    with open(os.path.join(repo, "tests", "ac.sh"), "w") as fh:
+        fh.write('#!/usr/bin/env bash\necho "AC-1: FAIL not implemented yet"\nexit 1\n')
+    slot = (wo["id"], "ledger")
+    before = stub.state.documents[slot]["body"]
+    stub.state.put_failures[slot] = 1
+
+    code, out, raw = run(stub, ["decide", stage["identifier"], "--apply"])
+    check("decide red: a failed ledger write is a setup error, exit 2",
+          code == 2 and "ledger write failed" in raw, raw[-400:])
+    check("decide red: a failed ledger write leaves the stage in_progress",
+          stub.state.issues[stage["id"]]["status"] == "in_progress",
+          stub.state.issues[stage["id"]]["status"])
+    check("decide red: a failed ledger write leaves the ledger byte-identical",
+          stub.state.documents[slot]["body"] == before)
+    check("decide red: the stage is not patched done and gets no done comment",
+          not [c for c in stub.state.comments if c["issueId"] == stage["id"]],
+          [c["body"][:80] for c in stub.state.comments if c["issueId"] == stage["id"]])
+    check("decide red: the stage's commit was made before the write",
+          git_out(repo, "log", "-1", "--format=%s") == "factory(GUL-905): red",
+          git_out(repo, "log", "-1", "--format=%s"))
+
+    # the whole point: the same decide can be re-run and finishes the job
+    code2, out2, raw2 = run(stub, ["decide", stage["identifier"], "--apply"])
+    body = stub.state.documents[slot]["body"]
+    check("decide red: the re-run records the sha the failed attempt committed",
+          code2 == 0 and stub.state.issues[stage["id"]]["status"] == "done"
+          and git_out(repo, "rev-parse", "HEAD") in body
+          and '"outcome": "pass"' in body, raw2[-400:])
+    check("decide red: the re-run adds no second commit",
+          git_out(repo, "rev-list", "--count", "HEAD") == "2",
+          git_out(repo, "rev-list", "--count", "HEAD"))
+
+
+def case_green_approve_opens_one_pr(stub):
+    """GUL-497: the green pass — commit → open-pr → ledger → done, and one PR re-used on a re-run."""
+    repo, origin, base, red_sha, branch = make_green_repo()
+    wo = base_work_order(stub, base, repo, identifier="GUL-907")
+    stub.state.doc(wo["id"], "spec", GREEN_SPEC_BODY)
+    ledger = json.loads(stub.state.documents[(wo["id"], "ledger")]["body"]
+                        .split("```json")[1].split("```")[0])
+    ledger["stages"] = {"red": {"issueId": "red-1", "identifier": "GUL-906", "round": 1,
+                                "attempts": 0, "sha": red_sha}}
+    stub.state.documents[(wo["id"], "ledger")]["body"] = (
+        "# Factory ledger\n\n```json\n%s\n```\n" % json.dumps(ledger))
+    stage = stage_issue(stub, wo, "[green] GUL-907 — Add the fix")
+    gh_log = os.path.join(WORKDIR, "gh-calls.log")
+    env = {"FACTORY_GH": write_gh_stub(os.path.join(WORKDIR, "gh-stub.sh")),
+           "GH_CALL_LOG": gh_log}
+
+    code, out, raw = run(stub, ["decide", stage["identifier"], "--apply"], extra_env=env)
+    calls = [l for l in open(gh_log).read().splitlines() if l.strip()] if os.path.exists(gh_log) else []
+    body = stub.state.documents[(wo["id"], "ledger")]["body"]
+    products = [p for p in stub.state.work_products if p.get("issueId") == wo["id"]]
+    check("decide green: the pass commits, opens a PR and marks the stage done",
+          code == 0 and out.get("decision") == "approve"
+          and stub.state.issues[stage["id"]]["status"] == "done", raw[-700:])
+    check("decide green: the commit is the stage's own and the branch is pushed",
+          git_out(repo, "log", "-1", "--format=%s") == "factory(GUL-907): green"
+          and git_out(origin, "rev-parse", "refs/heads/" + branch) == git_out(repo, "rev-parse", "HEAD"),
+          "%s / %s" % (git_out(repo, "log", "-1", "--format=%s"),
+                       git_out(origin, "rev-parse", "refs/heads/" + branch)))
+    check("decide green: open-pr called gh once", len(calls) == 1, calls)
+    check("decide green: the ledger records the PR it opened",
+          '"number": 80' in body and '"outcome": "pass"' in body, body[-300:])
+    check("decide green: the PR is linked as a work product",
+          len(products) == 1 and "pull/80" in (products[0].get("url") or "")
+          and products[0].get("externalId") == "80", products)
+
+    code2, out2, raw2 = run(stub, ["decide", stage["identifier"], "--apply"], extra_env=env)
+    calls2 = [l for l in open(gh_log).read().splitlines() if l.strip()]
+    products2 = [p for p in stub.state.work_products if p.get("issueId") == wo["id"]]
+    check("decide green: a re-run reuses the recorded PR instead of opening a second",
+          code2 == 0 and len(calls2) == 1 and len(products2) == 1, calls2)
+    check("decide green: the re-run leaves the stage done and the ledger intact",
+          stub.state.issues[stage["id"]]["status"] == "done"
+          and '"number": 80' in stub.state.documents[(wo["id"], "ledger")]["body"], raw2[-400:])
+
+
+GREEN_SPEC_BODY = """# Spec
+
+```json
+{"repo": "gulasz101/homelab-2nd", "base": "main", "kind": "code",
+ "allowedPaths": ["src/**"],
+ "acs": [{"id": "AC-1", "text": "a.py carries the fix the red stage's check asks for",
+          "check": "bash tests/ac.sh"}],
+ "maxDiffLines": 100}
+```
+"""
+
+
+def write_gh_stub(path):
+    """A gh that answers `pr create` and logs every call. Enough for open-pr."""
+    with open(path, "w") as fh:
+        fh.write("#!/usr/bin/env bash\n"
+                 'printf "%s|%s\\n" "$1" "$2" >> "$GH_CALL_LOG"\n'
+                 'case "$1" in\n'
+                 '  pr)\n'
+                 '    [ "$2" = "create" ] || { echo "stub gh: pr $2 not stubbed" >&2; exit 1; }\n'
+                 '    echo "https://github.com/gulasz101/homelab-2nd/pull/80"\n'
+                 '    ;;\n'
+                 '  *) echo "stub gh: not stubbed: $*" >&2; exit 1 ;;\n'
+                 "esac\n")
+    os.chmod(path, 0o755)
+    return path
+
+
+def make_green_repo(name="green-repo"):
+    """A work-order branch holding the red commit, with the green fix in the tree.
+
+    origin is a bare repo rather than the checkout itself: `open-pr` pushes the
+    branch, and git refuses to update a branch that origin has checked out.
+    """
+    root = os.path.join(WORKDIR, name)
+    origin = os.path.join(root, "origin.git")
+    repo = os.path.join(root, "repo")
+    for sub in ("tests", "src"):
+        os.makedirs(os.path.join(repo, sub), exist_ok=True)
+    subprocess.run(["git", "init", "--bare", "-q", origin], check=True)
+    with open(os.path.join(repo, "tests", "ac.sh"), "w") as fh:
+        fh.write("#!/usr/bin/env bash\n"
+                 'if grep -q fixed src/a.py; then echo "AC-1: PASS"; exit 0; fi\n'
+                 'echo "AC-1: FAIL a.py does not carry the fix"; exit 1\n')
+    with open(os.path.join(repo, "src", "a.py"), "w") as fh:
+        fh.write("value = 'TODO'\n")
+    with open(os.path.join(repo, "README.md"), "w") as fh:
+        fh.write("fixture\n")
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "add", "-A")
+    git(repo, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-qm", "base")
+    git(repo, "remote", "add", "origin", origin)
+    git(repo, "push", "-q", "origin", "main")
+    base_sha = git_out(repo, "rev-parse", "HEAD")
+
+    branch = "gul-907-add-the-fix"
+    git(repo, "switch", "-q", "-c", branch)
+    with open(os.path.join(repo, "tests", "ac.sh"), "a") as fh:
+        fh.write("# red: the check is written, the fix is not there\n")
+    git(repo, "add", "-A")
+    git(repo, "-c", "user.email=t@example.com", "-c", "user.name=T",
+        "commit", "-qm", "factory(GUL-907): red")
+    red_sha = git_out(repo, "rev-parse", "HEAD")
+    # the green stage's work as a builder leaves it: in the tree, not committed
+    with open(os.path.join(repo, "src", "a.py"), "w") as fh:
+        fh.write("value = 'fixed'\n")
+    return repo, origin, base_sha, red_sha, branch
+
+
 def main():
     global WORKDIR
     WORKDIR = tempfile.mkdtemp(prefix="factory-pc-tests-")
@@ -713,6 +872,8 @@ def main():
             case_write_document_carries_revision(stub)
             case_edge_block_falls_back(stub)
             case_commit_is_idempotent(stub)
+            case_ledger_write_precedes_done(stub)
+            case_green_approve_opens_one_pr(stub)
         finally:
             stub.close()
     finally:

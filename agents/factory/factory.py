@@ -1304,12 +1304,25 @@ def cmd_factory_decide(args) -> int:
         return 0 if passed else 1
 
     if decision == "request_changes":
-        api.patch_issue(stage_issue["id"], {"status": "in_progress", "comment": comment})
+        # ledger first here too: a lost attempts counter would let the same
+        # stage past its third failure without escalating (GUL-497).
         save_ledger(api, work_order["id"], ledger, "request changes %s" % key)
+        api.patch_issue(stage_issue["id"], {"status": "in_progress", "comment": comment})
         emit(False, "decide", reasons, result)
         return 1
 
-    # approve
+    # approve — prepare the ledger, make it durable, and only then mark the
+    # stage `done` (GUL-497). A stage patched `done` whose ledger write then
+    # fails never runs again: the board looks fine, the ledger keeps
+    # `sha: null`, and the next stage refuses with "no red commit recorded in
+    # the ledger". So each branch below only *prepares* its ledger row; the
+    # `done` PATCH and every side effect that is not the record itself (work
+    # product, merge card, work-order status) come after `save_ledger`
+    # returned. A failed write leaves the stage `in_progress` with its commit
+    # already made, and the re-run is safe: `commit` hands back HEAD for this
+    # stage (GUL-496) and a recorded `pr` is reused instead of opening a
+    # second one (GUL-497).
+    after_ledger: list = []
     if stage == "red":
         ccode, cparsed, cout = _run_self(["commit", "--repo", cwd, "--stage", "red",
                                           "--issue", work_order["identifier"]])
@@ -1318,7 +1331,6 @@ def cmd_factory_decide(args) -> int:
         ledger["stages"].setdefault(key, {"issueId": stage_issue["id"], "round": round_no,
                                           "attempts": 0})
         ledger["stages"][key]["sha"] = (cparsed or {}).get("sha")
-        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
     elif stage == "green":
         ccode, cparsed, cout = _run_self(["commit", "--repo", cwd, "--stage", "green",
                                           "--issue", work_order["identifier"]])
@@ -1344,18 +1356,21 @@ def cmd_factory_decide(args) -> int:
             if match:
                 number = int(match.group(1))
             ledger["pr"] = {"number": number, "url": url}
-            api.create_work_product(work_order["id"], {
-                "type": "pull_request", "provider": "github",
-                "title": "PR for %s" % work_order["identifier"],
-                "url": url, "externalId": str(number) if number else None,
-                "status": "ready_for_review", "isPrimary": True,
-                "reviewState": "needs_board_review",
-            })
-        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
+            # the work product links the PR to the board; it is not the record
+            # the next stage reads, so it lands after the ledger is durable. A
+            # re-run reuses ledger["pr"] and leaves the link to be re-added by
+            # hand rather than opening a second PR.
+            after_ledger.append(lambda _url=url, _num=number: api.create_work_product(
+                work_order["id"], {
+                    "type": "pull_request", "provider": "github",
+                    "title": "PR for %s" % work_order["identifier"],
+                    "url": _url, "externalId": str(_num) if _num else None,
+                    "status": "ready_for_review", "isPrimary": True,
+                    "reviewState": "needs_board_review",
+                }))
     elif stage == "review":
-        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
+        pass
     elif stage == "verify":
-        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
         if open_fix_round:
             ledger["fixRounds"] = int(ledger.get("fixRounds", 0)) + 1
             findings_block = ("\n**Confirmed blocking findings from verify (fix these, round %d):**\n%s\n"
@@ -1373,20 +1388,32 @@ def cmd_factory_decide(args) -> int:
             api.comment(work_order["id"], "fix round %d opened: %s"
                         % (round_no + 1, ", ".join(i["issue"].get("identifier", "?") for i in created)))
     else:  # gate
-        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
         pr = ledger.get("pr") or {}
-        api.create_interaction(work_order["id"], {
-            "kind": "request_confirmation",
-            "resolverPolicy": "human_only",
-            "title": "Merge PR #%s?" % pr.get("number"),
-            "summary": "The factory gate passed. Wojtek merges.",
-            "payload": {"version": 1, "prompt": "Merge PR #%s?" % pr.get("number"),
-                        "detailsMarkdown": pr.get("url") or ""},
-        })
-        api.patch_issue(work_order["id"], {"status": "in_review"})
+
+        def _raise_merge_card(_pr=pr, _wo=work_order["id"]):
+            # the card the gate exists to raise — after the ledger, so a lost
+            # write can never leave a "Merge PR #None?" card on the board.
+            api.create_interaction(_wo, {
+                "kind": "request_confirmation",
+                "resolverPolicy": "human_only",
+                "title": "Merge PR #%s?" % _pr.get("number"),
+                "summary": "The factory gate passed. Wojtek merges.",
+                "payload": {"version": 1, "prompt": "Merge PR #%s?" % _pr.get("number"),
+                            "detailsMarkdown": _pr.get("url") or ""},
+            })
+            api.patch_issue(_wo, {"status": "in_review"})
+
+        after_ledger.append(_raise_merge_card)
 
     ledger["outcome"] = "pass"
-    save_ledger(api, work_order["id"], ledger, "approve %s" % key)
+    try:
+        save_ledger(api, work_order["id"], ledger, "approve %s" % key)
+    except pc.ApiError as exc:
+        raise SetupError("ledger write failed, stage left in_progress: %s" % exc)
+
+    api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
+    for step in after_ledger:
+        step()
     emit(True, "decide", [], result)
     return 0
 
