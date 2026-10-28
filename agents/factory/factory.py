@@ -677,6 +677,17 @@ def cmd_commit(args) -> int:
         if args.stage == "green" and is_test:
             reasons.append("green commit touches a test path: %s" % path)
     if not touched:
+        # A decide that died after its commit (Paperclip error, crash, cancelled
+        # run) is re-run against a clean tree. The stage's own commit IS HEAD
+        # then, so hand back that sha instead of refusing: otherwise a stage
+        # that already did its work can never be recorded, and the work order
+        # stalls with a null sha in the ledger (GUL-497).
+        head_subject = git(args.repo, "log", "-1", "--format=%s").strip() if head_exists(args.repo) else ""
+        wanted = "factory(%s): %s" % (args.issue, args.stage)
+        if head_subject == wanted:
+            emit(True, "commit", ["already committed: HEAD is this stage's commit"],
+                 {"sha": git(args.repo, "rev-parse", "HEAD").strip()})
+            return 0
         reasons.append("nothing to commit")
     if reasons:
         emit(False, "commit", reasons)
@@ -975,6 +986,32 @@ def create_stages(api, work_order_id: str, plan: list, cfg: dict) -> list:
     return created
 
 
+def _resolve_base(repo: str, base: str) -> str:
+    base_sha = git(repo, "rev-parse", "origin/" + base, allow_fail=True).strip()
+    if not base_sha:
+        base_sha = git(repo, "rev-parse", base, allow_fail=True).strip()
+    if not base_sha:
+        raise SetupError("cannot resolve base %r in %s" % (base, repo))
+    return base_sha
+
+
+def _switch_to_work_order_branch(repo: str, branch: str, base_sha: str) -> str:
+    """Cut the work order branch at base_sha, or switch to it when it is already
+    there at that sha (the "start twice" case). Returns "" on success, or the
+    reason the branch cannot be used."""
+    existing = git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch,
+                   allow_fail=True).strip()
+    if existing and existing != base_sha:
+        return ("branch %s already exists at %s, not at the work order base %s: "
+                "move it out of the way before starting"
+                % (branch, existing[:12], base_sha[:12]))
+    if existing:
+        git(repo, "switch", branch)
+    else:
+        git(repo, "switch", "-c", branch, base_sha)
+    return ""
+
+
 def cmd_factory_start(args) -> int:
     _sys_path_for_modules()
     import pc
@@ -1009,6 +1046,15 @@ def cmd_factory_start(args) -> int:
         raise SetupError("spec document does not parse: %s" % "; ".join(spec_reasons))
 
     cwd = args.repo or work_order_cwd(api, work_order)
+    # The factory's own code now runs from a checkout of main (GUL-502, ADR-096).
+    # That checkout must never be a work order's workspace: `start` would cut the
+    # work order branch in it and the next invocation would move it back to main,
+    # leaving a ledger pointing at a tree that no longer holds the diff.
+    if os.path.realpath(cwd) == os.path.realpath(os.path.join(FACTORY_DIR, "..", "..")):
+        raise SetupError(
+            "refusing to start a work order in the factory's own tooling checkout (%s): "
+            "that copy must stay on main. The work order runs in its own workspace — "
+            "check the project workspace, or pass --repo" % cwd)
     project_id = work_order.get("projectId")
     busy = open_work_orders(api, company, cfg, work_order["id"], project_id)
     if busy:
@@ -1021,13 +1067,37 @@ def cmd_factory_start(args) -> int:
         return 1
 
     base = spec["base"]
-    base_sha = git(cwd, "rev-parse", "origin/" + base, allow_fail=True).strip()
-    if not base_sha:
-        base_sha = git(cwd, "rev-parse", base, allow_fail=True).strip()
-    if not base_sha:
-        raise SetupError("cannot resolve base %r in %s" % (base, cwd))
-
     number = args.work_order.split("-")[-1]
+    branch = "gul-%s-%s" % (number, slugify(work_order.get("title", "")))
+
+    existing = load_json_document(api, work_order["id"], "ledger")
+    if existing and existing.get("stages"):
+        emit(True, "start", ["work order already started; nothing created"],
+             {"workOrder": args.work_order, "created": 0,
+              "stages": existing.get("stages")})
+        return 0
+
+    if args.dry_run:
+        base_sha = _resolve_base(cwd, base)
+    else:
+        # The work order runs on its own branch, cut here (GUL-481). Without this
+        # the red commit lands on the checkout's local main and `open-pr` refuses
+        # ("refusing to open a PR from main"), so a real work order cannot finish.
+        git(cwd, "fetch", "origin")
+        dirty = git(cwd, "status", "--porcelain").strip()
+        if dirty:
+            paths = [ln[3:] for ln in dirty.splitlines()][:5]
+            emit(False, "start", [
+                "checkout is dirty: %s" % ", ".join(paths),
+                "commit or stash it first: a work order needs a clean checkout and its "
+                "own branch (ADR-095)"], {"workOrder": args.work_order})
+            return 1
+        base_sha = _resolve_base(cwd, base)
+        reason = _switch_to_work_order_branch(cwd, branch, base_sha)
+        if reason:
+            emit(False, "start", [reason], {"workOrder": args.work_order})
+            return 1
+
     ledger = {
         "version": 1,
         "workOrder": args.work_order,
@@ -1037,7 +1107,7 @@ def cmd_factory_start(args) -> int:
         "base": base,
         "baseSha": base_sha,
         "cwd": cwd,
-        "branch": "gul-%s-%s" % (number, slugify(work_order.get("title", ""))),
+        "branch": branch,
         "projectId": project_id,
         "stages": {},
         "fixRounds": 0,
@@ -1045,13 +1115,6 @@ def cmd_factory_start(args) -> int:
         "outcome": None,
         "escalated": None,
     }
-
-    existing = load_json_document(api, work_order["id"], "ledger")
-    if existing and existing.get("stages"):
-        emit(True, "start", ["work order already started; nothing created"],
-             {"workOrder": args.work_order, "created": 0,
-              "stages": existing.get("stages")})
-        return 0
 
     plan = plan_stages(cfg, spec, ledger, work_order, 1, "")
     if args.dry_run:
@@ -1241,12 +1304,25 @@ def cmd_factory_decide(args) -> int:
         return 0 if passed else 1
 
     if decision == "request_changes":
-        api.patch_issue(stage_issue["id"], {"status": "in_progress", "comment": comment})
+        # ledger first here too: a lost attempts counter would let the same
+        # stage past its third failure without escalating (GUL-497).
         save_ledger(api, work_order["id"], ledger, "request changes %s" % key)
+        api.patch_issue(stage_issue["id"], {"status": "in_progress", "comment": comment})
         emit(False, "decide", reasons, result)
         return 1
 
-    # approve
+    # approve — prepare the ledger, make it durable, and only then mark the
+    # stage `done` (GUL-497). A stage patched `done` whose ledger write then
+    # fails never runs again: the board looks fine, the ledger keeps
+    # `sha: null`, and the next stage refuses with "no red commit recorded in
+    # the ledger". So each branch below only *prepares* its ledger row; the
+    # `done` PATCH and every side effect that is not the record itself (work
+    # product, merge card, work-order status) come after `save_ledger`
+    # returned. A failed write leaves the stage `in_progress` with its commit
+    # already made, and the re-run is safe: `commit` hands back HEAD for this
+    # stage (GUL-496) and a recorded `pr` is reused instead of opening a
+    # second one (GUL-497).
+    after_ledger: list = []
     if stage == "red":
         ccode, cparsed, cout = _run_self(["commit", "--repo", cwd, "--stage", "red",
                                           "--issue", work_order["identifier"]])
@@ -1255,7 +1331,6 @@ def cmd_factory_decide(args) -> int:
         ledger["stages"].setdefault(key, {"issueId": stage_issue["id"], "round": round_no,
                                           "attempts": 0})
         ledger["stages"][key]["sha"] = (cparsed or {}).get("sha")
-        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
     elif stage == "green":
         ccode, cparsed, cout = _run_self(["commit", "--repo", cwd, "--stage", "green",
                                           "--issue", work_order["identifier"]])
@@ -1264,30 +1339,38 @@ def cmd_factory_decide(args) -> int:
         ledger["stages"].setdefault(key, {"issueId": stage_issue["id"], "round": round_no,
                                           "attempts": 0})
         ledger["stages"][key]["sha"] = (cparsed or {}).get("sha")
-        pcode, pparsed, pout = _run_self(["open-pr", "--repo", cwd,
-                                          "--issue", work_order["identifier"],
-                                          "--title", "factory(%s): %s" % (
-                                              work_order["identifier"], work_order.get("title", "")[:100])])
-        if pcode != 0:
-            raise SetupError("open-pr refused: %s" % ((pparsed or {}).get("reasons")))
-        url = (pparsed or {}).get("url")
-        number = None
-        match = re.search(r"/pull/([0-9]+)", url or "")
-        if match:
-            number = int(match.group(1))
-        ledger["pr"] = {"number": number, "url": url}
-        api.create_work_product(work_order["id"], {
-            "type": "pull_request", "provider": "github",
-            "title": "PR for %s" % work_order["identifier"],
-            "url": url, "externalId": str(number) if number else None,
-            "status": "ready_for_review", "isPrimary": True,
-            "reviewState": "needs_board_review",
-        })
-        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
+        existing_pr = ledger.get("pr") or {}
+        if existing_pr.get("number"):
+            # a decide re-run must not open a second PR for the same branch
+            pass
+        else:
+            pcode, pparsed, pout = _run_self(["open-pr", "--repo", cwd,
+                                              "--issue", work_order["identifier"],
+                                              "--title", "factory(%s): %s" % (
+                                                  work_order["identifier"], work_order.get("title", "")[:100])])
+            if pcode != 0:
+                raise SetupError("open-pr refused: %s" % ((pparsed or {}).get("reasons")))
+            url = (pparsed or {}).get("url")
+            number = None
+            match = re.search(r"/pull/([0-9]+)", url or "")
+            if match:
+                number = int(match.group(1))
+            ledger["pr"] = {"number": number, "url": url}
+            # the work product links the PR to the board; it is not the record
+            # the next stage reads, so it lands after the ledger is durable. A
+            # re-run reuses ledger["pr"] and leaves the link to be re-added by
+            # hand rather than opening a second PR.
+            after_ledger.append(lambda _url=url, _num=number: api.create_work_product(
+                work_order["id"], {
+                    "type": "pull_request", "provider": "github",
+                    "title": "PR for %s" % work_order["identifier"],
+                    "url": _url, "externalId": str(_num) if _num else None,
+                    "status": "ready_for_review", "isPrimary": True,
+                    "reviewState": "needs_board_review",
+                }))
     elif stage == "review":
-        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
+        pass
     elif stage == "verify":
-        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
         if open_fix_round:
             ledger["fixRounds"] = int(ledger.get("fixRounds", 0)) + 1
             findings_block = ("\n**Confirmed blocking findings from verify (fix these, round %d):**\n%s\n"
@@ -1305,20 +1388,32 @@ def cmd_factory_decide(args) -> int:
             api.comment(work_order["id"], "fix round %d opened: %s"
                         % (round_no + 1, ", ".join(i["issue"].get("identifier", "?") for i in created)))
     else:  # gate
-        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
         pr = ledger.get("pr") or {}
-        api.create_interaction(work_order["id"], {
-            "kind": "request_confirmation",
-            "resolverPolicy": "human_only",
-            "title": "Merge PR #%s?" % pr.get("number"),
-            "summary": "The factory gate passed. Wojtek merges.",
-            "payload": {"version": 1, "prompt": "Merge PR #%s?" % pr.get("number"),
-                        "detailsMarkdown": pr.get("url") or ""},
-        })
-        api.patch_issue(work_order["id"], {"status": "in_review"})
+
+        def _raise_merge_card(_pr=pr, _wo=work_order["id"]):
+            # the card the gate exists to raise — after the ledger, so a lost
+            # write can never leave a "Merge PR #None?" card on the board.
+            api.create_interaction(_wo, {
+                "kind": "request_confirmation",
+                "resolverPolicy": "human_only",
+                "title": "Merge PR #%s?" % _pr.get("number"),
+                "summary": "The factory gate passed. Wojtek merges.",
+                "payload": {"version": 1, "prompt": "Merge PR #%s?" % _pr.get("number"),
+                            "detailsMarkdown": _pr.get("url") or ""},
+            })
+            api.patch_issue(_wo, {"status": "in_review"})
+
+        after_ledger.append(_raise_merge_card)
 
     ledger["outcome"] = "pass"
-    save_ledger(api, work_order["id"], ledger, "approve %s" % key)
+    try:
+        save_ledger(api, work_order["id"], ledger, "approve %s" % key)
+    except pc.ApiError as exc:
+        raise SetupError("ledger write failed, stage left in_progress: %s" % exc)
+
+    api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
+    for step in after_ledger:
+        step()
     emit(True, "decide", [], result)
     return 0
 
@@ -1429,7 +1524,10 @@ def cmd_factory_tick(args) -> int:
             if usage:
                 rows[-1]["tokens"] = usage
 
-    # config drift: every factory agent must carry the guard extension and its role
+    # config drift: every factory agent must carry the guard extension and its role.
+    # An entry with `factoryRole: null` runs without the guard (phase 2: Majster's
+    # gate stage has no extraArgs and `readonly` would refuse `decide`), so it is
+    # reported as "not required" rather than as drift on every sweep (GUL-481).
     drift = []
     seen = set()
     for stage in STAGE_ORDER:
@@ -1438,6 +1536,10 @@ def cmd_factory_tick(args) -> int:
         if agent_id in seen:
             continue
         seen.add(agent_id)
+        if not agent.get("factoryRole"):
+            drift.append({"agent": agent.get("name", stage), "guard": "not required",
+                          "expectedRole": None})
+            continue
         try:
             live = api.agent(agent_id)
         except Exception as exc:  # noqa: BLE001

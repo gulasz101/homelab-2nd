@@ -8,6 +8,19 @@ Design rules:
 
 - Python 3 standard library only, run as `python3 -I agents/factory/factory.py <subcommand>`.
   JSON, not YAML: the system `python3` on the Air and in CI has no PyYAML.
+- **The script runs from a checkout of `main`, never from the work order's checkout**
+  (GUL-502, ADR-096). `agents/factory/factory-run.sh` — installed as
+  `~/.local/bin/factory` and `/Users/paperclip/factory/bin/factory` — force-moves the
+  tooling checkout `/Users/paperclip/factory/tooling` to `refs/remotes/origin/main` on
+  every call and executes the copy there. `start`, `decide` and `tick` are therefore
+  always the code on `main`: a stage check fixed and merged today decides today, and no
+  stage ever decides on a client frozen at the spec's `baseSha`. The work order's own
+  checkout (`ledger.cwd`) still runs the checks, because every check diffs its working
+  tree and the commits on its branch — it is data to the script, not the script. A
+  refresh that fails (no network, dirty tooling copy) is a setup error, exit 2: running
+  a stale copy silently is exactly the bug the wrapper removes. `start` refuses a
+  `cwd` equal to the tooling checkout, because a branch cut there would be moved off it
+  by the next call.
 - `git` is called through `subprocess` with an argument list, never through a
   shell string. The one deliberate exception: AC `check` commands (point 2),
   which are defined as shell commands and run with `bash -c` from the repo
@@ -21,6 +34,10 @@ Design rules:
   `urllib`). They never call `gh`, never `git push` themselves, and never read
   the board token file (GUL-297); auth is `PAPERCLIP_API_KEY` and
   `PAPERCLIP_RUN_ID` from the environment or the subcommand exits 2.
+  `PAPERCLIP_API_URL` is the base; when that base answers like the edge
+  (Cloudflare 1010, or nothing at all) the client falls back once to
+  `PAPERCLIP_API_FALLBACK_URL` (default `http://127.0.0.1:3100/api`) and stays
+  there for the rest of the run (GUL-496).
 - Output: every subcommand prints exactly one JSON line on stdout
   (`{"ok": true|false, "check": "<name>", "reasons": [...]"}` plus the fields
   named per subcommand) and a short human summary on stderr.
@@ -162,7 +179,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 | `check-findings --repo DIR --base SHA --findings FILE` | findings follow point 3; every `file` is in the diff SHA→worktree; every `line` exists in the new version (file readable, ≥ `line` lines) |
 | `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed` |
 | `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ maxDiffLines` |
-| `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only) |
+| `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only). A second run on a clean tree whose HEAD is already `factory(GUL-N): <stage>` is not an error: it passes and returns that HEAD sha, so a `decide` that died after its commit can be re-run (GUL-497) |
 | `open-pr --repo DIR --issue GUL-N --title T` | current branch is not `main`/`master` (refuse, exit 1); `git push -u origin <branch>` (never `--force`); `gh pr create` with body linking the work order: `Work order: [GUL-N](https://paperclip.voitech.dev/GUL/issues/GUL-N)`. JSON adds `"url": "<PR url>"`. Repo comes from `git remote get-url origin` |
 | `start GUL-N [--dry-run]` | point 9 below |
 | `decide GUL-M [--apply]` | point 9 below |
@@ -197,36 +214,62 @@ its execution workspace and a finished child wakes Majster, not the PM.
 `agents/factory/agents.json` holds Majster's id, the stage agent ids and the
 `--factory-role` each stage needs; `agents/factory/templates/<stage>.md` holds
 the stage briefs (`red`, `green`, `review`, `verify`, `gate`). Templates are
-self-contained: a stage agent may not be able to read the work order.
+self-contained: a stage agent may not be able to read the work order. The four
+stage briefs (`red`, `green`, `review`, `verify`) end with both hand-off payloads
+— the full `executionPolicy` on the first hand-off, `status` + `comment` only on a
+stage that already carries a `changes_requested` decision (GUL-471). The hand-off
+is always the last call of the run: it reassigns the issue and Paperclip cancels
+the sending run, so the stage report rides in its `comment` and nothing may follow
+it (GUL-472). `gate.md` ends with the one `decide` command instead: the gate has no
+review stage to hand off to.
 
 **`start GUL-N [--dry-run]`**
 
 1. Refuses (exit 1) when `~/paperclip-agents/majster/factory/STOP` exists
    (`FACTORY_STOP` overrides). Runs `lint-spec` on the spec; a bad spec is exit 1.
 2. Refuses while another work order is open in the same project — the shared
-   checkout cannot hold two diffs (ADR-094). `--dry-run` plans and creates nothing.
-3. Records in the work order's `ledger` document: `baseSha` (= `origin/<spec.base>`),
+   checkout cannot hold two diffs (ADR-095). `--dry-run` plans and creates nothing.
+3. Cuts the work order's own branch, which is what `open-pr` needs: runs
+   `git fetch origin`, refuses (exit 1) when `git status --porcelain` is not empty,
+   resolves `baseSha` = `origin/<spec.base>` and runs
+   `git switch -c gul-<N>-<slug> <baseSha>` — or switches to that branch when it
+   already exists at that sha. `--dry-run` does none of it.
+4. Records in the work order's `ledger` document: `baseSha` (= `origin/<spec.base>`),
    `branch` = `gul-<N>-<slug>`, `cwd`.
-4. Creates 5 children: `[red]` → Tester, `[green]` → Builder, `[review]` →
+5. Creates 5 children: `[red]` → Tester, `[green]` → Builder, `[review]` →
    Reviewer, `[verify]` → Verifier, `[gate]` → Majster. The first is `todo`, each
    later one `blocked` by the one before. Red/green/review/verify carry
    `executionPolicy {"stages": [{"type": "review", "participants": [{"type": "agent",
    "agentId": Majster}]}]}`.
-5. `start` twice creates nothing the second time (the ledger has the stages).
+6. `start` twice creates nothing the second time (the ledger has the stages).
 
 **Ledger** — markdown with one fenced `json` block on the work order:
 `{version, workOrder, workOrderId, title, repo, base, baseSha, cwd, branch,
 projectId, stages: {<stage or stage:rN>: {issueId, identifier, round, attempts,
 sha}}, fixRounds, pr: {number, url} | null, outcome, escalated}`. Only `factory.py`
-writes it.
+writes it, and every write carries the document's `latestRevisionId` as
+`baseRevisionId` — Paperclip answers `409 Document update requires
+baseRevisionId` without it (GUL-496). A 409 on the write means a concurrent
+writer: the client re-reads the revision and retries once.
 
 **`decide GUL-M [--apply]`** — M is the stage issue; the stage comes from its
 `[stage]`/`[stage rN]` title. Runs the check for that stage against the spec and
 the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
 `check-verdicts`, `check-gate` with the ledger's PR).
 
-- Pass → `commit`/`open-pr` where the stage calls for it, then
-  `PATCH {"status": "done", "comment": …}`.
+- Pass → `commit`/`open-pr` where the stage calls for it, then **the ledger write,
+  and only then** `PATCH {"status": "done", "comment": …}`. The order is part of
+  the contract (GUL-497): a stage marked `done` whose ledger write then fails
+  never runs again — the board looks fine, the ledger keeps `sha: null`, and the
+  next stage refuses with *no red commit recorded in the ledger*. So a failed
+  write exits 2 as a setup error and leaves the stage `in_progress` with its
+  work already in git; the same `decide` is re-runnable because `commit` hands
+  back HEAD for this stage and a recorded `pr` is reused instead of opening a
+  second PR. Side effects that are not the record — the green stage's work
+  product, the gate's merge card and the work order's `in_review` — run after the
+  `done` PATCH. Request-changes writes the ledger before its `in_progress` PATCH
+  for the same reason: the `attempts` counter that escalates on the third
+  failure lives there.
 - Fail → `PATCH {"status": "in_progress", "comment": …}` (request changes;
   Paperclip routes it back to the stage agent). The comment is the check's JSON
   line plus the last 60 lines of its output.
@@ -246,7 +289,11 @@ agent, age, rounds, and flags (`idle>2h`, `no-run`, `runs-unknown`,
 `recovery-hold`, `STOP`). Config drift: every factory agent's
 `adapterConfig.extraArgs` must carry the guard extension and its stage's
 `--factory-role`; the agents API returns the key, so it is parsed in code and
-only names and booleans are printed. Appends one line per open work order to
+only names and booleans are printed. An entry whose `factoryRole` is `null` runs
+without the guard — in phase 2 that is the `gate` entry, because Majster has no
+`extraArgs` and the `readonly` role would refuse `python3 … decide` — so `tick`
+skips the drift check there and prints `guard: not required` instead of reporting
+Majster as drift on every sweep. Appends one line per open work order to
 `~/paperclip-agents/majster/factory/ledger.jsonl`: `time, workOrder, stage,
 agent, model, outcome (pass|fail|escalate|pending), round, durationSec`, plus
 `tokens` when the run's usage has them. `pending` is the honest value for a work

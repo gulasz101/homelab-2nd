@@ -42,7 +42,30 @@ this extension). Missing or unknown role fails closed. Profiles live in
 | `executor` | anywhere except the always-denied list | yes / own branch only | 60 |
 | `tester` | `**/tests/**`, `**/test/**`, `**/*.test.*`, `**/*_test.*`, `**/test_*.py` inside the workspace repo | no / no | 25 |
 | `builder` | workspace repo except test paths | no / no | 40 |
-| `readonly` | none; bash limited to a read-only allowlist | no / no | 20 |
+| `readonly` | none; bash limited to a read-only allowlist, plus the one stage hand-off (below) | no / no | 20 |
+
+### The two calls a read-only agent may make (GUL-468)
+
+A `[review]` or `[verify]` stage has exactly two jobs, and both go through the API: deliver its
+`findings`/`verdicts` document (`PUT /issues/<id>/documents/<key>`) and hand the stage back
+(`PATCH /issues/<id>` to `in_review`). The templates name both, and there is no other channel. So
+`curl` is allowed for the `readonly` role **only** when all of these hold:
+
+- the request is `PATCH` on `/issues/<id>`, or `PUT` on `/issues/<id>/documents/<key>`;
+- exactly one URL, and it is the Paperclip API: `$PAPERCLIP_API_URL…`, `127.0.0.1`, `localhost`
+  or `paperclip.voitech.dev`;
+- the body is inline (`-d '{…}'`), never `@file` or `@-`.
+
+Everything else through `curl` is refused with `readonly-allowlist`: any other verb (including POST,
+even to the documents path), another host, any other path, a body or upload from a local file (`-T`,
+`--data-binary`, `-F`), an output file (`-o`). The role stays read only on the filesystem and cannot
+reach a second API, while still being able to finish its own stage. `tests/policy.test.ts` covers 5
+allow and 16 block cases, and the live matrix runs a real PATCH, a real document PUT and a real POST.
+
+Every refusal names the token that caused it and keeps the rule id for the block log (GUL-472):
+`factory-guard: curl -o refused: output file (readonly-allowlist)`,
+`factory-guard: cd refused: not on the allowlist (readonly-allowlist)`. A refusal that reads as
+"curl is banned" sends an agent hunting the wrong fault; the command name alone is not the reason.
 
 "Workspace repo" = the git top-level of the run's cwd. Only `executor` may
 write outside it, because today's Pi works on files outside repos.
