@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  GUL-437: daily factory-guard self-test on the Air. Zero model, zero tokens.
+
+  Fires at 04:45 Warsaw wall time, before the 05:30 PM round. The Mac's system
+  timezone is Europe/Berlin, which carries the same UTC offset and the same EU
+  DST rules as Europe/Warsaw all year, so system-local 04:45 IS 04:45 Warsaw —
+  no TZ trick needed (launchd only understands system-local wall time anyway).
+
+  Install (person, after the PR merge):
+    cp agents/factory/selftest/dev.voitech.factory-guard-selftest.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.voitech.factory-guard-selftest.plist
+  Run once now:
+    launchctl kickstart -k gui/$(id -u)/dev.voitech.factory-guard-selftest
+  Result:
+    tail ~/paperclip-agents/majster/factory/selftest.log
+
+  PATH must carry /opt/homebrew: launchd's default has no pi, node or brew git.
+  The script re-execs the origin/main copy of itself, so a shared checkout
+  branch-switched by a concurrent agent run at 04:45 cannot change what is
+  tested. Missed window (machine asleep) = no run, nothing stops; next fire in
+  24 h. A FAIL writes .../factory/STOP and the factory refuses to start until a
+  person clears it. launchd stdout/stderr go next to selftest.log for the case
+  where the script itself never starts.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.voitech.factory-guard-selftest</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/paperclip/Projects/homelab-2nd/agents/factory/selftest/guard-selftest.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>45</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/paperclip/paperclip-agents/majster/factory/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/paperclip/paperclip-agents/majster/factory/launchd.err.log</string>
+</dict>
+</plist>
