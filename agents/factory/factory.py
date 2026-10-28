@@ -975,6 +975,32 @@ def create_stages(api, work_order_id: str, plan: list, cfg: dict) -> list:
     return created
 
 
+def _resolve_base(repo: str, base: str) -> str:
+    base_sha = git(repo, "rev-parse", "origin/" + base, allow_fail=True).strip()
+    if not base_sha:
+        base_sha = git(repo, "rev-parse", base, allow_fail=True).strip()
+    if not base_sha:
+        raise SetupError("cannot resolve base %r in %s" % (base, repo))
+    return base_sha
+
+
+def _switch_to_work_order_branch(repo: str, branch: str, base_sha: str) -> str:
+    """Cut the work order branch at base_sha, or switch to it when it is already
+    there at that sha (the "start twice" case). Returns "" on success, or the
+    reason the branch cannot be used."""
+    existing = git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch,
+                   allow_fail=True).strip()
+    if existing and existing != base_sha:
+        return ("branch %s already exists at %s, not at the work order base %s: "
+                "move it out of the way before starting"
+                % (branch, existing[:12], base_sha[:12]))
+    if existing:
+        git(repo, "switch", branch)
+    else:
+        git(repo, "switch", "-c", branch, base_sha)
+    return ""
+
+
 def cmd_factory_start(args) -> int:
     _sys_path_for_modules()
     import pc
@@ -1021,13 +1047,37 @@ def cmd_factory_start(args) -> int:
         return 1
 
     base = spec["base"]
-    base_sha = git(cwd, "rev-parse", "origin/" + base, allow_fail=True).strip()
-    if not base_sha:
-        base_sha = git(cwd, "rev-parse", base, allow_fail=True).strip()
-    if not base_sha:
-        raise SetupError("cannot resolve base %r in %s" % (base, cwd))
-
     number = args.work_order.split("-")[-1]
+    branch = "gul-%s-%s" % (number, slugify(work_order.get("title", "")))
+
+    existing = load_json_document(api, work_order["id"], "ledger")
+    if existing and existing.get("stages"):
+        emit(True, "start", ["work order already started; nothing created"],
+             {"workOrder": args.work_order, "created": 0,
+              "stages": existing.get("stages")})
+        return 0
+
+    if args.dry_run:
+        base_sha = _resolve_base(cwd, base)
+    else:
+        # The work order runs on its own branch, cut here (GUL-481). Without this
+        # the red commit lands on the checkout's local main and `open-pr` refuses
+        # ("refusing to open a PR from main"), so a real work order cannot finish.
+        git(cwd, "fetch", "origin")
+        dirty = git(cwd, "status", "--porcelain").strip()
+        if dirty:
+            paths = [ln[3:] for ln in dirty.splitlines()][:5]
+            emit(False, "start", [
+                "checkout is dirty: %s" % ", ".join(paths),
+                "commit or stash it first: a work order needs a clean checkout and its "
+                "own branch (ADR-095)"], {"workOrder": args.work_order})
+            return 1
+        base_sha = _resolve_base(cwd, base)
+        reason = _switch_to_work_order_branch(cwd, branch, base_sha)
+        if reason:
+            emit(False, "start", [reason], {"workOrder": args.work_order})
+            return 1
+
     ledger = {
         "version": 1,
         "workOrder": args.work_order,
@@ -1037,7 +1087,7 @@ def cmd_factory_start(args) -> int:
         "base": base,
         "baseSha": base_sha,
         "cwd": cwd,
-        "branch": "gul-%s-%s" % (number, slugify(work_order.get("title", ""))),
+        "branch": branch,
         "projectId": project_id,
         "stages": {},
         "fixRounds": 0,
@@ -1045,13 +1095,6 @@ def cmd_factory_start(args) -> int:
         "outcome": None,
         "escalated": None,
     }
-
-    existing = load_json_document(api, work_order["id"], "ledger")
-    if existing and existing.get("stages"):
-        emit(True, "start", ["work order already started; nothing created"],
-             {"workOrder": args.work_order, "created": 0,
-              "stages": existing.get("stages")})
-        return 0
 
     plan = plan_stages(cfg, spec, ledger, work_order, 1, "")
     if args.dry_run:
@@ -1429,7 +1472,10 @@ def cmd_factory_tick(args) -> int:
             if usage:
                 rows[-1]["tokens"] = usage
 
-    # config drift: every factory agent must carry the guard extension and its role
+    # config drift: every factory agent must carry the guard extension and its role.
+    # An entry with `factoryRole: null` runs without the guard (phase 2: Majster's
+    # gate stage has no extraArgs and `readonly` would refuse `decide`), so it is
+    # reported as "not required" rather than as drift on every sweep (GUL-481).
     drift = []
     seen = set()
     for stage in STAGE_ORDER:
@@ -1438,6 +1484,10 @@ def cmd_factory_tick(args) -> int:
         if agent_id in seen:
             continue
         seen.add(agent_id)
+        if not agent.get("factoryRole"):
+            drift.append({"agent": agent.get("name", stage), "guard": "not required",
+                          "expectedRole": None})
+            continue
         try:
             live = api.agent(agent_id)
         except Exception as exc:  # noqa: BLE001

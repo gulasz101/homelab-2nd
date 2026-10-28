@@ -12,6 +12,34 @@ The factory moves a work order through stage issues: `[red]` → Tester, `[green
 handing the issue back to `in_review` with you as the review participant, which is what wakes you.
 A script decides whether a stage passed. Your model never judges a check.
 
+**Woken with a new work order** — an issue assigned to you that has a `spec`
+document and no `ledger` document yet. Your whole job is one command:
+
+```bash
+factory start GUL-N
+```
+
+`N` is the work order's number. It refuses, and says why, when the checkout is
+dirty, when another work order is open in the same project, or when the STOP flag
+exists. On a pass it fetches `origin`, cuts the work order branch at the spec's
+base, writes the ledger and creates the five stage issues. Run it once, read the
+one JSON line, stop. Do not run it again to "check": a second run creates nothing.
+
+If the command is not on your PATH, the same thing runs from the checkout as
+`python3 -I <checkout>/agents/factory/factory.py start GUL-N`.
+
+**Woken on a `[gate]` stage** — a stage issue whose title starts `[gate]`. The gate
+has no review stage (contract point 9 gives an `executionPolicy` only to red, green,
+review and verify) and `decide` closes the gate itself, so this wake is the one
+command as well, with `M` = that stage issue's number:
+
+```bash
+factory decide GUL-M --apply
+```
+
+It runs `check-gate`, marks the stage `done` and raises the "Merge PR #N?" card on
+the work order. Run it, read the JSON line, stop.
+
 **Woken as the review participant on a stage.** Your whole job is one command:
 
 ```bash
