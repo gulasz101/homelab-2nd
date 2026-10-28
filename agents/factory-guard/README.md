@@ -62,6 +62,11 @@ even to the documents path), another host, any other path, a body or upload from
 reach a second API, while still being able to finish its own stage. `tests/policy.test.ts` covers 5
 allow and 16 block cases, and the live matrix runs a real PATCH, a real document PUT and a real POST.
 
+Every refusal names the token that caused it and keeps the rule id for the block log (GUL-472):
+`factory-guard: curl -o refused: output file (readonly-allowlist)`,
+`factory-guard: cd refused: not on the allowlist (readonly-allowlist)`. A refusal that reads as
+"curl is banned" sends an agent hunting the wrong fault; the command name alone is not the reason.
+
 "Workspace repo" = the git top-level of the run's cwd. Only `executor` may
 write outside it, because today's Pi works on files outside repos.
 

@@ -611,46 +611,71 @@ const READONLY_CMDS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", 
 const HANDOFF_URL_RE =
   /^(?:\$\{?PAPERCLIP_API_URL\}?|https?:\/\/(?:127\.0\.0\.1|localhost|paperclip\.voitech\.dev)(?::\d+)?)\//;
 
-function curlIsStageHandoff(args: string[]): boolean {
-  let method: "PATCH" | "PUT" | null = null;
+const CURL_REFUSED_FLAGS: Record<string, string> = {
+  "-T": "file upload", "--upload-file": "file upload",
+  "-o": "output file", "--output": "output file",
+  "-O": "output file", "--remote-name": "output file",
+  "-F": "form upload", "--form": "form upload",
+  "--data-binary": "body from a file", "--data-urlencode": "body from a file",
+  "--json": "body from a file", "-K": "config file", "--config": "config file",
+};
+
+/** Host part of a curl URL for a refusal message, userinfo stripped, never the whole command. */
+function curlHost(url: string): string {
+  if (/^\$\{?PAPERCLIP_API_URL\}?/.test(url)) return "$PAPERCLIP_API_URL";
+  const m = /^[a-z]+:\/\/([^/?#]+)/i.exec(url);
+  return m ? m[1]!.replace(/^.*@/, "") : url;
+}
+
+/**
+ * GUL-472: why this curl is not one of the two calls a read-only stage may make.
+ * The message names the offending token — a legal curl refused for its `-o` flag
+ * used to read as "curl is banned" and cost two runs on the wrong diagnosis.
+ * Returns undefined when the call is allowed.
+ */
+function curlHandoffRefusal(args: string[]): string | undefined {
+  let method: string | null = null;
   let inlineBody = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "-X" || a === "--request") {
-      const v = (args[i + 1] ?? "").toUpperCase();
-      if (v === "PATCH" || v === "PUT") method = v;
-    } else if (/^--request=(PATCH|PUT)$/i.test(a)) {
-      method = a.split("=")[1]!.toUpperCase() as "PATCH" | "PUT";
-    } else if (/^-[a-zA-Z]*X(PATCH|PUT)$/i.test(a)) {
-      method = /XPUT$/i.test(a) ? "PUT" : "PATCH";
+      method = (args[i + 1] ?? "").toUpperCase() || null;
+    } else if (/^--request=(.+)$/i.test(a)) {
+      method = a.split("=")[1]!.toUpperCase();
+    } else if (/^-[a-zA-Z]*X(.+)$/i.test(a)) {
+      method = a.split("X").pop()!.toUpperCase();
     }
 
     // local files in either direction, multipart forms, config files
-    if (["-T", "--upload-file", "-o", "--output", "-O", "--remote-name", "-F", "--form",
-         "--data-binary", "--data-urlencode", "--json", "-K", "--config"].includes(a)) return false;
-    if (/^--(?:upload-file|output|remote-name|form|data-binary|data-urlencode|json|config)=/.test(a)) return false;
+    const named = /^(--[a-z-]+)=/.exec(a)?.[1] ?? "";
+    const refusedFlag = CURL_REFUSED_FLAGS[a] ?? CURL_REFUSED_FLAGS[named];
+    if (refusedFlag) return `curl ${a.split("=")[0]} refused: ${refusedFlag}`;
     // a body read from a file ("@x") or from stdin ("@-") is not an inline body
     if (["-d", "--data", "--data-raw"].includes(a)) {
       const v = (args[i + 1] ?? "").trim();
-      if (v.startsWith("@")) return false;
+      if (v.startsWith("@")) return `curl ${a} ${v.split(/\s/)[0]} refused: body must be inline`;
       if (v) inlineBody = true;
     }
-    if (/^--data(?:-raw)?=@/.test(a)) return false;
+    if (/^--data(?:-raw)?=@/.test(a)) return `curl ${a.split("=")[0]} refused: body must be inline`;
     if (/^--data(?:-raw)?=./.test(a)) inlineBody = true;
   }
-  if (!method || !inlineBody) return false;
+  if (!method) return "curl refused: no -X PATCH or -X PUT";
+  if (method !== "PATCH" && method !== "PUT") return `curl -X ${method} refused: only PATCH and PUT are allowed`;
+  if (!inlineBody) return `curl -X ${method} refused: no inline body`;
 
   const urls = args.filter((a) => /^https?:\/\//.test(a) || /^\$\{?PAPERCLIP_API_URL\}?\//.test(a));
-  if (urls.length !== 1) return false;
+  if (urls.length !== 1) return `curl refused: ${urls.length} URLs, exactly one is allowed`;
   const url = (urls[0] ?? "").replace(/^["']|["']$/g, "");
-  if (!HANDOFF_URL_RE.test(url)) return false;
+  if (!HANDOFF_URL_RE.test(url)) return `curl ${curlHost(url)} refused: not the Paperclip API`;
 
   const path = url
     .replace(/^[a-z]+:\/\/[^/]+/i, "")
     .replace(/^\$\{?PAPERCLIP_API_URL\}?/, "")
     .replace(/[?#].*$/, "");
-  if (method === "PATCH") return /\/issues\/[^/]+$/.test(path);
-  return /\/issues\/[^/]+\/documents\/[^/]+$/.test(path); // PUT: the stage document
+  const ok = method === "PATCH"
+    ? /\/issues\/[^/]+$/.test(path)
+    : /\/issues\/[^/]+\/documents\/[^/]+$/.test(path); // PUT: the stage document
+  return ok ? undefined : `curl ${method} ${path} refused: not a stage hand-off path`;
 }
 
 function decideBash(command: string, role: RoleProfile, state: GuardState, home: string): Decision {
@@ -813,28 +838,30 @@ function decideBash(command: string, role: RoleProfile, state: GuardState, home:
 
     // readonly role: bash only from the read-only allowlist
     if (role.writeScope === "none") {
-      if (!readonlyBashAllowed(c0, args)) {
-        return block("readonly-allowlist", `${c0} is not on the read-only allowlist`);
-      }
+      const refusal = readonlyBashRefusal(c0, args);
+      if (refusal) return block("readonly-allowlist", refusal);
     }
   }
   return undefined;
 }
 
-function readonlyBashAllowed(c0: string, args: string[]): boolean {
-  if (READONLY_CMDS.has(c0)) return true; // scan/writer rules already rejected the bad ones
+function readonlyBashRefusal(c0: string, args: string[]): string | undefined {
+  if (READONLY_CMDS.has(c0)) return undefined; // scan/writer rules already rejected the bad ones
   if (c0 === "git") {
+    // defensive: READONLY_CMDS holds "git" today, so this branch is unreachable
     const g = gitSubcommand(["git", ...args]);
-    return !!g && ["log", "show", "diff", "status", "blame"].includes(g.sub);
+    if (g && ["log", "show", "diff", "status", "blame"].includes(g.sub)) return undefined;
+    return `git ${g ? g.sub : "?"} refused: not a read-only subcommand`;
   }
   if (c0 === "bash" || c0 === "sh" || SHELLS.has(c0)) {
     const script = args.find((a) => !a.startsWith("-"));
-    if (!script) return false;
-    return /(^|\/)tests\/[^\/]+-check\.sh$/.test(script) || /(^|\/)scripts\/check\.sh$/.test(script);
+    if (!script) return `${c0} refused: no script given`;
+    const ok = /(^|\/)tests\/[^\/]+-check\.sh$/.test(script) || /(^|\/)scripts\/check\.sh$/.test(script);
+    return ok ? undefined : `${c0} ${script} refused: only tests/*-check.sh and scripts/check.sh`;
   }
   // GUL-468: the stage hand-off — a PATCH to the Paperclip API, nothing else
-  if (c0 === "curl") return curlIsStageHandoff(args);
-  return false;
+  if (c0 === "curl") return curlHandoffRefusal(args);
+  return `${c0} refused: not on the allowlist`;
 }
 
 // ---------- entry points ----------

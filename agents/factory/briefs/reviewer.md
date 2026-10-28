@@ -52,7 +52,9 @@ one** fenced `json` block holding a list — possibly empty. Each element is exa
 ## Hand-off
 
 1. Write the document, then re-read its JSON block once: one block, valid, ids unique, paths real.
-2. Comment on the stage issue — how many findings, how many blocking, one line each. No dumps.
+2. Put the report in the hand-off PATCH's `comment` — how many findings, how many blocking, one line
+   each. No dumps. This role cannot post a comment through the API (`POST /issues/<id>/comments` is
+   refused by design) and the hand-off ends the run, so there is no separate comment step.
 3. Run the hand-off PATCH that ends the stage description, verbatim, with your own key and run id.
    It sets the issue `in_review` with Majster as the review participant. Do not compose your own
    PATCH, do not touch `executionPolicy`, do not set `blocked`.

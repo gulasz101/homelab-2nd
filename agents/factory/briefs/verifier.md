@@ -49,8 +49,9 @@ first. `unproven` is an honest answer and it is not a failure; a guess is a fail
 ## Hand-off
 
 1. Write the document, then re-read its JSON block once: one block, valid, one id per finding.
-2. Comment on the stage issue — one line per finding with its verdict, nothing else. The document
-   holds the evidence.
+2. Put the report in the hand-off PATCH's `comment` — one line per finding with its verdict, nothing
+   else. The document holds the evidence. This role cannot post a comment through the API
+   (`POST /issues/<id>/comments` is refused by design) and the hand-off ends the run.
 3. Run the hand-off PATCH that ends the stage description, verbatim, with your own key and run id.
    It sets the issue `in_review` with Majster as the review participant. Do not compose your own
    PATCH, do not touch `executionPolicy`, do not set `blocked`.
