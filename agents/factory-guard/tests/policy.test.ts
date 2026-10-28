@@ -196,6 +196,27 @@ const bashCases: Array<[string, typeof exec, string | undefined]> = [
   ["bash scripts/check.sh", ro, undefined],
   ["bash /repo/agents/factory-guard/tests/guard-check.sh", ro, undefined],
   ["find . -name x", ro, undefined],
+  // --- GUL-468: the stage hand-off is the one allowed curl ---
+  ['curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/abc" -H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "Content-Type: application/json" -d \'{"status":"in_review"}\'', ro, undefined],
+  ["curl -s --request PATCH http://127.0.0.1:3100/api/issues/abc -d '{\"status\":\"in_review\"}'", ro, undefined],
+  ["curl -sXPATCH https://paperclip.voitech.dev/api/issues/abc -d '{\"status\":\"in_review\"}'", ro, undefined],
+  // --- and the document it has to deliver (GUL-468, second half) ---
+  ['curl -s -X PUT "$PAPERCLIP_API_URL/api/issues/abc/documents/findings" -H "Content-Type: application/json" -d \'{"body":"# Findings\\n```json\\n[]\\n```\\n"}\'', ro, undefined],
+  ["curl -sXPUT http://127.0.0.1:3100/api/issues/abc/documents/verdicts -d '{\"body\":\"x\"}'", ro, undefined],
+  ["curl -s http://127.0.0.1:3100/api/issues/abc", ro, "readonly-allowlist"],
+  ["curl -s -X POST http://127.0.0.1:3100/api/issues/abc -d '{\"status\":\"done\"}'", ro, "readonly-allowlist"],
+  ["curl -s -X DELETE http://127.0.0.1:3100/api/issues/abc", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH https://example.com/api/issues/abc -d '{\"status\":\"in_review\"}'", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/agents/abc -d '{\"name\":\"x\"}'", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -d @/tmp/body.json", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -T /etc/passwd", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -o /repo/x.json -d '{}'", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc", ro, "readonly-allowlist"],
+  ["curl -s -X PUT http://127.0.0.1:3100/api/issues/abc/documents/findings", ro, "readonly-allowlist"],
+  ["curl -s -X PUT http://127.0.0.1:3100/api/issues/abc/documents/findings -d @/tmp/doc.json", ro, "readonly-allowlist"],
+  ["curl -s -X POST http://127.0.0.1:3100/api/issues/abc/documents/findings -d '{}'", ro, "readonly-allowlist"],
+  ["curl -s -X PUT http://127.0.0.1:3100/api/issues/abc -d '{}'", ro, "readonly-allowlist"],
+  ["curl -s -X PUT http://127.0.0.1:3100/api/issues/abc/documents/../../agents/x -d '{}'", ro, "readonly-allowlist"],
 ];
 
 // ---------- tool cases: [tool, input, role, expectRule | undefined] ----------
@@ -356,3 +377,33 @@ test("looksLikeTestPath follows the plan's patterns", () => {
   assert.ok(!looksLikeTestPath("/repo/src/a.ts"));
   assert.ok(!looksLikeTestPath("/repo/tests"));
 });
+
+// ---------- GUL-472: a readonly refusal names the token, not "curl is banned" ----------
+
+const readonlyRefusals: Array<[string, string]> = [
+  ["cd /repo && ls", "cd refused: not on the allowlist"],
+  ["bash deploy.sh", "bash deploy.sh refused: only tests/*-check.sh and scripts/check.sh"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -o /repo/x.json -d '{}'",
+    "curl -o refused: output file"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -T /etc/passwd",
+    "curl -T refused: file upload"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -d @/tmp/body.json",
+    "curl -d @/tmp/body.json refused: body must be inline"],
+  ["curl -s http://127.0.0.1:3100/api/issues/abc", "curl refused: no -X PATCH or -X PUT"],
+  ["curl -s -X POST http://127.0.0.1:3100/api/issues/abc -d '{}'",
+    "curl -X POST refused: only PATCH and PUT are allowed"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc", "curl -X PATCH refused: no inline body"],
+  ["curl -s -X PATCH https://example.com/api/issues/abc -d '{}'",
+    "curl example.com refused: not the Paperclip API"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/agents/abc -d '{}'",
+    "curl PATCH /api/agents/abc refused: not a stage hand-off path"],
+];
+
+for (const [command, expected] of readonlyRefusals) {
+  test(`readonly refusal names the token: ${expected}`, () => {
+    const d = decideToolCall(ro, "bash", { command }, state, HOME);
+    assert.ok(d, `expected a block for: ${command}`);
+    assert.equal(d!.ruleId, "readonly-allowlist");
+    assert.equal(d!.reason, `factory-guard: ${expected} (readonly-allowlist)`);
+  });
+}
