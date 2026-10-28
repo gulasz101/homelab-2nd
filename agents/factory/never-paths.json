@@ -1,0 +1,31 @@
+{
+  "comment": "ADR-093 decision 6. Paths a factory work order may never touch, whatever any gate says. Globs follow agents/factory/CONTRACT.md point 1. Tunnel manifests: cloudflared deployments, *-tunnel-ingress-configmap, *-tunnel-token.sops, tunnel-namespace (paths verified in-repo 2026-10-28: apps/*/cloudflared-*, infrastructure/auth, infrastructure/observability).",
+  "globs": [
+    ".sops.yaml",
+    "**/.sops.yaml",
+    "**/*.sops.yaml",
+    "clusters/**",
+    "**/AGENTS.md",
+    "**/SOUL.md",
+    "agents/factory-guard/**",
+    "agents/factory/**",
+    ".github/workflows/**",
+    "**/cloudflared-*.yaml",
+    "**/cloudflared-*.yml",
+    "**/*tunnel*.yaml",
+    "**/*tunnel*.yml"
+  ],
+  "newFilesUnder": [
+    "docs/adr/"
+  ],
+  "contentRules": {
+    "extensions": [".yaml", ".yml"],
+    "forbiddenKinds": [
+      "Secret",
+      "Cluster",
+      "ScheduledBackup",
+      "PersistentVolumeClaim"
+    ],
+    "forbiddenSopsKey": true
+  }
+}
