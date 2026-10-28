@@ -15,12 +15,19 @@
 #       than 20 HelmRelease documents, so a scan that silently stops matching
 #       fails loudly instead of reporting green over an empty set.
 # AC-2: cloudnative-pg 0.29.1 (infrastructure/cnpg/helm-release.yaml),
-#       open-webui 17.0.0 (apps/llm-hub/openwebui-helm-release.yaml),
+#       open-webui 17.3.0 (apps/llm-hub/openwebui-helm-release.yaml),
 #       opentelemetry-collector 0.178.0
 #       (infrastructure/observability/opentelemetry-collector-helm-release.yaml)
 #       and kube-prometheus-stack 92.14.1
 #       (infrastructure/observability/prometheus-stack-helm-release.yaml) are
 #       pinned to those exact versions.
+#
+# A pin is a floor as well as a ceiling: never pin below the chart version the
+# cluster is already running. open-webui was pinned to 17.0.0 while 17.3.0 was
+# deployed, Flux downgraded it, and the container died on
+# "alembic.util.exc.CommandError: Can't locate revision identified by
+# '0bd252b206fb'" - its SQLite schema was already at 17.3.0's alembic head.
+# Downgrade the app and the database together or not at all.
 #
 # Parsing is yq, not grep: the values blocks of these releases carry `version:`
 # keys of their own (grafana's values hold `version: Flux`, prometheus-stack's
@@ -61,7 +68,7 @@ ROOTS=${HELMRELEASE_PIN_ROOTS:-apps infrastructure}
 # The four charts that floated on a range, pinned to the versions running on
 # 2026-10-28. Shape: file|chart|version
 TARGETS='infrastructure/cnpg/helm-release.yaml|cloudnative-pg|0.29.1
-apps/llm-hub/openwebui-helm-release.yaml|open-webui|17.0.0
+apps/llm-hub/openwebui-helm-release.yaml|open-webui|17.3.0
 infrastructure/observability/opentelemetry-collector-helm-release.yaml|opentelemetry-collector|0.178.0
 infrastructure/observability/prometheus-stack-helm-release.yaml|kube-prometheus-stack|92.14.1'
 
