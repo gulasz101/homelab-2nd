@@ -196,6 +196,18 @@ const bashCases: Array<[string, typeof exec, string | undefined]> = [
   ["bash scripts/check.sh", ro, undefined],
   ["bash /repo/agents/factory-guard/tests/guard-check.sh", ro, undefined],
   ["find . -name x", ro, undefined],
+  // --- GUL-468: the stage hand-off is the one allowed curl ---
+  ['curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/abc" -H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "Content-Type: application/json" -d \'{"status":"in_review"}\'', ro, undefined],
+  ["curl -s --request PATCH http://127.0.0.1:3100/api/issues/abc -d '{\"status\":\"in_review\"}'", ro, undefined],
+  ["curl -sXPATCH https://paperclip.voitech.dev/api/issues/abc -d '{\"status\":\"in_review\"}'", ro, undefined],
+  ["curl -s http://127.0.0.1:3100/api/issues/abc", ro, "readonly-allowlist"],
+  ["curl -s -X POST http://127.0.0.1:3100/api/issues/abc -d '{\"status\":\"done\"}'", ro, "readonly-allowlist"],
+  ["curl -s -X DELETE http://127.0.0.1:3100/api/issues/abc", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH https://example.com/api/issues/abc -d '{\"status\":\"in_review\"}'", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/agents/abc -d '{\"name\":\"x\"}'", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -d @/tmp/body.json", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -T /etc/passwd", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -o /repo/x.json -d '{}'", ro, "readonly-allowlist"],
 ];
 
 // ---------- tool cases: [tool, input, role, expectRule | undefined] ----------

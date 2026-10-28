@@ -190,11 +190,19 @@ EOF
 EOF
       ;;
     readonly)
-      # allowed: read README.md. forbidden: any write/edit, git commit, touch.
+      # allowed: read README.md, and one stage hand-off PATCH to the Paperclip
+      # API (GUL-468). forbidden: any write/edit, git commit, touch, and any
+      # curl that is not that PATCH.
       cat > "$RT/script.json" <<'EOF'
 [
  {"tools":[
    {"name":"read","arguments":{"path":"README.md"}}
+ ]},
+ {"tools":[
+   {"name":"bash","arguments":{"command":"curl -s -X PATCH http://127.0.0.1:3900/api/issues/abc -H 'Content-Type: application/json' -d '{\"status\":\"in_review\"}'"}}
+ ]},
+ {"tools":[
+   {"name":"bash","arguments":{"command":"curl -s -X POST http://127.0.0.1:3900/api/issues/abc -d '{\"status\":\"done\"}'"}}
  ]},
  {"tools":[
    {"name":"write","arguments":{"path":"x.txt","content":"nope\n"}},
@@ -265,6 +273,17 @@ EOF
       log_has readonly "$LOG" '"tool":"edit","rule":"role-write-forbidden"'
       log_has readonly "$LOG" '"tool":"bash","rule":"role-no-commit"'
       log_has readonly "$LOG" '"tool":"bash","rule":"readonly-allowlist"'
+      # GUL-468: two curls in the plan — the hand-off PATCH (allowed) and a POST
+      # (refused). Every block is logged, the log carries no command text, so the
+      # allowlist count is the proof: 2 = touch + the POST curl, 3 = the PATCH was
+      # refused as well.
+      ALLOW_N="$(grep -c '"rule":"readonly-allowlist"' "$LOG" || true)"
+      if [ "$ALLOW_N" = "2" ]; then
+        echo "  ok  [readonly] hand-off PATCH allowed, non-PATCH curl refused (2 allowlist blocks)"
+      else
+        echo "  FAIL [readonly] expected 2 readonly-allowlist blocks (touch + POST curl), got $ALLOW_N"
+        FAIL=1
+      fi
       ;;
   esac
 
