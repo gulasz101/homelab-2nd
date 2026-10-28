@@ -8,15 +8,26 @@ metadata:
 spec:
   interval: 1h
   url: https://github.com/croffasia/itsaplan.git
-  # Pinned to the last upstream tag whose chart is still 0.1.0 (v1.9.0/before), after
-  # release-please started bumping the chart version itself: tag v1.9.0 (be004e6) came
-  # floating in unasked on 2026-10-27, failed on Deployment/itsaplan-worker and stalled
-  # the HelmRelease (GUL-446). The app runs chart 0.1.0 templates rendered 2026-09-11;
-  # any upgrade must move the chart ref AND the 0.17.0 image pins together, deliberately.
-  # The chart's wait-for-migrations initContainer (added upstream 2026-09-25, #444) has
-  # no script in api:0.17.0, so the worker can never go ready on new chart + old image.
+  # Pinned to the exact chart snapshot the running release (itsaplan.v19/v21,
+  # chart 0.1.0) was rendered from — not merely to a tag whose Chart.yaml still
+  # says 0.1.0 (GUL-446).
+  #
+  # Why not tag v1.8.0: it is the last tag whose chart version is 0.1.0, but its
+  # templates already carry the `wait-for-migrations` initContainer added in
+  # 94255140 (2026-09-25, #444). That initContainer runs
+  # packages/db/src/wait-for-migrations.ts from the api image, and our images are
+  # pinned to 0.17.0 (tagged 2026-09-06) where the script does not exist. Rendering
+  # v1.8.0 crashes the worker init container, the Deployment never goes ready and
+  # Helm times out exactly as it did on 1.9.0.
+  #
+  # 9f96ad99 (2026-09-08) is the last chart commit before #444. Rendered with this
+  # HelmRelease's values it produces checksum/config 88bc0693d926… — the
+  # annotation on the currently running worker pod — and no initContainers, so
+  # un-stalling the HelmRelease is a no-op release rather than another outage.
+  #
+  # Any upgrade must move this ref AND the 0.17.0 image pins together, on purpose.
   ref:
-    tag: v1.8.0
+    commit: 9f96ad991014dfba69a978fb93995e595065ff63
   ignore: |
     # exclude everything except the Helm chart
     /*
