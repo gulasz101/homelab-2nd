@@ -44,21 +44,23 @@ this extension). Missing or unknown role fails closed. Profiles live in
 | `builder` | workspace repo except test paths | no / no | 40 |
 | `readonly` | none; bash limited to a read-only allowlist, plus the one stage hand-off (below) | no / no | 20 |
 
-### The one write a read-only agent may make (GUL-468)
+### The two calls a read-only agent may make (GUL-468)
 
-A `[review]` or `[verify]` stage ends with "PATCH this issue to `in_review`", and the API is the
-only channel for it, so `curl` is allowed for the `readonly` role **only** when all of these hold:
+A `[review]` or `[verify]` stage has exactly two jobs, and both go through the API: deliver its
+`findings`/`verdicts` document (`PUT /issues/<id>/documents/<key>`) and hand the stage back
+(`PATCH /issues/<id>` to `in_review`). The templates name both, and there is no other channel. So
+`curl` is allowed for the `readonly` role **only** when all of these hold:
 
-- the request is `PATCH` (`-X PATCH`, `--request PATCH`, `--request=PATCH`, `-XPATCH`);
+- the request is `PATCH` on `/issues/<id>`, or `PUT` on `/issues/<id>/documents/<key>`;
 - exactly one URL, and it is the Paperclip API: `$PAPERCLIP_API_URL…`, `127.0.0.1`, `localhost`
-  or `paperclip.voitech.dev`, on an `/issues/` path;
+  or `paperclip.voitech.dev`;
 - the body is inline (`-d '{…}'`), never `@file` or `@-`.
 
-Everything else through `curl` is refused with `readonly-allowlist`: any other verb, another host,
-a body or upload from a local file (`-T`, `--data-binary`, `-F`), or an output file (`-o`). The
-point is that the role stays read only on the filesystem and cannot reach a second API, while still
-being able to hand its own stage back. `tests/policy.test.ts` has three allow cases and eight block
-cases, and the live matrix runs a real PATCH and a real POST.
+Everything else through `curl` is refused with `readonly-allowlist`: any other verb (including POST,
+even to the documents path), another host, any other path, a body or upload from a local file (`-T`,
+`--data-binary`, `-F`), an output file (`-o`). The role stays read only on the filesystem and cannot
+reach a second API, while still being able to finish its own stage. `tests/policy.test.ts` covers 5
+allow and 16 block cases, and the live matrix runs a real PATCH, a real document PUT and a real POST.
 
 "Workspace repo" = the git top-level of the run's cwd. Only `executor` may
 write outside it, because today's Pi works on files outside repos.
