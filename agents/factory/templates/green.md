@@ -17,23 +17,33 @@ turns the red tests green.
 5. Do not commit. Do not push. The factory script commits and opens the PR.
 {{findingsBlock}}
 
-post a short comment after each step.
+Post a short comment after each step, **before** the hand-off. The hand-off is the last call of this
+run: it reassigns the issue and Paperclip cancels the sending run, so nothing you send afterwards
+lands. Its `comment` is the report.
 
 When every AC check prints `PASS`, hand off to the review stage:
 
-The payload has two shapes and the wrong one is refused.
+The payload has two shapes and the wrong one is refused. Both carry the report in `comment`.
 
 **First hand-off** — no decision against this stage yet, send the full payload:
 
 ```
-PATCH /api/issues/<this issue> {"status": "in_review", "executionPolicy": {{handoffPatch}}}
+curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/$PAPERCLIP_TASK_ID" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+  -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "in_review", "executionPolicy": {{handoffPatch}}, "comment": "<the short report: what changed and which AC checks now PASS>"}'
 ```
 
 **Hand-off after a decision sent this stage back to you** — a `changes_requested` verdict is on this
 stage, so send `status` and `comment` only, never `executionPolicy`:
 
 ```
-PATCH /api/issues/<this issue> {"status": "in_review", "comment": "green again after the changes requested; <what changed>"}
+curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/$PAPERCLIP_TASK_ID" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+  -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "in_review", "comment": "green again after the changes requested; <what changed>"}'
 ```
 
 Why: this template's policy carries no stage ids, so re-sending it mints new ones, the stored

@@ -377,3 +377,33 @@ test("looksLikeTestPath follows the plan's patterns", () => {
   assert.ok(!looksLikeTestPath("/repo/src/a.ts"));
   assert.ok(!looksLikeTestPath("/repo/tests"));
 });
+
+// ---------- GUL-472: a readonly refusal names the token, not "curl is banned" ----------
+
+const readonlyRefusals: Array<[string, string]> = [
+  ["cd /repo && ls", "cd refused: not on the allowlist"],
+  ["bash deploy.sh", "bash deploy.sh refused: only tests/*-check.sh and scripts/check.sh"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -o /repo/x.json -d '{}'",
+    "curl -o refused: output file"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -T /etc/passwd",
+    "curl -T refused: file upload"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -d @/tmp/body.json",
+    "curl -d @/tmp/body.json refused: body must be inline"],
+  ["curl -s http://127.0.0.1:3100/api/issues/abc", "curl refused: no -X PATCH or -X PUT"],
+  ["curl -s -X POST http://127.0.0.1:3100/api/issues/abc -d '{}'",
+    "curl -X POST refused: only PATCH and PUT are allowed"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc", "curl -X PATCH refused: no inline body"],
+  ["curl -s -X PATCH https://example.com/api/issues/abc -d '{}'",
+    "curl example.com refused: not the Paperclip API"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/agents/abc -d '{}'",
+    "curl PATCH /api/agents/abc refused: not a stage hand-off path"],
+];
+
+for (const [command, expected] of readonlyRefusals) {
+  test(`readonly refusal names the token: ${expected}`, () => {
+    const d = decideToolCall(ro, "bash", { command }, state, HOME);
+    assert.ok(d, `expected a block for: ${command}`);
+    assert.equal(d!.ruleId, "readonly-allowlist");
+    assert.equal(d!.reason, `factory-guard: ${expected} (readonly-allowlist)`);
+  });
+}
