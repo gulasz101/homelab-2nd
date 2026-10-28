@@ -202,6 +202,9 @@ EOF
    {"name":"bash","arguments":{"command":"curl -s -X PATCH http://127.0.0.1:3900/api/issues/abc -H 'Content-Type: application/json' -d '{\"status\":\"in_review\"}'"}}
  ]},
  {"tools":[
+   {"name":"bash","arguments":{"command":"curl -s -X PUT http://127.0.0.1:3900/api/issues/abc/documents/findings -H 'Content-Type: application/json' -d '{\"body\":\"# Findings\\n```json\\n[]\\n```\\n\"}'"}}
+ ]},
+ {"tools":[
    {"name":"bash","arguments":{"command":"curl -s -X POST http://127.0.0.1:3900/api/issues/abc -d '{\"status\":\"done\"}'"}}
  ]},
  {"tools":[

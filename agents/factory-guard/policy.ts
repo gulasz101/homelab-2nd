@@ -597,39 +597,60 @@ function writerTargets(c0: string, args: string[]): string[] {
 const READONLY_CMDS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "git"]);
 
 /**
- * GUL-468: the one network call a read-only stage agent is allowed.
+ * GUL-468: the two network calls a read-only stage agent is allowed.
  *
- * A `[review]` or `[verify]` stage ends with "PATCH this issue to in_review"
- * (agents/factory/templates/*.md), and the API is the only channel for it. So
- * `curl` is allowed when — and only when — it is a PATCH to the Paperclip API's
- * issues path with an inline JSON body. Everything that could write, upload or
- * fetch a local file, every other verb, and every other host is refused, so the
- * role stays read only on the filesystem and on the network.
+ * A `[review]` or `[verify]` stage has to do exactly two things through the API:
+ * write its `findings`/`verdicts` document (`PUT /issues/<id>/documents/<key>`)
+ * and hand the stage back (`PATCH /issues/<id>` to `in_review`). Both are in the
+ * stage templates, and the API is the only channel. So `curl` is allowed when —
+ * and only when — it is one of those two calls, to the Paperclip API, with an
+ * inline body. Everything that could read or write a local file, upload one,
+ * every other verb and every other host is refused, so the role stays read only
+ * on the filesystem and cannot reach a second API.
  */
 const HANDOFF_URL_RE =
   /^(?:\$\{?PAPERCLIP_API_URL\}?|https?:\/\/(?:127\.0\.0\.1|localhost|paperclip\.voitech\.dev)(?::\d+)?)\//;
 
 function curlIsStageHandoff(args: string[]): boolean {
-  let isPatch = false;
+  let method: "PATCH" | "PUT" | null = null;
+  let inlineBody = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
-    if ((a === "-X" || a === "--request") && (args[i + 1] ?? "").toUpperCase() === "PATCH") isPatch = true;
-    else if (/^--request=PATCH$/i.test(a) || /^-[a-zA-Z]*XPATCH$/i.test(a)) isPatch = true;
+    if (a === "-X" || a === "--request") {
+      const v = (args[i + 1] ?? "").toUpperCase();
+      if (v === "PATCH" || v === "PUT") method = v;
+    } else if (/^--request=(PATCH|PUT)$/i.test(a)) {
+      method = a.split("=")[1]!.toUpperCase() as "PATCH" | "PUT";
+    } else if (/^-[a-zA-Z]*X(PATCH|PUT)$/i.test(a)) {
+      method = /XPUT$/i.test(a) ? "PUT" : "PATCH";
+    }
 
     // local files in either direction, multipart forms, config files
     if (["-T", "--upload-file", "-o", "--output", "-O", "--remote-name", "-F", "--form",
          "--data-binary", "--data-urlencode", "--json", "-K", "--config"].includes(a)) return false;
     if (/^--(?:upload-file|output|remote-name|form|data-binary|data-urlencode|json|config)=/.test(a)) return false;
-    // a body read from a file ("@x") or from stdin ("@-") is not an inline hand-off
-    if (["-d", "--data", "--data-raw"].includes(a) && (args[i + 1] ?? "").trim().startsWith("@")) return false;
+    // a body read from a file ("@x") or from stdin ("@-") is not an inline body
+    if (["-d", "--data", "--data-raw"].includes(a)) {
+      const v = (args[i + 1] ?? "").trim();
+      if (v.startsWith("@")) return false;
+      if (v) inlineBody = true;
+    }
     if (/^--data(?:-raw)?=@/.test(a)) return false;
+    if (/^--data(?:-raw)?=./.test(a)) inlineBody = true;
   }
-  if (!isPatch) return false;
+  if (!method || !inlineBody) return false;
+
   const urls = args.filter((a) => /^https?:\/\//.test(a) || /^\$\{?PAPERCLIP_API_URL\}?\//.test(a));
   if (urls.length !== 1) return false;
   const url = (urls[0] ?? "").replace(/^["']|["']$/g, "");
-  if (!/\/issues\//.test(url)) return false;
-  return HANDOFF_URL_RE.test(url);
+  if (!HANDOFF_URL_RE.test(url)) return false;
+
+  const path = url
+    .replace(/^[a-z]+:\/\/[^/]+/i, "")
+    .replace(/^\$\{?PAPERCLIP_API_URL\}?/, "")
+    .replace(/[?#].*$/, "");
+  if (method === "PATCH") return /\/issues\/[^/]+$/.test(path);
+  return /\/issues\/[^/]+\/documents\/[^/]+$/.test(path); // PUT: the stage document
 }
 
 function decideBash(command: string, role: RoleProfile, state: GuardState, home: string): Decision {
