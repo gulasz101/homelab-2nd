@@ -596,6 +596,42 @@ function writerTargets(c0: string, args: string[]): string[] {
 
 const READONLY_CMDS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "git"]);
 
+/**
+ * GUL-468: the one network call a read-only stage agent is allowed.
+ *
+ * A `[review]` or `[verify]` stage ends with "PATCH this issue to in_review"
+ * (agents/factory/templates/*.md), and the API is the only channel for it. So
+ * `curl` is allowed when — and only when — it is a PATCH to the Paperclip API's
+ * issues path with an inline JSON body. Everything that could write, upload or
+ * fetch a local file, every other verb, and every other host is refused, so the
+ * role stays read only on the filesystem and on the network.
+ */
+const HANDOFF_URL_RE =
+  /^(?:\$\{?PAPERCLIP_API_URL\}?|https?:\/\/(?:127\.0\.0\.1|localhost|paperclip\.voitech\.dev)(?::\d+)?)\//;
+
+function curlIsStageHandoff(args: string[]): boolean {
+  let isPatch = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if ((a === "-X" || a === "--request") && (args[i + 1] ?? "").toUpperCase() === "PATCH") isPatch = true;
+    else if (/^--request=PATCH$/i.test(a) || /^-[a-zA-Z]*XPATCH$/i.test(a)) isPatch = true;
+
+    // local files in either direction, multipart forms, config files
+    if (["-T", "--upload-file", "-o", "--output", "-O", "--remote-name", "-F", "--form",
+         "--data-binary", "--data-urlencode", "--json", "-K", "--config"].includes(a)) return false;
+    if (/^--(?:upload-file|output|remote-name|form|data-binary|data-urlencode|json|config)=/.test(a)) return false;
+    // a body read from a file ("@x") or from stdin ("@-") is not an inline hand-off
+    if (["-d", "--data", "--data-raw"].includes(a) && (args[i + 1] ?? "").trim().startsWith("@")) return false;
+    if (/^--data(?:-raw)?=@/.test(a)) return false;
+  }
+  if (!isPatch) return false;
+  const urls = args.filter((a) => /^https?:\/\//.test(a) || /^\$\{?PAPERCLIP_API_URL\}?\//.test(a));
+  if (urls.length !== 1) return false;
+  const url = (urls[0] ?? "").replace(/^["']|["']$/g, "");
+  if (!/\/issues\//.test(url)) return false;
+  return HANDOFF_URL_RE.test(url);
+}
+
 function decideBash(command: string, role: RoleProfile, state: GuardState, home: string): Decision {
   const scan = scanBashLine(command);
 
@@ -775,6 +811,8 @@ function readonlyBashAllowed(c0: string, args: string[]): boolean {
     if (!script) return false;
     return /(^|\/)tests\/[^\/]+-check\.sh$/.test(script) || /(^|\/)scripts\/check\.sh$/.test(script);
   }
+  // GUL-468: the stage hand-off — a PATCH to the Paperclip API, nothing else
+  if (c0 === "curl") return curlIsStageHandoff(args);
   return false;
 }
 
