@@ -200,6 +200,9 @@ const bashCases: Array<[string, typeof exec, string | undefined]> = [
   ['curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/abc" -H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "Content-Type: application/json" -d \'{"status":"in_review"}\'', ro, undefined],
   ["curl -s --request PATCH http://127.0.0.1:3100/api/issues/abc -d '{\"status\":\"in_review\"}'", ro, undefined],
   ["curl -sXPATCH https://paperclip.voitech.dev/api/issues/abc -d '{\"status\":\"in_review\"}'", ro, undefined],
+  // --- and the document it has to deliver (GUL-468, second half) ---
+  ['curl -s -X PUT "$PAPERCLIP_API_URL/api/issues/abc/documents/findings" -H "Content-Type: application/json" -d \'{"body":"# Findings\\n```json\\n[]\\n```\\n"}\'', ro, undefined],
+  ["curl -sXPUT http://127.0.0.1:3100/api/issues/abc/documents/verdicts -d '{\"body\":\"x\"}'", ro, undefined],
   ["curl -s http://127.0.0.1:3100/api/issues/abc", ro, "readonly-allowlist"],
   ["curl -s -X POST http://127.0.0.1:3100/api/issues/abc -d '{\"status\":\"done\"}'", ro, "readonly-allowlist"],
   ["curl -s -X DELETE http://127.0.0.1:3100/api/issues/abc", ro, "readonly-allowlist"],
@@ -208,6 +211,12 @@ const bashCases: Array<[string, typeof exec, string | undefined]> = [
   ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -d @/tmp/body.json", ro, "readonly-allowlist"],
   ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -T /etc/passwd", ro, "readonly-allowlist"],
   ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -o /repo/x.json -d '{}'", ro, "readonly-allowlist"],
+  ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc", ro, "readonly-allowlist"],
+  ["curl -s -X PUT http://127.0.0.1:3100/api/issues/abc/documents/findings", ro, "readonly-allowlist"],
+  ["curl -s -X PUT http://127.0.0.1:3100/api/issues/abc/documents/findings -d @/tmp/doc.json", ro, "readonly-allowlist"],
+  ["curl -s -X POST http://127.0.0.1:3100/api/issues/abc/documents/findings -d '{}'", ro, "readonly-allowlist"],
+  ["curl -s -X PUT http://127.0.0.1:3100/api/issues/abc -d '{}'", ro, "readonly-allowlist"],
+  ["curl -s -X PUT http://127.0.0.1:3100/api/issues/abc/documents/../../agents/x -d '{}'", ro, "readonly-allowlist"],
 ];
 
 // ---------- tool cases: [tool, input, role, expectRule | undefined] ----------
