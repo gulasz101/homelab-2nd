@@ -203,6 +203,30 @@ spec:
         # Keep this ABOVE the LiteLLM route timeout; render-check.sh asserts
         # the ordering and the >=90 s fallback window.
         HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT: "210"
+        # GUL-428/GUL-429 (2026-10-27): retain gets its own concurrency cap and
+        # deadline, because the global defaults are sized for a paid route and
+        # retain now shares a free pool with 34 free tiers. Measured over 36 h
+        # against FreeLLMAPI `auto` (llm_requests scope retain_extract_facts,
+        # 4,723 ok / 1,361 err): successes take p50 79 s and p90 398 s, and the
+        # 574 TimeoutErrors are p50 604 s = four consecutive 120 s deadlines
+        # (global default x MAX_RETRIES 3) before the call gives up. They also
+        # line up with 5,280 FreeLLMAPI requests cancelled by the client in the
+        # same window, so the pool was still walking its provider chain when
+        # Hindsight hung up.
+        #   - RETAIN_LLM_MAX_CONCURRENT 6: retain used the global cap of 32, so
+        #     32 transcript-sized prompts hit a pool whose per-request failover
+        #     is sequential. 6 matches CONSOLIDATION_LLM_PARALLELISM below,
+        #     which runs at a 3% error rate on the same pool. The queue moves
+        #     from FreeLLMAPI into this one semaphore, where it is visible.
+        #   - RETAIN_LLM_TIMEOUT 240: headroom, not the fix. p90 398 s is
+        #     queueing at FreeLLMAPI and should collapse once only 6 calls are
+        #     in flight; 240 s keeps a legitimately slow call from being cut
+        #     twice while staying far below the 3,600 s retain wall timeout.
+        # Throughput is not the constraint: retain completes ~2.2 calls a
+        # minute today, and 6 slots at the 79 s p50 carry ~4.5 a minute.
+        # Asserted in apps/hindsight/tests/render-check.sh (5h-ter).
+        HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT: "6"
+        HINDSIGHT_API_RETAIN_LLM_TIMEOUT: "240"
         # NO *_LLM_REASONING_EFFORT here: LiteLLM rejects it for this route with
         #   400 UnsupportedParamsError: openrouter does not support parameters:
         #   ['reasoning_effort'], for model=openai/gpt-oss-120b:nitro
