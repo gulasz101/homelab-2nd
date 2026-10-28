@@ -300,9 +300,12 @@ def case_start_creates_chain(stub, base_sha, repo):
     check("start: red/green/review/verify carry the review hand-off to Majster",
           all(c["executionPolicy"] == {"stages": [{"type": "review", "participants": [
               {"type": "agent", "agentId": MAJSTER}]}]} for c in children[:4]), policy)
+    with open(os.path.join(HERE, "..", "agents.json"), encoding="utf-8") as fh:
+        stage_cfg = json.load(fh)
+    expected_agents = [stage_cfg["stages"][s]["agentId"]
+                       for s in ("red", "green", "review", "verify")] + [stage_cfg["majster"]]
     check("start: stage agents come from agents.json",
-          [c["assigneeAgentId"] for c in children] == ["placeholder-tester", "placeholder-builder",
-                                                       "placeholder-reviewer", "placeholder-verifier", MAJSTER],
+          [c["assigneeAgentId"] for c in children] == expected_agents,
           [c["assigneeAgentId"] for c in children])
     check("start: red template ends with the exact hand-off",
           '"status": "in_review", "executionPolicy"' in children[0]["description"]
