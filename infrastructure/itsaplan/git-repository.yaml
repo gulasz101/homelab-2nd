@@ -8,8 +8,15 @@ metadata:
 spec:
   interval: 1h
   url: https://github.com/croffasia/itsaplan.git
+  # Pinned to the last upstream tag whose chart is still 0.1.0 (v1.9.0/before), after
+  # release-please started bumping the chart version itself: tag v1.9.0 (be004e6) came
+  # floating in unasked on 2026-10-27, failed on Deployment/itsaplan-worker and stalled
+  # the HelmRelease (GUL-446). The app runs chart 0.1.0 templates rendered 2026-09-11;
+  # any upgrade must move the chart ref AND the 0.17.0 image pins together, deliberately.
+  # The chart's wait-for-migrations initContainer (added upstream 2026-09-25, #444) has
+  # no script in api:0.17.0, so the worker can never go ready on new chart + old image.
   ref:
-    branch: main
+    tag: v1.8.0
   ignore: |
     # exclude everything except the Helm chart
     /*
