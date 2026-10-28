@@ -719,6 +719,753 @@ def cmd_open_pr(args) -> int:
 # main
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# factory phase 2 (GUL-439): the script drives Paperclip
+# --------------------------------------------------------------------------
+#
+# These three subcommands (start, decide, tick) are the only ones that talk to
+# Paperclip. They use pc.py (stdlib urllib) with auth from PAPERCLIP_API_KEY
+# and PAPERCLIP_RUN_ID only — never ~/.paperclip/auth.json (GUL-297).
+
+FACTORY_DIR = HERE
+STAGE_ORDER = ("red", "green", "review", "verify", "gate")
+OPEN_STATUSES = {"backlog", "todo", "in_progress", "in_review", "blocked"}
+HANDOFF_POLICY_TEMPLATE = {
+    "stages": [{"type": "review", "participants": [{"type": "agent", "agentId": ""}]}],
+}
+
+
+def _sys_path_for_modules() -> None:
+    # `python3 -I` drops the script's own directory from sys.path, so a module
+    # next to factory.py is only importable after putting it back explicitly.
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+
+
+def _stop_file() -> str:
+    return os.environ.get("FACTORY_STOP") or os.path.expanduser(
+        "~/paperclip-agents/majster/factory/STOP")
+
+
+def _ledger_jsonl() -> str:
+    return os.environ.get("FACTORY_LEDGER_JSONL") or os.path.expanduser(
+        "~/paperclip-agents/majster/factory/ledger.jsonl")
+
+
+def load_agent_config() -> dict:
+    path = os.environ.get("FACTORY_AGENTS_FILE") or os.path.join(FACTORY_DIR, "agents.json")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise SetupError("cannot read %s: %s" % (path, exc))
+
+
+def handoff_policy(cfg: dict) -> dict:
+    policy = json.loads(json.dumps(HANDOFF_POLICY_TEMPLATE))
+    policy["stages"][0]["participants"][0]["agentId"] = cfg["majster"]
+    return policy
+
+
+def stage_agent(cfg: dict, stage: str) -> dict:
+    try:
+        return cfg["stages"][stage]
+    except KeyError:
+        raise SetupError("agents.json has no entry for stage %r" % stage)
+
+
+def fill_template(stage: str, values: dict) -> str:
+    path = os.path.join(FACTORY_DIR, "templates", stage + ".md")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as exc:
+        raise SetupError("cannot read template %s: %s" % (path, exc))
+    for key, value in values.items():
+        text = text.replace("{{" + key + "}}", str(value))
+    leftover = re.findall(r"\{\{([a-z][a-zA-Z0-9_]*)\}\}", text)
+    if leftover:
+        raise SetupError("template %s has unfilled placeholders: %s"
+                         % (stage, ", ".join(sorted(set(leftover)))))
+    return text
+
+
+def slugify(text: str, limit: int = 40) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return (slug[:limit].rstrip("-") or "work")
+
+
+def load_json_document(api, issue_id: str, key: str):
+    """Read a document and parse its one fenced json block. Returns None when
+    the document does not exist, an empty dict when it has no block."""
+    doc = api.document(issue_id, key)
+    if not doc:
+        return None
+    body = doc.get("body") if isinstance(doc, dict) else None
+    if not isinstance(body, str):
+        return None
+    if "```json" not in body:
+        return {}
+    value, _reasons = extract_json_block(body, key)
+    return value
+
+
+def fence_json_document(title: str, prose: str, payload) -> str:
+    return "%s\n\n```json\n%s\n```\n" % (prose.rstrip(), json.dumps(payload, indent=1, ensure_ascii=False))
+
+
+def save_ledger(api, work_order_id: str, ledger: dict, summary: str) -> None:
+    body = fence_json_document(
+        "Factory ledger",
+        "# Factory ledger\n\nWritten by `factory.py`; one fenced JSON block is the state. "
+        "Do not hand-edit: `factory decide` keeps it.",
+        ledger)
+    response = api.write_document(work_order_id, "ledger", body,
+                                  title="Factory ledger", change_summary=summary)
+    doc = response.get("document") if isinstance(response, dict) else None
+    if not isinstance(doc, dict) or not doc.get("id"):
+        raise SetupError("ledger write was not echoed back by Paperclip")
+
+
+def _run_self(args: list) -> tuple:
+    """Run one of this script's checks as a child process. Returns
+    (exit_code, parsed json line or None, combined output tail)."""
+    cmd = [sys.executable, "-I", os.path.abspath(__file__)] + args
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    out = proc.stdout.strip()
+    parsed = None
+    if out:
+        try:
+            parsed = json.loads(out.splitlines()[-1])
+        except ValueError:
+            parsed = None
+    combined = "\n".join(x for x in (proc.stdout, proc.stderr) if x)
+    return proc.returncode, parsed, combined
+
+
+def check_comment(parsed, combined: str) -> str:
+    line = json.dumps(parsed, ensure_ascii=False) if parsed is not None else "(no json)"
+    tail = [ln for ln in combined.splitlines() if ln.strip()][-60:]
+    return "%s\n\n```\n%s\n```" % (line, "\n".join(tail))
+
+
+def resolve_issue(api, company_id: str, identifier: str):
+    issue = api.by_identifier(company_id, identifier)
+    if not issue:
+        raise SetupError("issue %s not found in company %s" % (identifier, company_id))
+    return issue
+
+
+def work_order_cwd(api, issue: dict) -> str:
+    workspace = issue.get("currentExecutionWorkspace")
+    if isinstance(workspace, dict) and workspace.get("cwd"):
+        return workspace["cwd"]
+    project_id = issue.get("projectId")
+    if project_id:
+        try:
+            for ws in api.project_workspaces(project_id) or []:
+                if ws.get("isPrimary") and ws.get("cwd"):
+                    return ws["cwd"]
+        except Exception:  # noqa: BLE001 - a missing project must not hide FACTORY_REPO
+            pass
+    return os.environ.get("FACTORY_REPO") or os.path.abspath(os.path.join(FACTORY_DIR, "..", ".."))
+
+
+def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_id) -> list:
+    """Every other open issue in the same project that is assigned to Majster and
+    carries a `spec` document. Document check is per issue: the company list does
+    not include document summaries."""
+    found = []
+    for item in api.issues(company_id):
+        if item.get("id") == exclude_id:
+            continue
+        if item.get("status") not in OPEN_STATUSES:
+            continue
+        if item.get("assigneeAgentId") != cfg["majster"]:
+            continue
+        if project_id and item.get("projectId") != project_id:
+            continue
+        if api.document(item["id"], "spec"):
+            found.append(item)
+    return found
+
+
+def stage_title(work_order: str, title: str, stage: str, round_no: int) -> str:
+    suffix = "" if round_no == 1 else " r%d" % round_no
+    return "[%s%s] %s — %s" % (stage, suffix, work_order, title[:120])
+
+
+def stage_key(stage: str, round_no: int) -> str:
+    return stage if round_no == 1 else "%s:r%d" % (stage, round_no)
+
+
+def template_values(spec: dict, ledger: dict, cfg: dict, stage: str, round_no: int,
+                    work_order: dict, extra: dict) -> dict:
+    acs = "\n".join("   - %s: %s" % (a.get("id"), a.get("text")) for a in spec.get("acs", []))
+    commands = "\n".join("   - `%s`" % a.get("check") for a in spec.get("acs", []))
+    values = {
+        "workOrder": ledger["workOrder"],
+        "workOrderId": work_order["id"],
+        "workOrderTitle": work_order.get("title", ""),
+        "repo": ledger["repo"],
+        "cwd": ledger["cwd"],
+        "branch": ledger["branch"],
+        "base": ledger["base"],
+        "baseSha": ledger["baseSha"],
+        "kind": spec.get("kind", ""),
+        "allowedPaths": ", ".join("`%s`" % p for p in spec.get("allowedPaths", [])),
+        "acs": acs,
+        "checkCommands": commands,
+        "maxDiffLines": spec.get("maxDiffLines", 400),
+        "roundSuffix": "" if round_no == 1 else " r%d" % round_no,
+        "handoffPatch": json.dumps(handoff_policy(cfg), separators=(",", ":")),
+        "redSha": (ledger.get("stages", {}).get("red") or {}).get("sha", "(red not committed)"),
+        "reviewIssue": (ledger.get("stages", {}).get("review:r%d" % round_no)
+                        or ledger.get("stages", {}).get("review") or {}).get("identifier", "?"),
+        "prRef": "%s#%s" % (ledger["repo"], (ledger.get("pr") or {}).get("number", "?")),
+        "findingsBlock": "",
+    }
+    values.update(extra)
+    return values
+
+
+def plan_stages(cfg: dict, spec: dict, ledger: dict, work_order: dict, round_no: int,
+                findings_block: str) -> list:
+    plan = []
+    for stage in STAGE_ORDER if round_no == 1 else ("green", "review", "verify"):
+        agent = stage_agent(cfg, stage)
+        extra = {"findingsBlock": findings_block if stage == "green" else ""}
+        plan.append({
+            "stage": stage,
+            "key": stage_key(stage, round_no),
+            "title": stage_title(ledger["workOrder"], work_order.get("title", ""), stage, round_no),
+            "description": fill_template(
+                stage, template_values(spec, ledger, cfg, stage, round_no, work_order, extra)),
+            "agentId": agent["agentId"],
+            "agentName": agent.get("name", stage),
+            "round": round_no,
+        })
+    return plan
+
+
+def create_stages(api, work_order_id: str, plan: list, cfg: dict) -> list:
+    created = []
+    previous = None
+    policy = handoff_policy(cfg)
+    for item in plan:
+        body = {
+            "title": item["title"],
+            "description": item["description"],
+            "status": "todo" if previous is None else "blocked",
+            "priority": "medium",
+            "assigneeAgentId": item["agentId"],
+            "executionPolicy": policy,
+        }
+        if previous is not None:
+            body["blockedByIssueIds"] = [previous]
+        child = api.create_child(work_order_id, body)
+        if not isinstance(child, dict) or not child.get("id"):
+            raise SetupError("child creation for stage %s was not echoed back" % item["stage"])
+        if child.get("status") != body["status"]:
+            raise SetupError("stage %s came back %r, wanted %r"
+                             % (item["stage"], child.get("status"), body["status"]))
+        created.append({"stage": item["stage"], "key": item["key"], "round": item["round"],
+                        "issue": child})
+        previous = child["id"]
+    return created
+
+
+def cmd_factory_start(args) -> int:
+    _sys_path_for_modules()
+    import pc
+
+    if os.path.exists(_stop_file()):
+        emit(False, "start", ["STOP flag present: %s" % _stop_file()])
+        return 1
+    try:
+        api = pc.Api()
+    except LookupError as exc:
+        sys.stderr.write("factory start: %s\n" % exc)
+        return 2
+    company = os.environ.get("PAPERCLIP_COMPANY_ID") or args.company
+    cfg = load_agent_config()
+
+    work_order = resolve_issue(api, company, args.work_order)
+    spec_doc = api.document(work_order["id"], "spec")
+    if not spec_doc or not spec_doc.get("body"):
+        raise SetupError("%s has no `spec` document" % args.work_order)
+
+    import tempfile
+    spec_path = os.path.join(tempfile.mkdtemp(prefix="factory-spec-"), "spec.md")
+    with open(spec_path, "w", encoding="utf-8") as fh:
+        fh.write(spec_doc["body"])
+    code, lint, lint_output = _run_self(["lint-spec", "--spec", spec_path])
+    if code != 0:
+        emit(False, "start", ["spec lint failed"] + list((lint or {}).get("reasons", [])),
+             {"workOrder": args.work_order})
+        return 1
+    spec, spec_reasons = extract_json_block(spec_doc["body"], "spec")
+    if spec is None:
+        raise SetupError("spec document does not parse: %s" % "; ".join(spec_reasons))
+
+    cwd = args.repo or work_order_cwd(api, work_order)
+    project_id = work_order.get("projectId")
+    busy = open_work_orders(api, company, cfg, work_order["id"], project_id)
+    if busy:
+        emit(False, "start", [
+            "another factory work order is open: %s (%s)" % (b["identifier"], b.get("status"))
+            for b in busy] + [
+            "one checkout per work order: the shared checkout cannot hold two diffs "
+            "(project worktrees are unavailable on this instance, see ADR-095)"],
+            {"workOrder": args.work_order})
+        return 1
+
+    base = spec["base"]
+    base_sha = git(cwd, "rev-parse", "origin/" + base, allow_fail=True).strip()
+    if not base_sha:
+        base_sha = git(cwd, "rev-parse", base, allow_fail=True).strip()
+    if not base_sha:
+        raise SetupError("cannot resolve base %r in %s" % (base, cwd))
+
+    number = args.work_order.split("-")[-1]
+    ledger = {
+        "version": 1,
+        "workOrder": args.work_order,
+        "workOrderId": work_order["id"],
+        "title": work_order.get("title", ""),
+        "repo": spec["repo"],
+        "base": base,
+        "baseSha": base_sha,
+        "cwd": cwd,
+        "branch": "gul-%s-%s" % (number, slugify(work_order.get("title", ""))),
+        "projectId": project_id,
+        "stages": {},
+        "fixRounds": 0,
+        "pr": None,
+        "outcome": None,
+        "escalated": None,
+    }
+
+    existing = load_json_document(api, work_order["id"], "ledger")
+    if existing and existing.get("stages"):
+        emit(True, "start", ["work order already started; nothing created"],
+             {"workOrder": args.work_order, "created": 0,
+              "stages": existing.get("stages")})
+        return 0
+
+    plan = plan_stages(cfg, spec, ledger, work_order, 1, "")
+    if args.dry_run:
+        emit(True, "start", ["dry run: nothing created"], {
+            "workOrder": args.work_order,
+            "dryRun": True,
+            "cwd": cwd,
+            "branch": ledger["branch"],
+            "baseSha": base_sha,
+            "planned": [{"stage": p["stage"], "title": p["title"],
+                         "agent": p["agentName"], "agentId": p["agentId"],
+                         "status": "todo" if i == 0 else "blocked",
+                         "blockedBy": None if i == 0 else plan[i - 1]["stage"]}
+                        for i, p in enumerate(plan)],
+        })
+        return 0
+
+    created = create_stages(api, work_order["id"], plan, cfg)
+    for item in created:
+        ledger["stages"][item["key"]] = {
+            "issueId": item["issue"]["id"],
+            "identifier": item["issue"].get("identifier"),
+            "round": item["round"],
+            "attempts": 0,
+            "sha": None,
+        }
+    save_ledger(api, work_order["id"], ledger, "start %s" % args.work_order)
+    api.comment(work_order["id"],
+                "factory start: 5 stage issues created, chained %s. Checkout `%s`, branch `%s`."
+                % (" → ".join(i["issue"].get("identifier", "?") for i in created), cwd, ledger["branch"]))
+    emit(True, "start", ["5 stage issues created"], {
+        "workOrder": args.work_order,
+        "created": len(created),
+        "cwd": cwd,
+        "branch": ledger["branch"],
+        "stages": [{"stage": i["stage"], "issue": i["issue"].get("identifier")} for i in created],
+    })
+    return 0
+
+
+def _stage_round(stage_issue: dict) -> tuple:
+    match = re.match(r"^\[([a-z]+)(?: r([0-9]+))?\]", stage_issue.get("title", ""))
+    if not match:
+        raise SetupError("stage issue %s has no [stage] title prefix" % stage_issue.get("identifier"))
+    return match.group(1), int(match.group(2) or 1)
+
+
+def _apply_stage_comment(api, stage_issue: dict, text: str) -> None:
+    api.comment(stage_issue["id"], text)
+
+
+def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: str) -> None:
+    ledger["outcome"] = "escalate"
+    ledger["escalated"] = reason
+    save_ledger(api, work_order_id, ledger, "escalate %s" % identifier)
+    api.patch_issue(work_order_id, {
+        "status": "blocked",
+        "executionPolicy": None,
+        "comment": "factory escalate: %s — no more retries. Wojtek decides." % reason,
+    })
+
+
+def cmd_factory_decide(args) -> int:
+    _sys_path_for_modules()
+    import pc
+
+    if os.path.exists(_stop_file()):
+        emit(False, "decide", ["STOP flag present: %s" % _stop_file()])
+        return 1
+    try:
+        api = pc.Api()
+    except LookupError as exc:
+        sys.stderr.write("factory decide: %s\n" % exc)
+        return 2
+    company = os.environ.get("PAPERCLIP_COMPANY_ID") or args.company
+    cfg = load_agent_config()
+
+    stage_issue = resolve_issue(api, company, args.stage_issue)
+    if not stage_issue.get("parentId"):
+        raise SetupError("%s is not a stage issue (no parent work order)" % args.stage_issue)
+    work_order = api.issue(stage_issue["parentId"])
+    ledger = load_json_document(api, work_order["id"], "ledger")
+    if not ledger:
+        raise SetupError("%s has no ledger document" % work_order.get("identifier"))
+    stage, round_no = _stage_round(stage_issue)
+    key = stage_key(stage, round_no)
+    if stage not in STAGE_ORDER:
+        raise SetupError("unknown stage %r on %s" % (stage, args.stage_issue))
+
+    cwd = ledger["cwd"]
+    spec_doc = api.document(work_order["id"], "spec")
+    if not spec_doc or not spec_doc.get("body"):
+        raise SetupError("%s has no `spec` document" % work_order.get("identifier"))
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="factory-decide-")
+    spec_path = os.path.join(tmp, "spec.md")
+    with open(spec_path, "w", encoding="utf-8") as fh:
+        fh.write(spec_doc["body"])
+
+    if stage == "red":
+        check_args = ["check-red", "--repo", cwd, "--base", ledger["baseSha"], "--spec", spec_path]
+    elif stage == "green":
+        red_sha = ((ledger["stages"].get("red") or {}).get("sha"))
+        if not red_sha:
+            raise SetupError("no red commit recorded in the ledger")
+        check_args = ["check-green", "--repo", cwd, "--red", red_sha, "--spec", spec_path]
+    elif stage == "review":
+        review_key = key
+        findings = api.document(stage_issue["id"], "findings")
+        if not findings or not findings.get("body"):
+            emit(False, "decide", ["review issue has no `findings` document"], {"stage": "review"})
+            return 1
+        findings_path = os.path.join(tmp, "findings.md")
+        with open(findings_path, "w", encoding="utf-8") as fh:
+            fh.write(findings["body"])
+        check_args = ["check-findings", "--repo", cwd, "--base", ledger["baseSha"],
+                      "--findings", findings_path]
+    elif stage == "verify":
+        review_entry = (ledger["stages"].get("review:r%d" % round_no)
+                        or ledger["stages"].get("review") or {})
+        review_doc = api.document(review_entry.get("issueId", ""), "findings") if review_entry else None
+        verdicts = api.document(stage_issue["id"], "verdicts")
+        if not review_doc or not verdicts:
+            emit(False, "decide", ["verify needs both the review `findings` and its own `verdicts`"],
+                 {"stage": "verify"})
+            return 1
+        findings_path = os.path.join(tmp, "findings.md")
+        verdicts_path = os.path.join(tmp, "verdicts.md")
+        with open(findings_path, "w", encoding="utf-8") as fh:
+            fh.write(review_doc["body"])
+        with open(verdicts_path, "w", encoding="utf-8") as fh:
+            fh.write(verdicts["body"])
+        check_args = ["check-verdicts", "--findings", findings_path, "--verdicts", verdicts_path]
+    else:  # gate
+        pr = ledger.get("pr") or {}
+        if not pr.get("number"):
+            raise SetupError("no PR recorded in the ledger for the gate stage")
+        check_args = ["check-gate", "--pr", "%s#%s" % (ledger["repo"], pr["number"]),
+                      "--spec", spec_path]
+
+    code, parsed, combined = _run_self(check_args)
+    comment = check_comment(parsed, combined)
+    passed = code == 0
+    blocking = (parsed or {}).get("blockingConfirmed") or []
+
+    decision = "approve" if passed else "request_changes"
+    reasons = []
+    if not passed:
+        reasons = list((parsed or {}).get("reasons") or ["check exited %d" % code])
+
+    # verify: a confirmed blocking finding opens a fix round, at most two.
+    open_fix_round = stage == "verify" and passed and blocking and round_no < 2
+    if stage == "verify" and passed and blocking and round_no >= 2:
+        decision = "escalate"
+        reasons = ["a third fix round would start; confirmed blocking: %s" % ", ".join(blocking)]
+
+    attempts = int((ledger["stages"].get(key) or {}).get("attempts", 0))
+    if decision == "request_changes":
+        attempts += 1
+        ledger["stages"].setdefault(key, {})["attempts"] = attempts
+        if attempts >= 3:
+            decision = "escalate"
+            reasons = ["third request-changes on %s" % key]
+
+    result = {
+        "ok": passed and decision != "escalate",
+        "check": "decide",
+        "reasons": reasons,
+        "stage": stage,
+        "round": round_no,
+        "decision": decision,
+        "applied": bool(args.apply),
+        "workOrder": work_order.get("identifier"),
+    }
+
+    if decision == "escalate":
+        if args.apply:
+            _escalate(api, work_order["id"], ledger, reasons[0] if reasons else "escalated",
+                      stage_issue.get("identifier", "?"))
+            api.patch_issue(stage_issue["id"], {"status": "blocked", "executionPolicy": None,
+                                                "comment": "escalated: %s" % (reasons[0] if reasons else "")})
+        emit(False, "decide", reasons, result)
+        return 1
+
+    if not args.apply:
+        emit(passed, "decide", reasons, result)
+        return 0 if passed else 1
+
+    if decision == "request_changes":
+        api.patch_issue(stage_issue["id"], {"status": "in_progress", "comment": comment})
+        save_ledger(api, work_order["id"], ledger, "request changes %s" % key)
+        emit(False, "decide", reasons, result)
+        return 1
+
+    # approve
+    if stage == "red":
+        ccode, cparsed, cout = _run_self(["commit", "--repo", cwd, "--stage", "red",
+                                          "--issue", work_order["identifier"]])
+        if ccode != 0:
+            raise SetupError("red commit refused: %s" % ((cparsed or {}).get("reasons")))
+        ledger["stages"].setdefault(key, {"issueId": stage_issue["id"], "round": round_no,
+                                          "attempts": 0})
+        ledger["stages"][key]["sha"] = (cparsed or {}).get("sha")
+        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
+    elif stage == "green":
+        ccode, cparsed, cout = _run_self(["commit", "--repo", cwd, "--stage", "green",
+                                          "--issue", work_order["identifier"]])
+        if ccode != 0:
+            raise SetupError("green commit refused: %s" % ((cparsed or {}).get("reasons")))
+        ledger["stages"].setdefault(key, {"issueId": stage_issue["id"], "round": round_no,
+                                          "attempts": 0})
+        ledger["stages"][key]["sha"] = (cparsed or {}).get("sha")
+        pcode, pparsed, pout = _run_self(["open-pr", "--repo", cwd,
+                                          "--issue", work_order["identifier"],
+                                          "--title", "factory(%s): %s" % (
+                                              work_order["identifier"], work_order.get("title", "")[:100])])
+        if pcode != 0:
+            raise SetupError("open-pr refused: %s" % ((pparsed or {}).get("reasons")))
+        url = (pparsed or {}).get("url")
+        number = None
+        match = re.search(r"/pull/([0-9]+)", url or "")
+        if match:
+            number = int(match.group(1))
+        ledger["pr"] = {"number": number, "url": url}
+        api.create_work_product(work_order["id"], {
+            "type": "pull_request", "provider": "github",
+            "title": "PR for %s" % work_order["identifier"],
+            "url": url, "externalId": str(number) if number else None,
+            "status": "ready_for_review", "isPrimary": True,
+            "reviewState": "needs_board_review",
+        })
+        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
+    elif stage == "review":
+        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
+    elif stage == "verify":
+        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
+        if open_fix_round:
+            ledger["fixRounds"] = int(ledger.get("fixRounds", 0)) + 1
+            findings_block = ("\n**Confirmed blocking findings from verify (fix these, round %d):**\n%s\n"
+                              % (round_no + 1, "\n".join("- %s" % b for b in blocking)))
+            spec, spec_reasons = extract_json_block(spec_doc["body"], "spec")
+            if spec is None:
+                raise SetupError("spec document does not parse: %s" % "; ".join(spec_reasons))
+            plan = plan_stages(cfg, spec, ledger, work_order, round_no + 1, findings_block)
+            created = create_stages(api, work_order["id"], plan, cfg)
+            for item in created:
+                ledger["stages"][item["key"]] = {
+                    "issueId": item["issue"]["id"], "identifier": item["issue"].get("identifier"),
+                    "round": item["round"], "attempts": 0, "sha": None,
+                }
+            api.comment(work_order["id"], "fix round %d opened: %s"
+                        % (round_no + 1, ", ".join(i["issue"].get("identifier", "?") for i in created)))
+    else:  # gate
+        api.patch_issue(stage_issue["id"], {"status": "done", "comment": comment})
+        pr = ledger.get("pr") or {}
+        api.create_interaction(work_order["id"], {
+            "kind": "request_confirmation",
+            "resolverPolicy": "human_only",
+            "title": "Merge PR #%s?" % pr.get("number"),
+            "summary": "The factory gate passed. Wojtek merges.",
+            "payload": {"version": 1, "prompt": "Merge PR #%s?" % pr.get("number"),
+                        "detailsMarkdown": pr.get("url") or ""},
+        })
+        api.patch_issue(work_order["id"], {"status": "in_review"})
+
+    ledger["outcome"] = "pass"
+    save_ledger(api, work_order["id"], ledger, "approve %s" % key)
+    emit(True, "decide", [], result)
+    return 0
+
+
+def _now_iso() -> str:
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def _age_hours(stamp: str) -> float:
+    import datetime
+    try:
+        then = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return 0.0
+    delta = datetime.datetime.now(datetime.timezone.utc) - then
+    return round(delta.total_seconds() / 3600.0, 1)
+
+
+def cmd_factory_tick(args) -> int:
+    _sys_path_for_modules()
+    import pc
+
+    try:
+        api = pc.Api()
+    except LookupError as exc:
+        sys.stderr.write("factory tick: %s\n" % exc)
+        return 2
+    company = os.environ.get("PAPERCLIP_COMPANY_ID") or args.company
+    cfg = load_agent_config()
+    stop = os.path.exists(_stop_file())
+
+    lines = []
+    rows = []
+    for item in api.issues(company):
+        if item.get("status") not in OPEN_STATUSES:
+            continue
+        if item.get("assigneeAgentId") != cfg["majster"]:
+            continue
+        if not api.document(item["id"], "spec"):
+            continue
+        ledger = load_json_document(api, item["id"], "ledger") or {}
+        stages = ledger.get("stages") or {}
+        current_key, current = None, None
+        order = list(stages.keys())
+        for key in reversed(order):
+            entry = stages[key]
+            child = api.issue(entry["issueId"]) if entry.get("issueId") else None
+            if child and child.get("status") not in ("done", "cancelled"):
+                current_key, current = key, child
+                break
+        if current is None and order:
+            entry = stages[order[-1]]
+            current_key = order[-1]
+            current = api.issue(entry["issueId"]) if entry.get("issueId") else None
+        flags = []
+        agent_name = "-"
+        model = "-"
+        age = 0.0
+        runs = None
+        if current:
+            age = _age_hours(current.get("updatedAt") or current.get("createdAt") or "")
+            agent_id = current.get("assigneeAgentId")
+            if agent_id:
+                try:
+                    agent = api.agent(agent_id)
+                    agent_name = agent.get("name") or agent_id[:8]
+                    model = (agent.get("adapterConfig") or {}).get("model") or "-"
+                except Exception:  # noqa: BLE001
+                    agent_name = agent_id[:8]
+            runs = api.runs(current["id"])
+            if runs is None:
+                flags.append("runs-unknown")
+            else:
+                if not runs:
+                    flags.append("no-run")
+                if age > 2:
+                    flags.append("idle>2h")
+            if current.get("activeRecoveryAction") or current.get("executionBlocker"):
+                flags.append("recovery-hold")
+        if stop:
+            flags.append("STOP")
+        attempts = 0
+        if current_key and stages.get(current_key):
+            attempts = int(stages[current_key].get("attempts", 0))
+        lines.append("%s  %-12s %-10s age %5.1fh rounds %d%s"
+                     % (item.get("identifier"), current_key or "-", agent_name, age, attempts,
+                        ("  [" + ",".join(flags) + "]") if flags else ""))
+        rows.append({
+            "time": _now_iso(),
+            "workOrder": item.get("identifier"),
+            "stage": current_key,
+            "agent": agent_name,
+            "model": model,
+            "outcome": ledger.get("outcome") or "pending",
+            "round": (stages.get(current_key) or {}).get("round", 1) if current_key else 0,
+            "durationSec": int(age * 3600),
+        })
+        if runs:
+            usage = None
+            for run in runs:
+                for candidate in ("usage", "tokenUsage", "tokens"):
+                    if isinstance(run.get(candidate), dict):
+                        usage = run[candidate]
+                        break
+                if usage:
+                    break
+            if usage:
+                rows[-1]["tokens"] = usage
+
+    # config drift: every factory agent must carry the guard extension and its role
+    drift = []
+    seen = set()
+    for stage in STAGE_ORDER:
+        agent = stage_agent(cfg, stage)
+        agent_id = agent["agentId"]
+        if agent_id in seen:
+            continue
+        seen.add(agent_id)
+        try:
+            live = api.agent(agent_id)
+        except Exception as exc:  # noqa: BLE001
+            drift.append({"agent": agent.get("name", stage), "error": str(exc)[:120]})
+            continue
+        extra = ((live.get("adapterConfig") or {}).get("extraArgs")) or []
+        has_extension = cfg.get("extension") in extra
+        has_role = False
+        for i, arg in enumerate(extra):
+            if arg == "--factory-role" and i + 1 < len(extra) and extra[i + 1] == agent.get("factoryRole"):
+                has_role = True
+        entry = {"agent": live.get("name") or agent.get("name", stage),
+                 "extension": has_extension, "role": has_role,
+                 "expectedRole": agent.get("factoryRole")}
+        drift.append(entry)
+
+    try:
+        os.makedirs(os.path.dirname(_ledger_jsonl()), exist_ok=True)
+        with open(_ledger_jsonl(), "a", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        sys.stderr.write("factory tick: cannot append ledger.jsonl: %s\n" % exc)
+
+    emit(True, "tick", lines, {"workOrders": rows, "configDrift": drift, "stop": stop})
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="factory.py",
                                description="Deterministic factory stage checks (agents/factory/CONTRACT.md)")
@@ -767,6 +1514,24 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--issue", required=True)
     s.add_argument("--title", required=True)
     s.set_defaults(fn=cmd_open_pr)
+
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--company", default=os.environ.get("PAPERCLIP_COMPANY_ID", ""),
+                        help="company id (default: PAPERCLIP_COMPANY_ID)")
+
+    s = sub.add_parser("start", parents=[common])
+    s.add_argument("work_order", help="work order identifier, e.g. GUL-439")
+    s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--repo", help="override the checkout directory")
+    s.set_defaults(fn=cmd_factory_start)
+
+    s = sub.add_parser("decide", parents=[common])
+    s.add_argument("stage_issue", help="stage issue identifier, e.g. GUL-441")
+    s.add_argument("--apply", action="store_true", help="make the Paperclip PATCH")
+    s.set_defaults(fn=cmd_factory_decide)
+
+    s = sub.add_parser("tick", parents=[common])
+    s.set_defaults(fn=cmd_factory_tick)
     return p
 
 

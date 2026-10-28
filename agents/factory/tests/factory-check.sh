@@ -5,6 +5,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 FACTORY="$ROOT/agents/factory/factory.py"
+PC="$ROOT/agents/factory/pc.py"
 PY="python3 -I"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/factory-check-XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
@@ -405,17 +406,34 @@ else
   bad "parity: node not installed (required — CI has it)"
 fi
 
-# ---------- 10. no-network rule ----------
-echo "== no-network rule =="
-if grep -nE 'urllib|requests|socket' "$FACTORY" > "$TMP/net.out"; then
-  bad "factory.py references a network lib"; cat "$TMP/net.out" >&2
+# ---------- 10. network + Paperclip containment ----------
+echo "== network and Paperclip containment =="
+# GUL-439: the stage checks never call Paperclip. The three factory subcommands
+# do, and only through pc.py. So: no network imports in factory.py, and pc.py is
+# the single file allowed to build a URL.
+if grep -nE '^[[:space:]]*(import|from)[[:space:]]+(urllib|http|socket|requests)' "$FACTORY" > "$TMP/net.out"; then
+  bad "factory.py imports a network lib directly"; cat "$TMP/net.out" >&2
 else
-  ok "factory.py: no urllib/requests/socket"
+  ok "factory.py: no direct network import (pc.py owns the client)"
 fi
-if grep -nE 'paperclip' "$FACTORY" | grep -vE 'noreply@paperclip\.ing|paperclip\.voitech\.dev|factory@paperclip\.ing' > "$TMP/pclip.out"; then
-  bad "factory.py touches Paperclip"; cat "$TMP/pclip.out" >&2
+if grep -nE 'socket|requests|https?://' "$PC" | grep -vE 'DEFAULT_BASE|^[0-9]+: *#|URL: PAPERCLIP_API_URL' > "$TMP/pcnet.out"; then
+  bad "pc.py carries a URL or an extra network lib"; cat "$TMP/pcnet.out" >&2
 else
-  ok "factory.py: no Paperclip calls (only the PR trailer/link constants)"
+  ok "pc.py: urllib only, one base URL constant"
+fi
+if grep -nE 'auth\.json' "$FACTORY" "$PC" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' > "$TMP/auth.out"; then
+  bad "factory code reads the board token file"; cat "$TMP/auth.out" >&2
+else
+  ok "factory code: never reads ~/.paperclip/auth.json (GUL-297)"
+fi
+
+# ---------- 11. start/decide/tick against a stub Paperclip ----------
+echo "== factory drives Paperclip (stub API, GUL-439) =="
+if python3 "$ROOT/agents/factory/tests/test_factory_paperclip.py" > "$TMP/pc-tests.out" 2>&1; then
+  ok "start/decide/tick: $(grep -c '^ok ' "$TMP/pc-tests.out") assertions against the stub API"
+else
+  bad "start/decide/tick: stub API suite failed"
+  tail -40 "$TMP/pc-tests.out" >&2
 fi
 
 # ---------- summary ----------

@@ -13,9 +13,14 @@ Design rules:
   which are defined as shell commands and run with `bash -c` from the repo
   root — a work order is human-approved text, and the spec author is on the
   hook for its checks.
-- No subcommand talks to Paperclip. Network use is only `gh`, only inside
-  `check-gate` and `open-pr`. The `gh` binary comes from env `FACTORY_GH`
-  (default `gh`) so tests can stub it.
+- No stage check talks to Paperclip. Network use in `lint-spec`/`check-*`/
+  `commit`/`open-pr` is only `gh`, only inside `check-gate` and `open-pr`. The
+  `gh` binary comes from env `FACTORY_GH` (default `gh`) so tests can stub it.
+- Since GUL-439 the three orchestration subcommands — `start`, `decide`, `tick`
+  — do talk to Paperclip, and only through `pc.py` next to this file (stdlib
+  `urllib`). They never call `gh`, never `git push` themselves, and never read
+  the board token file (GUL-297); auth is `PAPERCLIP_API_KEY` and
+  `PAPERCLIP_RUN_ID` from the environment or the subcommand exits 2.
 - Output: every subcommand prints exactly one JSON line on stdout
   (`{"ok": true|false, "check": "<name>", "reasons": [...]"}` plus the fields
   named per subcommand) and a short human summary on stderr.
@@ -159,6 +164,9 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 | `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ maxDiffLines` |
 | `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only) |
 | `open-pr --repo DIR --issue GUL-N --title T` | current branch is not `main`/`master` (refuse, exit 1); `git push -u origin <branch>` (never `--force`); `gh pr create` with body linking the work order: `Work order: [GUL-N](https://paperclip.voitech.dev/GUL/issues/GUL-N)`. JSON adds `"url": "<PR url>"`. Repo comes from `git remote get-url origin` |
+| `start GUL-N [--dry-run]` | point 9 below |
+| `decide GUL-M [--apply]` | point 9 below |
+| `tick` | point 9 below |
 
 `--pr OWNER/REPO#N` splits on the last `#`.
 
@@ -179,3 +187,69 @@ unparseable output → not a pass (gh errors are setup errors, exit 2).
 | 0 | stage passed |
 | 1 | stage did not pass (a real violation, or a refused operation) |
 | 2 | usage/setup error: inputs unreadable, git/gh broken, check protocol violated |
+
+## 9. `start`, `decide`, `tick` — the script drives Paperclip (GUL-439)
+
+A **work order** is an issue with a `spec` document (point 1), assigned to
+Majster, open in its project. Stage issues are its **children** — they inherit
+its execution workspace and a finished child wakes Majster, not the PM.
+
+`agents/factory/agents.json` holds Majster's id, the stage agent ids and the
+`--factory-role` each stage needs; `agents/factory/templates/<stage>.md` holds
+the stage briefs (`red`, `green`, `review`, `verify`, `gate`). Templates are
+self-contained: a stage agent may not be able to read the work order.
+
+**`start GUL-N [--dry-run]`**
+
+1. Refuses (exit 1) when `~/paperclip-agents/majster/factory/STOP` exists
+   (`FACTORY_STOP` overrides). Runs `lint-spec` on the spec; a bad spec is exit 1.
+2. Refuses while another work order is open in the same project — the shared
+   checkout cannot hold two diffs (ADR-094). `--dry-run` plans and creates nothing.
+3. Records in the work order's `ledger` document: `baseSha` (= `origin/<spec.base>`),
+   `branch` = `gul-<N>-<slug>`, `cwd`.
+4. Creates 5 children: `[red]` → Tester, `[green]` → Builder, `[review]` →
+   Reviewer, `[verify]` → Verifier, `[gate]` → Majster. The first is `todo`, each
+   later one `blocked` by the one before. Red/green/review/verify carry
+   `executionPolicy {"stages": [{"type": "review", "participants": [{"type": "agent",
+   "agentId": Majster}]}]}`.
+5. `start` twice creates nothing the second time (the ledger has the stages).
+
+**Ledger** — markdown with one fenced `json` block on the work order:
+`{version, workOrder, workOrderId, title, repo, base, baseSha, cwd, branch,
+projectId, stages: {<stage or stage:rN>: {issueId, identifier, round, attempts,
+sha}}, fixRounds, pr: {number, url} | null, outcome, escalated}`. Only `factory.py`
+writes it.
+
+**`decide GUL-M [--apply]`** — M is the stage issue; the stage comes from its
+`[stage]`/`[stage rN]` title. Runs the check for that stage against the spec and
+the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
+`check-verdicts`, `check-gate` with the ledger's PR).
+
+- Pass → `commit`/`open-pr` where the stage calls for it, then
+  `PATCH {"status": "done", "comment": …}`.
+- Fail → `PATCH {"status": "in_progress", "comment": …}` (request changes;
+  Paperclip routes it back to the stage agent). The comment is the check's JSON
+  line plus the last 60 lines of its output.
+- verify with a non-empty `blockingConfirmed` → approve it and open a fix round
+  (`[green r2]` → `[review r2]` → `[verify r2]`, chained the same way), confirmed
+  findings pasted into the fix issue. At most 2 fix rounds.
+- gate pass → a `request_confirmation` interaction on the work order
+  (`resolverPolicy: human_only`, "Merge PR #N?") plus `in_review`. Wojtek merges.
+- **Escalate** on a third request-changes for one stage, or when a third fix round
+  would start: work order `blocked` with `"executionPolicy": null` in the same
+  PATCH (otherwise Paperclip reads `blocked` as request-changes), one sentence
+  why, recorded in the ledger, no more retries.
+- Without `--apply` nothing is written: it prints the decision only.
+
+**`tick`** — changes nothing in Paperclip. One line per open work order: stage,
+agent, age, rounds, and flags (`idle>2h`, `no-run`, `runs-unknown`,
+`recovery-hold`, `STOP`). Config drift: every factory agent's
+`adapterConfig.extraArgs` must carry the guard extension and its stage's
+`--factory-role`; the agents API returns the key, so it is parsed in code and
+only names and booleans are printed. Appends one line per open work order to
+`~/paperclip-agents/majster/factory/ledger.jsonl`: `time, workOrder, stage,
+agent, model, outcome (pass|fail|escalate|pending), round, durationSec`, plus
+`tokens` when the run's usage has them. `pending` is the honest value for a work
+order whose current stage has no recorded decision yet — the alternative was
+lying with `pass`.
+
