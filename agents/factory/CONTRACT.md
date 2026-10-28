@@ -244,8 +244,19 @@ writer: the client re-reads the revision and retries once.
 the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
 `check-verdicts`, `check-gate` with the ledger's PR).
 
-- Pass → `commit`/`open-pr` where the stage calls for it, then
-  `PATCH {"status": "done", "comment": …}`.
+- Pass → `commit`/`open-pr` where the stage calls for it, then **the ledger write,
+  and only then** `PATCH {"status": "done", "comment": …}`. The order is part of
+  the contract (GUL-497): a stage marked `done` whose ledger write then fails
+  never runs again — the board looks fine, the ledger keeps `sha: null`, and the
+  next stage refuses with *no red commit recorded in the ledger*. So a failed
+  write exits 2 as a setup error and leaves the stage `in_progress` with its
+  work already in git; the same `decide` is re-runnable because `commit` hands
+  back HEAD for this stage and a recorded `pr` is reused instead of opening a
+  second PR. Side effects that are not the record — the green stage's work
+  product, the gate's merge card and the work order's `in_review` — run after the
+  `done` PATCH. Request-changes writes the ledger before its `in_progress` PATCH
+  for the same reason: the `attempts` counter that escalates on the third
+  failure lives there.
 - Fail → `PATCH {"status": "in_progress", "comment": …}` (request changes;
   Paperclip routes it back to the stage agent). The comment is the check's JSON
   line plus the last 60 lines of its output.
