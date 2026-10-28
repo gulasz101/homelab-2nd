@@ -21,6 +21,10 @@ Design rules:
   `urllib`). They never call `gh`, never `git push` themselves, and never read
   the board token file (GUL-297); auth is `PAPERCLIP_API_KEY` and
   `PAPERCLIP_RUN_ID` from the environment or the subcommand exits 2.
+  `PAPERCLIP_API_URL` is the base; when that base answers like the edge
+  (Cloudflare 1010, or nothing at all) the client falls back once to
+  `PAPERCLIP_API_FALLBACK_URL` (default `http://127.0.0.1:3100/api`) and stays
+  there for the rest of the run (GUL-496).
 - Output: every subcommand prints exactly one JSON line on stdout
   (`{"ok": true|false, "check": "<name>", "reasons": [...]"}` plus the fields
   named per subcommand) and a short human summary on stderr.
@@ -230,7 +234,10 @@ review stage to hand off to.
 `{version, workOrder, workOrderId, title, repo, base, baseSha, cwd, branch,
 projectId, stages: {<stage or stage:rN>: {issueId, identifier, round, attempts,
 sha}}, fixRounds, pr: {number, url} | null, outcome, escalated}`. Only `factory.py`
-writes it.
+writes it, and every write carries the document's `latestRevisionId` as
+`baseRevisionId` — Paperclip answers `409 Document update requires
+baseRevisionId` without it (GUL-496). A 409 on the write means a concurrent
+writer: the client re-reads the revision and retries once.
 
 **`decide GUL-M [--apply]`** — M is the stage issue; the stage comes from its
 `[stage]`/`[stage rN]` title. Runs the check for that stage against the spec and

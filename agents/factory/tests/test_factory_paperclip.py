@@ -21,6 +21,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FACTORY = os.path.abspath(os.path.join(HERE, "..", "factory.py"))
+sys.path.insert(0, os.path.dirname(FACTORY))
+import pc  # noqa: E402  the factory's own client, for unit-level cases (GUL-496)
 MAJSTER = "2df240b5-a5ea-4ebf-81ff-bf96758e8f80"
 COMPANY = "c0000000-0000-4000-8000-000000000001"
 PROJECT = "p0000000-0000-4000-8000-000000000001"
@@ -54,6 +56,10 @@ class State:
         self.agents = {}
         self.runs = {}
         self.counter = 700
+        # {(issueId, key): n} — force the next n PUTs of that document to 409
+        self.put_conflicts = {}
+        # the live API echoes the document bare; the stub can do either
+        self.wrapped_documents = True
 
     def add_issue(self, **kw):
         ident = kw.pop("identifier", None)
@@ -84,7 +90,7 @@ class State:
     def doc(self, issue_id, key, body):
         self.documents[(issue_id, key)] = {
             "id": str(uuid.uuid4()), "key": key, "format": "markdown", "body": body,
-            "issueId": issue_id,
+            "issueId": issue_id, "latestRevisionId": str(uuid.uuid4()),
         }
 
 
@@ -158,11 +164,24 @@ def make_handler(state):
             parts = self._parts()
             body = self._body()
             if parts[:2] == ["api", "issues"] and len(parts) == 5 and parts[3] == "documents":
+                slot = (parts[2], parts[4])
+                existing = state.documents.get(slot)
+                forced = state.put_conflicts.get(slot, 0)
+                if forced:
+                    state.put_conflicts[slot] = forced - 1
+                    return self._send(409, {"error": "Document update requires baseRevisionId."})
+                want = body.get("baseRevisionId")
+                if existing is not None:
+                    if not want or want != existing.get("latestRevisionId"):
+                        return self._send(409, {"error": "Document update requires baseRevisionId."})
+                elif want:
+                    return self._send(409, {"error": "baseRevisionId refers to no revision"})
                 doc = {"id": str(uuid.uuid4()), "key": parts[4], "format": "markdown",
                        "body": body.get("body"), "issueId": parts[2],
-                       "title": body.get("title")}
-                state.documents[(parts[2], parts[4])] = doc
-                return self._send(200, {"document": doc})
+                       "title": body.get("title"),
+                       "latestRevisionId": str(uuid.uuid4())}
+                state.documents[slot] = doc
+                return self._send(200, {"document": doc} if state.wrapped_documents else doc)
             return self._send(404, {"error": "API route not found"})
 
         def do_PATCH(self):
@@ -189,6 +208,34 @@ class Stub:
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.state))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
+        self.url = "http://127.0.0.1:%d/api" % self.server.server_address[1]
+
+    def close(self):
+        self.server.shutdown()
+
+
+class Blocked:
+    """Stands in for the edge: every request is Cloudflare's 1010 block page."""
+
+    PAGE = "<html><body><h1>Error 1010</h1>cloudflare</body></html>"
+
+    def __init__(self):
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _answer(self):
+                raw = Blocked.PAGE.encode()
+                self.send_response(403)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            do_GET = do_POST = do_PUT = do_PATCH = _answer
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.url = "http://127.0.0.1:%d/api" % self.server.server_address[1]
 
     def close(self):
@@ -542,6 +589,65 @@ def case_tick(stub, base_sha, repo):
     check("tick: the API key never reaches stdout", "test-key-not-a-secret" not in raw)
 
 
+def case_write_document_carries_revision(stub):
+    """GUL-496: a document write names the revision it replaces, first write null."""
+    issue = stub.state.add_issue(identifier="GUL-996", title="probe")
+    api = pc.Api(key="test-key-not-a-secret", run_id="test-run-id", base=stub.url)
+    slot = (issue["id"], "ledger")
+    first = api.write_document(issue["id"], "ledger", "# one\n", title="Ledger")
+    rev1 = stub.state.documents[slot]["latestRevisionId"]
+    check("write_document: a first write is accepted with a null baseRevisionId",
+          isinstance(first, dict) and stub.state.documents[slot]["body"] == "# one\n", first)
+    api.write_document(issue["id"], "ledger", "# two\n", title="Ledger")
+    rev2 = stub.state.documents[slot]["latestRevisionId"]
+    check("write_document: the second write replaces the revision it read",
+          rev1 != rev2 and stub.state.documents[slot]["body"] == "# two\n", rev2)
+    stub.state.put_conflicts[slot] = 1
+    api.write_document(issue["id"], "ledger", "# three\n", title="Ledger")
+    check("write_document: a 409 re-reads the revision and retries once",
+          stub.state.documents[slot]["body"] == "# three\n",
+          stub.state.documents[slot]["body"])
+    stub.state.wrapped_documents = False
+    try:
+        bare = api.write_document(issue["id"], "ledger", "# four\n", title="Ledger")
+    finally:
+        stub.state.wrapped_documents = True
+    check("write_document: the live bare-document echo is normalised to {'document': …}",
+          isinstance(bare, dict) and isinstance(bare.get("document"), dict)
+          and bool(bare["document"].get("id")), bare)
+    import factory  # noqa: E402  the script's own save_ledger, imported for the echo check
+    stub.state.wrapped_documents = False
+    try:
+        factory.save_ledger(api, issue["id"], {"version": 1, "workOrder": "GUL-996"}, "probe")
+        accepted, detail = True, ""
+    except Exception as exc:  # SetupError from a missing echo, or an ApiError
+        accepted, detail = False, repr(exc)
+    finally:
+        stub.state.wrapped_documents = True
+    check("save_ledger: a ledger write against the live echo shape does not raise",
+          accepted, detail)
+    check("edge fallback: a JSON 403 from Paperclip is not mistaken for the edge",
+          not pc.Api._wall(403, '{"error":"forbidden"}')
+          and pc.Api._wall(403, Blocked.PAGE) and pc.Api._wall(0, ""))
+
+
+def case_edge_block_falls_back(stub):
+    """GUL-496: an inherited public URL that Cloudflare blocks does not kill the run."""
+    edge = Blocked()
+    os.environ[pc.FALLBACK_ENV] = stub.url
+    try:
+        issue = stub.state.add_issue(identifier="GUL-997", title="probe")
+        api = pc.Api(key="test-key-not-a-secret", run_id="test-run-id", base=edge.url)
+        got = api.issue(issue["id"])
+        check("edge fallback: a Cloudflare 1010 falls back to the local API",
+              isinstance(got, dict) and got.get("id") == issue["id"], got)
+        check("edge fallback: the working base is remembered for the rest of the run",
+              api.base == stub.url, api.base)
+    finally:
+        os.environ.pop(pc.FALLBACK_ENV, None)
+        edge.close()
+
+
 def main():
     global WORKDIR
     WORKDIR = tempfile.mkdtemp(prefix="factory-pc-tests-")
@@ -557,6 +663,8 @@ def main():
             case_verify_fix_round(stub, base_sha, repo)
             case_third_failure_escalates(stub, base_sha, repo)
             case_tick(stub, base_sha, repo)
+            case_write_document_carries_revision(stub)
+            case_edge_block_falls_back(stub)
         finally:
             stub.close()
     finally:
