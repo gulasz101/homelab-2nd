@@ -23,8 +23,13 @@ post: you run the gate yourself and stop. Your whole job is one command, with `M
 factory decide GUL-M --apply
 ```
 
-If the command is not on your PATH, the same thing runs in the checkout as
-`python3 -I {{cwd}}/agents/factory/factory.py decide GUL-M --apply`.
+If the command is not on your PATH, call the wrapper by its absolute path:
+`/Users/paperclip/factory/bin/factory decide GUL-M --apply`.
+
+Both run `agents/factory/factory.py` from a checkout of `main` (GUL-502, ADR-096),
+force-updated to `origin/main` on every call — a fix merged today is the code that
+decides today. Never run `{{cwd}}/agents/factory/factory.py` directly: that copy is
+frozen at the spec's base and its decisions are not the ones on `main`.
 
 It runs `check-gate`, PATCHes this stage `done`, raises the merge card above and
 sets the work order `in_review`. Read its one JSON line and stop. Do not PATCH this
