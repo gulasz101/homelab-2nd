@@ -197,25 +197,31 @@ its execution workspace and a finished child wakes Majster, not the PM.
 `agents/factory/agents.json` holds Majster's id, the stage agent ids and the
 `--factory-role` each stage needs; `agents/factory/templates/<stage>.md` holds
 the stage briefs (`red`, `green`, `review`, `verify`, `gate`). Templates are
-self-contained: a stage agent may not be able to read the work order. Each brief
-ends with both hand-off payloads — the full `executionPolicy` on the first
-hand-off, `status` + `comment` only on a stage that already carries a
-`changes_requested` decision (GUL-471).
+self-contained: a stage agent may not be able to read the work order. The four
+stage briefs end with both hand-off payloads — the full `executionPolicy` on the
+first hand-off, `status` + `comment` only on a stage that already carries a
+`changes_requested` decision (GUL-471). `gate.md` ends with the one `decide`
+command instead: the gate has no review stage to hand off to.
 
 **`start GUL-N [--dry-run]`**
 
 1. Refuses (exit 1) when `~/paperclip-agents/majster/factory/STOP` exists
    (`FACTORY_STOP` overrides). Runs `lint-spec` on the spec; a bad spec is exit 1.
 2. Refuses while another work order is open in the same project — the shared
-   checkout cannot hold two diffs (ADR-094). `--dry-run` plans and creates nothing.
-3. Records in the work order's `ledger` document: `baseSha` (= `origin/<spec.base>`),
+   checkout cannot hold two diffs (ADR-095). `--dry-run` plans and creates nothing.
+3. Cuts the work order's own branch, which is what `open-pr` needs: runs
+   `git fetch origin`, refuses (exit 1) when `git status --porcelain` is not empty,
+   resolves `baseSha` = `origin/<spec.base>` and runs
+   `git switch -c gul-<N>-<slug> <baseSha>` — or switches to that branch when it
+   already exists at that sha. `--dry-run` does none of it.
+4. Records in the work order's `ledger` document: `baseSha` (= `origin/<spec.base>`),
    `branch` = `gul-<N>-<slug>`, `cwd`.
-4. Creates 5 children: `[red]` → Tester, `[green]` → Builder, `[review]` →
+5. Creates 5 children: `[red]` → Tester, `[green]` → Builder, `[review]` →
    Reviewer, `[verify]` → Verifier, `[gate]` → Majster. The first is `todo`, each
    later one `blocked` by the one before. Red/green/review/verify carry
    `executionPolicy {"stages": [{"type": "review", "participants": [{"type": "agent",
    "agentId": Majster}]}]}`.
-5. `start` twice creates nothing the second time (the ledger has the stages).
+6. `start` twice creates nothing the second time (the ledger has the stages).
 
 **Ledger** — markdown with one fenced `json` block on the work order:
 `{version, workOrder, workOrderId, title, repo, base, baseSha, cwd, branch,
@@ -249,7 +255,11 @@ agent, age, rounds, and flags (`idle>2h`, `no-run`, `runs-unknown`,
 `recovery-hold`, `STOP`). Config drift: every factory agent's
 `adapterConfig.extraArgs` must carry the guard extension and its stage's
 `--factory-role`; the agents API returns the key, so it is parsed in code and
-only names and booleans are printed. Appends one line per open work order to
+only names and booleans are printed. An entry whose `factoryRole` is `null` runs
+without the guard — in phase 2 that is the `gate` entry, because Majster has no
+`extraArgs` and the `readonly` role would refuse `python3 … decide` — so `tick`
+skips the drift check there and prints `guard: not required` instead of reporting
+Majster as drift on every sweep. Appends one line per open work order to
 `~/paperclip-agents/majster/factory/ledger.jsonl`: `time, workOrder, stage,
 agent, model, outcome (pass|fail|escalate|pending), round, durationSec`, plus
 `tokens` when the run's usage has them. `pending` is the honest value for a work

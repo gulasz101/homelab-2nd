@@ -230,8 +230,8 @@ def git(cwd, *args):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def make_repo():
-    repo = os.path.join(WORKDIR, "repo")
+def make_repo(name="repo"):
+    repo = os.path.join(WORKDIR, name)
     os.makedirs(os.path.join(repo, "tests"), exist_ok=True)
     with open(os.path.join(repo, "tests", "ac.sh"), "w") as fh:
         fh.write('#!/usr/bin/env bash\necho "AC-1: PASS"\nexit 0\n')
@@ -246,20 +246,36 @@ def make_repo():
                                 stdout=subprocess.PIPE, text=True).stdout.strip()
 
 
-def base_work_order(stub, base_sha, repo):
-    issue = stub.state.add_issue(identifier="GUL-900", title="Add the fixture",
-                                 assigneeAgentId=MAJSTER, projectId=None, status="in_progress")
+def base_work_order(stub, base_sha, repo, identifier="GUL-900", project_id=None):
+    number = identifier.split("-")[-1]
+    branch = "gul-%s-add-the-fixture" % number
+    issue = stub.state.add_issue(identifier=identifier, title="Add the fixture",
+                                 assigneeAgentId=MAJSTER, projectId=project_id, status="in_progress")
     stub.state.doc(issue["id"], "spec", SPEC_BODY)
     ledger = {
-        "version": 1, "workOrder": "GUL-900", "workOrderId": issue["id"],
+        "version": 1, "workOrder": identifier, "workOrderId": issue["id"],
         "title": "Add the fixture", "repo": "gulasz101/homelab-2nd", "base": "main",
-        "baseSha": base_sha, "cwd": repo, "branch": "gul-900-add-the-fixture",
-        "projectId": None, "stages": {}, "fixRounds": 0, "pr": None,
+        "baseSha": base_sha, "cwd": repo, "branch": branch,
+        "projectId": project_id, "stages": {}, "fixRounds": 0, "pr": None,
         "outcome": None, "escalated": None,
     }
     body = "# Factory ledger\n\n```json\n%s\n```\n" % json.dumps(ledger)
     stub.state.doc(issue["id"], "ledger", body)
     return issue
+
+
+def git_out(repo, *args):
+    proc = subprocess.run(["git", "-C", repo] + list(args),
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def branch_sha(repo, branch):
+    return git_out(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch)
+
+
+def head_branch(repo):
+    return git_out(repo, "rev-parse", "--abbrev-ref", "HEAD")
 
 
 def stage_issue(stub, parent, title, status="in_progress"):
@@ -279,6 +295,63 @@ def check(name, condition, detail=""):
 # --------------------------------------------------------------------------
 # cases
 # --------------------------------------------------------------------------
+
+def case_start_cuts_branch(stub):
+    """Gap 1 (GUL-481): start cuts the work order branch, refuses a dirty checkout."""
+    repo, base_sha = make_repo("repo-branch")
+    wo = base_work_order(stub, base_sha, repo, identifier="GUL-902", project_id=PROJECT)
+    branch = "gul-902-add-the-fixture"
+    env = {"FACTORY_REPO": repo}
+
+    with open(os.path.join(repo, "README.md"), "a") as fh:
+        fh.write("someone else's work in progress\n")
+    code, out, raw = run(stub, ["start", "GUL-902"], extra_env=env)
+    check("start: a dirty checkout is refused",
+          code == 1 and any("dirty" in r for r in (out or {}).get("reasons", [])), raw[-400:])
+    check("start: a dirty checkout gets no branch", branch_sha(repo, branch) == "", branch)
+    check("start: a dirty checkout creates no stages",
+          not [i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]],
+          str([i.get("title") for i in stub.state.issues.values()]))
+
+    git(repo, "checkout", "--", "README.md")
+    code, out, raw = run(stub, ["start", "GUL-902"], extra_env=env)
+    check("start: cuts the branch at baseSha and switches to it",
+          code == 0 and branch_sha(repo, branch) == base_sha and head_branch(repo) == branch,
+          "%s %s %s" % (code, branch_sha(repo, branch), head_branch(repo)))
+    ledger_body = stub.state.documents[(wo["id"], "ledger")]["body"]
+    check("start: the ledger records the branch it cut",
+          branch in ledger_body and base_sha in ledger_body, ledger_body[:200])
+
+    code2, out2, raw2 = run(stub, ["start", "GUL-902"], extra_env=env)
+    check("start twice: no-op, branch stays where it is",
+          code2 == 0 and (out2 or {}).get("created") == 0
+          and branch_sha(repo, branch) == base_sha and head_branch(repo) == branch, raw2[-300:])
+
+    # a branch already cut at baseSha but no ledger yet: switch to it, do not fail
+    wo3 = base_work_order(stub, base_sha, repo, identifier="GUL-903", project_id=PROJECT + "-b")
+    reused = "gul-903-add-the-fixture"
+    git(repo, "branch", reused, base_sha)
+    git(repo, "switch", "--detach", base_sha)
+    code3, out3, raw3 = run(stub, ["start", "GUL-903"], extra_env=env)
+    check("start: an existing branch at baseSha is re-used, not re-created",
+          code3 == 0 and head_branch(repo) == reused, raw3[-300:])
+
+    # a branch that exists at another sha is refused, not force-reset
+    wo4 = base_work_order(stub, base_sha, repo, identifier="GUL-904", project_id=PROJECT + "-c")
+    git(repo, "switch", "-c", "gul-904-add-the-fixture", base_sha)
+    with open(os.path.join(repo, "README.md"), "a") as fh:
+        fh.write("another commit\n")
+    git(repo, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-qam", "moved")
+    git(repo, "switch", "main")
+    code4, out4, raw4 = run(stub, ["start", "GUL-904"], extra_env=env)
+    check("start: a branch that moved off baseSha is refused",
+          code4 == 1 and any("already exists" in r for r in (out4 or {}).get("reasons", [])),
+          raw4[-300:])
+
+    # keep these work orders out of the shared-project busy check of later cases
+    for issue in (wo, wo3, wo4):
+        stub.state.issues[issue["id"]]["status"] = "done"
+
 
 def case_start_creates_chain(stub, base_sha, repo):
     wo = base_work_order(stub, base_sha, repo)
@@ -456,6 +529,9 @@ def case_tick(stub, base_sha, repo):
           drift.get("Tester", {}).get("role") is False and drift["Tester"]["expectedRole"] == "tester", drift)
     check("tick: flags the missing guard extension",
           drift.get("Tester", {}).get("extension") is False, drift)
+    check("tick: an entry without a factoryRole is 'guard: not required', not drift",
+          (drift.get("Majster") or {}).get("guard") == "not required"
+          and "role" not in (drift.get("Majster") or {}), drift)
     ledger_path = os.path.join(WORKDIR, "ledger.jsonl")
     rows = [json.loads(l) for l in open(ledger_path).read().splitlines() if l.strip()] if os.path.exists(ledger_path) else []
     check("tick: appends a ledger.jsonl row with the contract fields",
@@ -472,6 +548,7 @@ def main():
         repo, base_sha = make_repo()
         stub = Stub()
         try:
+            case_start_cuts_branch(stub)
             case_start_creates_chain(stub, base_sha, repo)
             case_stop_blocks(stub, base_sha, repo)
             case_missing_key(stub)

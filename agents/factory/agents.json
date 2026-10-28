@@ -26,7 +26,7 @@
     "gate": {
       "agentId": "2df240b5-a5ea-4ebf-81ff-bf96758e8f80",
       "name": "Majster",
-      "factoryRole": "readonly"
+      "factoryRole": null
     }
   }
 }
