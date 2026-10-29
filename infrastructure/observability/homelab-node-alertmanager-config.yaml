@@ -1,7 +1,12 @@
 ---
-# AlertmanagerConfig: route homelab-node alerts to the existing Mattermost
-# webhook via the kube-prometheus-stack Alertmanager, formatted as Slack
-# messages so Mattermost renders them nicely and includes the measured value.
+# AlertmanagerConfig: route homelab-node and omv-storage alerts to the
+# existing Mattermost webhook via the kube-prometheus-stack Alertmanager,
+# formatted as Slack messages so Mattermost renders them nicely and includes
+# the measured value. omv-storage (OMV btrfs/MinIO disk health, GUL-560) rides
+# this route because it is the same escalation - a failing durable store - and
+# because a child route cannot rescue it: Alertmanager ANDs a child's matchers
+# with its parent's, so a route under alertgroup=homelab-node would never be
+# reached by alertgroup=omv-storage. Hence the regex on this route.
 apiVersion: monitoring.coreos.com/v1alpha1
 kind: AlertmanagerConfig
 metadata:
@@ -14,8 +19,8 @@ spec:
     receiver: homelab-node-mattermost
     matchers:
       - name: alertgroup
-        value: homelab-node
-        matchType: "="
+        value: homelab-node|omv-storage
+        matchType: "=~"
   receivers:
     - name: homelab-node-mattermost
       slackConfigs:
