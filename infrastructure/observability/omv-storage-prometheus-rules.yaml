@@ -54,7 +54,7 @@ spec:
             namespace: observability
           annotations:
             summary: "OMV btrfs device {{ $labels.device }} reports {{ $labels.type }} errors"
-            description: "openmediavault btrfs device {{ $labels.device }} ({{ $labels.btrfs_dev_uuid }}) logged {{ $value | humanize }} {{ $labels.type }} errors in 10 minutes. This is data damage, not a transient I/O error — stop writing and check the filesystem before trusting it."
+            description: "openmediavault btrfs device {{ $labels.device }} ({{ $labels.btrfs_dev_uuid }}) logged {{ $value | humanize }} {{ $labels.type }} errors in 10 minutes. This is data damage, not a transient I/O error. Stop writing and check the filesystem before trusting it."
 
         # btrfs remounts a volume read-only when a write fails on a device it
         # cannot recover from. For single-device btrfs (all OMV data volumes)
@@ -83,4 +83,4 @@ spec:
             namespace: observability
           annotations:
             summary: "openmediavault node exporter is unreachable"
-            description: "Prometheus has failed to scrape openmediavault ({{ $labels.instance }}) for 10 minutes. Storage health and the MinIO backend are unobservable — check the host, not just the cluster."
+            description: "Prometheus has failed to scrape openmediavault ({{ $labels.instance }}) for 10 minutes. Storage health and the MinIO backend are unobservable. Check the host, not just the cluster."
