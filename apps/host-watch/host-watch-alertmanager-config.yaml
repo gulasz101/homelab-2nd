@@ -1,0 +1,40 @@
+---
+# Routes host-watch alerts to Mattermost, the same slackConfigs/webhook shape every
+# other namespace uses. The webhook URL is a SOPS-encrypted Secret in this
+# namespace (an AlertmanagerConfig can only reference a Secret next to it).
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: host-watch-mattermost-alerts
+  namespace: host-watch
+  labels:
+    release: prometheus-stack
+spec:
+  route:
+    receiver: host-watch-mattermost
+    groupBy:
+      - alertname
+      - target
+      - component
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+    matchers:
+      - name: namespace
+        value: host-watch
+        matchType: "="
+  receivers:
+    - name: host-watch-mattermost
+      slackConfigs:
+        - apiURL:
+            name: host-watch-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] host-watch: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            host-watch alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

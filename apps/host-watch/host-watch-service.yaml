@@ -1,0 +1,21 @@
+---
+# ClusterIP face: what Prometheus scrapes. The heartbeat ingest is a separate
+# NodePort Service (host-watch-lan-service.yaml) so the two paths can be reasoned
+# about — and firewalled — independently.
+apiVersion: v1
+kind: Service
+metadata:
+  name: host-watch
+  namespace: host-watch
+  labels:
+    app.kubernetes.io/name: host-watch
+    app.kubernetes.io/part-of: host-watch
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: host-watch
+  ports:
+    - name: http
+      port: 9115
+      targetPort: http
+      protocol: TCP
