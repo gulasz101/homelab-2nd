@@ -464,3 +464,41 @@ spec:
             summary: "Hindsight consolidation backlog is growing"
             description: "The consolidation queue has grown by more than 1,500 source memories over the last 6 hours and is above 1,500: consolidation is no longer keeping up with retains, so the lag will keep growing. Find the writing bank (memory_units where consolidated_at is null, grouped by bank_id) and decide whether the feed is legitimate or a loop."
 
+        - alert: HindsightConsolidationFailedRows
+          # THE ALERT FOR "PERMANENTLY FAILED" IS NOT THE SAME AS "BEHIND".
+          #
+          # `hindsight_consolidation_failed` (instrument hindsight.consolidation.failed,
+          # gauge, reproduced from hindsight-api-slim/hindsight_api/metrics.py @ 0.10.3)
+          # counts source memories whose consolidation was marked permanently failed:
+          # the LLM call exhausted its retries *and* adaptive bisection could not
+          # rescue the batch, so the row got `consolidation_failed_at`. Those rows are
+          # excluded from BOTH the backlog gauge above and the reconcile sweep's work
+          # set (banks_needing_consolidation() filters `consolidation_failed_at IS NULL`),
+          # so nothing will ever pick them up again. The facts stay recallable - they
+          # simply never fold into observations, i.e. the knowledge base quietly stops
+          # synthesising them. That state has no other signal: no operation fails, no
+          # backlog grows, no error is logged after the fact.
+          #
+          # Measured 2026-10-29 (GUL-559): 1,633 rows were sitting in that state - 1,609
+          # in hermes-andrzej, mostly the 2026-10-19 OpenViking migration ingest hit by
+          # the 10-23 gpt-oss/FreeLLMAPI schema-rejection outages, 1,468 of them marked
+          # in a single hour. They had been invisible since, because the gauge existed
+          # and nothing alerted on it. Hence: alert on the STOCK, with a zero baseline
+          # (all 1,633 were requeued on 2026-10-29), not on a delta - one row in this
+          # state is already a lost synthesis and the expected value is 0.
+          #
+          # for: 30m, not 5m: rows only land here after retries AND bisection have both
+          # failed, so a 30-minute delay cannot turn a recoverable blip into damage, and
+          # it keeps a single row that failed on a transient route hiccup from paging
+          # instantly if the following consolidation pass would have rescued it.
+          expr: |
+            sum(hindsight_consolidation_failed) > 0
+          for: 30m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight has {{ $value }} memories stuck in consolidation-failed"
+            description: "Source memories are marked permanently consolidation-failed and are excluded from the backlog gauge and from the reconcile sweep - they will never fold into observations on their own. Check llm_requests (scope=consolidation, status=error) for the cause, then requeue the bank with POST /v1/default/banks/{bank_id}/consolidation/recover (clears consolidation_failed_at for the whole bank; batch it if the count is large, because every requeued row returns to the consolidation queue)."
+
