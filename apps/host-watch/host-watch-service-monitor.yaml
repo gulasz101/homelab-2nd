@@ -1,0 +1,21 @@
+---
+# Prometheus scrapes /metrics every 30 s. Two scrapes per probe interval means a
+# 60 s probe is never reported late, and `up{namespace="host-watch"}` doubles as
+# the "the watchdog itself is dead" signal.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: host-watch
+  namespace: host-watch
+  labels:
+    release: prometheus-stack
+    app.kubernetes.io/name: host-watch
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: host-watch
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

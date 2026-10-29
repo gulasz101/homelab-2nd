@@ -1,0 +1,127 @@
+---
+# host-watch probes the platform from outside the Air and receives its heartbeat.
+# See server.py (generated into the host-watch-server ConfigMap) for the logic and
+# ADR-098 for why the monitoring does not live on the host it watches.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: host-watch
+  namespace: host-watch
+  labels:
+    app.kubernetes.io/name: host-watch
+    app.kubernetes.io/part-of: host-watch
+spec:
+  replicas: 1
+  # One replica: the receiver's state (last heartbeat, failure counters) is in
+  # memory. A rolling restart would briefly lose the heartbeat timestamp and could
+  # fire a false "missing heartbeat" — Recreate + a grace window is the honest
+  # trade for a single-node cluster.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: host-watch
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: host-watch
+        app.kubernetes.io/part-of: host-watch
+        app.kubernetes.io/component: watchdog
+      annotations:
+        # Secret-backed volume below is optional; see the note there.
+        homelab.voitech.dev/decision: "ADR-098"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: host-watch
+          image: docker.io/library/python:3.12.7-slim
+          command:
+            - python3
+            - /opt/host-watch/server.py
+          ports:
+            - name: http
+              containerPort: 9115
+              protocol: TCP
+          env:
+            # Three targets, 60 s apart, alert after 3 consecutive failures
+            # (issue deliverable 4). The Hermes API is not here: it binds
+            # 127.0.0.1:8642 on the Air and nothing public fronts it, so it rides
+            # on the heartbeat's per-component health instead.
+            - name: HOSTWATCH_PROBE_TARGETS
+              value: "paperclip=https://paperclip.voitech.dev,chat=https://chat.voitech.dev,status=https://status.voitech.dev"
+            - name: HOSTWATCH_PROBE_INTERVAL
+              value: "60"
+            - name: HOSTWATCH_PROBE_TIMEOUT
+              value: "10"
+            - name: HOSTWATCH_FAIL_THRESHOLD
+              value: "3"
+            - name: HOSTWATCH_HEARTBEAT_GRACE_SECONDS
+              value: "420"
+            - name: HOSTWATCH_TOKEN_FILE
+              value: /etc/host-watch/token/token
+            - name: HOSTWATCH_LISTEN_PORT
+              value: "9115"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          volumeMounts:
+            - name: server
+              mountPath: /opt/host-watch
+              readOnly: true
+            - name: token
+              mountPath: /etc/host-watch/token
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: server
+          configMap:
+            name: host-watch-server
+            defaultMode: 0444
+        # optional: true is load-bearing. The heartbeat token is created by hand
+        # with sops (it has no decryptable ciphertext until Wojtek seeds it), and a
+        # missing Secret must NOT block the whole apps kustomization. Without the
+        # token the receiver still probes and exports
+        # hostwatch_heartbeat_configured 0 — the HostWatchHeartbeatNotConfigured
+        # alert says exactly that, and every beat is rejected (fail closed).
+        - name: token
+          secret:
+            secretName: host-watch-heartbeat-token
+            optional: true
+            defaultMode: 0440
+        - name: tmp
+          emptyDir: {}
