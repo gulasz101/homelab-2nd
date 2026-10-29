@@ -82,6 +82,13 @@ session is a LaunchAgent. Never both, for the same service, at the same time.**
 - **Auto-login is no longer load-bearing for the platform**, only for GUI tooling. That removes
   the worst failure mode of the 2026-10-29 incident: a broken `autoLoginUser` no longer means a
   dark platform, just a dark screen.
+- **Scheduled jobs are the other half of the same problem.** The nightly 03:30
+  `~/.hermes` state backup (`com.gulasz101.hermes-state-backup`) and the factory guard are
+  LaunchAgents as well. Under model A the console session may never exist, so those jobs would
+  simply stop running and the backups would fail silently — worse than the outage that started
+  this. Any **scheduled** host job must become a daemon with `StartCalendarInterval` too. The five
+  services here always need to run; the schedules follow the same rule and are tracked as
+  follow-up work rather than smuggled into this conversion.
 - **A MacBook Air has no IPMI and no PDU.** Every recovery path here is software. Power-cut
   recovery still rests on `autorestart=1` plus working auto-login, which is only *proven* after
   the attended reboot in H2-341.
