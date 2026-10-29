@@ -1,0 +1,36 @@
+# Riff Radar demo — riffradar.voitech.dev (GUL-550, ADR-102)
+# A clickable demo of the riff_radar tab-learning app for Wojtek and his wife.
+# No upstream Helm chart exists (the app ships a Dockerfile and nothing else), so
+# raw manifests delivered by Flux are the sanctioned last resort (guardrail 2);
+# the reasoning is in ADR-102 and the tracking note.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: riffradar
+resources:
+  - namespace.yaml
+  # SOPS-encrypted secrets
+  - riffradar-jwt-secret.sops.yaml
+  - riffradar-minio-backup-creds.sops.yaml
+  - riffradar-tunnel-token.sops.yaml
+  # Private GHCR pull credential (dockerconfigjson, ns riffradar + ns flux-system).
+  # NOT YET PRESENT: the token is minted by Wojtek (card on GUL-550) and the
+  # ciphertext lands in the commit that follows his action. Listed here only when
+  # the file exists - kustomize build fails on a missing resource, and shipping a
+  # placeholder "credential" would be a lie in a public repo.
+  # - riffradar-ghcr-pull-secret.sops.yaml
+  # Data volume + workload
+  - riffradar-data-pvc.yaml
+  - riffradar-deployment.yaml
+  - riffradar-service.yaml
+  # Nightly SQLite + tabs backup to OMV MinIO
+  - riffradar-backup-cronjob.yaml
+  # Public ingress: dedicated tunnel
+  - cloudflared-riffradar-deployment.yaml
+  - riffradar-tunnel-ingress-configmap.yaml
+  # Flux image automation
+  - riffradar-image-policy.yaml
+  - riffradar-image-update-automation.yaml
+  # Observability package (alerts; the app has no /metrics, see ADR-102)
+  - riffradar-prometheus-rules.yaml
+  - riffradar-loki-rule.yaml

@@ -1,0 +1,221 @@
+---
+# Nightly Riff Radar backup -> OMV MinIO, s3://riffradar-backups/riffradar/ (GUL-550).
+#
+# The app's durability is this job, not the PVC: homelab-2nd is rebuildable and
+# the local-path volume dies with the node. Two artefacts per run:
+#
+#   riffradar-<ts>.db        sqlite3 online-backup copy of data/db/riffradar.db
+#   tabs-<ts>.tar.gz         the generated tab files from data/tabs
+#
+# The database copy uses SQLite's own backup API (sqlite3.Connection.backup),
+# never `cp`: the DB runs in WAL mode, so a file copy can capture a half-written
+# page plus a -wal the reader does not replay. The API takes a read lock and
+# produces a single consistent file, which is the only thing worth uploading.
+#
+# The PVC is mounted read-only; uploads use AWS SigV4 from the Python stdlib, the
+# same no-external-binary pattern as karakeep-backup and fitness-data-backup.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: riffradar-backup
+  namespace: riffradar
+  labels:
+    app.kubernetes.io/name: riffradar
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "30 3 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: riffradar
+            app.kubernetes.io/component: backup
+            job_name: riffradar-backup
+        spec:
+          restartPolicy: OnFailure
+          # The PVC is node-local; homelab-2nd is the only node that can mount it.
+          nodeSelector:
+            kubernetes.io/hostname: homelab-2nd
+          containers:
+            - name: backup
+              image: python:3.13-alpine
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  echo "Starting Riff Radar backup"
+                  python3 - <<'PY'
+                  import os, sqlite3, tarfile, tempfile, datetime, time
+                  import urllib.request, urllib.parse, hashlib, hmac
+                  import xml.etree.ElementTree as ET
+
+                  bucket = 'riffradar-backups'
+                  prefix = 'riffradar/'
+                  endpoint = 'http://openmediavault.local:9000'
+                  region = 'us-east-1'
+                  service = 's3'
+                  access_key = os.environ['RIFFRADAR_MINIO_ACCESS_KEY']
+                  secret_key = os.environ['RIFFRADAR_MINIO_SECRET_KEY']
+                  db_path = '/data/db/riffradar.db'
+                  tabs_dir = '/data/tabs'
+                  retention_days = 30
+
+                  if not os.path.exists(db_path):
+                      raise SystemExit(f'{db_path} is missing - wrong PVC or the app never started; refusing to upload nothing')
+
+                  def sha256(data):
+                      return hashlib.sha256(data if isinstance(data, bytes) else data.encode('utf-8')).hexdigest()
+
+                  def sign(key, msg):
+                      return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+
+                  def get_signature_key(secret, date_stamp, region, service):
+                      k_date = sign(('AWS4' + secret).encode('utf-8'), date_stamp)
+                      k_region = sign(k_date, region)
+                      k_service = sign(k_region, service)
+                      return sign(k_service, 'aws4_request')
+
+                  def signed_request(method, path, payload=b'', query='', payload_hash=None, content_length=None):
+                      t = datetime.datetime.now(datetime.timezone.utc)
+                      date_stamp = t.strftime('%Y%m%d')
+                      amz_date = t.strftime('%Y%m%dT%H%M%SZ')
+                      if isinstance(payload, str):
+                          payload = payload.encode('utf-8')
+                      if payload_hash is None:
+                          payload_hash = sha256(payload)
+                      host = 'openmediavault.local:9000'
+                      headers = {
+                          'host': host,
+                          'x-amz-content-sha256': payload_hash,
+                          'x-amz-date': amz_date,
+                      }
+                      if method in ('PUT', 'POST'):
+                          if content_length is None:
+                              content_length = len(payload)
+                          headers['content-length'] = str(content_length)
+                      header_keys = sorted(headers.keys())
+                      signed_headers = ';'.join(header_keys)
+                      canonical_request = '\n'.join([
+                          method,
+                          urllib.parse.quote(path, safe='/'),
+                          query,
+                          ''.join(f'{k}:{headers[k]}\n' for k in header_keys),
+                          signed_headers,
+                          payload_hash,
+                      ])
+                      credential_scope = f'{date_stamp}/{region}/{service}/aws4_request'
+                      string_to_sign = '\n'.join([
+                          'AWS4-HMAC-SHA256',
+                          amz_date,
+                          credential_scope,
+                          sha256(canonical_request.encode('utf-8')),
+                      ])
+                      signing_key = get_signature_key(secret_key, date_stamp, region, service)
+                      signature = hmac.new(signing_key, string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+                      headers['Authorization'] = (
+                          f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, '
+                          f'SignedHeaders={signed_headers}, Signature={signature}'
+                      )
+                      url = f'{endpoint}{path}'
+                      if query:
+                          url = f'{url}?{query}'
+                      req = urllib.request.Request(url, data=payload, method=method, headers=headers)
+                      return urllib.request.urlopen(req, timeout=120)
+
+                  def upload(local_path, key):
+                      size = os.path.getsize(local_path)
+                      h = hashlib.sha256()
+                      with open(local_path, 'rb') as f:
+                          for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                              h.update(chunk)
+                      file_hash = h.hexdigest()
+                      for attempt in range(3):
+                          try:
+                              with open(local_path, 'rb') as f:
+                                  resp = signed_request('PUT', f'/{bucket}/{urllib.parse.quote(key, safe="/")}', f,
+                                                        payload_hash=file_hash, content_length=size)
+                              print(f'Uploaded {key} ({size} bytes, HTTP {resp.status})')
+                              return
+                          except Exception as e:
+                              print(f'Upload attempt {attempt + 1} for {key} failed: {e}')
+                              if attempt == 2:
+                                  raise
+                              time.sleep(2 ** attempt)
+
+                  ts = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')
+                  tmp = tempfile.mkdtemp()
+
+                  # Consistent copy first (WAL-safe), then upload it.
+                  snap = os.path.join(tmp, f'riffradar-{ts}.db')
+                  src = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+                  dst = sqlite3.connect(snap)
+                  with dst:
+                      src.backup(dst)
+                  dst.close()
+                  src.close()
+                  upload(snap, prefix + f'riffradar-{ts}.db')
+
+                  # Tab files: a tar of a directory the app only ever appends to.
+                  if os.path.isdir(tabs_dir) and any(os.scandir(tabs_dir)):
+                      tabs_tar = os.path.join(tmp, f'tabs-{ts}.tar.gz')
+                      with tarfile.open(tabs_tar, 'w:gz') as tar:
+                          tar.add(tabs_dir, arcname='tabs')
+                      upload(tabs_tar, prefix + f'tabs-{ts}.tar.gz')
+                  else:
+                      print('data/tabs is empty - nothing to archive this run')
+
+                  # Retention: drop objects older than retention_days.
+                  list_query = urllib.parse.urlencode({'list-type': '2', 'prefix': prefix}, quote_via=urllib.parse.quote)
+                  list_resp = signed_request('GET', f'/{bucket}', b'', list_query)
+                  root = ET.fromstring(list_resp.read())
+                  ns = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+                  cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=retention_days)
+                  removed = 0
+                  for contents in root.findall('s3:Contents', ns):
+                      key_el = contents.find('s3:Key', ns)
+                      if key_el is None:
+                          continue
+                      key = key_el.text
+                      last_mod = datetime.datetime.fromisoformat(contents.find('s3:LastModified', ns).text.replace('Z', '+00:00'))
+                      if last_mod < cutoff:
+                          signed_request('DELETE', f'/{bucket}/{urllib.parse.quote(key, safe="/")}')
+                          removed += 1
+                          print(f'Removed old backup: {key}')
+                  print(f'Retention cleanup complete, removed {removed} objects')
+                  PY
+                  echo "Riff Radar backup complete"
+              env:
+                - name: RIFFRADAR_MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: riffradar-minio-backup-creds
+                      key: ACCESS_KEY_ID
+                - name: RIFFRADAR_MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: riffradar-minio-backup-creds
+                      key: ACCESS_SECRET_KEY
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 20m
+                  memory: 64Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: riffradar-data
+                readOnly: true

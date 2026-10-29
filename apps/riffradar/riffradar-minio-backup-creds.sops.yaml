@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: riffradar-minio-backup-creds
+    namespace: riffradar
+type: Opaque
+stringData:
+    ACCESS_KEY_ID: ENC[AES256_GCM,data:RUdwt+z1NxjCogu9ZdJOIA==,iv:Uw3FeY0guWySEYN/yC/Zh7oljH7AtiSCLsleYpYZxh8=,tag:8KAHNJc4/37G0v9j5k3qKA==,type:str]
+    ACCESS_SECRET_KEY: ENC[AES256_GCM,data:wDLOy8oR9hr2TsfEIp4wfYgBY5JjoBvMEKg+utJHq48CwOsbeh7BWw==,iv:e/p9ThtYtL0ZzNJf7ksK5RUfirNfvDfitNJLeoH5TCQ=,tag:iYGii7M84lMcyA1cm1BS6w==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBaSWRQWHJuaHBSbzZxVmtn
+            WXUvMTNFeGRReHlmRFJrVjJqMlhNMnpHakF3CnJTRjFkYVloQmFRVGZ3ejUydE9o
+            Vmc4L1JoRUxXWHYzV0lGNWlrb0t2WlUKLS0tIGRrUVlCMDJXcDNRcW13bjF4RUta
+            elJ6eU1ETWp3VTcyTEhWR1llbEdNd0kKaRajJmtq1mLfSnUf+cdXc3u2LurWEG7x
+            6jw94i2YolLW2n1qHpe8UUhFAM3kWrm7qLXhT8LhUTEpWcF31yIsZA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-29T12:57:32Z"
+    mac: ENC[AES256_GCM,data:qUzLjaH3UODaXx/iqOElYjfFsZRLrQCluphIDA/jaOaHyydSGiK/aaiTT/MpX2jwVDKnoKskrvdoOOJtq3MFSJ6GF3Nz5vez4bfh+KJcBdE3cDgH3OChKtF30hs13thIfUHELjjEkPzbgjIpAyoxGXG0qC1nfOTrCPKuxMkRqM8=,iv:WCkV/TBFufXAhd9ux8vgbtAXu3KixahQYTb5v/n/Rm0=,tag:OchM21PqJ/86ju3BpJFSmg==,type:str]
+    version: 3.13.3

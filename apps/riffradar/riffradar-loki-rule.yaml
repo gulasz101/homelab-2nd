@@ -1,0 +1,38 @@
+---
+# Loki Ruler rule for Riff Radar app errors (GUL-550, guardrail 6).
+# Container logs arrive from the OTel Collector DaemonSet (filelog receiver ->
+# otlphttp/loki) with k8s_namespace_name / k8s_container_name labels. The rule
+# lives in the observability namespace because that is where the Loki ruler
+# sidecar watches for ConfigMaps labelled loki_rule="true".
+#
+# Matched on failure indicators only — never bare feature keywords
+# (homelab-log-ingestion lesson: status-digit regexes page on timings).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: riffradar-loki-rules
+  namespace: observability
+  labels:
+    loki_rule: "true"
+data:
+  riffradar-errors.yaml: |-
+    groups:
+      - name: riffradar.app-errors
+        interval: 1m
+        rules:
+          - alert: RiffRadarAppErrors
+            expr: |
+              sum by (pod, k8s_namespace_name) (
+                count_over_time(
+                  {k8s_namespace_name="riffradar", k8s_container_name="riffradar"}
+                    |~ "Error:|ERROR|FATAL|Unhandled|SQLITE_|EADDRINUSE|ECONNREFUSED"
+                  [5m]
+                )
+              ) > 3
+            for: 5m
+            labels:
+              severity: warning
+              namespace: riffradar
+            annotations:
+              summary: "Riff Radar is logging errors"
+              description: "{{ $labels.pod }} logged more than 3 error-type lines in 5 minutes — check for a SQLite write failure, a failed migration or a JWT_SECRET problem."

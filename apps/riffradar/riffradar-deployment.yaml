@@ -1,0 +1,114 @@
+---
+# Riff Radar demo API + SPA (GUL-550, ADR-102).
+#
+# One replica and strategy Recreate, on purpose: the app is a single Bun process
+# whose state is a SQLite file on an RWO local-path volume. Two writers or a
+# rolling update (two pods, one SQLite file, two schema migration runs) is how
+# you corrupt a demo. Recreate means "old pod gone, then new pod" — a few seconds
+# of 502 at the Cloudflare edge, and one writer at any time.
+#
+# The image runs as root by default (no USER in the Dockerfile). We force a
+# non-root uid here and give the process HOME=/tmp so Bun has somewhere to write
+# its cache; the PVC is created 0777 by the local-path provisioner, so uid 1000
+# can write data/db and data/tabs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: riffradar
+  namespace: riffradar
+  labels:
+    app.kubernetes.io/name: riffradar
+    app.kubernetes.io/component: app
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: riffradar
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: riffradar
+        app.kubernetes.io/component: app
+    spec:
+      # Private GHCR package (ADR-101): the kubelet needs the dockerconfigjson
+      # Secret, encrypted with SOPS in riffradar-ghcr-pull-secret.sops.yaml.
+      imagePullSecrets:
+        - name: riffradar-ghcr-pull
+      # local-path PVC is node-local; the backup Job pins the same node.
+      nodeSelector:
+        kubernetes.io/hostname: homelab-2nd
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: riffradar
+          image: ghcr.io/gulasz101/riff_radar:0.1.0 # {"$imagepolicy": "flux-system:riffradar"}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: HOME
+              value: /tmp
+            - name: DATABASE_URL
+              value: file:/data/db/riffradar.db
+            - name: TAB_FILES_DIR
+              value: /data/tabs
+            # First boot only: seeds the demo challenge. Left on because a
+            # rebuild from an empty PVC has to come up demo-ready; the seed is
+            # idempotent in the app (GUL-549 smoke ran it twice).
+            - name: SEED_ON_START
+              value: "true"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: riffradar-jwt
+                  key: JWT_SECRET
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: riffradar-data
+        - name: tmp
+          emptyDir: {}
