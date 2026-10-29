@@ -212,6 +212,18 @@ class Api:
     def create_interaction(self, issue_id, body):
         return self.post(f"/issues/{issue_id}/interactions", body)
 
+    def interactions(self, issue_id):
+        payload = self.get(f"/issues/{issue_id}/interactions")
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            return payload.get("interactions") or []
+        return []
+
+    def withdraw_interaction(self, issue_id, interaction_id, reason=""):
+        body = {"reason": reason} if reason else {}
+        return self.post(f"/issues/{issue_id}/interactions/{interaction_id}/withdraw", body)
+
     def runs(self, issue_id):
         try:
             payload = self.get(f"/issues/{issue_id}/runs")

@@ -31,9 +31,11 @@ Design rules:
   `gh` binary comes from env `FACTORY_GH` (default `gh`) so tests can stub it.
 - Since GUL-439 the three orchestration subcommands — `start`, `decide`, `tick`
   — do talk to Paperclip, and only through `pc.py` next to this file (stdlib
-  `urllib`). They never call `gh`, never `git push` themselves, and never read
-  the board token file (GUL-297); auth is `PAPERCLIP_API_KEY` and
-  `PAPERCLIP_RUN_ID` from the environment or the subcommand exits 2.
+  `urllib`). They never `git push` themselves and never read the board token
+  file (GUL-297); auth is `PAPERCLIP_API_KEY` and `PAPERCLIP_RUN_ID` from the
+  environment or the subcommand exits 2. Since GUL-553 `tick` also reads `gh pr
+  view` — one read-only call per work order waiting on a merge, through the same
+  `FACTORY_GH` binary.
   `PAPERCLIP_API_URL` is the base; when that base answers like the edge
   (Cloudflare 1010, or nothing at all) the client falls back once to
   `PAPERCLIP_API_FALLBACK_URL` (default `http://127.0.0.1:3100/api`) and stays
@@ -266,8 +268,8 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   work already in git; the same `decide` is re-runnable because `commit` hands
   back HEAD for this stage and a recorded `pr` is reused instead of opening a
   second PR. Side effects that are not the record — the green stage's work
-  product, the gate's merge card and the work order's `in_review` — run after the
-  `done` PATCH. Request-changes writes the ledger before its `in_progress` PATCH
+  product, the gate's merge monitor and the work order's `in_review` — run after
+  the `done` PATCH. Request-changes writes the ledger before its `in_progress` PATCH
   for the same reason: the `attempts` counter that escalates on the third
   failure lives there.
 - Fail → `PATCH {"status": "in_progress", "comment": …}` (request changes;
@@ -276,27 +278,52 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
 - verify with a non-empty `blockingConfirmed` → approve it and open a fix round
   (`[green r2]` → `[review r2]` → `[verify r2]`, chained the same way), confirmed
   findings pasted into the fix issue. At most 2 fix rounds.
-- gate pass → a `request_confirmation` interaction on the work order
-  (`resolverPolicy: human_only`, "Merge PR #N?") plus `in_review`. Wojtek merges.
+- gate pass → **no card** (GUL-553). The work order goes `in_review` with a
+  comment that names the PR and says merge it on GitHub, plus an issue monitor
+  (`executionPolicy.monitor`: `kind: external_service`, `serviceName: github pull
+  request`, `nextCheckAt` = now + 1h, `maxAttempts` 72). That monitor is what
+  makes `in_review` a real wait; the old `request_confirmation` card merged
+  nothing and only looked like a button. Wojtek merges on GitHub, `tick --apply`
+  notices it.
 - **Escalate** on a third request-changes for one stage, or when a third fix round
   would start: work order `blocked` with `"executionPolicy": null` in the same
   PATCH (otherwise Paperclip reads `blocked` as request-changes), one sentence
   why, recorded in the ledger, no more retries.
 - Without `--apply` nothing is written: it prints the decision only.
 
-**`tick`** — changes nothing in Paperclip. One line per open work order: stage,
+**`tick [--apply]`** — read-only without `--apply`. One line per open work order: stage,
 agent, age, rounds, and flags (`idle>2h`, `no-run`, `runs-unknown`,
-`recovery-hold`, `STOP`). Config drift: every factory agent's
+`recovery-hold`, `STOP`, `pr-open`, `pr-merged`, `pr-closed`, `merge-unknown`). Config drift: every factory agent's
 `adapterConfig.extraArgs` must carry the guard extension and its stage's
 `--factory-role`; the agents API returns the key, so it is parsed in code and
 only names and booleans are printed. An entry whose `factoryRole` is `null` runs
 without the guard — in phase 2 that is the `gate` entry, because Majster has no
 `extraArgs` and the `readonly` role would refuse `python3 … decide` — so `tick`
 skips the drift check there and prints `guard: not required` instead of reporting
-Majster as drift on every sweep. Appends one line per open work order to
+Majster as drift on every sweep.
+
+**`tick --apply` — the merge watch (GUL-553).** For every open work order whose
+ledger has a `pr.number`, whose `gate` stage issue is `done`, and whose ledger has
+no `merge` record, `tick` reads
+`gh pr view <n> --repo OWNER/REPO --json state,mergedAt,mergeCommit` and settles it:
+
+- `MERGED` → withdraw any leftover "Merge PR #N?" card, write `merge: {state,
+  sha, at}` and `outcome: merged` to the ledger, **then** PATCH the work order
+  `{"status": "done", "executionPolicy": null, "comment": "PR #N is merged in
+  `<sha>` (<mergedAt>)"}`. Ledger first, status second, same rule as `decide`.
+- `OPEN` → re-arm the monitor (`nextCheckAt` = now + 1h) and change nothing else.
+- `CLOSED` without a merge → ledger `outcome: closed`, work order `blocked` with
+  one sentence: *PR #N was closed without a merge, so nothing shipped.*
+- `gh` errors → the line carries `merge-unknown`, the reason goes to stderr, and
+  nothing is written. One unreadable PR never stops the sweep.
+
+`--apply` is ignored while the STOP flag exists: a stopped factory writes nothing.
+
+Appends one line per open work order to
 `~/paperclip-agents/majster/factory/ledger.jsonl`: `time, workOrder, stage,
-agent, model, outcome (pass|fail|escalate|pending), round, durationSec`, plus
-`tokens` when the run's usage has them. `pending` is the honest value for a work
+agent, model, outcome (pass|fail|escalate|pending|merged|closed), round,
+durationSec`, plus `tokens` when the run's usage has them and `merge` when the
+work order was settled in this sweep. `pending` is the honest value for a work
 order whose current stage has no recorded decision yet — the alternative was
 lying with `pass`.
 

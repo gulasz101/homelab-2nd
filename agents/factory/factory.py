@@ -429,6 +429,120 @@ def parse_pr_ref(ref: str):
 
 
 # --------------------------------------------------------------------------
+# merge watch (GUL-553): the gate raises no card; the tick reads the PR
+# --------------------------------------------------------------------------
+
+MERGE_MONITOR_HOURS = 1
+MERGE_MONITOR_ATTEMPTS = 72  # one tick an hour: three days of patience
+
+
+def monitor_payload(pr: dict, hours: int = MERGE_MONITOR_HOURS) -> dict:
+    """The issue monitor that makes `in_review` a real wait after the gate.
+
+    Paperclip only accepts `kind: external_service`, and it redacts
+    `externalRef` before storing it, so the PR number rides in `notes` and the
+    clickable link is the `pull_request` work product from the green stage.
+    """
+    import datetime
+    next_check = (datetime.datetime.now(datetime.timezone.utc)
+                  + datetime.timedelta(hours=hours))
+    return {
+        "kind": "external_service",
+        "serviceName": "github pull request",
+        "externalRef": pr.get("url") or "PR #%s" % pr.get("number"),
+        "nextCheckAt": next_check.isoformat(timespec="seconds"),
+        "maxAttempts": MERGE_MONITOR_ATTEMPTS,
+        "notes": "waiting for the merge of PR #%s on github" % pr.get("number"),
+    }
+
+
+def pr_merge_view(repo: str, number) -> dict:
+    """`gh pr view <n> --json state,mergedAt,mergeCommit`: the merge is the signal."""
+    view = gh_json(["pr", "view", str(number), "--repo", repo,
+                    "--json", "state,mergedAt,mergeCommit"])
+    if not isinstance(view, dict):
+        raise SetupError("gh pr view %s returned no object" % number)
+    return view
+
+
+def withdraw_merge_cards(api, work_order_id: str) -> int:
+    """Withdraw leftover "Merge PR #N?" cards (GUL-553).
+
+    The gate no longer raises one, so this only cleans up cards left by a run
+    from before the change, or by a decide that was interrupted mid-flight.
+    """
+    import pc
+    try:
+        cards = api.interactions(work_order_id)
+    except pc.ApiError:
+        return 0
+    withdrawn = 0
+    for card in cards or []:
+        if card.get("status") != "pending":
+            continue
+        payload = card.get("payload") or {}
+        if card.get("kind") != "request_confirmation":
+            continue
+        title = str(card.get("title") or payload.get("title") or "")
+        prompt = str(payload.get("prompt") or "")
+        if not (title.startswith("Merge PR") or prompt.startswith("Merge PR")):
+            continue
+        try:
+            api.withdraw_interaction(work_order_id, card["id"],
+                                     "the factory now reads the merge from github")
+            withdrawn += 1
+        except pc.ApiError:
+            continue
+    return withdrawn
+
+
+def settle_merge(api, work_order: dict, ledger: dict, pr: dict, view: dict,
+                 apply: bool) -> str:
+    """Move a work order on after a merge, or say why it cannot. Returns the
+    merge state it saw: `merged`, `closed` or `open`."""
+    number = pr.get("number")
+    state = str(view.get("state") or "").upper()
+    merged_at = view.get("mergedAt")
+    commit = ((view.get("mergeCommit") or {}) or {}).get("oid")
+
+    if state == "MERGED":
+        if not apply:
+            return "merged"
+        withdrawn = withdraw_merge_cards(api, work_order["id"])
+        ledger["merge"] = {"state": "merged", "sha": commit, "at": merged_at}
+        ledger["outcome"] = "merged"
+        save_ledger(api, work_order["id"], ledger, "merged PR #%s" % number)
+        note = ""
+        if withdrawn:
+            note = " %d leftover merge card(s) withdrawn." % withdrawn
+        api.patch_issue(work_order["id"], {
+            "status": "done", "executionPolicy": None,
+            "comment": ("PR #%s is merged in `%s` (%s). No card: the factory read "
+                        "the merge on GitHub and moved this work order on.%s"
+                        % (number, commit or "?", merged_at or "?", note)),
+        })
+        return "merged"
+
+    if state == "CLOSED":
+        if not apply:
+            return "closed"
+        ledger["merge"] = {"state": "closed", "sha": None, "at": None}
+        ledger["outcome"] = "closed"
+        save_ledger(api, work_order["id"], ledger, "PR #%s closed without a merge" % number)
+        api.patch_issue(work_order["id"], {
+            "status": "blocked", "executionPolicy": None,
+            "comment": ("PR #%s was closed without a merge, so nothing shipped. "
+                        "Reopen it or start a new work order." % number),
+        })
+        return "closed"
+
+    if apply:
+        # still open: keep the wait a real path by re-arming the monitor
+        api.patch_issue(work_order["id"], {"executionPolicy": {"monitor": monitor_payload(pr)}})
+    return "open"
+
+
+# --------------------------------------------------------------------------
 # subcommands
 # --------------------------------------------------------------------------
 
@@ -1390,20 +1504,21 @@ def cmd_factory_decide(args) -> int:
     else:  # gate
         pr = ledger.get("pr") or {}
 
-        def _raise_merge_card(_pr=pr, _wo=work_order["id"]):
-            # the card the gate exists to raise — after the ledger, so a lost
-            # write can never leave a "Merge PR #None?" card on the board.
-            api.create_interaction(_wo, {
-                "kind": "request_confirmation",
-                "resolverPolicy": "human_only",
-                "title": "Merge PR #%s?" % _pr.get("number"),
-                "summary": "The factory gate passed. Wojtek merges.",
-                "payload": {"version": 1, "prompt": "Merge PR #%s?" % _pr.get("number"),
-                            "detailsMarkdown": _pr.get("url") or ""},
+        def _watch_merge(_pr=pr, _wo=work_order["id"]):
+            # No card (GUL-553): a card that merges nothing only teaches the
+            # board to click through cards. The work order instead waits
+            # `in_review` on a real issue monitor, and `tick` reads the PR with
+            # `gh` and moves the work order on when the merge lands.
+            api.patch_issue(_wo, {
+                "status": "in_review",
+                "executionPolicy": {"monitor": monitor_payload(_pr)},
+                "comment": ("gate passed. Merge PR #%s on GitHub: %s\n\n"
+                            "There is no card to accept: `factory tick` reads the PR "
+                            "and moves this work order on by itself."
+                            % (_pr.get("number"), _pr.get("url") or "(no url recorded)")),
             })
-            api.patch_issue(_wo, {"status": "in_review"})
 
-        after_ledger.append(_raise_merge_card)
+        after_ledger.append(_watch_merge)
 
     ledger["outcome"] = "pass"
     try:
@@ -1445,6 +1560,9 @@ def cmd_factory_tick(args) -> int:
     company = os.environ.get("PAPERCLIP_COMPANY_ID") or args.company
     cfg = load_agent_config()
     stop = os.path.exists(_stop_file())
+    # tick is read-only unless Majster asks to apply, and never applies while
+    # the factory is stopped (GUL-553).
+    apply = bool(getattr(args, "apply", False)) and not stop
 
     lines = []
     rows = []
@@ -1496,6 +1614,23 @@ def cmd_factory_tick(args) -> int:
                 flags.append("recovery-hold")
         if stop:
             flags.append("STOP")
+        # the merge watch (GUL-553): a gate-passed work order waits `in_review`
+        # for a merge on GitHub, and this is what notices it.
+        merge_state = None
+        pr = ledger.get("pr") or {}
+        gate_entry = stages.get("gate") or {}
+        if pr.get("number") and not ledger.get("merge") and gate_entry.get("issueId"):
+            gate_issue = api.issue(gate_entry["issueId"])
+            if gate_issue and gate_issue.get("status") == "done":
+                try:
+                    view = pr_merge_view(ledger.get("repo") or "", pr["number"])
+                except SetupError as exc:
+                    flags.append("merge-unknown")
+                    sys.stderr.write("factory tick: %s: %s\n"
+                                     % (item.get("identifier"), str(exc)[:200]))
+                else:
+                    merge_state = settle_merge(api, item, ledger, pr, view, apply)
+                    flags.append("pr-%s" % merge_state)
         attempts = 0
         if current_key and stages.get(current_key):
             attempts = int(stages[current_key].get("attempts", 0))
@@ -1512,6 +1647,8 @@ def cmd_factory_tick(args) -> int:
             "round": (stages.get(current_key) or {}).get("round", 1) if current_key else 0,
             "durationSec": int(age * 3600),
         })
+        if merge_state:
+            rows[-1]["merge"] = merge_state
         if runs:
             usage = None
             for run in runs:
@@ -1633,6 +1770,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_factory_decide)
 
     s = sub.add_parser("tick", parents=[common])
+    s.add_argument("--apply", action="store_true",
+                   help="settle merges: withdraw leftover cards, move a merged or closed work order on")
     s.set_defaults(fn=cmd_factory_tick)
     return p
 
