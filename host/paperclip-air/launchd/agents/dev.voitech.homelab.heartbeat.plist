@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  heartbeat — USER LaunchAgent, on purpose (ADR-098, H2-336).
+
+  This is the one job in the tree that must NOT survive a session loss. The
+  off-host receiver (apps/host-watch in k3s) treats a silent heartbeat as a dead
+  host; if this ran in the system domain it would keep ticking through a logout
+  and hide the exact failure that took the platform down for two hours on
+  2026-10-29. Session loss has to look like host loss.
+
+  No UserName key: it runs as the console user, in gui/<uid>, and dies with it.
+  Install as the appliance user, not with sudo:
+    cp launchd/agents/dev.voitech.homelab.heartbeat.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.voitech.homelab.heartbeat.plist
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.voitech.homelab.heartbeat</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/paperclip/bin/homelab-heartbeat.sh</string>
+	</array>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>60</integer>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>/Users/paperclip</string>
+	</dict>
+
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>/Users/paperclip/Library/Logs/homelab/heartbeat.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/paperclip/Library/Logs/homelab/heartbeat.err.log</string>
+</dict>
+</plist>
