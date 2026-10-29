@@ -73,9 +73,15 @@ allowlist) in front of it, not a public hostname.**
 it with a SOPS-encrypted `kubernetes.io/dockerconfigjson` Secret present twice —
 in `riffradar` for the kubelet and in `flux-system` for
 image-reflector-controller, which can only read a `secretRef` from its own
-namespace. The token is a GitHub PAT with `read:packages` and nothing else; it is
-minted by the owner and encrypted in place, never pasted into a file, a comment or
-a chat.
+namespace. The token is a GitHub PAT with `read:packages` and nothing else
+(verified from the `x-oauth-scopes` header), minted by the owner and encrypted in
+place, never pasted into a file, a comment or a chat.
+
+**This per-service Secret is a stop-gap.** ADR-103 (GUL-579, in review) moves the
+platform to one shared `ghcr-pull` credential; when that lands, riffradar consumes
+that Secret (`scripts/ghcr-pull-credential.sh add riffradar`) and this file plus
+its kustomization entry are deleted. One credential, N namespaces — not N
+credentials.
 
 **4. Observability is honest about what does not exist.**
 
