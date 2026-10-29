@@ -1,0 +1,37 @@
+---
+# Route riffradar alerts to the homelab-2nd-alerts channel in Mattermost.
+#
+# Without this file the PrometheusRule fires into Alertmanager's default route,
+# whose receiver is 'null' — the alerts would be evaluated and thrown away. The
+# namespace-scoped AlertmanagerConfig is the route (same pattern as
+# fitness/karakeep/opengist): match on the `namespace` label our rules carry and
+# point it at this service's own incoming webhook, stored SOPS-encrypted.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: riffradar-mattermost-alerts
+  namespace: riffradar
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: riffradar-mattermost
+    matchers:
+      - name: namespace
+        value: riffradar
+        matchType: "="
+  receivers:
+    - name: riffradar-mattermost
+      slackConfigs:
+        - apiURL:
+            name: riffradar-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] riffradar: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            riffradar alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

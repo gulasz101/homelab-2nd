@@ -1,0 +1,77 @@
+---
+# Riff Radar availability + backup alerts (GUL-550, guardrail 6).
+#
+# Honest partial: the app exposes no /metrics endpoint, so there is nothing to
+# scrape and no app-level SLI here. These rules watch what the platform knows:
+# is the single replica Ready, does the nightly backup run, and does it succeed.
+# App metrics are a later work order (ADR-102 "when to revisit").
+#
+# PrometheusRule selector label is 'prometheus-stack' (NOT 'kube-prometheus-stack'
+# — the rules and the AlertmanagerConfig selectors differ; verified gotcha).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: riffradar-alerts
+  namespace: riffradar
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: riffradar.availability
+      interval: 30s
+      rules:
+        - alert: RiffRadarPodNotReady
+          expr: |
+            kube_pod_status_ready{namespace="riffradar", condition="true", pod=~"riffradar-.*"} == 0
+          for: 10m
+          labels:
+            severity: critical
+            namespace: riffradar
+          annotations:
+            summary: "Riff Radar pod not Ready for 10 minutes"
+            description: "{{ $labels.pod }} has been not-Ready for 10 minutes. Single replica behind the riffradar tunnel — https://riffradar.voitech.dev is serving a Cloudflare 502."
+        - alert: RiffRadarRestartLoop
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="riffradar", container="riffradar"}[30m]) > 2
+          for: 5m
+          labels:
+            severity: warning
+            namespace: riffradar
+          annotations:
+            summary: "Riff Radar is restarting repeatedly"
+            description: "{{ $labels.pod }} restarted more than twice in 30 minutes — check the last logs for a migration or JWT_SECRET failure."
+
+    - name: riffradar.backup
+      interval: 60s
+      rules:
+        - alert: RiffRadarBackupJobFailed
+          expr: |
+            kube_job_status_failed{namespace="riffradar", job_name=~"riffradar-backup-.+"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            namespace: riffradar
+          annotations:
+            summary: "Riff Radar backup job failed"
+            description: "{{ $labels.job_name }} has failed pods — the SQLite copy or the MinIO upload did not complete. The demo data has no fresh recovery copy."
+        - alert: RiffRadarBackupStale
+          # Schedule is 03:30 daily; 30h gives a day of slack.
+          expr: |
+            (time() - kube_cronjob_status_last_successful_time{namespace="riffradar", cronjob="riffradar-backup"} > 30 * 3600)
+          for: 1h
+          labels:
+            severity: warning
+            namespace: riffradar
+          annotations:
+            summary: "Riff Radar backup has not succeeded recently"
+            description: "No successful riffradar-backup run in 30 hours (daily 03:30). Nothing fresh in s3://riffradar-backups/riffradar/."
+        - alert: RiffRadarBackupCronJobMissing
+          expr: |
+            absent(kube_cronjob_status_last_successful_time{namespace="riffradar", cronjob="riffradar-backup"})
+          for: 1h
+          labels:
+            severity: warning
+            namespace: riffradar
+          annotations:
+            summary: "Riff Radar backup CronJob not reporting"
+            description: "The riffradar-backup CronJob metric is absent — deleted, renamed or suspended."
