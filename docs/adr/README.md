@@ -103,6 +103,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-100 | A factory work order on riff_radar is an OpenSpec change (the change dir is the spec, the Paperclip `spec` document is the envelope) | Proposed | 2026-10-29 |
 | ADR-102 | A demo of one app is not a database platform: Riff Radar runs SQLite on `local-path` with a nightly MinIO backup, behind Cloudflare Access | Accepted | 2026-10-29 |
 | ADR-105 | DeepSeek's own API joins LiteLLM as the `-ds` family, and `deepseek-v4.1-flash-1017` is served by the upstream id `deepseek-flash` | Accepted | 2026-10-29 |
+| ADR-106 | The whole agent fleet runs on `deepseek-v4.1-flash-1017-ds` (DeepSeek's own API) while the Go and Ollama subscription quotas are walled | Accepted | 2026-10-29 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,
