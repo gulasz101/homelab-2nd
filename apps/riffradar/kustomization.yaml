@@ -34,3 +34,5 @@ resources:
   # Observability package (alerts; the app has no /metrics, see ADR-102)
   - riffradar-prometheus-rules.yaml
   - riffradar-loki-rule.yaml
+  - riffradar-alertmanager-config.yaml
+  - riffradar-mattermost-webhook-url.sops.yaml
