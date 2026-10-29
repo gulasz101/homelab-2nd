@@ -1,0 +1,86 @@
+---
+# PrometheusRule: storage-health alerts for the openmediavault host.
+#
+# OMV is the only durable store in the homelab (btrfs volumes + MinIO), and it
+# sits outside Kubernetes, so none of the chart's default rules cover it. These
+# four alerts close the gap GUL-558 exposed: /dev/sdc was returning unreadable
+# sectors from 2026-10-28 while MinIO took the only drive offline for 30 s at a
+# time, every S3 write failed intermittently, and nothing paged anyone. The
+# metrics were scraped by job=omv-node the whole time; only the rules were
+# missing.
+#
+# Labels follow homelab-node-prometheus-rules.yaml:
+#   release: prometheus-stack  -> the Prometheus ruleSelector matchLabels
+#   alertgroup: omv-storage    -> routed by homelab-node-alertmanager-config.yaml
+#   namespace: observability   -> the AlertmanagerConfig matcher strategy
+#                                 (OnNamespace) injects this namespace, so an
+#                                 alert without it routes to the null receiver.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: omv-storage-alerts
+  namespace: observability
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: omv-storage-btrfs
+      interval: 60s
+      rules:
+        # A failing disk's reallocated/unreadable sectors show up as read I/O
+        # errors on the btrfs device. 5 errors in 10 minutes is well above the
+        # zero a healthy device logs; sdc logged bursts of 100+ in 10 minutes
+        # on 2026-10-29 while MinIO was flapping.
+        - alert: OMVBtrfsDeviceReadErrors
+          expr: increase(node_btrfs_device_errors_total{job="omv-node",type="read"}[10m]) > 5
+          for: 5m
+          labels:
+            severity: critical
+            alertgroup: omv-storage
+            namespace: observability
+          annotations:
+            summary: "OMV btrfs device {{ $labels.device }} is returning read errors"
+            description: "openmediavault btrfs device {{ $labels.device }} ({{ $labels.btrfs_dev_uuid }}) logged {{ $value | humanize }} read I/O errors in 10 minutes. The disk is failing: expect MinIO drive-offline flaps and failed S3 writes until it is replaced."
+
+        # corruption = checksum/metadata mismatch, generation = the on-disk
+        # generation does not match what btrfs expects. Any increase at all is
+        # data damage, so there is no threshold to tune.
+        - alert: OMVBtrfsDeviceCorruptionOrGenerationErrors
+          expr: increase(node_btrfs_device_errors_total{job="omv-node",type=~"corruption|generation"}[10m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+            alertgroup: omv-storage
+            namespace: observability
+          annotations:
+            summary: "OMV btrfs device {{ $labels.device }} reports {{ $labels.type }} errors"
+            description: "openmediavault btrfs device {{ $labels.device }} ({{ $labels.btrfs_dev_uuid }}) logged {{ $value | humanize }} {{ $labels.type }} errors in 10 minutes. This is data damage, not a transient I/O error — stop writing and check the filesystem before trusting it."
+
+        # btrfs remounts a volume read-only when a write fails on a device it
+        # cannot recover from. For single-device btrfs (all OMV data volumes)
+        # that is the "everything is down now" signal: MinIO, CNPG WAL
+        # archiving and every backup target live below these mountpoints.
+        - alert: OMVBtrfsVolumeReadOnly
+          expr: node_filesystem_readonly{mountpoint=~"/srv/dev-disk-by-uuid-.*"} == 1
+          for: 5m
+          labels:
+            severity: critical
+            alertgroup: omv-storage
+            namespace: observability
+          annotations:
+            summary: "OMV btrfs volume {{ $labels.mountpoint }} is mounted read-only"
+            description: "openmediavault volume {{ $labels.mountpoint }} on {{ $labels.instance }} is read-only. Writes are failing at the filesystem layer, so MinIO, CNPG backups and WAL archiving are all down until it is remounted (and the device replaced)."
+
+        # The OMV host is not in the cluster, so nothing else notices it going
+        # away. A Prometheus-side scrape failure is the only "storage is
+        # unobservable" signal we have; 10 minutes filters out a reboot.
+        - alert: OMVDiskUnreachable
+          expr: up{job="omv-node"} == 0
+          for: 10m
+          labels:
+            severity: critical
+            alertgroup: omv-storage
+            namespace: observability
+          annotations:
+            summary: "openmediavault node exporter is unreachable"
+            description: "Prometheus has failed to scrape openmediavault ({{ $labels.instance }}) for 10 minutes. Storage health and the MinIO backend are unobservable — check the host, not just the cluster."

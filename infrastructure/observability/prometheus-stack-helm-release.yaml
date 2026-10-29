@@ -88,6 +88,14 @@ spec:
                 labels:
                   instance: openmediavault
                   host: openmediavault
+          # NOT scraped: MinIO cluster metrics (192.168.1.180:9000/minio/v2/metrics/cluster).
+          # The server gates that endpoint behind JWT auth - MINIO_PROMETHEUS_AUTH_TYPE
+          # is unset in /opt/homelab/minio/docker-compose.yml, which means the default
+          # "jwt" - and returned 403 AccessDenied on 2026-10-29 (GUL-560). Wiring it
+          # needs either MINIO_PROMETHEUS_AUTH_TYPE=public on the OMV host or a
+          # least-privilege access key whose bearer token is SOPS-encrypted; neither
+          # belongs in this public repo, so the MinIO drive alerts are deliberately
+          # absent until the owner picks one.
         resources:
           requests:
             cpu: 100m
