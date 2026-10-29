@@ -23,7 +23,10 @@
 #
 # Every expr below was parsed against the live Loki API before commit (a parse
 # error returns HTTP 400 — the H2-114 method); each currently matches 0 lines on
-# the healthy app.
+# the healthy app. "Validate the regex against the live stream, then look at what
+# it actually matched" is not optional here: MailArchiverSyncFailures shipped with
+# a regex that matched the app's own success lines and fired ~90 times a day
+# (GUL-554, 2026-10-29). Counting is the easy part; reading the matches is the job.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -55,11 +58,32 @@ data:
               summary: "mail-archiver logging fatal errors"
               description: "{{ $labels.k8s_pod_name }} logged more than 3 failure/exception lines in 5 minutes — the ASP.NET host failing to start (e.g. a keyring mount or writable-directory problem) looks exactly like this."
           - alert: MailArchiverSyncFailures
+            # A failed *sync*, not any line that happens to contain a failure word.
+            # The v1 expr was:
+            #   (?i)(mailsync|imap|sync).*(fail|error|exception|could not)
+            #     |(fail|error|exception).*(sync|imap)
+            # It matched two healthy lines on every single sync tick:
+            #   "Syncing folder: workflow_error for account: …"
+            #       — a mailbox folder literally named workflow_error (user data,
+            #         not a fault, and "sync…error" in the same line);
+            #   "Sync completed … New: 0, Failed: 0 … Failed folders: 0"
+            #       — the success summary counting up its own zeroes.
+            # With a 15-minute sync interval and a 10-minute lookback that meant a
+            # pending→firing→resolved cycle about every 15 minutes, all day: the
+            # alert was a heartbeat, not an alarm (GUL-554).
+            #
+            # The v2 expr requires the failure word to be *about* the sync
+            # (fail/error/exception + sync/connect/fetch/authenticate verb), or a
+            # non-zero failure counter from the app's own summary. Validated against
+            # the live Loki before commit: a healthy 2 h window matches 0 lines; the
+            # previous 24 h matched 24 lines, all of them from the real
+            # 2026-10-28T22:19Z Npgsql outage ("Failed to connect to
+            # 10.43.198.245:5432" and "Sync completed … Failed: 2").
             expr: |
               sum by (k8s_pod_name) (
                 count_over_time(
                   {k8s_namespace_name="mail-archiver", k8s_container_name="mail-archiver"}
-                    |~ "(?i)(mailsync|imap|sync).*(fail|error|exception|could not)|(fail|error|exception).*(sync|imap)"
+                    |~ `(?i)(?:fail(?:ed|ure)?|error|exception|fatal)\s+(?:to\s+)?(?:sync|syncing|connect|connecting|fetch|fetching|retrieve|retrieving|authenticate|authenticating|process|processing|read|reading)|authentication\s+failed|could not (?:connect|sync|be established)|(?:failed folders|failed):\s*[1-9]|status\s+failed`
                   [10m]
                 )
               ) > 0
@@ -70,7 +94,7 @@ data:
               namespace: observability
             annotations:
               summary: "mail-archiver mail sync failing"
-              description: "{{ $labels.k8s_pod_name }} logged a mail-sync failure in the last 10 minutes. Gmail throttling, an account password change, or the 2500 MB/day bandwidth cap can all present here — check the account before assuming a code fault."
+              description: "{{ $labels.k8s_pod_name }} logged a real mail-sync failure in the last 10 minutes. Read the lines, do not guess: kubectl -n mail-archiver logs deploy/mail-archiver --since=30m | grep -iE 'fail|error|exception'. Gmail throttling, a revoked app password, a DB connection error, or the 2500 MB/day bandwidth cap can all present here — check the account before assuming a code fault."
           - alert: MailArchiverLoginAnomalies
             expr: |
               sum by (k8s_pod_name) (
