@@ -290,7 +290,8 @@ for pair in \
   "HindsightDatabaseInstanceNotReady:kube_pod_status_ready" \
   "HindsightDbPvcAbove80Percent:kubelet_volume_stats_used_bytes" \
   "HindsightAsyncOperationsStranded:hindsight_async_operations" \
-  "HindsightConsolidationBacklogHigh:hindsight_consolidation_backlog"
+  "HindsightConsolidationBacklogHigh:hindsight_consolidation_backlog" \
+  "HindsightConsolidationBacklogGrowing:hindsight_consolidation_backlog"
 do
   alert=${pair%%:*}; metric=${pair#*:}
   if has "$RULES_FILE" "$metric" && has "$RULES_FILE" "- alert: $alert"; then
