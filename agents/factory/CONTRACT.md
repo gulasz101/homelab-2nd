@@ -29,6 +29,9 @@ Design rules:
 - No stage check talks to Paperclip. Network use in `lint-spec`/`check-*`/
   `commit`/`open-pr` is only `gh`, only inside `check-gate` and `open-pr`. The
   `gh` binary comes from env `FACTORY_GH` (default `gh`) so tests can stub it.
+  `check-gate` additionally reads the live cluster with `kubectl` (and parses
+  YAML with `yq`) for the chart-pin check in point 7: that is a read of the k3s
+  API on the LAN, never Paperclip, and both binaries live on the Air.
 - Since GUL-439 the three orchestration subcommands — `start`, `decide`, `tick`
   — do talk to Paperclip, and only through `pc.py` next to this file (stdlib
   `urllib`). They never `git push` themselves and never read the board token
@@ -180,7 +183,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 | `check-green --repo DIR --red SHA --spec FILE` | every test path is byte-identical to the red commit (worktree contents; a new untracked test path is a violation); every changed path is inside `allowedPaths`; every AC reports `PASS`; if the repo has `scripts/check.sh`, it runs (`bash scripts/check.sh`, repo root) and must exit 0 |
 | `check-findings --repo DIR --base SHA --findings FILE` | findings follow point 3; every `file` is in the diff SHA→worktree; every `line` exists in the new version (file readable, ≥ `line` lines) |
 | `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed` |
-| `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ maxDiffLines` |
+| `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ maxDiffLines`; every HelmRelease the PR changes pins a chart version at or above the one the cluster runs (ADR-097, below) |
 | `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only). A second run on a clean tree whose HEAD is already `factory(GUL-N): <stage>` is not an error: it passes and returns that HEAD sha, so a `decide` that died after its commit can be re-run (GUL-497) |
 | `open-pr --repo DIR --issue GUL-N --title T` | current branch is not `main`/`master` (refuse, exit 1); `git push -u origin <branch>` (never `--force`); `gh pr create` with body linking the work order: `Work order: [GUL-N](https://paperclip.voitech.dev/GUL/issues/GUL-N)`. JSON adds `"url": "<PR url>"`. Repo comes from `git remote get-url origin` |
 | `start GUL-N [--dry-run]` | point 9 below |
@@ -198,6 +201,31 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 
 A missing `check` run, a non-SUCCESS state, or a gh call that errors/returns
 unparseable output → not a pass (gh errors are setup errors, exit 2).
+
+### `check-gate` local check: chart pin vs cluster (GUL-552, ADR-097)
+
+A chart pin is a floor as well as a ceiling: `17.0.0` merged while the cluster
+ran `17.3.0` downgraded Open WebUI into an unusable database. So when the PR
+changes a HelmRelease document (column-0 `kind: HelmRelease` at head, test paths
+and never-path globs excluded), the gate also runs, from the tooling checkout:
+
+```
+bash scripts/helmrelease-pin-vs-cluster.sh <base-sha> <pr-head-ref>
+```
+
+- The script owns the judgement and the wording; it is also the documented way
+  for a human to run the same check by hand on an ordinary PR (ADR-097).
+- `check-gate` fetches the PR head into `refs/factory/pr-N` and the base tip
+  before calling it, because the tooling checkout only carries `main`. A head
+  that does not resolve to the sha `gh pr view` reported is a setup error, not
+  a pass: a stale ref would diff the wrong commits.
+- Exit 0 → no reason added. Exit 1 → each `FAIL …` line on stdout becomes one
+  gate reason. Anything else (2 = cluster unreachable, no `kubectl`/`yq`,
+  unreadable YAML, unknown ref) is a **setup error, exit 2** — the check never
+  passes when it could not read the cluster.
+- It is not part of `scripts/check.sh`: CI has no cluster access. The gate runs
+  on the Air, which has `kubectl` and `yq`. `FACTORY_GATE_REPO` points the check
+  at another checkout (the self-test uses it with a `kubectl` stub).
 
 ## 8. Exit-code recap
 

@@ -23,6 +23,12 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 NEVER_PATHS_FILE = os.path.join(HERE, "never-paths.json")
+# The checkout this script runs from: agents/factory/../../ = the repo root.
+# check-gate needs it for the one check that reads git objects and the cluster
+# (scripts/helmrelease-pin-vs-cluster.sh). FACTORY_GATE_REPO overrides it so the
+# self-test can point that check at a fixture instead of the real repo.
+REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
+
 SPEC_KINDS = {"docs", "tests", "manifest", "code", "agent-rules"}
 
 
@@ -712,6 +718,95 @@ def cmd_check_verdicts(args) -> int:
     return 0 if ok else 1
 
 
+# --------------------------------------------------------------------------
+# chart pin vs cluster (GUL-552, ADR-097)
+#
+# scripts/helmrelease-pin-vs-cluster.sh, not this file, owns the judgement: it
+# diffs two refs, reads the live HelmReleases with kubectl and fails a pin that
+# sits below the chart version the cluster is already running. Keeping it in
+# bash means one implementation for the gate and for a human running the same
+# check by hand on an ordinary PR.
+# --------------------------------------------------------------------------
+
+PIN_CHECK = os.path.join("scripts", "helmrelease-pin-vs-cluster.sh")
+PIN_HEAD_REF = "refs/factory/pr-%s"
+
+
+def ref_sha(repo: str, ref: str) -> str:
+    """Full sha of ref, or "" when it is not in this checkout."""
+    return git(repo, "rev-parse", "--verify", "--quiet", ref + "^{commit}",
+               allow_fail=True).strip()
+
+
+def ensure_pin_refs(repo: str, pr_num: str, base_oid: str, head_oid: str) -> tuple:
+    """Return (base_ref, head_ref) that both resolve in `repo`.
+
+    The gate runs from the tooling checkout, which is force-moved to
+    origin/main on every call (CONTRACT point 0), so the PR's commits are
+    usually absent. Fetch the PR head into its own ref plus the base tip, then
+    insist the head resolves to exactly the sha gh reported: a stale ref left
+    behind by an earlier PR would otherwise diff the wrong thing and pass."""
+    head_ref = PIN_HEAD_REF % pr_num
+    git(repo, "fetch", "--quiet", "--no-tags", "origin",
+        "+refs/pull/%s/head:%s" % (pr_num, head_ref), base_oid, allow_fail=True)
+    if ref_sha(repo, head_ref) != head_oid:
+        if ref_sha(repo, head_oid) == head_oid:
+            head_ref = head_oid
+        else:
+            raise SetupError("PR head %s not in %s and could not be fetched"
+                             % (head_oid[:12], repo))
+    if ref_sha(repo, base_oid) != base_oid:
+        raise SetupError("PR base %s not in %s and could not be fetched"
+                         % (base_oid[:12], repo))
+    return base_oid, head_ref
+
+
+def pin_reasons(repo: str, pr_num: str, base_oid: str, head_oid: str) -> list:
+    """Reasons from the pin-vs-cluster check: exit 1 gives one reason per FAIL
+    line, exit 0 gives none, anything else is a setup error - a check that
+    could not read the cluster must never pass a PR."""
+    script = os.path.join(repo, PIN_CHECK)
+    if not os.path.isfile(script):
+        raise SetupError("check-gate needs %s (run from the repo checkout)" % PIN_CHECK)
+    base_ref, head_ref = ensure_pin_refs(repo, pr_num, base_oid, head_oid)
+    proc = subprocess.run(["bash", script, base_ref, head_ref], cwd=repo,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for line in proc.stdout.splitlines():
+        sys.stderr.write("  pin-vs-cluster: %s\n" % line)
+    if proc.returncode == 0:
+        return []
+    if proc.returncode == 1:
+        fails = [l.strip() for l in proc.stdout.splitlines() if l.startswith("FAIL ")]
+        if not fails:
+            raise SetupError("pin-vs-cluster exited 1 without a FAIL line")
+        return fails
+    raise SetupError("pin-vs-cluster exited %d: %s"
+                     % (proc.returncode,
+                        (proc.stderr.strip() or proc.stdout.strip())[-300:]))
+
+
+def touches_helmrelease(files: list, head_oid: str, text_for_path, globs: list) -> bool:
+    """True when the PR changes a HelmRelease document. Deletions do not count
+    (nothing left to pin), and neither do never-path globs: those already fail
+    the gate, and their content is deliberately not fetched. Keeps the cluster
+    check off PRs that never touch a release, and on every PR that does."""
+    for entry in files:
+        path = entry.get("path") or ""
+        if not path.endswith((".yaml", ".yml")) or looks_like_test_path(path):
+            continue
+        if entry.get("changeType") == "DELETED" or glob_match(globs, path):
+            continue
+        try:
+            text = text_for_path(path, head_oid) or ""
+        except SetupError:
+            # An unreadable changed YAML already fails the never-path loop
+            # above; it cannot also be the release that needs the pin check.
+            continue
+        if re.search(r"^kind:[ \t]+HelmRelease[ \t]*(#.*)?$", text, re.MULTILINE):
+            return True
+    return False
+
+
 def cmd_check_gate(args) -> int:
     spec = load_spec(args.spec)
     repo, num = parse_pr_ref(args.pr)
@@ -773,6 +868,11 @@ def cmd_check_gate(args) -> int:
             return pr_content_text(_path, ref)
 
         reasons.extend(never_path_reasons(cfg, path, status, provider))
+    # ADR-097: a pin is a floor too. Any PR that touches a HelmRelease has to
+    # pass the cluster comparison before the gate can pass (GUL-552).
+    gate_repo = os.environ.get("FACTORY_GATE_REPO") or REPO_ROOT
+    if touches_helmrelease(files, head_oid, pr_content_text, cfg["globs"]):
+        reasons.extend(pin_reasons(gate_repo, num, base_oid, head_oid))
     emit(len(reasons) == 0, "check-gate", reasons)
     return 0 if not reasons else 1
 
