@@ -280,8 +280,11 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   findings pasted into the fix issue. At most 2 fix rounds.
 - gate pass → **no card** (GUL-553). The work order goes `in_review` with a
   comment that names the PR and says merge it on GitHub, plus an issue monitor
-  (`executionPolicy.monitor`: `kind: external_service`, `serviceName: github pull
-  request`, `nextCheckAt` = now + 1h, `maxAttempts` 72). That monitor is what
+  (`executionPolicy.monitor`: `kind: external_service` — the only accepted value —
+  `serviceName: github pull request`, `nextCheckAt` as `YYYY-MM-DDTHH:MM:SSZ` (the
+  API rejects an ISO `+00:00` offset with a 422), `maxAttempts` 72). The server
+  redacts `externalRef` before storing it, so the PR number rides in `notes` and
+  the link is the green stage's `pull_request` work product. That monitor is what
   makes `in_review` a real wait; the old `request_confirmation` card merged
   nothing and only looked like a button. Wojtek merges on GitHub, `tick --apply`
   notices it.

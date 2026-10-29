@@ -442,6 +442,10 @@ def monitor_payload(pr: dict, hours: int = MERGE_MONITOR_HOURS) -> dict:
     Paperclip only accepts `kind: external_service`, and it redacts
     `externalRef` before storing it, so the PR number rides in `notes` and the
     clickable link is the `pull_request` work product from the green stage.
+
+    `nextCheckAt` is validated by the live API against
+    `...T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$` — an ISO `+00:00` offset is a 422,
+    so the stamp is formatted by hand rather than by `datetime.isoformat()`.
     """
     import datetime
     next_check = (datetime.datetime.now(datetime.timezone.utc)
@@ -450,7 +454,7 @@ def monitor_payload(pr: dict, hours: int = MERGE_MONITOR_HOURS) -> dict:
         "kind": "external_service",
         "serviceName": "github pull request",
         "externalRef": pr.get("url") or "PR #%s" % pr.get("number"),
-        "nextCheckAt": next_check.isoformat(timespec="seconds"),
+        "nextCheckAt": next_check.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "maxAttempts": MERGE_MONITOR_ATTEMPTS,
         "notes": "waiting for the merge of PR #%s on github" % pr.get("number"),
     }

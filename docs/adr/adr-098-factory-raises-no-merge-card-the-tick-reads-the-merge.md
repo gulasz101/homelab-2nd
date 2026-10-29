@@ -33,7 +33,8 @@ The gate raises **no card**. On a gate pass the work order goes `in_review` with
 - one comment naming the PR and telling the owner to merge it on GitHub;
 - an issue monitor: `executionPolicy.monitor` with `kind: external_service`,
   `serviceName: github pull request`, `externalRef` = the PR URL, `nextCheckAt` =
-  now + 1 hour, `maxAttempts` 72.
+  `YYYY-MM-DDTHH:MM:SSZ` (the API's regex accepts `Z`, not a `+00:00` offset),
+  `maxAttempts` 72.
 
 That monitor is the review path the guard accepts, and it is real: Paperclip's
 scheduler wakes the work order's assignee (Majster) hourly.
