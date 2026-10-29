@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: riffradar-tunnel-token
+    namespace: riffradar
+type: Opaque
+stringData:
+    token: ENC[AES256_GCM,data:nWgEAYvFhjlg7H3pHN6WHDY04ScVq0+wttRMQ3UWZLQS+A6ZLoYpAOBkfX4q82sEVlFBovpewIECsOevLqLSCVnIS4wHYjJEcWSvJDlSJ1562NyXzkj+ze40aaqrDfhqLgbstmNSEuGZgudZ5fBP+gckRPhRHjAvW/PzfPuo8OKUHGNdfJYpFB2igB8i1YrO0lFfdaFYle29Nbfm79Rrd4QptXZ3AJDaI7g5bsE1HofJ0ECFF+bebC/trOFjsx3ZII2uD014cmLy0imhEDatMIFfzF25IpTKerEPrObcAvd2P7rScJPe29C/eYWGDDSI,iv:9iikkUJ2By4zIt5L7xH5aMxBMP6uRBsAALFbLt7jw9A=,tag:2Roz7dxbrXDXapgWKNYIkw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBVQkI0V29GczhjQlRTTUN3
+            QmwrS21GMyt3QkZUdytLQ3hlTUNRVFNWU2tVClo0d2lIUk83aG1aVE5McTFKbnZB
+            dDE4TFZjM0wwRHdhVTNYcGFES091ZmsKLS0tIHg5TnNQb3lVbTF1WTE1VU5rRUp4
+            NDFhcElVYVdYa0sveUovR1gxcytXd0EK87pUMa+w94oGusuvDEVj6RbhNsn9boKT
+            KpbCYTcyPSyt956CuGe40Kfx8ZwR9NTVLxNiOMlf6BHrWftxmGMcZg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-29T12:57:32Z"
+    mac: ENC[AES256_GCM,data:3fTNQY3TiB5Wuzm/slLAYbCrGLq9MaFx/SIe9GxzY9kNr0PbPQqh4PwG+OsVi87hLNMq2kMjk+8V3AaBe0GRL6+lq2m0id28CZkMa6jfhww7PEsaeZPxfF7LDHRPjJvrPg3st3R1bx15n+6MF4lPsvjWuK32xMPG4fRf7upAVAM=,iv:+0miqL1iHkU2aTOv2P94JD7GiXEYOOPSzv//N3Qse/4=,tag:EQ/qSnlxAxSB+89sGhzH5A==,type:str]
+    version: 3.13.3

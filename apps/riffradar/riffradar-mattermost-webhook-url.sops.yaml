@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: riffradar-mattermost-webhook-url
+    namespace: riffradar
+type: Opaque
+stringData:
+    url: ENC[AES256_GCM,data:6izA8LeA38F/KxbLAAgpIiRAHMRDr/Zj8y0u6m+cxfbMrF3sL1wV7+yJqld4XYh/n6JgeIszxPCD,iv:hosb87D2VqUX/UakgDlOZfD8LIhrPnqmnRk29H7oWaI=,tag:SPIOF2vMH6XPfyF4LzUPVw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBTKzI0cHVxckV4Z2poMjlX
+            STFsREVTekNPS2pwMmo1YjRBWGhiTDBpSWo0CjgxZVJUS3RMdGFPNXROYXROWEs5
+            K2ZvN21OZnF5ME1MYmg3ZUcvU2NUYkEKLS0tIEhKbXYrakRrbitFa1hCU3BHT0pV
+            TENUR3doYnRYcHhYdWNRanhzMndXVDgKLmOiH2k6hjJJEbnhPvRyCMbjxwHyx4mX
+            2jDckzUIab1O2W1uedpExVENHtRlX4Bwlru8waCYYcCuqGc6nl1mzg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-29T13:02:16Z"
+    mac: ENC[AES256_GCM,data:1EXF/IwNVtERirwYXmwM+vUuDA4tc9mMbPiPFPXq7D/ZuaoBHugBmC03IQvGSUT18Nbs4yu/jAqCibRK1NyaZECmHjJ0u7Ia4bGFlB2PZgjN9gHqkpF0pLviwiWHkBOQpDlQZLIPtqbGFeK34yB1qUx449bAlfVtZf9xX0QvShQ=,iv:WrscxpfuEJOi0XhdTpicndA4uIDnQ25NGqhU/ab98c8=,tag:ZIkx3aZJ0mx316LM/dJH1w==,type:str]
+    version: 3.13.3
