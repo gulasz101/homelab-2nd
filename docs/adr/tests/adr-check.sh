@@ -99,6 +99,19 @@ for file in "$ADR_DIR"/adr-*.md; do
 done
 note "rows without files are allowed on purpose (ADR-001..005/010 live in the vault; 045 is reserved)"
 
+head1 "1b. no two ADR files share a number"
+# A number is only free at the moment you read origin/main. Two branches can each
+# take ADR-100 in good faith and merge cleanly, because the only conflict is in
+# the index row — which a rebase resolves by keeping both. Check the tree instead.
+dupes=$(compgen -G "$ADR_DIR/adr-*.md" | sed -E 's#.*/adr-([0-9]{3})-.*#\1#' | sort | uniq -d)
+if [ -z "$dupes" ]; then
+  ok "every ADR number belongs to exactly one file"
+else
+  for n in $dupes; do
+    bad "ADR-$n is claimed by more than one file: $(cd "$ADR_DIR" && compgen -G "adr-$n-*.md" | tr '\n' ' ')"
+  done
+fi
+
 head1 "2. ADR-052 content (H2-233 acceptance criteria)"
 if [ ! -f "$ADR" ]; then
   bad "ADR-052 file missing: docs/adr/$SLUG (this is the deliverable of H2-269)"
