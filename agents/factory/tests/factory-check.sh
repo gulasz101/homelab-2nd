@@ -336,6 +336,77 @@ rm -f "$GHSTUB/data/contents-app.yaml.json"
 run env FACTORY_GH="$GHSTUB/gh" GH_STUB_DIR="$GHSTUB/data" $PY "$FACTORY" check-gate --pr "gulasz101/homelab-2nd#7" --spec "$TMP/gate-spec.md"
 expect_rc "gate: gh api error -> rc 2" 2 "$LAST_RC"
 
+# ---------- 6b. check-gate: chart pin vs cluster (GUL-552, ADR-097) ----------
+# A PR that touches a HelmRelease has to pass scripts/helmrelease-pin-vs-cluster.sh.
+# The fixture is a real git repo (the script diffs refs), a kubectl stub on PATH
+# and the same gh stub: the PR head ref is pre-created as refs/factory/pr-9, so
+# the gate's fetch has nothing to do and the check runs offline.
+echo "== check-gate: pin vs cluster =="
+GATE_REPO="$TMP/gate-repo"
+mkdir -p "$GATE_REPO/scripts" "$GATE_REPO/apps/llm-hub"
+cp "$ROOT/scripts/helmrelease-pin-vs-cluster.sh" "$GATE_REPO/scripts/"
+( cd "$GATE_REPO"
+  git init -q -b main .
+  git config user.email test@example.invalid
+  git config user.name "gate test"
+  printf 'apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: open-webui\n  namespace: llm-hub\nspec:\n  chart:\n    spec:\n      chart: open-webui\n      version: "17.3.0"\n' \
+    > apps/llm-hub/openwebui-helm-release.yaml
+  git add -A && git commit -qm base
+  printf 'apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: open-webui\n  namespace: llm-hub\nspec:\n  chart:\n    spec:\n      chart: open-webui\n      version: "17.0.0"\n' \
+    > apps/llm-hub/openwebui-helm-release.yaml
+  git add -A && git commit -qm "pin open-webui to 17.0.0"
+  git update-ref refs/factory/pr-9 HEAD )
+GATE_HEAD="$(git -C "$GATE_REPO" rev-parse HEAD)"
+GATE_BASE="$(git -C "$GATE_REPO" rev-parse HEAD^)"
+printf '{"headRefOid":"%s","baseRefOid":"%s","additions":1,"deletions":1,"files":[{"path":"apps/llm-hub/openwebui-helm-release.yaml","changeType":"MODIFIED","additions":1,"deletions":1}]}' \
+  "$GATE_HEAD" "$GATE_BASE" > "$GHSTUB/data/pr-view.json"
+printf '{"content":%s}' "\"$(git -C "$GATE_REPO" show HEAD:apps/llm-hub/openwebui-helm-release.yaml | b64)\"" \
+  > "$GHSTUB/data/contents-openwebui-helm-release.yaml.json"
+cat > "$GHSTUB/data/pr-checks.json" <<'EOF'
+[{"name":"check","state":"SUCCESS"}]
+EOF
+KUBEBIN="$TMP/kube-bin"
+mkdir -p "$KUBEBIN" "$TMP/kube-data"
+cat > "$KUBEBIN/kubectl" <<'KUBESTUB'
+#!/usr/bin/env bash
+# kubectl stub for factory-check: $KUBE_DATA/version holds the deployed version,
+# $KUBE_DATA/down makes the cluster unreachable.
+[ -f "$KUBE_DATA/down" ] && { echo 'connection refused' >&2; exit 1; }
+case "$*" in
+  *" -A "*|*" -A") printf 'llm-hub|open-webui\n'; exit 0 ;;
+esac
+v=$(cat "$KUBE_DATA/version" 2>/dev/null)
+[ -n "$v" ] || { echo 'Error from server (NotFound): helmreleases not found' >&2; exit 1; }
+printf '%s' "$v"
+KUBESTUB
+chmod +x "$KUBEBIN/kubectl"
+export KUBE_DATA="$TMP/kube-data"
+
+gate_pin_run() { # runs check-gate against the HelmRelease PR with the stub tools
+  env PATH="$KUBEBIN:$PATH" KUBE_DATA="$TMP/kube-data" FACTORY_GATE_REPO="$GATE_REPO" \
+      GH_STUB_DIR="$GHSTUB/data" FACTORY_GH="$GHSTUB/gh" \
+      $PY "$FACTORY" check-gate --pr "gulasz101/homelab-2nd#9" --spec "$TMP/gate-spec.md"
+}
+
+printf '17.3.0' > "$TMP/kube-data/version"
+run gate_pin_run
+expect_rc "gate: pin 17.0.0 below deployed 17.3.0 -> FAILS" 1 "$LAST_RC"
+grep -q 'pins 17.0.0' "$LAST_OUT" && ok "gate: downgrade reason names both versions" \
+  || bad "gate: downgrade reason missing"
+
+printf '17.0.0' > "$TMP/kube-data/version"
+run gate_pin_run
+expect_rc "gate: pin equal deployed -> PASS" 0 "$LAST_RC"
+
+printf '' > "$TMP/kube-data/version"
+: > "$TMP/kube-data/down"
+run gate_pin_run
+expect_rc "gate: kubectl unreachable -> rc 2 (never a pass)" 2 "$LAST_RC"
+rm -f "$TMP/kube-data/down"
+
+# back to a clean view for the sections after this one
+write_view '[{"path":"src/app.yaml","changeType":"MODIFIED","additions":3,"deletions":1}]' 3 1
+
 # ---------- 7. commit ----------
 echo "== commit =="
 C="$TMP/commit"
