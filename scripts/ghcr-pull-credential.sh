@@ -28,7 +28,7 @@
 set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-OUT="$REPO/infrastructure/ghcr-pull/ghcr-pull.sops.yaml"
+OUT="$REPO/apps/ghcr-pull/ghcr-pull.sops.yaml"
 CFG="$REPO/.sops.yaml"
 SECRET=ghcr-pull
 GH_USER=gulasz101
@@ -158,10 +158,8 @@ fi
 echo "wrote $OUT"
 echo "namespaces ($n): $(printf '%s' "$NS" | tr '\n' ' ')"
 echo
-echo "Next, if this is the first write:"
-echo "  1. list it in infrastructure/kustomization.yaml:"
-echo "       - ghcr-pull/ghcr-pull.sops.yaml"
-echo "  2. in every consuming namespace, the pod spec needs:"
+echo "Next:"
+echo "  1. in every consuming namespace, the pod spec needs:"
 echo "       imagePullSecrets: [ { name: $SECRET } ]"
 echo "     and its ImageRepository needs:"
 echo "       secretRef: { name: $SECRET }"

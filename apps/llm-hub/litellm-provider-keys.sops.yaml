@@ -4,6 +4,7 @@ metadata:
     name: litellm-provider-keys
     namespace: llm-hub
 stringData:
+    DEEPSEEK_API_KEY: ENC[AES256_GCM,data:yBC4l2M8N4DvQIszF+d3MThs8iikmoWo2Y25s6XTz5M8FiQ=,iv:wQdSAyvLCoe7NJGxknJscIMYXMqLVmy7hU1w877IKlc=,tag:VInydCInOSoXu/IMFcSbjQ==,type:str]
     OPENCODE_GO_SUBSCRIPTION_API_KEY: ENC[AES256_GCM,data:e9I6Azx87ZsxALSKwXo+fNPs0vXgP6H9CqV56E6s8ssHsfdAVC2dO5eDulv/XBNc79+G,iv:8apIJdZ4AK4w85FbuM3G8qs3eT+7FpLkWLzMpSjAwuw=,tag:qqtEqrlDL8c5UkSFq2QYfg==,type:str]
     OLLAMA_API_KEY: ENC[AES256_GCM,data:FSRH3+4mLPGA75rZIXNOxk2fwdCJ6b+XUON3NYZyOoeP2ypfGWcJ5xT+kN0JjGXEe6F0Uar/iGQF,iv:XxYMFstm0oLTgwC/Av+XveK9206RWtNuek+VRKcthYE=,tag:xvZh6LTzWABDPrIaeZ775A==,type:str]
     FREELLMAPI_API_KEY: ENC[AES256_GCM,data:iApStlcHgf18w2xjozWswyy+j25NIAieZd3m4d3t1dhSIcCWdFsv7EWSiL8SpkUXjf1teHrSQFYVo6I=,iv:APgq9BiqSKK8VJOpwUtF9+r6/dIVk/GuSg++nW0EHGc=,tag:cOo8eAN+kudvOMMM8BjTUg==,type:str]
@@ -20,6 +21,6 @@ sops:
             -----END AGE ENCRYPTED FILE-----
           recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-10-26T20:00:41Z"
-    mac: ENC[AES256_GCM,data:ZdEm2rmKe9k70cCTpvP8Xu5vhMJ1RhwrY3J9W7NI+qKIVeFsmu5taZH1cMxOtD/H9mr5klHtHeVF8H1iSTkO1w2eUWvStKO1/ZZu7OmDDLGblaCb6tK2LPpLn89w0YUZ/5GDgtEOgCuMbroNadp7djT5NR4iAWFaoEZ9hgciAqg=,iv:5arpIk2Udrbzuy8hxsY2GBBg42xwpWM6uRgjAhWU06g=,tag:Ct8qKHlVmKIVlXP6cZQaxQ==,type:str]
+    lastmodified: "2026-10-29T18:36:55Z"
+    mac: ENC[AES256_GCM,data:IUlWGkRdByiQW+/N2/4FMkMvs1X4mIc66QhVZTa3V8T8BKXghDKcGxwfP38GqLQbLYWuj8A4oucgKesHyrJIs/WHnsE9JLa7FG0Gg/ijycY6uco8x7tJH1LVYtF2tb+elhV4/SNFtuNsGTd+ICgMei5bgXnIueuOPHAUkSLhXUA=,iv:CYLhur0l+rnG24ndg9GXPKV+gPy3pZXGaVBLohmA5X0=,tag:Ke/JKt9lkEtbTtLtifUilg==,type:str]
     version: 3.13.3

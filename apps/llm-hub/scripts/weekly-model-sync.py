@@ -51,6 +51,14 @@ GO_BARE_ROUTES = {"deepseek-v4.1-flash", "qwen3.8-flash"}
 # Derived / purpose-built Go routes that are not generated from the upstream catalogue.
 GO_DERIVED_ROUTES = {"hindsight-consolidation-go"}
 
+# DeepSeek's own API (api.deepseek.com) routes end in `-ds`. DeepSeek publishes
+# only a handful of ids and they do NOT follow the local route name, so the
+# routes we serve are mapped explicitly: local suffix -> DeepSeek upstream id.
+# Anything unmapped is resolved by stripping `-ds` and matching a live id.
+DS_UPSTREAM_ALIASES = {"deepseek-v4.1-flash-1017": "deepseek-flash"}
+DS_MODELS_URL = "https://api.deepseek.com/models"
+DS_CHAT_URL = "https://api.deepseek.com/v1/chat/completions"
+
 
 def map_ollama_name(upstream_id: str) -> str:
     return upstream_id.replace(":", "-") + "-ollama"
@@ -74,11 +82,24 @@ def is_go_model(name: str) -> bool:
     return name.endswith("-go") or name in GO_BARE_ROUTES or name in GO_DERIVED_ROUTES
 
 
+def is_ds_model(name: str) -> bool:
+    """True for routes on DeepSeek's own API (`-ds`).
+
+    NOT generated from a catalogue: DeepSeek's ids are few and stable, and the
+    local name carries the snapshot label (`-1017`) that DeepSeek does not
+    publish. They are hand-written routes the sync preserves, probes weekly and
+    reports as dead if DeepSeek stops serving the upstream id (GUL-591).
+    """
+    return name.endswith("-ds")
+
+
 def model_category(name: str) -> str:
     if is_ollama_model(name):
         return "ollama"
     if is_go_model(name):
         return "go"
+    if is_ds_model(name):
+        return "ds"
     return "other"
 
 
@@ -191,6 +212,28 @@ def fetch_go_model_ids() -> set[str]:
     return {m["id"] for m in data.get("data", []) if "id" in m}
 
 
+def fetch_ds_model_ids(key: str) -> set[str]:
+    """DeepSeek's own catalogue (api.deepseek.com/models).
+
+    Returns an empty set when no key is available: the `-ds` routes still resolve
+    through DS_UPSTREAM_ALIASES, so a missing key degrades the dead-route check
+    instead of failing the whole weekly sync.
+    """
+    if not key:
+        print("WARN: no DEEPSEEK_API_KEY; -ds routes fall back to alias mapping")
+        return set()
+    req = urllib.request.Request(
+        DS_MODELS_URL,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "User-Agent": "homelab-weekly-model-sync/1.0",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return {m["id"] for m in data.get("data", []) if "id" in m}
+
+
 # ---------------------------------------------------------------------------
 # Current config parsing
 # ---------------------------------------------------------------------------
@@ -216,19 +259,25 @@ def upstream_refs(data) -> list[tuple[str, str, str]]:
     for entry in data["spec"]["values"]["proxy_config"]["model_list"]:
         params = entry.get("litellm_params") or {}
         raw = str(params.get("model", ""))
-        upstream_id = raw.split("/", 1)[1] if raw.startswith("openai/") else raw
         api_base = str(params.get("api_base", ""))
         if "opencode.ai" in api_base:
             provider = "go"
+            upstream_id = raw.split("/", 1)[1] if raw.startswith("openai/") else raw
         elif "ollama.com" in api_base:
             provider = "ollama"
+            upstream_id = raw.split("/", 1)[1] if raw.startswith("openai/") else raw
+        elif raw.startswith("deepseek/"):
+            # GUL-591: a DeepSeek-direct route carries no api_base (provider
+            # default), so it is identified by its native provider prefix.
+            provider = "ds"
+            upstream_id = raw.split("/", 1)[1]
         else:
             continue  # z.ai, OpenRouter, Gemini, oneprovider... own catalogues, out of scope
         refs.append((entry["model_name"], upstream_id, provider))
     return refs
 
 
-def dead_upstream_routes(data, ollama_ids: set[str], go_ids: set[str]) -> list[tuple[str, str, str]]:
+def dead_upstream_routes(data, ollama_ids: set[str], go_ids: set[str], ds_ids: set[str] | None = None) -> list[tuple[str, str, str]]:
     """Routes the sync does NOT own that point at an upstream id the catalogue no longer serves.
 
     The sync regenerates its own routes from the catalogue (`map_go_name` / `map_ollama_name`),
@@ -244,6 +293,12 @@ def dead_upstream_routes(data, ollama_ids: set[str], go_ids: set[str]) -> list[t
         if provider == "go":
             live = upstream_id in go_ids
             sync_owned = name in map_go_name(upstream_id)
+        elif provider == "ds":
+            # `-ds` routes are hand-written by design, so nothing regenerates
+            # them: report dead the moment DeepSeek stops serving the id. With no
+            # DeepSeek catalogue (missing key) assume live rather than cry wolf.
+            live = (not ds_ids) or upstream_id in ds_ids
+            sync_owned = False
         else:
             live = upstream_id in ollama_ids or map_ollama_name(upstream_id).removesuffix("-ollama") in {
                 i.replace(":", "-") for i in ollama_ids
@@ -348,7 +403,7 @@ def update_key_provisioner(text: str, desired: set[str]) -> str:
 
     kept = [e for e in entries if not (e["kind"] == "model" and e["model"] in to_remove)]
 
-    for cat in ("other", "ollama", "go"):
+    for cat in ("other", "ollama", "go", "ds"):
         adds = sorted(m for m in to_add if model_category(m) == cat)
         if not adds:
             continue
@@ -437,6 +492,8 @@ def get_provider_keys() -> dict[str, str]:
     for key_name, secret_key in [
         ("OLLAMA_API_KEY", "OLLAMA_API_KEY"),
         ("OPENCODE_GO_SUBSCRIPTION_API_KEY", "OPENCODE_GO_SUBSCRIPTION_API_KEY"),
+        # GUL-591: DeepSeek's own API, paying on Wojtek's key.
+        ("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY"),
     ]:
         cmd = [
             "ssh", "homelab-2nd",
@@ -445,12 +502,20 @@ def get_provider_keys() -> dict[str, str]:
         ]
         value = run(cmd, capture=True).strip()
         if not value:
+            if key_name == "DEEPSEEK_API_KEY":
+                # The -ds routes are opt-in: a missing key must not break the
+                # weekly sync for the Ollama/Go catalogues.
+                print("WARN: DEEPSEEK_API_KEY missing from litellm-provider-keys")
+                keys[key_name] = ""
+                continue
             raise RuntimeError(f"Could not retrieve provider key {secret_key}")
         keys[key_name] = value
     return keys
 
 
-def upstream_id_for_model(model_name: str, ollama_ids: set[str], go_ids: set[str]) -> tuple[str, str] | None:
+def upstream_id_for_model(
+    model_name: str, ollama_ids: set[str], go_ids: set[str], ds_ids: set[str] | None = None
+) -> tuple[str, str] | None:
     """Return (upstream_model_id, provider) for a LiteLLM model_name, or None if not probeable."""
     if is_ollama_model(model_name):
         base = model_name.removesuffix("-ollama")
@@ -473,6 +538,11 @@ def upstream_id_for_model(model_name: str, ollama_ids: set[str], go_ids: set[str
         if model_name in go_ids:
             return (model_name, "go")
         return None
+    if is_ds_model(model_name):
+        # Local name carries the snapshot label DeepSeek does not publish, so
+        # resolve through the explicit alias map first (GUL-591).
+        base = model_name.removesuffix("-ds")
+        return (DS_UPSTREAM_ALIASES.get(base, base), "ds")
     return None
 
 
@@ -491,6 +561,13 @@ def probe_model(model_name: str, upstream_id: str, provider: str, key: str) -> d
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
             "x-opencode-session": os.environ.get("SYNC_SESSION_ID") or str(os.urandom(16).hex()),
+            "User-Agent": "homelab-weekly-model-sync/1.0",
+        }
+    elif provider == "ds":
+        url = DS_CHAT_URL
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
             "User-Agent": "homelab-weekly-model-sync/1.0",
         }
     else:
@@ -564,6 +641,18 @@ def build_model_entry(model_name: str) -> dict:
                 "model": f"openai/{upstream}",
                 "api_base": "https://opencode.ai/zen/go/v1",
                 "api_key": "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY",
+            },
+        }
+    if is_ds_model(model_name):
+        # Native `deepseek/` provider: no api_base (provider default), and
+        # reasoning_effort maps to DeepSeek's thinking mode instead of 400ing.
+        base = model_name.removesuffix("-ds")
+        upstream = DS_UPSTREAM_ALIASES.get(base, base)
+        return {
+            "model_name": model_name,
+            "litellm_params": {
+                "model": f"deepseek/{upstream}",
+                "api_key": "os.environ/DEEPSEEK_API_KEY",
             },
         }
     raise ValueError(f"Cannot build entry for unknown model category: {model_name}")
@@ -715,6 +804,12 @@ def main() -> int:
     go_ids = fetch_go_model_ids()
     print(f"OpenCode Go: {len(go_ids)} models")
 
+    provider_keys = get_provider_keys()
+
+    print("\n-- Fetching DeepSeek catalogue --")
+    ds_ids = fetch_ds_model_ids(provider_keys.get("DEEPSEEK_API_KEY", ""))
+    print(f"DeepSeek: {len(ds_ids)} models" + ("" if ds_ids else " (unavailable)"))
+
     # ------------------------------------------------------------------
     # Load current configs
     # ------------------------------------------------------------------
@@ -725,7 +820,7 @@ def main() -> int:
     upstream_desired = desired_model_names(ollama_ids, go_ids)
 
     # Routes the sync does not regenerate still have to point at something real.
-    dead_upstreams = dead_upstream_routes(litellm_data, ollama_ids, go_ids)
+    dead_upstreams = dead_upstream_routes(litellm_data, ollama_ids, go_ids, ds_ids)
 
     def exit_code() -> int:
         """3 when a dead upstream reference survived the run, so the CronJob goes red."""
@@ -766,7 +861,6 @@ def main() -> int:
     # ------------------------------------------------------------------
     # Probe additions
     # ------------------------------------------------------------------
-    provider_keys = get_provider_keys()
     master_key = get_master_key()
     os.environ["SYNC_SESSION_ID"] = os.urandom(16).hex()
     verified_additions: set[str] = set()
@@ -775,13 +869,18 @@ def main() -> int:
     if litellm_additions:
         print("\n-- Probing LiteLLM additions (upstream directly) --")
         for m in sorted(litellm_additions):
-            probe_info = upstream_id_for_model(m, ollama_ids, go_ids)
+            probe_info = upstream_id_for_model(m, ollama_ids, go_ids, ds_ids)
             if not probe_info:
                 print(f"  Skipping {m}: cannot determine upstream id")
                 failed_additions[m] = "Cannot determine upstream id"
                 continue
             upstream_id, provider = probe_info
-            key = provider_keys.get("OLLAMA_API_KEY" if provider == "ollama" else "OPENCODE_GO_SUBSCRIPTION_API_KEY", "")
+            key = provider_keys.get(
+                {"ollama": "OLLAMA_API_KEY", "ds": "DEEPSEEK_API_KEY"}.get(
+                    provider, "OPENCODE_GO_SUBSCRIPTION_API_KEY"
+                ),
+                "",
+            )
             print(f"  Probing {m} ({provider}/{upstream_id}) ...", end=" ", flush=True)
             result = probe_model(m, upstream_id, provider, key)
             if result["ok"]:

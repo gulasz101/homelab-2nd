@@ -127,7 +127,11 @@ spec:
       # Provider keys come from the litellm-provider-keys Secret as env vars,
       # read only at pod start. BUMP THIS after rotating a key in
       # litellm-provider-keys.sops.yaml, or the pod keeps the old key.
-      litellm.provider-keys-revision: "2"
+      # rev 3 (GUL-591, 2026-10-29): DEEPSEEK_API_KEY added to the Secret.
+      # `environmentSecrets: [litellm-provider-keys]` below injects every key
+      # in that Secret under its own name, so a new key needs no extraEnvVars
+      # entry - only this bump, or the running pod keeps the old env.
+      litellm.provider-keys-revision: "3"
 
     # Pre-call hook that normalizes the OpenCode Go session header (ADR-029).
     # LiteLLM loads a callback named in litellm_settings.callbacks by file path
@@ -162,6 +166,28 @@ spec:
           model: openai/deepseek-v4.1-flash:1017
           api_base: https://ollama.com/v1
           api_key: os.environ/OLLAMA_API_KEY
+        # ── DeepSeek direct API, same model, on Wojtek's own paid key (GUL-591) ──
+        # Suffix `-ds` = DeepSeek's own API (api.deepseek.com), the same
+        # convention `-ollama`/`-go` already use for which subscription pays.
+        # The upstream id is NOT `deepseek-v4.1-flash:1017`: DeepSeek's API
+        # advertises exactly two ids (verified live 2026-10-29, GET /models):
+        #   deepseek-flash     -> name "DeepSeek-V4.1-Flash", 1,048,576 ctx
+        #   deepseek-v4-pro    -> name "DeepSeek-V4-Pro"
+        # and rejects everything else with 400 "The supported API model names
+        # are deepseek-flash, deepseek-v4-pro". `:1017` is the Ollama Cloud
+        # snapshot tag only, so the local route name keeps the 1017 label
+        # (Wojtek's mental model) while the upstream id is deepseek-flash.
+        # Using the native `deepseek/` provider, not `openai/` + api_base: it
+        # carries DeepSeek's own params, so `reasoning_effort` (low|high|max)
+        # maps to its thinking mode instead of being rejected as unknown
+        # (ADR-036 note; see the -ollama sibling's allowed_openai_params).
+      - model_name: deepseek-v4.1-flash-1017-ds
+        litellm_params:
+          model: deepseek/deepseek-flash
+          api_key: os.environ/DEEPSEEK_API_KEY
+        model_info:
+          max_input_tokens: 1048576
+          max_output_tokens: 393216
       - model_name: minimax-m3.1-flash-ollama
         litellm_params:
           model: openai/minimax-m3.1-flash

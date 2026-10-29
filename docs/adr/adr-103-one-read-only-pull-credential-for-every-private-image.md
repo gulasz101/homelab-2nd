@@ -1,11 +1,12 @@
 # ADR-103: One read-only pull credential for every private image, not one per service
 
-- **Status:** Accepted
+- **Status:** Accepted, implemented
 - **Date:** 2026-10-29
 - **Deciders:** Wojtek (owner), Andrzej (CTO, homelab-2nd)
 - **Tracked by:** GUL-579; first application: Riff Radar (GUL-550)
 - **Amends:** ADR-101 ("its own pull secret when the package is private" — the pull side is now a
-  platform concern, the publish side stays per-app)
+  platform concern, the publish side stays per-app). ADR-101 was still open in PR #95 when this
+  landed; the practice it describes is what we already run.
 
 ## Context
 
@@ -36,11 +37,19 @@ image is a source leak wearing a different hat.
 the owner's account with `read:packages` **and nothing else**, stored as one SOPS file:
 
 ```
-infrastructure/ghcr-pull/ghcr-pull.sops.yaml
+apps/ghcr-pull/ghcr-pull.sops.yaml
   Secret/ghcr-pull (type kubernetes.io/dockerconfigjson)
     - namespace: flux-system   (image-reflector-controller reads it via ImageRepository.secretRef)
     - namespace: <each app namespace that runs a private image>
 ```
+
+**Why it sits under `apps/` and not `infrastructure/`.** The file carries one Secret per consuming
+namespace, and those namespaces are created by the app roots. `infrastructure` is reconciled before
+`apps` (`apps` has `dependsOn: infrastructure`), so on a rebuild from Git a Secret aimed at a
+namespace that does not exist yet fails the whole `infrastructure` Kustomization — and every
+dependent with it. Resource kind ordering puts `Namespace` before `Secret` inside one apply, so the
+`apps` root creates both in the same pass. A platform object delivered in the app root is a wart;
+a cluster that cannot rebuild is worse.
 
 Mechanics that make it a platform primitive rather than one more snowflake:
 
@@ -55,6 +64,13 @@ Mechanics that make it a platform primitive rather than one more snowflake:
 - **One namespace list, one rotation.** Rotating the token re-runs `mint` with the full namespace
   list; the ciphertext of every namespace changes in one commit.
 - **GHCR stays the only registry.** No in-cluster registry, no pull-through mirror.
+
+Implemented the same day: Riff Radar (GUL-550) had already shipped a per-service
+`riffradar-ghcr-pull` Secret, minted from the owner's `read:packages` token. The platform file was
+built from that same token — verified byte-identical by hashing the decrypted credential, so **no
+rotation and no downtime** — the deployment and its `ImageRepository` now name `ghcr-pull`, and the
+per-service file is deleted. That is the whole migration for a new consumer from now on: a name and
+a script run.
 
 ## Consequences
 

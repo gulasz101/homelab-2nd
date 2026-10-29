@@ -545,3 +545,17 @@ resources:
   # The heartbeat ingest is a LAN/Netbird NodePort, never a Cloudflare tunnel.
   # ============================================================
   - host-watch/
+
+  # ============================================================
+  # The platform's one pull credential for private registry images (ADR-103).
+  # Here, not in infrastructure/: it carries a Secret per consuming namespace and
+  # those namespaces are created by the app roots (see the file's kustomization).
+  - ghcr-pull/
+  # Riff Radar demo (GUL-550, ADR-102) — riffradar.voitech.dev
+  # The tab-learning app for Wojtek and his wife. SQLite on a local-path PVC
+  # with a nightly sqlite3 .backup -> OMV MinIO CronJob; dedicated Cloudflare
+  # Tunnel behind Cloudflare Access (email allowlist) because the demo serves a
+  # copyrighted song tab. Nested kustomization: the file list and its rationale
+  # live in apps/riffradar/kustomization.yaml.
+  # ============================================================
+  - riffradar/

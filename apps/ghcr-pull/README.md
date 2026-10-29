@@ -9,11 +9,15 @@ holds **one** narrow credential and every private service reuses it. This direct
 encrypted Secret lives.
 
 ```
-infrastructure/ghcr-pull/ghcr-pull.sops.yaml
+apps/ghcr-pull/ghcr-pull.sops.yaml
   Secret/ghcr-pull, type kubernetes.io/dockerconfigjson
     namespace: flux-system   <- ImageRepository.secretRef (image-reflector-controller)
     namespace: <app ns>      <- imagePullSecrets on the pod spec
 ```
+
+It lives under `apps/` because those namespaces are created by the app roots and `infrastructure`
+is reconciled first — a Secret for a not-yet-existing namespace freezes that whole Kustomization on
+a rebuild. The `apps` root creates the namespaces and this Secret in one apply.
 
 ## What the token is
 
@@ -32,12 +36,8 @@ scripts/ghcr-pull-credential.sh mint riffradar
 
 It prompts for the token with echo off, writes the SOPS file, and refuses to continue if the
 plaintext ever appears in the output file. Paste the token from your password manager — never into
-chat, an issue comment or a commit. Then commit the ciphertext and list the file in
-`infrastructure/kustomization.yaml`:
-
-```yaml
-  - ghcr-pull/ghcr-pull.sops.yaml
-```
+chat, an issue comment or a commit. Then commit the ciphertext. The file is already listed by
+`apps/ghcr-pull/kustomization.yaml` and wired into the `apps` root as `- ghcr-pull/`.
 
 ## Adding a namespace later (no human, no new token)
 
