@@ -152,6 +152,9 @@ spec:
           model: openai/beam
           api_base: https://ollama.com/v1
           api_key: os.environ/OLLAMA_API_KEY
+          # GUL-581 / ADR-101: mirror of beam-free-go (GUL-122). beam reasons by
+          # default, so the client's reasoning_effort is dropped, not forwarded.
+          drop_params: true
       - model_name: deepseek-v4-pro-0813-ollama
         litellm_params:
           model: openai/deepseek-v4-pro:0813
@@ -162,6 +165,12 @@ spec:
           model: openai/deepseek-v4.1-flash:1017
           api_base: https://ollama.com/v1
           api_key: os.environ/OLLAMA_API_KEY
+          # GUL-581 / ADR-101: this route is the fleet's executor primary, and Pi
+          # (thinking: max) sends reasoning_effort. Ollama Cloud accepts it, but
+          # LiteLLM rejects params the openai provider does not declare, so
+          # declare it here instead of silently dropping the thinking budget.
+          allowed_openai_params:
+          - reasoning_effort
       - model_name: minimax-m3.1-flash-ollama
         litellm_params:
           model: openai/minimax-m3.1-flash
@@ -211,6 +220,10 @@ spec:
           model: openai/glm-5.3
           api_base: "https://ollama.com/v1"
           api_key: "os.environ/OLLAMA_API_KEY"
+          # GUL-581 / ADR-101: reviewer/verifier route; same reasoning_effort
+          # declaration as the flash route above.
+          allowed_openai_params:
+          - reasoning_effort
       - model_name: glm-5.3-flash-ollama
         litellm_params:
           model: openai/glm-5.3-flash
