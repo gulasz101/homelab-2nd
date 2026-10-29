@@ -45,6 +45,25 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        # The app hardcodes its data dir as './data' relative to the working
+        # directory (/app), so the PVC is mounted over /app/data. The image
+        # creates data/db and data/tabs as root at build time; the volume hides
+        # them, so they are recreated with the pod's own uid.
+        - name: prepare-data
+          image: busybox:1.36.1
+          command:
+            - /bin/sh
+            - -c
+            - mkdir -p /app/data/db /app/data/tabs
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
       containers:
         - name: riffradar
           image: ghcr.io/gulasz101/riff_radar:0.1.0 # {"$imagepolicy": "flux-system:riffradar"}
@@ -60,9 +79,9 @@ spec:
             - name: HOME
               value: /tmp
             - name: DATABASE_URL
-              value: file:/data/db/riffradar.db
+              value: file:/app/data/db/riffradar.db
             - name: TAB_FILES_DIR
-              value: /data/tabs
+              value: /app/data/tabs
             # First boot only: seeds the demo challenge. Left on because a
             # rebuild from an empty PVC has to come up demo-ready; the seed is
             # idempotent in the app (GUL-549 smoke ran it twice).
@@ -103,7 +122,7 @@ spec:
                 - ALL
           volumeMounts:
             - name: data
-              mountPath: /data
+              mountPath: /app/data
             - name: tmp
               mountPath: /tmp
       volumes:
