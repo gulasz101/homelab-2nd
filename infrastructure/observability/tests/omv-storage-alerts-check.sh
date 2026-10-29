@@ -102,7 +102,7 @@ if [ -n "${PR:-}" ]; then
     || bad "  missing label release: prometheus-stack - Prometheus would ignore this rule"
 
   for a in OMVBtrfsDeviceReadErrors OMVBtrfsDeviceCorruptionOrGenerationErrors \
-           OMVBtrfsVolumeReadOnly OMVDiskUnreachable; do
+           OMVBtrfsVolumeReadOnly OMVDiskUnreachable OMVBtrfsSustainedReadErrors; do
     printf '%s\n' "$PR" | grep -qE "^[[:space:]]*- alert: ${a}$" \
       && ok "  rule ${a}" || bad "  rule ${a} missing"
   done
@@ -111,17 +111,19 @@ if [ -n "${PR:-}" ]; then
   n_group=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*alertgroup: omv-storage$')
   n_crit=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*severity: critical$')
   n_ns=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]{4,}namespace: observability$')
-  [ "$n_alerts" -eq 4 ] && [ "$n_alerts" -eq "$n_group" ] && [ "$n_alerts" -eq "$n_crit" ] && [ "$n_alerts" -eq "$n_ns" ] \
+  [ "$n_alerts" -eq 5 ] && [ "$n_alerts" -eq "$n_group" ] && [ "$n_alerts" -eq "$n_crit" ] && [ "$n_alerts" -eq "$n_ns" ] \
     && ok "  all ${n_alerts} alerts carry alertgroup: omv-storage, severity: critical and namespace: observability" \
     || bad "  ${n_alerts} alerts but ${n_group} alertgroup / ${n_crit} severity / ${n_ns} namespace labels"
 
   # 3 rules wait 5m (a burst is still critical, but let one scrape settle), the
-  # unreachable rule waits 10m so a reboot does not page.
+  # unreachable rule waits 10m so a reboot does not page, and the slow-burn
+  # rule waits 30m so one noisy half hour does not page.
   n_5m=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*for: 5m$')
   n_10m=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*for: 10m$')
-  [ "$n_5m" -eq 3 ] && [ "$n_10m" -eq 1 ] \
-    && ok "  3 rules use for: 5m, OMVDiskUnreachable uses for: 10m" \
-    || bad "  ${n_5m}x for: 5m and ${n_10m}x for: 10m (want 3 and 1)"
+  n_30m=$(printf '%s\n' "$PR" | grep -cE '^[[:space:]]*for: 30m$')
+  [ "$n_5m" -eq 3 ] && [ "$n_10m" -eq 1 ] && [ "$n_30m" -eq 1 ] \
+    && ok "  3 rules use for: 5m, OMVDiskUnreachable 10m, OMVBtrfsSustainedReadErrors 30m" \
+    || bad "  ${n_5m}x for: 5m, ${n_10m}x for: 10m, ${n_30m}x for: 30m (want 3, 1, 1)"
 
   # Each rule's PromQL, read from the source with yq: kubectl kustomize wraps
   # long scalars, so grepping the render would test the line wrapping rather
@@ -133,6 +135,12 @@ if [ -n "${PR:-}" ]; then
   [ "$(expr_of OMVBtrfsDeviceReadErrors)" = 'increase(node_btrfs_device_errors_total{job="omv-node",type="read"}[10m]) > 5' ] \
     && ok "  read errors: increase(omv-node read, 10m) > 5" \
     || bad "  OMVBtrfsDeviceReadErrors expr is not the 10m read-error increase > 5"
+  [ "$(expr_of OMVBtrfsSustainedReadErrors)" = 'increase(node_btrfs_device_errors_total{job="omv-node",type="read"}[6h]) > 20' ] \
+    && ok "  sustained read errors: increase(omv-node read, 6h) > 20" \
+    || bad "  OMVBtrfsSustainedReadErrors expr is not the 6h read-error increase > 20"
+  [ "$(for_of OMVBtrfsSustainedReadErrors)" = "30m" ] \
+    && ok "  OMVBtrfsSustainedReadErrors waits 30m" \
+    || bad "  OMVBtrfsSustainedReadErrors for is $(for_of OMVBtrfsSustainedReadErrors), want 30m"
   [ "$(expr_of OMVBtrfsDeviceCorruptionOrGenerationErrors)" = 'increase(node_btrfs_device_errors_total{job="omv-node",type=~"corruption|generation"}[10m]) > 0' ] \
     && ok "  corruption/generation: any increase of either type (no threshold)" \
     || bad "  corruption/generation rule does not match both types with > 0"
