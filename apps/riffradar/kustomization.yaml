@@ -14,11 +14,9 @@ resources:
   - riffradar-minio-backup-creds.sops.yaml
   - riffradar-tunnel-token.sops.yaml
   # Private GHCR pull credential (dockerconfigjson, ns riffradar + ns flux-system).
-  # NOT YET PRESENT: the token is minted by Wojtek (card on GUL-550) and the
-  # ciphertext lands in the commit that follows his action. Listed here only when
-  # the file exists - kustomize build fails on a missing resource, and shipping a
-  # placeholder "credential" would be a lie in a public repo.
-  # - riffradar-ghcr-pull-secret.sops.yaml
+  # Two documents in one encrypted file: the kubelet in `riffradar` needs it to
+  # pull, and image-reflector-controller in `flux-system` needs it to scan tags.
+  - riffradar-ghcr-pull-secret.sops.yaml
   # Data volume + workload
   - riffradar-data-pvc.yaml
   - riffradar-deployment.yaml
