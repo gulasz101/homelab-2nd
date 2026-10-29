@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  minio-lan-proxy — root LaunchDaemon (ADR-098 model A, H2-336).
+
+  Lives in the SYSTEM launchd domain on purpose: a WindowServer hang logs the GUI
+  session out on 2026-10-29-style failures, and launchd unloads every job in
+  gui/<uid> when that happens. A daemon is untouched by that teardown.
+
+  Do not also keep a LaunchAgent for this service. homelab-install-daemons.sh
+  removes it and tests/host-tree-check.sh fails if one is shipped here.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.voitech.homelab.minio-lan-proxy</string>
+
+	<!-- The command itself is host state: /Users/paperclip/.config/homelab/services.env -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>/usr/local/libexec/homelab/homelab-service-run.sh</string>
+		<string>minio-lan-proxy</string>
+	</array>
+
+	<key>UserName</key>
+	<string>paperclip</string>
+	<key>GroupName</key>
+	<string>staff</string>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>ExitTimeOut</key>
+	<integer>15</integer>
+
+	<key>WorkingDirectory</key>
+	<string>/Users/paperclip</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>/Users/paperclip</string>
+		<key>LANG</key>
+		<string>en_GB.UTF-8</string>
+	</dict>
+
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>/Users/paperclip/Library/Logs/homelab/minio-lan-proxy.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/paperclip/Library/Logs/homelab/minio-lan-proxy.err.log</string>
+</dict>
+</plist>

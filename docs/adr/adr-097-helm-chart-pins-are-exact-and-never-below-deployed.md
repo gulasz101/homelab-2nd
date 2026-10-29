@@ -58,6 +58,10 @@ A chart pin is one exact version **and** a floor.
   level — the same way every other release here is verified.
 - Downgrades remain possible, but only deliberately and with the migration story
   written down.
+- The floor is enforced where a pin is written: the factory gate runs
+  `scripts/helmrelease-pin-vs-cluster.sh <base> <head>` on any PR that changes a
+  HelmRelease and refuses a pin below `status.history[0].chartVersion`, and the
+  same script is the by-hand command for a non-factory PR (GUL-552).
 
 ## Alternatives considered
 

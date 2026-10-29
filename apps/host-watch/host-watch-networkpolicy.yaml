@@ -1,0 +1,34 @@
+---
+# Default-deny ingress with three narrow doors on 9115:
+#   * the pod CIDR, so Prometheus can scrape whatever namespace it runs in;
+#   * the LAN, so the Air's heartbeat reaches the NodePort (k3s masquerades
+#     NodePort traffic to the node IP, 192.168.1.179, which is in here);
+#   * the Netbird overlay, for the same reason from a laptop.
+# Egress is open because the whole point is to reach public URLs through the
+# cluster's normal internet path (DNS + 443); this pod holds no data worth
+# exfiltrating and runs no shell.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: host-watch
+  namespace: host-watch
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: host-watch
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 10.42.0.0/16
+        - ipBlock:
+            cidr: 192.168.1.0/24
+        - ipBlock:
+            cidr: 100.64.0.0/10
+      ports:
+        - protocol: TCP
+          port: 9115
+  egress:
+    - {}

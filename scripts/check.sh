@@ -11,7 +11,7 @@
 #           scripts/check.sh --list   print the checks, run nothing
 #
 #   Adding a check: drop an executable-ish `*/tests/*-check.sh` under apps/,
-#   infrastructure/, docs/, agents/ or scripts/ — it is discovered and run
+#   infrastructure/, docs/, agents/, scripts/ or host/ — it is discovered and run
 #   with no edit to this file. Checks that need the live cluster, SSH, the OMV
 #   host or decrypted secrets cannot run in CI: put them on the SKIP list with
 #   a reason instead of deleting or weakening them.
@@ -232,7 +232,7 @@ skip_check "apps/hindsight/tests/observability-check.sh" \
 
 # ---- auto-discovery: every */tests/*-check.sh, picked up with no edit here ----
 DISCOVER_DIRS=()
-for d in apps infrastructure docs agents scripts; do
+for d in apps infrastructure docs agents scripts host; do
   [ -d "$d" ] && DISCOVER_DIRS+=("$d")
 done
 while IFS= read -r f; do
