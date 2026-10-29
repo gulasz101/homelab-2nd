@@ -43,6 +43,8 @@ resources:
   - observability/loki-helm-release.yaml
   - observability/tempo-helm-release.yaml
   - observability/homelab-node-prometheus-rules.yaml
+  # OMV storage health (btrfs device errors, read-only volume, host down)
+  - observability/omv-storage-prometheus-rules.yaml
   - observability/homelab-node-alertmanager-config.yaml
   - observability/homelab-node-mattermost-webhook-url.sops.yaml
   # GitOps control-plane health: flux-system controller metrics
