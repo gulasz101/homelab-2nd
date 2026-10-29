@@ -21,6 +21,7 @@ resources:
   - riffradar-data-pvc.yaml
   - riffradar-deployment.yaml
   - riffradar-service.yaml
+  - riffradar-service-lan.yaml
   # Nightly SQLite + tabs backup to OMV MinIO
   - riffradar-backup-cronjob.yaml
   # Public ingress: dedicated tunnel
