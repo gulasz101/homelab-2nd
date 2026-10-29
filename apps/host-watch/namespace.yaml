@@ -1,0 +1,14 @@
+---
+# host-watch: the off-host watchdog for the M1 Air (H2-336).
+# Pod Security `restricted`: this pod runs no privileged code, mounts no host
+# path and needs no service-account token — it is a Python HTTP server.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: host-watch
+  labels:
+    app.kubernetes.io/name: host-watch
+    app.kubernetes.io/part-of: observability
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

@@ -1,0 +1,29 @@
+---
+# LAN/Netbird-only ingest face for the Air's heartbeat (H2-336).
+#
+# The Air posts to 192.168.1.179:30270/heartbeat every 60 s. This is deliberately
+# NOT a Cloudflare tunnel: a public ingest endpoint would be a free denial-of-
+# detection lever, and the heartbeat carries host internals (console user, per-
+# component health) that nobody outside the LAN needs to see. The path is still
+# token-gated (X-Heartbeat-Token) and the receiver fails closed without it.
+#
+# NodePort 30270 was free at the time of writing; the house inventory lives in
+# the H2-336 tracking note if it ever needs re-checking.
+apiVersion: v1
+kind: Service
+metadata:
+  name: host-watch-lan
+  namespace: host-watch
+  labels:
+    app.kubernetes.io/name: host-watch
+    app.kubernetes.io/component: heartbeat-ingest
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: host-watch
+  ports:
+    - name: http
+      port: 9115
+      targetPort: http
+      nodePort: 30270
+      protocol: TCP

@@ -1,4 +1,4 @@
-# ADR-098: The factory raises no merge card; the hourly tick reads the merge on GitHub
+# ADR-099: The factory raises no merge card; the hourly tick reads the merge on GitHub
 
 - **Status**: Accepted
 - **Date**: 2026-10-29
