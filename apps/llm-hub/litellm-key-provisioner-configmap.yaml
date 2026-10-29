@@ -62,6 +62,10 @@ data:
         "beam-ollama",
         "deepseek-v4-pro-0813-ollama",
         "deepseek-v4.1-flash-1017-ollama",
+        # GUL-591: same model on Wojtek's own DeepSeek API key (-ds suffix),
+        # upstream id `deepseek-flash`. Kept in DESIRED_MODELS so every key
+        # here can reach it; the route itself lives in litellm-helm-release.yaml.
+        "deepseek-v4.1-flash-1017-ds",
         "minimax-m3.1-flash-ollama",
         "mistral-large-4-ollama",
         "muse-spark-open-ollama",
