@@ -18,7 +18,9 @@
 #      repo-path entry disappears whenever a concurrent run parks the checkout
 #      on a branch without it, and launchd then fails in silence (proved by
 #      GUL-437's first kickstart after merge #65).
-#   4. drift: the INSTALLED PLIST in ~/Library/LaunchAgents must be
+#   4. drift: the INSTALLED PLIST in /Library/LaunchDaemons (GUL-617: a
+#      system daemon, because this Mac sits headless at the login window and a
+#      gui/501 LaunchAgent cannot fire then) must be
 #      byte-identical to the repo one — what launchd loaded must be what Git
 #      says is scheduled.
 #
@@ -32,7 +34,7 @@
 # Env overrides (used by tests):
 #   FACTORY_GUARD_DIR   installed guard dir   (default ~/paperclip-agents/pi/extensions/factory-guard)
 #   FACTORY_ENTRY_DIR   installed entry dir   (default ~/paperclip-agents/factory-selftest)
-#   FACTORY_PLIST_PATH  installed plist       (default ~/Library/LaunchAgents/dev.voitech.factory-guard-selftest.plist)
+#   FACTORY_PLIST_PATH  installed plist       (default /Library/LaunchDaemons/dev.voitech.factory-guard-selftest.plist)
 #   FACTORY_STATE_DIR   STOP/log dir          (default ~/paperclip-agents/majster/factory)
 #   FACTORY_REPO_DIR    homelab-2nd checkout  (default ~/Projects/homelab-2nd)
 #   FACTORY_SELFTEST_REEXEC=1  run this exact copy (skip the origin/main re-exec; negative tests use it)
@@ -148,7 +150,7 @@ if git -C "$FACTORY_REPO_DIR" archive origin/main agents/factory/selftest 2>/dev
     D3=$(head -c 200 "$DIFF3" | tr '\n' ';')
     add_failure install "installed self-test entry differs from origin/main — re-copy agents/factory/selftest/guard-selftest.sh from origin/main to $ENTRY_DIR/ (README has the commands): $D3"
   fi
-  PLIST_LIVE="${FACTORY_PLIST_PATH:-$HOME/Library/LaunchAgents/dev.voitech.factory-guard-selftest.plist}"
+  PLIST_LIVE="${FACTORY_PLIST_PATH:-/Library/LaunchDaemons/dev.voitech.factory-guard-selftest.plist}"
   DIFF4="$WORK/plist-diff.txt"
   diff -q "$WORK/selftest-ref/agents/factory/selftest/dev.voitech.factory-guard-selftest.plist" "$PLIST_LIVE" > "$DIFF4" 2>&1
   if [ -s "$DIFF4" ]; then
