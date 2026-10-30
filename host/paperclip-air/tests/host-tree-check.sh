@@ -91,6 +91,68 @@ for svc in $SERVICES; do
   fi
 done
 
+# ---- 3b. the scheduled jobs: system domain, appliance user, a real schedule ----
+# ADR-107/108. These are the jobs that went silent on 2026-10-29 because they
+# lived in gui/501: assert the shape that would have caught it.
+SCHEDULED="hermes-state-backup hermes-memory-watchdog"
+for job in $SCHEDULED; do
+  plist="$HERE/launchd/daemons/com.gulasz101.$job.plist"
+  if [ ! -f "$plist" ]; then fail "missing scheduled-job plist launchd/daemons/com.gulasz101.$job.plist"; continue; fi
+  python3 - "$plist" "$job" "$APPLIANCE_USER" "$APPLIANCE_HOME" "$HERE" <<'PY' || RC=1
+import os, plistlib, sys
+path, job, user, home, tree = sys.argv[1:6]
+label = "com.gulasz101." + job
+problems = []
+def bad(m): problems.append(m)
+try:
+    with open(path, 'rb') as fh:
+        p = plistlib.load(fh)
+except Exception as exc:
+    print('FAIL: %s is not a valid plist: %s' % (path, exc)); sys.exit(1)
+if p.get('Label') != label:
+    bad('Label is %r, expected %r' % (p.get('Label'), label))
+if os.path.basename(path) != label + '.plist':
+    bad('filename must equal <Label>.plist')
+if p.get('UserName') != user:
+    bad('UserName is %r, expected %r — a LaunchDaemon defaults to root (ADR-107)' % (p.get('UserName'), user))
+if p.get('KeepAlive'):
+    bad('KeepAlive must be absent: a scheduled job is not a service to keep running')
+if not (p.get('StartCalendarInterval') or p.get('StartInterval')):
+    bad('no StartCalendarInterval/StartInterval: nothing would ever schedule it')
+env = p.get('EnvironmentVariables') or {}
+if 'PATH' not in env:
+    bad('EnvironmentVariables.PATH missing')
+if env.get('HOME') != home:
+    bad('EnvironmentVariables.HOME must be %r: launchd does not guarantee HOME for system daemons' % home)
+if env.get('HERMES_HOME') != home + '/.hermes':
+    bad('EnvironmentVariables.HERMES_HOME must be %r: the installed script is outside the Hermes tree' % (home + '/.hermes'))
+args = p.get('ProgramArguments') or []
+want = '/usr/local/libexec/homelab/%s.sh' % job
+if len(args) != 2 or args[0] != '/bin/bash' or args[1] != want:
+    bad('ProgramArguments must be ["/bin/bash", %r], got %r' % (want, args))
+if not os.path.isfile(os.path.join(tree, 'bin', job + '.sh')):
+    bad('bin/%s.sh is missing from the tree (the installed copy has no source)' % job)
+if os.path.exists(os.path.join(tree, 'launchd', 'agents', label + '.plist')):
+    bad('launchd/agents/%s.plist exists: the job would be scheduled twice' % label)
+for m in problems:
+    print('FAIL: %s: %s' % (os.path.basename(path), m))
+sys.exit(1 if problems else 0)
+PY
+  [ "$RC" -eq 0 ] && ok "scheduled-job plist $job"
+done
+
+# the scheduled-job installer must render its plan without root (CI is Linux)
+if [ -f "$HERE/bin/homelab-install-scheduled-jobs.sh" ]; then
+  sched_plan=$(bash "$HERE/bin/homelab-install-scheduled-jobs.sh" --dry-run 2>&1)
+  for job in $SCHEDULED; do
+    printf '%s\n' "$sched_plan" | grep -q -- "$job" \
+      && ok "scheduled installer plans $job" \
+      || fail "scheduled installer's --dry-run does not mention $job"
+  done
+else
+  fail "bin/homelab-install-scheduled-jobs.sh missing (ADR-108)"
+fi
+
 # ---- 4. the heartbeat is a user agent on purpose -----------------------
 hb="$HERE/launchd/agents/$DOMAIN.heartbeat.plist"
 if [ -f "$hb" ]; then

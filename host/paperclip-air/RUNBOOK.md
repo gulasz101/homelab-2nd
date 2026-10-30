@@ -130,9 +130,13 @@ printf '%s' '<that value>' > ~/.config/homelab/heartbeat-token && chmod 600 ~/.c
 
 - **Logs.** launchd appends forever to `~/Library/Logs/homelab/*.log`. Check size monthly; rotate
   by hand (`: > file` after a `kill -HUP`-free restart) or add a `newsyslog.d` entry.
-- **Scheduled jobs are agents too.** `com.gulasz101.hermes-state-backup` (daily 03:30) and the
-  factory guard are LaunchAgents: with nobody logged in they never run, so those backups silently
-  stop. Convert them the same way (daemon + `StartCalendarInterval`) before relying on model A for
-  good — tracked as follow-up work, not part of the initial conversion.
+- **Scheduled jobs are daemons too (ADR-107, ADR-108).** `com.gulasz101.hermes-state-backup`
+  (daily 03:30), `com.gulasz101.hermes-memory-watchdog` (hourly) and the factory guard live in
+  `/Library/LaunchDaemons` with `UserName=paperclip`. They used to be LaunchAgents and went silent
+  the moment the 2026-10-29 WindowServer kill unloaded the GUI session. Nothing scheduled belongs in
+  `~/Library/LaunchAgents` — if you find one there, install it with
+  `bin/homelab-install-scheduled-jobs.sh` instead. Check the truth with
+  `sudo ./bin/homelab-install-scheduled-jobs.sh --status`; a hand-run job is not a substitute for a
+  schedule that fires.
 - **After a macOS major upgrade,** re-run `--status` and one drill: system-domain launchd semantics
   and `UserName` daemons' access to the user's home are the things that break.
