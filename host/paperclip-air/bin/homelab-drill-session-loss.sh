@@ -108,7 +108,7 @@ drill_session_loss() {
 }
 
 drill_kill() { # $1 = service or all
-  local svc pid found=0
+  local svc pid port found=0
   require_darwin || return 1
   case "$1" in
     all) set -- $HOMELAB_SERVICES ;;
@@ -125,6 +125,11 @@ drill_kill() { # $1 = service or all
     found=1
     say "killing $svc (pid $pid)"
     kill -9 "$pid" 2>/dev/null || warn "kill -9 $pid failed"
+    # Time from the port being free, not from the signal: the dying process's
+    # listening socket keeps accepting for a moment and the naive version
+    # recorded 0 s for a service that took 10 (measured on 2026-10-30).
+    port=$(svc_port "$svc")
+    wait_closed "$port" 15 || warn "$svc: port $port still open 15 s after kill -9 — timing anyway"
     elapsed=$(wait_up "$svc" 180)
     if [ -n "$elapsed" ]; then
       verdict="pass"; [ "$elapsed" -gt "$(svc_rto "$svc")" ] && verdict="slow"

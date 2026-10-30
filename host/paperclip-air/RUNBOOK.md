@@ -131,12 +131,21 @@ the truth.
 
 | Service | Port | RTO target | Measured (kill -9) | Measured (session loss) | RPO |
 |---|---|---|---|---|---|
-| `hermes-gateway` (6 profiles) | 8642 | 90 s | *pending drill* | *pending drill* | ≤ 24 h — `~/.hermes` snapshot at 03:30 to OMV MinIO `hermes-state-backups` (ADR-071) |
-| `paperclip` | 3100 | 120 s | *pending drill* | *pending drill* | minutes — CNPG WAL → OMV MinIO (barman plugin), daily base backup 03:00, 30 d retention |
-| `minio-lan-proxy` | 9000 | 30 s | *pending drill* | *pending drill* | none needed (stateless relay) |
-| `gemini-tunnel` | 8083 | 30 s | *pending drill* | *pending drill* | none needed (stateless ssh forward) |
-| `syncthing` | 8384 | 30 s | *pending drill* | *pending drill* | ≤ minutes (peer-to-peer; the vault lives on the other side too) |
+| `hermes-gateway` (6 profiles) | 8642 | 90 s | *not measured* — killing it on purpose ends the run doing the killing (§2a); needs the attended drill | *pending drill* | ≤ 24 h — `~/.hermes` snapshot at 03:30 to OMV MinIO `hermes-state-backups` (ADR-071) |
+| `paperclip` | 3100 | 120 s | **14 s** (2026-10-30) | *pending drill* | minutes — CNPG WAL → OMV MinIO (barman plugin), daily base backup 03:00, 30 d retention |
+| `minio-lan-proxy` | 9000 | 30 s | **1 s** (2026-10-30) | *pending drill* | none needed (stateless relay) |
+| `gemini-tunnel` | 8083 | 30 s | **1 s** (2026-10-30) | *pending drill* | none needed (stateless ssh forward) |
+| `syncthing` | 8384 | 30 s | **1 s** (2026-10-30) | *pending drill* | ≤ minutes (peer-to-peer; the vault lives on the other side too) |
 | whole platform after a logout | — | 300 s | — | *pending drill* | — |
+
+Measurements are the crash drill (`--kill <service>`): the service is SIGKILLed and the clock starts
+when its port goes *free*, not when the signal lands. Timing from the signal recorded `0 s` for
+`paperclip` on 2026-10-30, because a dying process's listening socket keeps accepting for a moment —
+a zero that looks like a perfect result and measures nothing. The `drills.jsonl` line from that first
+run is left in place; the number above is from the corrected re-run.
+
+Only the four services with no other dependency were drilled headless. `hermes-gateway` and the
+session-loss row need a person at the Mac.
 
 Restore drills have their own two rows: `restore-paperclip` (CNPG + MinIO → scratch namespace →
 working UI) and `restore-hermes` (`~/.hermes` from the 03:30 snapshot → gateway starts). Both are

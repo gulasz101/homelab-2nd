@@ -123,6 +123,22 @@ wait_up() {
   done
 }
 
+# Wait until the port is genuinely free, or the timeout expires.
+#
+# Needed by every "kill it, time the restart" measurement: a process that has
+# just been SIGKILLed keeps its listening socket accepting for a moment while the
+# kernel finishes with it, so a timer started at the kill can record 0 s - a
+# number that looks like a perfect result and measures nothing. Time from the
+# closed port, not from the signal.
+wait_closed() { # $1 = port, $2 = timeout (default 15)
+  local port="$1" timeout="${2:-15}" i=0
+  while [ "$i" -lt "$timeout" ]; do
+    port_open "$port" || return 0
+    sleep 1; i=$((i + 1))
+  done
+  return 1
+}
+
 require_darwin() {
   if [ "$(uname -s)" != "Darwin" ]; then
     printf 'this action only runs on the Mac (%s here); use --dry-run to see the plan\n' "$(uname -s)" >&2
