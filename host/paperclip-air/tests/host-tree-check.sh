@@ -236,5 +236,35 @@ if [ -f "$HERE/bin/homelab-drill-session-loss.sh" ]; then
   done
 fi
 
+# ---- 9. the installer resolves the right agent per service (GUL-619) ----
+# The agents on the Air do not share the daemons' names: ai.hermes.gateway vs
+# ...hermes-gateway, and io.paperclip.minio-proxy *also* matches "paperclip".
+# A plain substring search therefore misses the gateway agent and retires the
+# MinIO proxy's agent during the paperclip iteration - which is exactly how a
+# first install would produce four daemons, no gateway, and two owners for the
+# proxy. This runs against fixture filenames, needs no launchd, and is the
+# regression guard for that.
+fixture=$(mktemp -d "${TMPDIR:-/tmp}/host-tree-agents.XXXXXX")
+for n in ai.hermes.gateway io.paperclip.server io.paperclip.minio-proxy ai.hermes.gemini-tunnel sh.brew.syncthing; do
+  : >"$fixture/$n.plist"
+done
+HOMELAB_AGENT_DIR="$fixture"
+export HOMELAB_AGENT_DIR
+# shellcheck source=../bin/homelab-lib.sh
+. "$HERE/bin/homelab-lib.sh"
+# shellcheck source=../bin/homelab-find-agent.sh
+. "$HERE/bin/homelab-find-agent.sh"
+for pair in hermes-gateway:ai.hermes.gateway.plist \
+            paperclip:io.paperclip.server.plist \
+            minio-lan-proxy:io.paperclip.minio-proxy.plist \
+            gemini-tunnel:ai.hermes.gemini-tunnel.plist \
+            syncthing:sh.brew.syncthing.plist; do
+  svc=${pair%%:*}; want=${pair#*:}
+  got=$(find_agent_plists "$svc" | while IFS= read -r line; do basename "$line"; done | tr '\n' ' ')
+  [ "$got" = "$want " ] && ok "agent map: $svc -> $want" \
+    || fail "agent map: $svc resolved '$got', expected '$want ' (substring matching misses or cross-matches)"
+done
+rm -rf "$fixture"
+
 printf '\n%s\n' "$([ "$RC" -eq 0 ] && echo 'PASS: host/paperclip-air tree is installable, single-owner and secret-free' || echo 'FAIL: host/paperclip-air tree')"
 exit "$RC"

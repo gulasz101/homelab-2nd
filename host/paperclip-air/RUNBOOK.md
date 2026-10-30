@@ -50,6 +50,47 @@ sudo rm /Library/LaunchDaemons/dev.voitech.homelab-watchdog.plist
 sudo rm /usr/local/sbin/homelab-appliance-watchdog.sh
 ```
 
+### 2a. Converting a host whose services are *live orphans* (the 2026-10-29 leftover)
+
+The installer derives each service's command from the LaunchAgent it replaces and then boots that
+agent out. After the 2026-10-29 recovery the agents were **on disk but unloaded** (no `gui/501`
+exists headless) while the processes the interim watchdog had started were alive, `PPID 1`, and
+holding the ports. In that state the naive order is actively harmful: the daemon bootstraps, hits
+`EADDRINUSE`, and `KeepAlive` turns it into a crash loop *behind* a healthy-looking orphan — two
+supervisors and no owner.
+
+The order that works, and the reason for each step:
+
+```bash
+# 0. put the commands in place first, so nothing is derived from a JXA wrapper
+sudo -u paperclip ~/.config/homelab/gen-services-env.py       # or write services.env by hand
+
+# 1. kill the interim supervisor FIRST, or it resurrects the orphans inside 120 s
+sudo launchctl bootout system/dev.voitech.homelab-watchdog
+sudo rm /Library/LaunchDaemons/dev.voitech.homelab-watchdog.plist
+
+# 2. retire the agents before the ports change hands (they are unloaded, so this
+#    is only file state - a GUI login mid-cutover would otherwise load them)
+mv ~/Library/LaunchAgents/{ai.hermes.gateway,io.paperclip.server,io.paperclip.minio-proxy,ai.hermes.gemini-tunnel,sh.brew.syncthing}.plist \
+   ~/Library/LaunchAgents.h2-336-backup-*/
+
+# 3. now kill the orphans: they are PPID 1, so nothing else will
+for p in 9000 3100 8083 8384 8642; do sudo lsof -nP -iTCP:$p -sTCP:LISTEN -t | xargs -r sudo kill -TERM; done
+# syncthing keeps a monitor parent: pkill -f 'syncthing --no-browser' as well
+
+# 4. bootstrap once the ports are free, then prove it
+for s in minio-lan-proxy paperclip gemini-tunnel syncthing hermes-gateway; do
+  sudo launchctl enable "system/dev.voitech.homelab.$s"
+  sudo launchctl bootstrap system "/Library/LaunchDaemons/dev.voitech.homelab.$s.plist"
+done
+sudo ./bin/homelab-install-daemons.sh --status      # every row loaded, no agent
+ps -Ao ppid,command | grep -E 'gateway run|paperclip/cli|minio_proxy|syncthing' | grep '^ *1 '   # must be empty
+```
+
+Killing `hermes-gateway` ends any Hermes agent run in flight, including the one doing the cutover.
+Do it from a detached script (`python3 -c 'os.setsid()'`-style double fork) or with a person at the
+Mac; a run is not a supervisor and its unposted work dies with it.
+
 ## 3. Boot resilience (attended only)
 
 A MacBook Air has **no IPMI and no PDU**. There is no out-of-band power control: every recovery
