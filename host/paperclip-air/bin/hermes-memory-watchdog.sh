@@ -431,26 +431,92 @@ if [[ "${gemma_calls:-0}" -gt 0 ]]; then
     maybe_alert "gemma-in-use" "Hermes memory watchdog: ${gemma_calls} agent.log line(s) in the last hour show a Gemma model serving calls"
 fi
 
-# ---- 8. OpenRouter balance must stay above the floor ---------------------------
-# H2-306: Hindsight retain AND consolidation run on OpenRouter credit. At zero balance
-# every agent's live memory writes fail, not just background consolidation. The key is
-# read inside the cluster and never leaves homelab-2nd; only the remaining USD comes back.
+# ---- 8. the prepaid balance that feeds the fleet must stay above its floor ------
+# H2-306: at zero balance every agent's *live* Hindsight memory write fails silently,
+# not just background consolidation. The key is read inside the cluster and never
+# leaves homelab-2nd; only the remaining USD comes back.
+#
+# GUL-620: this check watched OpenRouter only, and had been reporting
+# `openrouter-unreadable` every hour since before 2026-10-29. Two faults, both silent:
+#   1. the header was the literal `Authorization: Bearer ***` - a redaction from a
+#      tracking note that got committed - so every call would 401 even with a key;
+#   2. `OPENROUTER_API_KEY` no longer exists in `litellm-provider-keys` at all:
+#      OpenRouter left LiteLLM on 2026-10-24 (GUL-123 / ADR-085), so the jsonpath
+#      returned an empty string and the pipeline could never have worked.
+# The balance that decides whether the fleet survives moved with ADR-106: every Hermes
+# profile and every Paperclip runner now runs on DeepSeek's own API, so DeepSeek's
+# prepaid balance is the one to guard. OpenRouter is kept as a second provider that
+# auto-skips when no key is present, so re-adding the credential arms it again.
+BALANCE_SSH_HOST="${BALANCE_SSH_HOST:-${HINDSIGHT_DB_HOST:-homelab-2nd}}"
+BALANCE_SECRET_NS="${BALANCE_SECRET_NS:-llm-hub}"
+BALANCE_SECRET_NAME="${BALANCE_SECRET_NAME:-litellm-provider-keys}"
+DEEPSEEK_FLOOR_USD="${DEEPSEEK_FLOOR_USD:-5}"
 OPENROUTER_FLOOR_USD="${OPENROUTER_FLOOR_USD:-5}"
-or_remaining="$(ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 "${HINDSIGHT_DB_HOST:-homelab-2nd}" 'bash -s' 2>/dev/null <<'OR' || true
-KEY=$(sudo k3s kubectl -n llm-hub get secret litellm-provider-keys -o jsonpath='{.data.OPENROUTER_API_KEY}' | base64 -d)
-curl -s -m 15 -H "Authorization: Bearer $KEY" https://openrouter.ai/api/v1/credits \
-  | python3 -c 'import json,sys; d=json.load(sys.stdin).get("data",{}); print("%.2f" % (float(d["total_credits"]) - float(d["total_usage"])))'
-unset KEY
-OR
-)"
-if [[ ! "${or_remaining}" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
-    maybe_alert "openrouter-unreadable" "Hermes memory watchdog: could not read the OpenRouter balance via ${HINDSIGHT_DB_HOST:-homelab-2nd}"
-else
-    log "check8 openrouter_remaining_usd=${or_remaining}"
-    if awk "BEGIN{exit !(${or_remaining} < ${OPENROUTER_FLOOR_USD})}"; then
-        maybe_alert "openrouter-low" "Hermes memory watchdog: OpenRouter balance is \$${or_remaining} (floor \$${OPENROUTER_FLOOR_USD}). Top up: at zero, every agent's live Hindsight memory writes fail."
-    fi
+
+# Prints the remaining USD for one provider, or `nokey` when the cluster secret holds
+# no key for it, or nothing at all when the read failed. Never prints the key.
+provider_balance() {
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
+        "${BALANCE_SSH_HOST}" 'bash -s' "$1" "${BALANCE_SECRET_NS}" "${BALANCE_SECRET_NAME}" 2>/dev/null <<'OR' || true
+id="$1"; ns="$2"; secret="$3"
+case "${id}" in
+    deepseek)   KEYNAME=DEEPSEEK_API_KEY;   URL=https://api.deepseek.com/user/balance ;;
+    openrouter) KEYNAME=OPENROUTER_API_KEY; URL=https://openrouter.ai/api/v1/credits ;;
+    *)          echo "unknown-provider"; exit 2 ;;
+esac
+KEY=$(sudo k3s kubectl -n "${ns}" get secret "${secret}" -o jsonpath="{.data.${KEYNAME}}" 2>/dev/null | base64 -d 2>/dev/null)
+if [ -z "${KEY}" ]; then
+    echo nokey
+    exit 0
 fi
+body=$(curl -sf -m 20 -H "Authorization: Bearer ${KEY}" "${URL}" 2>/dev/null) || body=""
+unset KEY
+[ -n "${body}" ] || exit 3
+printf '%s' "${body}" | /usr/bin/python3 -c '
+import json, sys
+pid = sys.argv[1]
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(3)
+try:
+    if pid == "deepseek":
+        infos = d.get("balance_infos") or []
+        usd = [float(b["total_balance"]) for b in infos if b.get("currency") == "USD"]
+        v = usd[0] if usd else (float(infos[0]["total_balance"]) if infos else None)
+    else:
+        dd = d.get("data") or {}
+        v = float(dd["total_credits"]) - float(dd["total_usage"])
+except Exception:
+    sys.exit(3)
+if v is None:
+    sys.exit(3)
+print("%.2f" % v)
+' "${id}"
+OR
+}
+
+check_provider_balance() {
+    local id="$1" floor="$2" remaining
+    remaining="$(provider_balance "${id}")"
+    if [[ "${remaining}" == "nokey" ]]; then
+        # A provider this cluster no longer holds a key for is not a fault, it is a
+        # retired route. Say so once an hour and alert on nothing.
+        log "check8 ${id}=skipped:no-key-in-${BALANCE_SECRET_NS}/${BALANCE_SECRET_NAME}"
+        return 0
+    fi
+    if [[ ! "${remaining}" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+        maybe_alert "${id}-unreadable" "Hermes memory watchdog: could not read the ${id} balance via ${BALANCE_SSH_HOST}"
+        return 0
+    fi
+    log "check8 ${id}_remaining_usd=${remaining}"
+    if awk "BEGIN{exit !(${remaining} < ${floor})}"; then
+        maybe_alert "${id}-low" "Hermes memory watchdog: ${id} balance is \$${remaining} (floor \$${floor}). Top up: at zero, every agent's live model calls and Hindsight memory writes fail."
+    fi
+}
+
+check_provider_balance deepseek "${DEEPSEEK_FLOOR_USD}"
+check_provider_balance openrouter "${OPENROUTER_FLOOR_USD}"
 
 if [[ "${alert_count}" -eq 0 ]]; then
     log "all checks ok"
