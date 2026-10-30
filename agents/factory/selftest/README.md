@@ -23,9 +23,17 @@ forbidden edit, the factory stops.*
 - Every run appends one line to `~/paperclip-agents/majster/factory/selftest.log`:
   time, PASS/FAIL, per-role results. The last raw matrix output is kept in
   `last-guard-check.out` next to it.
-- Schedule: launchd `dev.voitech.factory-guard-selftest`, daily 04:45 Warsaw
-  (plist here; install/load steps in its comment). Not a Paperclip routine —
-  no model run, no tokens.
+- Schedule: launchd **system daemon** `dev.voitech.factory-guard-selftest` in
+  `/Library/LaunchDaemons/`, `UserName=paperclip`, daily 04:45 Warsaw (plist
+  here; install/load steps in its comment). Not a Paperclip routine — no model
+  run, no tokens.
+- **System domain, not `gui/501`** (GUL-617). This Mac is a headless appliance:
+  on 2026-10-29 the userspace watchdog killed WindowServer, the Aqua session was
+  torn down and the machine sat at the login window. Every `~/Library/LaunchAgents`
+  job died with that session — including this self-test, which then said nothing
+  for two days. A LaunchDaemon needs no login and survives a WindowServer death.
+  Any *periodic* job on this host belongs in the system domain; the `UserName`
+  key is what keeps it running as paperclip rather than root.
 - The script re-execs the `origin/main` copy of itself so a shared checkout
   that some concurrent agent run switched to a feature branch cannot decide
   what the 04:45 test actually tests.
