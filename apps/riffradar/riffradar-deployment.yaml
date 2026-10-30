@@ -33,10 +33,12 @@ spec:
         app.kubernetes.io/name: riffradar
         app.kubernetes.io/component: app
     spec:
-      # Private GHCR package (ADR-101): the kubelet needs the dockerconfigjson
-      # Secret, encrypted with SOPS in riffradar-ghcr-pull-secret.sops.yaml.
+      # Private GHCR package (ADR-101/ADR-103): the kubelet needs the platform
+      # dockerconfigjson Secret from apps/ghcr-pull/ghcr-pull.sops.yaml. Shared
+      # with every other private image, so a new namespace is a script run, not
+      # a new GitHub token.
       imagePullSecrets:
-        - name: riffradar-ghcr-pull
+        - name: ghcr-pull
       # local-path PVC is node-local; the backup Job pins the same node.
       nodeSelector:
         kubernetes.io/hostname: homelab-2nd

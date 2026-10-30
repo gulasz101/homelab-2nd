@@ -21,6 +21,12 @@
 # --i-am-at-the-mac is a deliberate speed bump: two of these log the console
 # user out or reboot the machine, and the issue that created this script says
 # no unattended reboot until auto-login is proven.
+#
+# --kill refuses to kill a service that is hosting the caller. An agent run
+# measured `--kill paperclip` from inside a Paperclip heartbeat on 2026-10-30:
+# the kill -9 landed on the server running it, the run died before it could
+# record anything, and two other agents' runs died with it. Run --kill from a
+# Terminal (or an SSH session) on the Mac, never from an agent session.
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
@@ -108,12 +114,20 @@ drill_session_loss() {
 }
 
 drill_kill() { # $1 = service or all
-  local svc pid found=0
-  require_darwin || return 1
+  local svc pid port found=0
   case "$1" in
     all) set -- $HOMELAB_SERVICES ;;
     *)   set -- "$1" ;;
   esac
+  # The self-kill refusal comes first and is platform-independent on purpose:
+  # it must fire before anything else can act, and CI (Linux) has to be able
+  # to prove it fires.
+  for svc in "$@"; do
+    if caller_hosted_by "$svc"; then
+      die "refusing to kill $svc: this shell is running inside it, so the signal would kill the caller mid-drill and the measurement would be lost (that is exactly what happened on 2026-10-30 with --kill paperclip). Run it from a Terminal or SSH session on the Mac, not from an agent session."
+    fi
+  done
+  require_darwin || return 1
   say "kill -9 drill at $(now_h)"
   for svc in "$@"; do
     pid=$(launchctl print "system/$(svc_label "$svc")" 2>/dev/null | awk '/^[[:space:]]*pid = /{print $3; exit}')
@@ -125,6 +139,11 @@ drill_kill() { # $1 = service or all
     found=1
     say "killing $svc (pid $pid)"
     kill -9 "$pid" 2>/dev/null || warn "kill -9 $pid failed"
+    # Time from the port being free, not from the signal: the dying process's
+    # listening socket keeps accepting for a moment and the naive version
+    # recorded 0 s for a service that took 10 (measured on 2026-10-30).
+    port=$(svc_port "$svc")
+    wait_closed "$port" 15 || warn "$svc: port $port still open 15 s after kill -9 — timing anyway"
     elapsed=$(wait_up "$svc" 180)
     if [ -n "$elapsed" ]; then
       verdict="pass"; [ "$elapsed" -gt "$(svc_rto "$svc")" ] && verdict="slow"
