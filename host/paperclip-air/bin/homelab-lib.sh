@@ -123,6 +123,22 @@ wait_up() {
   done
 }
 
+# Wait until the port is genuinely free, or the timeout expires.
+#
+# Needed by every "kill it, time the restart" measurement: a process that has
+# just been SIGKILLed keeps its listening socket accepting for a moment while the
+# kernel finishes with it, so a timer started at the kill can record 0 s - a
+# number that looks like a perfect result and measures nothing. Time from the
+# closed port, not from the signal.
+wait_closed() { # $1 = port, $2 = timeout (default 15)
+  local port="$1" timeout="${2:-15}" i=0
+  while [ "$i" -lt "$timeout" ]; do
+    port_open "$port" || return 0
+    sleep 1; i=$((i + 1))
+  done
+  return 1
+}
+
 require_darwin() {
   if [ "$(uname -s)" != "Darwin" ]; then
     printf 'this action only runs on the Mac (%s here); use --dry-run to see the plan\n' "$(uname -s)" >&2
@@ -135,6 +151,36 @@ require_root() {
     printf 'this action needs root (it writes %s and drives the system launchd domain)\n' "$HOMELAB_DAEMON_DIR" >&2
     return 1
   fi
+}
+
+# True (0) when this very process is running inside the service it is about to
+# act on. Killing that service then kills the caller, and whatever the caller
+# was doing is lost. On 2026-10-30 an agent run measured `--kill paperclip`
+# from inside a Paperclip heartbeat: it killed the server hosting it and took
+# two other agents' runs down with it. A drill that dies before it writes its
+# own result has measured nothing.
+caller_hosted_by() { # $1 = service name
+  local svc="${1:-}" pid cmd pattern=""
+  [ -n "$svc" ] || return 1
+  case "$svc" in
+    paperclip)
+      # A Paperclip heartbeat always carries at least one of these.
+      if [ -n "${PAPERCLIP_RUN_ID:-}${PAPERCLIP_TASK_ID:-}${PAPERCLIP_AGENT_ID:-}" ]; then
+        return 0
+      fi
+      pattern='paperclipai'
+      ;;
+    hermes-gateway) pattern='gateway run' ;;
+    *) return 1 ;;
+  esac
+  pid=$$
+  while :; do
+    case "${pid:-}" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$pid" -gt 1 ] || return 1
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null) || return 1
+    case "$cmd" in *"$pattern"*) return 0 ;; esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+  done
 }
 
 appliance_uid() { id -u "$HOMELAB_USER" 2>/dev/null; }
