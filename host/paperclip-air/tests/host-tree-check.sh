@@ -248,12 +248,14 @@ fixture=$(mktemp -d "${TMPDIR:-/tmp}/host-tree-agents.XXXXXX")
 for n in ai.hermes.gateway io.paperclip.server io.paperclip.minio-proxy ai.hermes.gemini-tunnel sh.brew.syncthing; do
   : >"$fixture/$n.plist"
 done
-HOMELAB_AGENT_DIR="$fixture"
-export HOMELAB_AGENT_DIR
+# homelab-lib.sh ASSIGNS HOMELAB_AGENT_DIR, so the fixture path has to be set
+# after sourcing or it is silently replaced by the real home directory.
 # shellcheck source=../bin/homelab-lib.sh
 . "$HERE/bin/homelab-lib.sh"
 # shellcheck source=../bin/homelab-find-agent.sh
 . "$HERE/bin/homelab-find-agent.sh"
+HOMELAB_AGENT_DIR="$fixture"
+export HOMELAB_AGENT_DIR
 for pair in hermes-gateway:ai.hermes.gateway.plist \
             paperclip:io.paperclip.server.plist \
             minio-lan-proxy:io.paperclip.minio-proxy.plist \
