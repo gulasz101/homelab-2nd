@@ -186,167 +186,188 @@ caller_hosted_by() { # $1 = service name
 appliance_uid() { id -u "$HOMELAB_USER" 2>/dev/null; }
 
 # ---------------------------------------------------------------------------
-# Claude Code auth (GUL-641). On 2026-10-30 the Claude Code PM agent lost its
-# login at 05:30 — OAuth refresh rejected, ~/.claude/.credentials.json blanked
-# — and nobody was told for nine hours. The agent sat in `error` while its
-# ticket stayed parked. The silence was the defect; the login was the symptom.
+# Claude Code auth (GUL-641, corrected by GUL-661). On 2026-10-30 the Claude
+# Code PM agent lost its login at 05:30 and nobody was told for nine hours: the
+# agent sat in `error` while its ticket stayed parked. The silence was the
+# defect; the login was the symptom.
 #
-# Three ways to see it, all without a browser, in this order:
-#   1. `claude auth status` says "loggedIn": false   <- primary: local, cheap,
-#      no API key, and it is the same JSON the CLI itself trusts.
-#   2. the Paperclip agent row is in `error` with errorReason containing
-#      "OAuth session expired" / "Failed to authenticate"  <- needs the key in
-#      $HERMES_HOME/.env, so it is only a fallback.
-#   3. the newest session jsonl written since the last 05:30 run carries an
-#      assistant message with model "<synthetic>" and "Failed to authenticate"
-#      <- last resort: it only proves a failure *happened*, never that it was
-#      fixed, so it is never allowed to overrule a readable status 1.
+# GUL-641 watched `claude auth status` for it, and that was wrong. A managed run
+# never touches ~/.claude: the server builds a throwaway home per run
+# ($TMPDIR/paperclip-ai-<company>-<grant>-), points CLAUDE_CONFIG_DIR at its
+# `provider/` subdirectory, blanks every inherited auth env var, and hands
+# Claude the token from the Paperclip AI connection in the child environment
+# (CLAUDE_CODE_OAUTH_TOKEN, or ANTHROPIC_API_KEY for an API-key connection).
+# The stub in ~/.claude answered `loggedIn: false` for a day while every run
+# authenticated fine. That is not a weak signal, it is a signal about a
+# different login.
+#
+# The agent row is no better. `status` is live-only, so it flips to idle
+# mid-check, and `errorReason` is sticky: at 18:2xZ it still carried the 16:13Z
+# auth failure while the 18:18Z run was healthy. Reading either one, or both,
+# pages forever.
+#
+# What is faithful is the run row. The process that actually failed records
+# status, errorCode, error and finishedAt, so the check reads the newest
+# FINISHED run for the agent and nothing else. An in-flight row is skipped, so a
+# live status flip has no vote at all.
 #
 # Returns one line, never a secret:
-#   alive                 loggedIn is true, and only that
-#   dead:<reason>         certainly logged out
-#   unknown:<reason>      cannot tell (missing binary, unparseable output)
+#   alive                 the last finished run succeeded
+#   dead:<reason>         the last finished run failed on authentication
+#   unknown:<reason>      cannot tell: no key, API unreachable, no finished run
+#                         in the window, or the last run failed for another
+#                         reason
 #
-# AC3 of GUL-641: a bare `claude auth login` prompt attempt must NOT clear
-# this. It cannot: the verdict is re-read from the JSON on every call and only
-# an explicit true is alive. There is no cached "was alerted" state here.
-# Defaults only: the variables themselves are read at call time, so a caller
-# (the daemon, a drill, a test) can override any of them per invocation. An
-# explicit CLAUDE_BIN always wins, including when it points at nothing.
-#
-# They anchor on HOMELAB_HOME (the appliance user), NOT on $HOME: this check
-# must describe paperclip's Claude Code login, and a daemon started with a
-# different HOME — `sudo` gives one /var/root — must not silently measure
-# somebody else's. Anyone who wants to isolate the check overrides CLAUDE_BIN
-# or CLAUDE_PROJECTS_DIR explicitly.
-CLAUDE_BIN_DEFAULT="${CLAUDE_BIN_DEFAULT:-$HOMELAB_HOME/.local/bin/claude}"
-CLAUDE_PROJECTS_DEFAULT="${CLAUDE_PROJECTS_DEFAULT:-$HOMELAB_HOME/.claude/projects}"
+# Only a positive auth failure is `dead` and only `succeeded` is `alive`.
+# Everything else is `unknown`: logged, never paged. A watchdog that cries wolf
+# gets ignored inside a week, and then the real outage looks like the noise.
 CLAUDE_AGENT_ID="${CLAUDE_AGENT_ID:-97efeb2d-5b3a-4110-b893-6cbcbb29164c}"
+CLAUDE_COMPANY_ID="${CLAUDE_COMPANY_ID:-0e2eb054-4cb6-4ea1-a2e7-2b1894285d8c}"
+# 26 h: the daily PM round fires at 05:30, so a finished run older than that
+# means nobody has tried the credential since, and that is not evidence either
+# way. A window beats "the newest row whatever its age" because a fixed login
+# with no runs after it would otherwise page for days.
+CLAUDE_RUN_WINDOW_HOURS="${CLAUDE_RUN_WINDOW_HOURS:-26}"
+CLAUDE_RUN_LIMIT="${CLAUDE_RUN_LIMIT:-20}"
 
-# The most recent 05:30 in local time, as a `touch -t` stamp (YYYYMMDDhhmm).
-# The daily PM run fires at 05:30, so anything written before it belongs to
-# yesterday's story. Stays portable: BSD date on the Air, GNU date in CI.
-claude_since_stamp() {
-  local hh mm today yest
-  hh=$(date +%H); mm=$(date +%M)
-  today=$(date +%Y%m%d)
-  yest=$(date -j -v-1d +%Y%m%d 2>/dev/null) || yest=$(date -d 'yesterday' +%Y%m%d 2>/dev/null) \
-    || yest=$(date -r $(( $(date +%s) - 86400 )) +%Y%m%d 2>/dev/null) || yest="$today"
-  if [ "$hh" -gt 5 ] || { [ "$hh" -eq 5 ] && [ "$mm" -ge 30 ]; }; then
-    printf '%s0530' "$today"
-  else
-    printf '%s0530' "$yest"
+# The key the daemon can see. The LaunchDaemon sets HERMES_HOME, not the key
+# itself, so the profile .env is the source. Read, never printed.
+claude_paperclip_key() {
+  local key="${PAPERCLIP_API_KEY:-}" env_file
+  if [ -z "$key" ]; then
+    env_file="${HERMES_HOME:-$HOMELAB_HOME/.hermes}/.env"
+    if [ -r "$env_file" ]; then
+      key=$(. "$env_file" >/dev/null 2>&1; printf '%s' "${PAPERCLIP_API_KEY:-}")
+    fi
   fi
+  printf '%s' "$key"
 }
 
-# Signal 1 only. Prints the raw verdict word, so callers can compose.
-claude_auth_cli_state() {
-  local bin out compact
-  bin="${CLAUDE_BIN:-$CLAUDE_BIN_DEFAULT}"
-  # PATH is only a fallback for the *default* path going missing (a moved
-  # install). An explicit CLAUDE_BIN is authoritative, even when it points at
-  # nothing - otherwise the HOME=/tmp/noclaude proof would quietly answer using
-  # the real binary.
-  if [ "$bin" = "$CLAUDE_BIN_DEFAULT" ] && [ ! -x "$bin" ]; then
-    bin=$(command -v claude 2>/dev/null) || true
+# Raw run rows for the agent, newest first. CLAUDE_AUTH_RUNS_JSON_FILE replays a
+# recorded body instead of the network, which is how the test suite proves every
+# branch with no server and no key.
+claude_auth_runs_json() {
+  local key url body
+  if [ -n "${CLAUDE_AUTH_RUNS_JSON_FILE:-}" ]; then
+    cat "$CLAUDE_AUTH_RUNS_JSON_FILE"
+    return 0
   fi
-  [ -n "${bin:-}" ] && [ -x "$bin" ] || { echo "unknown:no-claude-binary"; return 0; }
-  # `auth status` prints JSON on stdout and exits 1 when logged out. The exit
-  # code is deliberately NOT the signal: a broken install exits non-zero too,
-  # and "the CLI is sick" must not read as "the login is dead".
-  out=$("$bin" auth status 2>/dev/null) || true
-  # Whitespace comes out of pretty-printed JSON, so collapse it and match the
-  # exact pair. A loose "*true*" match would read "analyticsDisabled": true as
-  # a login — the one false alarm that would teach everyone to ignore this.
-  compact=$(printf '%s' "$out" | tr -d ' \t\n\r')
-  case "$compact" in
-    *'"loggedIn":true'*)  echo "alive"; return 0 ;;
-    *'"loggedIn":false'*) echo "dead:claude-auth-status-loggedIn-false"; return 0 ;;
-  esac
-  echo "unknown:claude-auth-status-unparseable"
-}
-
-# Signal 2. Corroboration only; needs PAPERCLIP_API_KEY in the environment.
-claude_auth_agent_state() {
-  local url key body
+  key=$(claude_paperclip_key)
+  [ -n "$key" ] || { echo "unknown:no-paperclip-key"; return 0; }
   url="${PAPERCLIP_API_URL:-http://127.0.0.1:3100}"
   case "$url" in */api) : ;; *) url="$url/api" ;; esac
-  key="${PAPERCLIP_API_KEY:-}"
-  if [ -z "$key" ] && [ -r "${HERMES_HOME:-$HOMELAB_HOME/.hermes}/.env" ]; then
-    key=$(. "${HERMES_HOME:-$HOMELAB_HOME/.hermes}/.env" >/dev/null 2>&1; printf '%s' "${PAPERCLIP_API_KEY:-}")
-  fi
-  [ -n "$key" ] || { echo "unknown:no-paperclip-key"; return 0; }
-  body=$(curl -s -m 8 -H "Authorization: Bearer $key" "$url/agents/$CLAUDE_AGENT_ID" 2>/dev/null) || true
-  printf '%s' "$body" | claude_agent_verdict
+  body=$(curl -s -m 10 -H "Authorization: Bearer $key" \
+    "$url/companies/$CLAUDE_COMPANY_ID/heartbeat-runs?agentId=$CLAUDE_AGENT_ID&limit=${CLAUDE_RUN_LIMIT}" 2>/dev/null) || true
+  [ -n "$body" ] || { echo "unknown:paperclip-api-unreachable"; return 0; }
+  printf '%s' "$body"
 }
 
-# The verdict for signal 2, kept separate from the fetch so it can be tested
-# against a recorded body. The agent row is large and carries
-# `"status":"active"` (membership) and `"status":"healthy"` (orgChainHealth),
-# so only the exact pair counts.
-claude_agent_verdict() {
-  local body
-  body=$(cat)
-  case "$body" in
-    *'"status":"error"'*)
-      case "$body" in
-        *"OAuth session expired"*|*"Failed to authenticate"*)
-          echo "dead:paperclip-agent-error-auth"; return 0 ;;
-      esac
-      echo "unknown:paperclip-agent-error-other"; return 0 ;;
-    *'"id":"'*)
-      # Readable, and not in an auth error: the row has moved on (a later run
-      # succeeded). This is why signal 2 is a fallback, never an override.
-      echo "unknown:paperclip-agent-not-in-error"; return 0 ;;
-  esac
-  echo "unknown:paperclip-agent-unreadable"
+# The verdict for a run list, separated from the fetch so a recorded body can be
+# replayed. Reads the JSON array on stdin.
+claude_runs_verdict() {
+  local py src
+  py=$(command -v python3 2>/dev/null) || { cat >/dev/null; echo "unknown:no-python3"; return 0; }
+  # The program goes in -c, so stdin stays free for the JSON body.
+  src=$(cat <<'PY'
+import json, sys
+from datetime import datetime, timezone
+
+# The Claude adapter emits claude_auth_required on the CLI lane and translates
+# the shared acpx code into it on the ACP lane; adapter_auth_missing comes from
+# the sandbox login probe. All three mean "sign in again".
+AUTH_CODES = {"claude_auth_required", "acpx_auth_required", "adapter_auth_missing"}
+AUTH_PHRASES = ("failed to authenticate", "oauth session expired", "sign-in failed")
+
+
+def stamp(row):
+    ts = row.get("finishedAt")
+    if not isinstance(ts, str) or not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+try:
+    window_h = float(sys.argv[1]) if len(sys.argv) > 1 else 26.0
+except ValueError:
+    window_h = 26.0
+
+try:
+    runs = json.load(sys.stdin)
+except Exception:
+    print("unknown:runs-unreadable")
+    raise SystemExit(0)
+
+if not isinstance(runs, list) or not runs:
+    print("unknown:no-runs")
+    raise SystemExit(0)
+
+finished = [r for r in runs if isinstance(r, dict) and stamp(r)]
+if not finished:
+    # Only in-flight or queued rows: nothing has finished, so nothing is proven.
+    print("unknown:no-finished-run")
+    raise SystemExit(0)
+
+
+def classify(row):
+    """One finished row -> verdict, or None when it says nothing about the login."""
+    status = str(row.get("status") or "")
+    code = str(row.get("errorCode") or "").strip()
+    message = str(row.get("error") or "").strip().lower()
+    if status == "succeeded":
+        return "alive"
+    if status != "failed":
+        # cancelled / timed_out / killed: the row speaks about the issue or the
+        # host, not about whether the credential works.
+        return None
+    if code.lower() in AUTH_CODES or any(p in message for p in AUTH_PHRASES):
+        return "dead:run-%s" % (code or "auth-message")
+    if code.lower() == "provider_quota" or "quota" in message or "usage limit" in message:
+        # A quota refusal is an answer from the provider: the credential
+        # authenticated and only the allowance ran out. Not a login alarm.
+        return "alive"
+    return None
+
+
+# Newest finished row that actually says something. A cancelled run above an
+# auth failure must not silence the alarm, and an in-flight row never votes.
+verdict = None
+for row in sorted(finished, key=stamp, reverse=True):
+    verdict = classify(row)
+    if verdict is not None:
+        break
+if verdict is None:
+    print("unknown:no-informative-run")
+    raise SystemExit(0)
+
+age_h = (datetime.now(timezone.utc) - stamp(row)).total_seconds() / 3600.0
+if age_h > window_h:
+    print("unknown:last-finished-run-too-old")
+    raise SystemExit(0)
+
+print(verdict)
+PY
+)
+  "$py" -c "$src" "${CLAUDE_RUN_WINDOW_HOURS}"
 }
 
-# Signal 3. Only proves a failure happened since the 05:30 run.
-claude_auth_jsonl_state() {
-  local ref f hit="" dir
-  dir="${CLAUDE_PROJECTS_DIR:-$CLAUDE_PROJECTS_DEFAULT}"
-  [ -d "$dir" ] || { echo "unknown:no-projects-dir"; return 0; }
-  ref="${TMPDIR:-/tmp}/.claude-auth-ref.$$"
-  : > "$ref" 2>/dev/null || { echo "unknown:no-temp-for-reference"; return 0; }
-  # BSD find has no `-newermt @epoch`; a reference file is the portable form.
-  touch -t "$(claude_since_stamp)" "$ref" 2>/dev/null || { rm -f "$ref"; echo "unknown:bad-reference-stamp"; return 0; }
-  for f in $(find "$dir" -name '*.jsonl' -newer "$ref" 2>/dev/null | head -20); do
-    if grep -q '"model":"<synthetic>"' "$f" 2>/dev/null \
-       && grep -q 'Failed to authenticate' "$f" 2>/dev/null; then
-      hit="$f"; break
-    fi
-  done
-  rm -f "$ref"
-  [ -n "$hit" ] || { echo "unknown:no-auth-failure-in-jsonl"; return 0; }
-  if grep -qi 'OAuth session expired' "$hit" 2>/dev/null; then
-    echo "dead:jsonl-oauth-session-expired"
-  else
-    echo "dead:jsonl-failed-to-authenticate"
-  fi
-}
-
-# The verdict the callers act on. Primary signal wins whenever it is readable;
-# a readable "alive" is never overruled by a stale error row or a log line that
-# only records yesterday's failure.
+# The verdict the callers act on.
 claude_auth_state() {
-  local state
-  state=$(claude_auth_cli_state)
-  case "$state" in
-    alive|dead:*) echo "$state"; return 0 ;;
+  local raw
+  raw=$(claude_auth_runs_json)
+  case "$raw" in
+    unknown:*) printf '%s\n' "$raw" ;;
+    *) printf '%s' "$raw" | claude_runs_verdict ;;
   esac
-  state=$(claude_auth_agent_state)
-  case "$state" in
-    dead:*) echo "$state"; return 0 ;;
-  esac
-  claude_auth_jsonl_state
 }
 
 # One place for the words, so the hourly daemon and a hand-run of the legacy
 # watchdog cannot drift apart. The first sentence is fixed by GUL-641 AC2; the
 # rest exists because "restart it" is the wrong instinct here and the wrong
 # subcommand (`claude login`) is the other one.
-claude_auth_alert_message() { # $1 = verdict, e.g. dead:claude-auth-status-loggedIn-false
+claude_auth_alert_message() { # $1 = verdict, e.g. dead:run-claude_auth_required
   printf 'claude code auth dead: run claude auth login (%s). HUMAN action, not a restart - no daemon kickstart, no agent restart and no reboot will refresh an expired OAuth session. Use `claude auth login`, or /login in an interactive session; `claude login` is not a subcommand.' "${1#dead:}"
 }
 

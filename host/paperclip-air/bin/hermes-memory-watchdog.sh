@@ -482,12 +482,12 @@ else
     fi
 fi
 
-# ---- 9. Claude Code auth (GUL-641) ----------------------------------------
-# Primary signal is the CLI's own verdict: it is local, cheap, needs no API
-# key, and it is the same JSON the agent's own runtime reads. A bare
-# `claude auth login` prompt attempt does not clear it — only an explicit
-# "loggedIn": true does, because the verdict is re-read every hour and nothing
-# is cached here.
+# ---- 9. Claude Code auth (GUL-641, signal replaced in GUL-661) -------------
+# The signal is the newest FINISHED run of the agent from the Paperclip API:
+# a run that failed on auth is the exact condition we care about, and an
+# in-flight row is skipped so a mid-check status flip cannot hide it.
+# `claude auth status` is NOT the signal: it reads ~/.claude, which a managed
+# run never touches (see homelab-lib.sh for the whole story).
 if [[ "${CLAUDE_AUTH_CHECK}" -eq 1 ]]; then
     CLAUDE_AUTH_STATE_FILE="${STATE_DIR}/claude-auth.state"
     claude_prev=""
@@ -498,7 +498,7 @@ if [[ "${CLAUDE_AUTH_CHECK}" -eq 1 ]]; then
     printf '%s' "${claude_verdict}" > "${CLAUDE_AUTH_STATE_FILE}"
     case "${claude_verdict}" in
         alive)
-            log "check9 claude_auth=loggedIn:true"
+            log "check9 claude_auth=alive (last finished run succeeded)"
             if [[ -n "${claude_prev}" && "${claude_prev}" != "alive" ]]; then
                 log "check9 claude_auth RECOVERED from '${claude_prev}'"
             fi
