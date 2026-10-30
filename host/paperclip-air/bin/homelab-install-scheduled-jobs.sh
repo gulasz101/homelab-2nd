@@ -27,6 +27,13 @@
 #      edits a file that is no longer the one launchd runs.
 #
 # Safe to re-run: a loaded job is booted out and brought back from this tree.
+#
+# CAREFUL: re-running this while a job is mid-flight RESTARTS it (bootout +
+# kickstart -k). Harmless for the watchdog; for the state backup it throws away
+# a snapshot in progress and starts again — on 2026-10-30 two installs from
+# parallel agent runs each restarted a running backup. Nothing was lost (a
+# completed run overwrote the same S3 keys), but do not deploy this between
+# 03:30 and ~04:00 unless you mean to redo the night's backup.
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
