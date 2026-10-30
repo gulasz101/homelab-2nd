@@ -166,6 +166,19 @@ The heartbeat also carries per-component health (`hermes-gateway`, `paperclip`, 
 `gemini-tunnel`, `syncthing`), which is how the Hermes API gets watched at all: it binds
 `127.0.0.1:8642` on the Air and only a process on the Air can see it.
 
+### 5a. Claude Code auth is dead (GUL-641)
+
+- **Symptom:** Claude Code agent runs fail with `agent error: Failed to authenticate` (OAuth session
+  expired and could not be refreshed, `~/.claude/.credentials.json` blanked) and its ticket sits
+  parked. On 2026-10-30 it sat there for nine hours with nobody told.
+- **Check:** `~/.local/bin/claude auth status` — `"loggedIn": false` is dead. The hourly
+  `com.gulasz101.hermes-memory-watchdog` checks the same thing and logs
+  `check9 claude_auth=...` to `~/.hermes/logs/hermes-memory-watchdog.log`; for the verdict alone run
+  `/usr/local/libexec/homelab/hermes-memory-watchdog.sh --claude-auth-only`.
+- **Fix:** `claude auth login`, or `/login` in an interactive session. This is a **human** action: no
+  daemon kickstart, no agent restart and no reboot will refresh an expired OAuth session, and
+  `claude login` is not a subcommand.
+
 Seeding the heartbeat token (once, after `apps/host-watch` has reconciled):
 
 ```bash

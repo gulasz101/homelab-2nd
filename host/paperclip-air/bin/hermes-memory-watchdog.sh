@@ -46,6 +46,20 @@ BACKUP_STALE_SECONDS="${BACKUP_STALE_SECONDS:-93600}"
 # it counts as failed. The mc readiness probe alone can burn 20 x 30 s.
 BACKUP_RUN_INFLIGHT_GRACE_SECONDS="${BACKUP_RUN_INFLIGHT_GRACE_SECONDS:-3600}"
 
+# GUL-641. On 2026-10-30 the Claude Code PM agent's OAuth refresh was rejected
+# at 05:30; the agent sat in `error`, its ticket stayed parked, and nobody was
+# told for nine hours. This daemon is the hourly thing that runs on this Mac,
+# so the Claude auth check lives here. The detector itself is in homelab-lib.sh
+# because the legacy watchdog (and a human) must be able to call the same one.
+HERE_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -r "${HERE_BIN}/homelab-lib.sh" ]; then
+    # shellcheck source=homelab-lib.sh
+    . "${HERE_BIN}/homelab-lib.sh"
+    CLAUDE_AUTH_CHECK=1
+else
+    CLAUDE_AUTH_CHECK=0
+fi
+
 # PyYAML is NOT in the Apple-signed system python, and the system python is
 # the only one macOS lets a LaunchAgent take to the LAN (Local Network
 # privacy - ADR-079). So config parsing gets its own interpreter: it never
@@ -96,6 +110,22 @@ maybe_alert() {
         log "WARN hermes binary not executable at ${HERMES_BIN}"
     fi
 }
+
+# Human-runnable diagnostic for GUL-641, and the switch a drill uses to prove
+# the check without waiting for the hour to come round. Prints the verdict and,
+# when it is dead, the exact alert sentence. Never sends anything.
+if [ "${1:-}" = "--claude-auth-only" ]; then
+    if [ "${CLAUDE_AUTH_CHECK}" -ne 1 ]; then
+        echo "claude-auth: unknown:homelab-lib-not-found"
+        exit 0
+    fi
+    verdict="$(claude_auth_state)"
+    echo "claude-auth: ${verdict}"
+    case "${verdict}" in
+        dead:*) echo "$(claude_auth_alert_message "${verdict}")" ;;
+    esac
+    exit 0
+fi
 
 # ---- 1 + 2. provider must be hindsight; hindsight must not be disabled -------
 CONFIG_PATHS=()
@@ -450,6 +480,44 @@ else
     if awk "BEGIN{exit !(${or_remaining} < ${OPENROUTER_FLOOR_USD})}"; then
         maybe_alert "openrouter-low" "Hermes memory watchdog: OpenRouter balance is \$${or_remaining} (floor \$${OPENROUTER_FLOOR_USD}). Top up: at zero, every agent's live Hindsight memory writes fail."
     fi
+fi
+
+# ---- 9. Claude Code auth (GUL-641) ----------------------------------------
+# Primary signal is the CLI's own verdict: it is local, cheap, needs no API
+# key, and it is the same JSON the agent's own runtime reads. A bare
+# `claude auth login` prompt attempt does not clear it — only an explicit
+# "loggedIn": true does, because the verdict is re-read every hour and nothing
+# is cached here.
+if [[ "${CLAUDE_AUTH_CHECK}" -eq 1 ]]; then
+    CLAUDE_AUTH_STATE_FILE="${STATE_DIR}/claude-auth.state"
+    claude_prev=""
+    if [[ -r "${CLAUDE_AUTH_STATE_FILE}" ]]; then
+        claude_prev="$(cat "${CLAUDE_AUTH_STATE_FILE}")"
+    fi
+    claude_verdict="$(claude_auth_state)"
+    printf '%s' "${claude_verdict}" > "${CLAUDE_AUTH_STATE_FILE}"
+    case "${claude_verdict}" in
+        alive)
+            log "check9 claude_auth=loggedIn:true"
+            if [[ -n "${claude_prev}" && "${claude_prev}" != "alive" ]]; then
+                log "check9 claude_auth RECOVERED from '${claude_prev}'"
+            fi
+            ;;
+        dead:*)
+            # 24 h dedupe lives in maybe_alert, so an unresolved login pages
+            # once a day, not 24 times.
+            log "check9 claude_auth=dead reason=${claude_verdict#dead:}"
+            maybe_alert "claude-auth-dead" "$(claude_auth_alert_message "${claude_verdict}")"
+            ;;
+        *)
+            # Unknown is not green and it is not a page either. Say it in the
+            # log so a detector that has gone blind is visible rather than
+            # silent.
+            log "check9 claude_auth=unreadable reason=${claude_verdict#unknown:} - not alerting"
+            ;;
+    esac
+else
+    log "check9 skipped: homelab-lib.sh is not installed next to this script"
 fi
 
 if [[ "${alert_count}" -eq 0 ]]; then

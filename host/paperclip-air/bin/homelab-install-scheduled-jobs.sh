@@ -69,6 +69,7 @@ print_plan() {
   say "plan: install the Air's scheduled jobs as system LaunchDaemons (ADR-107)"
   say "host user:   $HOMELAB_USER (home $HOMELAB_HOME)"
   say "deploy to:   $HOMELAB_LIBEXEC/<job>.sh and $HOMELAB_DAEMON_DIR/<label>.plist"
+  say "             plus $HOMELAB_LIBEXEC/homelab-lib.sh (the schedules import their checks from it)"
   say ""
   say "job                     label                                    schedule"
   say "hermes-state-backup     $(sched_label hermes-state-backup)       daily 03:30 (StartCalendarInterval)"
@@ -118,6 +119,13 @@ do_apply() {
 
   step "deploying the scripts to $HOMELAB_LIBEXEC"
   mkdir -p "$HOMELAB_LIBEXEC"
+  # GUL-641: the memory watchdog calls the Claude auth detector in the shared
+  # library, so the library has to be on the host too. Shipping the job without
+  # it is the failure this ticket is about: the check would report "skipped"
+  # once an hour and look healthy. Guarded so a missing file stops the install.
+  install -m 0644 -o root -g wheel "$SCRIPT_DIR/homelab-lib.sh" "$HOMELAB_LIBEXEC/homelab-lib.sh" \
+    || die "could not install $HOMELAB_LIBEXEC/homelab-lib.sh (the watchdog imports its checks from it)"
+  say "installed $HOMELAB_LIBEXEC/homelab-lib.sh"
   for job in $SCHEDULED_JOBS; do
     install -m 0755 -o root -g wheel "$SCRIPT_DIR/$job.sh" "$(sched_script "$job")" \
       || die "could not install $(sched_script "$job")"
