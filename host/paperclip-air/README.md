@@ -22,6 +22,9 @@ host/paperclip-air/
 │   ├── homelab-lib.sh                     # what the Air runs: services, ports, RTOs, probes
 │   ├── homelab-find-agent.sh              # locate the LaunchAgent a service used to run under
 │   ├── homelab-install-daemons.sh         # THE installer: agents -> daemons, one owner, + rollback
+│   ├── homelab-install-scheduled-jobs.sh  # ADR-107: the two scheduled jobs -> system daemons
+│   ├── hermes-state-backup.sh             # nightly state.db -> MinIO (installed, never run from here)
+│   ├── hermes-memory-watchdog.sh          # hourly: memory config + backup-job health
 │   ├── homelab-service-run.sh             # exec wrapper every daemon calls (installed to /usr/local/libexec/homelab)
 │   ├── homelab-recover-appliance.sh       # break-glass: bring back anything not serving, headless
 │   ├── homelab-drill-session-loss.sh      # the drills, and the numbers they write down
@@ -33,7 +36,9 @@ host/paperclip-air/
 │   │   ├── dev.voitech.homelab.paperclip.plist
 │   │   ├── dev.voitech.homelab.minio-lan-proxy.plist
 │   │   ├── dev.voitech.homelab.gemini-tunnel.plist
-│   │   └── dev.voitech.homelab.syncthing.plist
+│   │   ├── dev.voitech.homelab.syncthing.plist
+│   │   ├── com.gulasz101.hermes-state-backup.plist      # scheduled 03:30 (ADR-107/108)
+│   │   └── com.gulasz101.hermes-memory-watchdog.plist   # scheduled hourly (ADR-107/108)
 │   └── agents/
 │       └── dev.voitech.homelab.heartbeat.plist   # user session ON PURPOSE (see ADR-098)
 ├── tests/host-tree-check.sh               # CI gate: plist shape, one owner, no secrets, plan renders
@@ -47,6 +52,21 @@ host/paperclip-air/
 on crash, needs no console) or a user LaunchAgent (dies with the session). Never both. The installer
 deletes the agent it replaces (backing it up first) and `tests/host-tree-check.sh` fails if this
 tree ever ships both for the same name.
+
+**Scheduled jobs are daemons too (ADR-107).** A job launchd *schedules* — not a service it
+supervises — gets the same treatment: `launchd/daemons/`, `UserName=paperclip`, an explicit `HOME`,
+installed by `bin/homelab-install-scheduled-jobs.sh`. A calendar job in `gui/501` does not fire
+while nobody is logged in, and the Air spends most of its life with nobody logged in.
+
+| Job | Label | Schedule | Script (installed to `/usr/local/libexec/homelab`) |
+|---|---|---|---|
+| Hermes state backup | `com.gulasz101.hermes-state-backup` | daily 03:30 | `hermes-state-backup.sh` |
+| Memory watchdog | `com.gulasz101.hermes-memory-watchdog` | hourly | `hermes-memory-watchdog.sh` |
+
+The scripts live here (ADR-108) because a script that exists only in `~/.hermes/scripts/` on one
+host cannot be reviewed, restored onto a replacement Air, or fixed through GitOps. `HERMES_HOME` is
+passed in the plist — the installed script is no longer inside the Hermes tree and cannot infer it
+from `$0`.
 
 ## First install on a fresh Air
 
@@ -81,7 +101,14 @@ tail -5 ~/Library/Logs/homelab/heartbeat.err.log      # expect silence or "compo
 sudo install -m 0755 bin/homelab-recover-appliance.sh /usr/local/libexec/homelab/
 sudo install -m 0755 bin/homelab-lib.sh /usr/local/libexec/homelab/
 
-# 6. prove it (a human must be at the Mac for the first two)
+# 6. the scheduled jobs (state backup + memory watchdog) — ADR-107/108
+sudo ./bin/homelab-install-scheduled-jobs.sh --dry-run     # the plan
+sudo ./bin/homelab-install-scheduled-jobs.sh --status      # who is scheduled where
+sudo ./bin/homelab-install-scheduled-jobs.sh               # install + prove both once
+tail -3 ~/.hermes/logs/hermes-state-backup.log             # a dated SUCCESS line
+tail -3 ~/.hermes/logs/hermes-memory-watchdog.log          # a dated check line
+
+# 7. prove it (a human must be at the Mac for the first two)
 sudo ./bin/homelab-drill-session-loss.sh --kill all
 sudo ./bin/homelab-drill-session-loss.sh --session-loss --i-am-at-the-mac
 sudo ./bin/homelab-drill-session-loss.sh --reboot-attended --i-am-at-the-mac

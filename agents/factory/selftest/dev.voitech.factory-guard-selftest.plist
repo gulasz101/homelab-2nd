@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  GUL-437: daily factory-guard self-test on the Air. Zero model, zero tokens.
+  GUL-437 / GUL-617: daily factory-guard self-test on the Air. Zero model, zero tokens.
+
+  GUL-617 moved this from ~/Library/LaunchAgents (gui/501) to a SYSTEM LaunchDaemon.
+  Why: this Mac is a headless appliance, not a desktop. On 2026-10-29 at 09:39:16
+  WindowServer was killed by the userspace watchdog (OS_REASON_WATCHDOG; spin report
+  WindowServer_2026-10-29-093900_paperclip.userspace_watchdog_timeout.spin). The Aqua
+  session was torn down and the machine sat at the login window from then on. A gui/501
+  LaunchAgent cannot fire while nobody is logged in, so the canary went quiet in silence —
+  exactly the failure it exists to catch. A system LaunchDaemon with UserName=paperclip
+  needs no login session and survives a WindowServer death.
 
   Fires at 04:45 Warsaw wall time, before the 05:30 PM round. The Mac's system
   timezone is Europe/Berlin, which carries the same UTC offset and the same EU
@@ -15,27 +24,39 @@
     mkdir -p ~/paperclip-agents/factory-selftest
     git -C ~/Projects/homelab-2nd show origin/main:agents/factory/selftest/guard-selftest.sh > ~/paperclip-agents/factory-selftest/guard-selftest.sh
     chmod +x ~/paperclip-agents/factory-selftest/guard-selftest.sh
-    git -C ~/Projects/homelab-2nd show origin/main:agents/factory/selftest/dev.voitech.factory-guard-selftest.plist > ~/Library/LaunchAgents/dev.voitech.factory-guard-selftest.plist
-    launchctl bootout gui/$(id -u)/dev.voitech.factory-guard-selftest 2>/dev/null || true
-    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.voitech.factory-guard-selftest.plist
+    git -C ~/Projects/homelab-2nd show origin/main:agents/factory/selftest/dev.voitech.factory-guard-selftest.plist > /tmp/guard-selftest.plist
+    sudo install -m 0644 -o root -g wheel /tmp/guard-selftest.plist /Library/LaunchDaemons/dev.voitech.factory-guard-selftest.plist
+    sudo launchctl bootout system/dev.voitech.factory-guard-selftest 2>/dev/null || true
+    sudo launchctl bootstrap system /Library/LaunchDaemons/dev.voitech.factory-guard-selftest.plist
+    # pre-GUL-617 gui agent: remove it, or the job is scheduled twice a day
+    rm -f ~/Library/LaunchAgents/dev.voitech.factory-guard-selftest.plist
   Run once now:
-    launchctl kickstart -k gui/$(id -u)/dev.voitech.factory-guard-selftest
+    sudo launchctl kickstart -k system/dev.voitech.factory-guard-selftest
   Result:
     tail ~/paperclip-agents/majster/factory/selftest.log
+    sudo launchctl print system/dev.voitech.factory-guard-selftest | head -20
   The self-test drift-checks its own installed entry and plist against
   origin/main every run, so a skipped install is caught the next morning.
+
+  UserName is required: a LaunchDaemon defaults to root, and the guard, the repo
+  checkout and the state dir all belong to paperclip. HOME is set explicitly
+  because launchd does not guarantee it for system daemons, and every default in
+  the script is $HOME-based.
 
   PATH must carry /opt/homebrew: launchd's default has no pi, node or brew git.
   The script re-execs the origin/main copy of itself, so a stale installed
   entry still tests what main says. Missed window (machine asleep) = no run,
-  nothing stops; next fire in 24 h. A FAIL writes .../factory/STOP and the
-  factory refuses to start until a person clears it. launchd stdout/stderr go
-  next to selftest.log for the case where the script itself never starts.
+  nothing stops; launchd fires the missed calendar event on the next wake. A
+  FAIL writes .../factory/STOP and the factory refuses to start until a person
+  clears it. launchd stdout/stderr go next to selftest.log for the case where
+  the script itself never starts.
 -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
   <string>dev.voitech.factory-guard-selftest</string>
+  <key>UserName</key>
+  <string>paperclip</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
@@ -45,6 +66,8 @@
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/paperclip</string>
   </dict>
   <key>StartCalendarInterval</key>
   <dict>
