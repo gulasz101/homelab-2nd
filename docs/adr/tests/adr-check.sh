@@ -99,6 +99,51 @@ for file in "$ADR_DIR"/adr-*.md; do
 done
 note "rows without files are allowed on purpose (ADR-001..005/010 live in the vault; 045 is reserved)"
 
+head1 "1b. pending ADRs carry no number and no index row (GUL-582)"
+PENDING_DIR="$ADR_DIR/pending"
+pending_n=0
+if [ -d "$PENDING_DIR" ]; then
+  for file in "$PENDING_DIR"/*.md; do
+    [ -e "$file" ] || continue
+    pending_n=$((pending_n + 1))
+    base="pending/$(basename "$file")"
+    h1=$(head -1 "$file")
+    if [[ "$h1" == "# ADR-"* ]]; then
+      bad "$base: H1 reserves a number ('$h1'); allocation belongs to scripts/adr-adopt.sh"
+      continue
+    fi
+    [[ "$h1" == "# "* ]] && ok "$base: H1 is a plain title" \
+      || { bad "$base: H1 is '$h1', expected '# <title>'"; continue; }
+    if [[ "$(basename "$file")" =~ ^adr-[0-9]{3} ]]; then
+      bad "$base: filename reserves a number; rename it to <slug>.md"
+    else
+      ok "$base: filename carries no number"
+    fi
+    grep -qxF -- '- **Status**: Pending' "$file" \
+      && ok "$base: status is Pending" || bad "$base: missing '- **Status**: Pending'"
+    grep -qE '^- \*\*Date\*\*: [0-9]{4}-[0-9]{2}-[0-9]{2}$' "$file" \
+      && ok "$base: carries its own date" || bad "$base: missing '- **Date**: YYYY-MM-DD'"
+    for s in Context Decision Consequences "When to revisit"; do
+      grep -qxF "## $s" "$file" || bad "$base: missing house section '## $s'"
+    done
+    if grep -qxF '## Alternatives considered' "$file" || grep -qxF '## Alternatives' "$file"; then
+      ok "$base: has an alternatives section"
+    else
+      bad "$base: missing '## Alternatives considered'"
+    fi
+    if grep -qF "$(basename "$file" .md)" "$INDEX"; then
+      bad "$base: named in docs/adr/README.md; a pending ADR has no index row until adoption"
+    else
+      ok "$base: has no index row (adoption creates it)"
+    fi
+  done
+fi
+if [ "$pending_n" -eq 0 ]; then
+  ok "no pending ADRs"
+else
+  note "$pending_n pending ADR(s) await scripts/adr-adopt.sh — not a failure, adoption is bookkeeping"
+fi
+
 head1 "2. ADR-052 content (H2-233 acceptance criteria)"
 if [ ! -f "$ADR" ]; then
   bad "ADR-052 file missing: docs/adr/$SLUG (this is the deliverable of H2-269)"
