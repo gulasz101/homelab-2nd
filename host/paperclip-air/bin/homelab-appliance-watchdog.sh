@@ -26,6 +26,20 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 say()  { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 
+# GUL-641: report Claude Code auth on every run of this script, even when it is
+# about to refuse to do anything else. The *hourly* execution lives in
+# hermes-memory-watchdog.sh — that is the daemon that actually runs, and it is
+# the one that alerts. This is here so a human who reaches for the old entry
+# point still gets an answer, and so there is exactly one detector
+# (homelab-lib.sh) behind both.
+claude_verdict=$(claude_auth_state)
+case "$claude_verdict" in
+  alive)   say "claude-auth: loggedIn true" ;;
+  dead:*)  say "claude-auth: $(claude_auth_alert_message "$claude_verdict")"
+           say "claude-auth: the hourly hermes-memory-watchdog.sh is what alerts on this; see RUNBOOK.md 5a" ;;
+  *)       say "claude-auth: ${claude_verdict}" ;;
+esac
+
 if [ -f "$HOMELAB_DAEMON_DIR/$(svc_label paperclip).plist" ]; then
   say "legacy watchdog: superseded by ADR-098 (launchd owns the services); doing nothing."
   exit 0
