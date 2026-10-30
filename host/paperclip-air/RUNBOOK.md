@@ -166,6 +166,39 @@ The heartbeat also carries per-component health (`hermes-gateway`, `paperclip`, 
 `gemini-tunnel`, `syncthing`), which is how the Hermes API gets watched at all: it binds
 `127.0.0.1:8642` on the Air and only a process on the Air can see it.
 
+### 5a. Claude Code auth is dead (GUL-641, signal corrected in GUL-661)
+
+- **Symptom:** Claude Code runs finish in about 13 seconds with `errorCode: claude_auth_required` and
+  `Failed to authenticate: OAuth session expired and could not be refreshed`, and the ticket sits
+  parked. On 2026-10-30 it sat there for nine hours with nobody told.
+- **What does NOT mean it is broken:** `claude auth status` printing `"loggedIn": false`. A managed
+  run never touches `~/.claude`: Paperclip builds a throwaway home per run
+  (`$TMPDIR/paperclip-ai-<company>-<grant>-`), points `CLAUDE_CONFIG_DIR` at its `provider/`
+  subdirectory, blanks every inherited auth env var and passes the token from the AI connection in
+  the child environment. `~/.claude/.credentials.json` can stay an empty 192-byte stub for days
+  while every run authenticates. The agent row is no better: `status` is live-only and
+  `errorReason` is sticky, so it keeps naming a failure that has already been fixed.
+- **Check (what does mean it):** the newest *finished* run for the agent. The hourly
+  `com.gulasz101.hermes-memory-watchdog` reads it and logs `check9 claude_auth=alive` or
+  `check9 claude_auth=dead reason=run-claude_auth_required` to
+  `~/.hermes/logs/hermes-memory-watchdog.log`. For the verdict alone:
+  `/usr/local/libexec/homelab/hermes-memory-watchdog.sh --claude-auth-only`. By hand:
+
+  ```bash
+  set -a; . ~/.hermes/.env; set +a
+  curl -s -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+    "http://127.0.0.1:3100/api/companies/0e2eb054-4cb6-4ea1-a2e7-2b1894285d8c/heartbeat-runs?agentId=97efeb2d-5b3a-4110-b893-6cbcbb29164c&limit=5" \
+    | python3 -c 'import json,sys; [print(r["status"], r["errorCode"], r["finishedAt"]) for r in json.load(sys.stdin)]'
+  ```
+
+  `succeeded` on the top finished row is healthy. `failed claude_auth_required` is dead. A row with
+  no `finishedAt` is still running and proves nothing either way.
+- **Fix:** re-authenticate the Anthropic AI connection on the agent panel (Agents, Claude Code, AI
+  connection, Test, then Save changes), which is what repaired it on 2026-10-30. `claude auth login`
+  or `/login` only matters when the adapter uses the host login instead of a managed connection. This
+  is a **human** action: no daemon kickstart, no agent restart and no reboot will refresh an expired
+  OAuth session, and `claude login` is not a subcommand.
+
 Seeding the heartbeat token (once, after `apps/host-watch` has reconciled):
 
 ```bash
