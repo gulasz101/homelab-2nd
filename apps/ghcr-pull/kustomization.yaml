@@ -1,0 +1,16 @@
+# The platform's one pull credential for private registry images (ADR-103).
+#
+# WHY THIS IS UNDER `apps/` AND NOT `infrastructure/`: the file carries one
+# dockerconfigjson Secret per consuming namespace, and those namespaces are
+# created by the app roots (`apps/<service>/namespace.yaml`). `infrastructure`
+# is reconciled BEFORE `apps` (apps has dependsOn: infrastructure), so a Secret
+# aimed at a namespace that does not exist yet makes the whole `infrastructure`
+# Kustomization fail on a rebuild from Git — and every dependent with it. The
+# `apps` root creates the namespaces and this Secret in the same apply, where
+# kustomize-controller's kind ordering puts Namespace before Secret.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: ghcr-pull
+resources:
+  - ghcr-pull.sops.yaml

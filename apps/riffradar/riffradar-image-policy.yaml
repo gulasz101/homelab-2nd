@@ -2,9 +2,9 @@
 # Flux image automation for Riff Radar (same shape as apps/star-office/).
 #
 # The package is private (ADR-101), so the ImageRepository authenticates with the
-# same dockerconfigjson credential the kubelet uses: the Secret lives in
-# flux-system as well, because image-reflector-controller can only read a
-# secretRef from its own namespace.
+# platform pull credential (ADR-103). image-reflector-controller can only read a
+# secretRef from its own namespace, so `ghcr-pull` exists in flux-system too —
+# same file, same bytes as the kubelet's copy.
 apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImageRepository
 metadata:
@@ -14,7 +14,7 @@ spec:
   image: ghcr.io/gulasz101/riff_radar
   interval: 5m0s
   secretRef:
-    name: riffradar-ghcr-pull
+    name: ghcr-pull
 ---
 apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImagePolicy
