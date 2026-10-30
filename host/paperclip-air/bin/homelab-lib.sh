@@ -153,6 +153,36 @@ require_root() {
   fi
 }
 
+# True (0) when this very process is running inside the service it is about to
+# act on. Killing that service then kills the caller, and whatever the caller
+# was doing is lost. On 2026-10-30 an agent run measured `--kill paperclip`
+# from inside a Paperclip heartbeat: it killed the server hosting it and took
+# two other agents' runs down with it. A drill that dies before it writes its
+# own result has measured nothing.
+caller_hosted_by() { # $1 = service name
+  local svc="${1:-}" pid cmd pattern=""
+  [ -n "$svc" ] || return 1
+  case "$svc" in
+    paperclip)
+      # A Paperclip heartbeat always carries at least one of these.
+      if [ -n "${PAPERCLIP_RUN_ID:-}${PAPERCLIP_TASK_ID:-}${PAPERCLIP_AGENT_ID:-}" ]; then
+        return 0
+      fi
+      pattern='paperclipai'
+      ;;
+    hermes-gateway) pattern='gateway run' ;;
+    *) return 1 ;;
+  esac
+  pid=$$
+  while :; do
+    case "${pid:-}" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$pid" -gt 1 ] || return 1
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null) || return 1
+    case "$cmd" in *"$pattern"*) return 0 ;; esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+  done
+}
+
 appliance_uid() { id -u "$HOMELAB_USER" 2>/dev/null; }
 
 # One-line summary of who owns the console. Trust this, never `who` — a logged

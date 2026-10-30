@@ -234,6 +234,23 @@ if [ -f "$HERE/bin/homelab-drill-session-loss.sh" ]; then
   for want in session-loss kill restore; do
     printf '%s\n' "$drills" | grep -q -- "$want" && ok "drill --list mentions $want" || fail "drill --list does not mention $want"
   done
+
+  # ---- 8b. the kill drill refuses to kill the service hosting it (GUL-631) --
+  # An agent run measured `--kill paperclip` from inside a Paperclip heartbeat
+  # on 2026-10-30, killed the server hosting it and took two other runs down.
+  # The guard must fire before any signal: run it with a fabricated heartbeat
+  # env and require a refusal with no launchctl call.
+  guard_out=$(PAPERCLIP_RUN_ID=test-run PAPERCLIP_TASK_ID=test-task \
+    bash "$HERE/bin/homelab-drill-session-loss.sh" --kill paperclip 2>&1)
+  guard_rc=$?
+  if [ "$guard_rc" -ne 0 ] && printf '%s\n' "$guard_out" | grep -q "refusing to kill paperclip"; then
+    ok "drill --kill refuses to kill the service it runs inside"
+  else
+    fail "drill --kill paperclip from a heartbeat env must refuse (rc=$guard_rc)"
+  fi
+  if printf '%s\n' "$guard_out" | grep -q "killing "; then
+    fail "the refusal must happen before any kill, but the drill started killing"
+  fi
 fi
 
 # ---- 9. the installer resolves the right agent per service (GUL-619) ----
