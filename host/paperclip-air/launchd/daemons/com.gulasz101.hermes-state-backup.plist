@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.gulasz101.hermes-state-backup — nightly sqlite3 backup of every Hermes
+  state.db to OMV MinIO over the loopback relay. SYSTEM LaunchDaemon (GUL-618).
+
+  Why it is a daemon and not an agent: on 2026-10-29 at 09:39:16 the userspace
+  watchdog killed WindowServer (OS_REASON_WATCHDOG), the Aqua session was torn
+  down and the machine sat at the login window. A gui/501 LaunchAgent does not
+  fire while nobody is logged in, so the 30 Oct 03:30 run simply did not happen
+  — no error, no alert, just a missing night of the only durable copy of every
+  agent conversation (ADR-071). ADR-107 is the rule: any job launchd SCHEDULES
+  on the Air lives in the system domain with UserName=paperclip and HOME set.
+
+  UserName is required because a LaunchDaemon defaults to root. HOME is required
+  because launchd does not guarantee it for system daemons under macOS 26 and
+  every path here is $HOME-based (trap: a script that "works" under sudo and
+  cannot find ~/.config/hermes-state-backup/minio.env when launchd starts it).
+
+  HERMES_HOME is passed explicitly: the script is installed outside the Hermes
+  tree (/usr/local/libexec/homelab), so it cannot infer the home from $0.
+
+  MINIO_ENDPOINT is the 127.0.0.1:9000 loopback relay (io.paperclip.minio-proxy),
+  not OMV directly — macOS Local Network privacy refuses LAN connections from
+  launchd-spawned non-Apple binaries and reports the refusal as "no route to
+  host" (GUL-87, ADR-079).
+
+  Install (person or agent, from a merged main checkout):
+    sudo ./bin/homelab-install-scheduled-jobs.sh
+  Prove it:
+    sudo launchctl print system/com.gulasz101.hermes-state-backup | head -20
+    sudo launchctl kickstart -k system/com.gulasz101.hermes-state-backup
+    tail -3 ~/.hermes/logs/hermes-state-backup.log
+  A hand-run backup is NOT a substitute: it hides a dead schedule.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.gulasz101.hermes-state-backup</string>
+
+  <key>UserName</key>
+  <string>paperclip</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/usr/local/libexec/homelab/hermes-state-backup.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/paperclip</string>
+    <key>HERMES_HOME</key>
+    <string>/Users/paperclip/.hermes</string>
+    <!-- GUL-87: point mc at the loopback relay, never at the OMV host. See the
+         header of this file and ADR-079. -->
+    <key>MINIO_ENDPOINT</key>
+    <string>http://127.0.0.1:9000</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/paperclip/.hermes/logs/hermes-state-backup.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/paperclip/.hermes/logs/hermes-state-backup.launchd.log</string>
+</dict>
+</plist>
