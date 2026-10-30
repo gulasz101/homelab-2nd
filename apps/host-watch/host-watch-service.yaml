@@ -10,6 +10,10 @@ metadata:
   labels:
     app.kubernetes.io/name: host-watch
     app.kubernetes.io/part-of: host-watch
+    # Which face this is. The ServiceMonitor selects on it, so the scrape does
+    # not also hit the heartbeat-ingest NodePort and export every metric twice
+    # (two identical alert instances per alert — GUL-643).
+    app.kubernetes.io/component: metrics
 spec:
   type: ClusterIP
   selector:
