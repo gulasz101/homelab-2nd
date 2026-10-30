@@ -64,6 +64,10 @@ Facts verified live on 2026-10-07 against the account:
    `Cloudflare One Connectors Write` / `Cloudflare One Connector: cloudflared
    Write` (older name `Cloudflare Tunnel Write`); the DNS scope is `DNS Write`.
    Never `All zones`. Never anything under Access / Zero Trust write.
+   > **Amended by [ADR-109](adr-109-cloudflare-token-carries-access-write.md)** (2026-10-29): the
+   > Access-write ban is retired. The same token now also carries `Access: Apps and Policies` →
+   > Edit, because every Access-protected service otherwise ended at a dashboard click (GUL-580).
+   > The blast-radius argument in point 4 stands and is recorded there.
 4. **The token lives outside the repo**, at `~/cloudflare-api.sops.yaml`, mode
    `0600`, age-encrypted to the repository recipient, and is never committed.
    Rationale: the repo is public; an account-grade token inside it, plus a
