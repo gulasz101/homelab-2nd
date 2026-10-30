@@ -77,11 +77,12 @@ namespace. The token is a GitHub PAT with `read:packages` and nothing else
 (verified from the `x-oauth-scopes` header), minted by the owner and encrypted in
 place, never pasted into a file, a comment or a chat.
 
-**This per-service Secret is a stop-gap.** ADR-103 (GUL-579, in review) moves the
-platform to one shared `ghcr-pull` credential; when that lands, riffradar consumes
-that Secret (`scripts/ghcr-pull-credential.sh add riffradar`) and this file plus
-its kustomization entry are deleted. One credential, N namespaces — not N
-credentials.
+**This per-service Secret was the stop-gap.** ADR-103 landed it as the platform
+`ghcr-pull` credential instead: one Secret written for `flux-system` and every
+namespace that runs a private image, in `apps/ghcr-pull/ghcr-pull.sops.yaml`. The
+riffradar deployment and its `ImageRepository` now reference `ghcr-pull`, and the
+per-service file is deleted. One credential, N namespaces — and adding a namespace
+is `scripts/ghcr-pull-credential.sh add <ns>`, not a new token.
 
 **4. Observability is honest about what does not exist.**
 
