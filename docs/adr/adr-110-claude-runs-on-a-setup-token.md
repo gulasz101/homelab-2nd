@@ -2,7 +2,8 @@
 
 - **Status**: Proposed (owner sign-off outstanding)
 - **Date**: 2026-10-31
-- **Issue**: GUL-642 (follow-up to GUL-640, GUL-656, GUL-686)
+- **Issue**: GUL-642 (follow-up to GUL-640, GUL-656, GUL-686); amended by GUL-691 (one-command
+  rotation, drift detection)
 - **Related**: ADR-106 (the current fleet model), ADR-107/108 (the Air's scheduled jobs)
 
 ## Context
@@ -49,6 +50,12 @@ unless a human logged in within the previous eight hours.
    the grant back to `active` and the connection health to `ok`), **then** rotate the user-scoped
    `ai.credential` secret to the setup token. Rotate only after Connect, because Connect writes its
    own fresh access-token version and would overwrite the setup token.
+   - **That overwrite is the trap this ADR keeps biting on.** Accepting a Connect card writes a new
+     vault version with an ~8 h access token and leaves the SOPS copy untouched; the grant reads
+     `versionSelector: "latest"`, so the very next 05:30 round authenticates with the wrong
+     credential and dies. Before GUL-691 nothing noticed until the round failed. The drift check in
+     `host/paperclip-air/bin/homelab-lib.sh` (`claude_token_state`) compares the two digests daily and
+     alerts with the fix command; that is the detector for this trap, not the run failure.
 3. **Nothing about the runtime changes.** `connection_grants.credential_secret_refs` selects
    `versionSelector: "latest"`, so the rotated value is picked up by the next run automatically.
 4. **The secret stays in the two vaults that already exist.** Paperclip's own encrypted secret store
@@ -58,6 +65,49 @@ unless a human logged in within the previous eight hours.
    printing either side.
 5. **The acceptance test is two consecutive 05:30Z runs succeeded** with no re-login. `claude auth
    status` is *not* the test: it reads `~/.claude`, which no managed run touches (GUL-661).
+
+## One command from the Air (GUL-691)
+
+The rotation used to be a board-UI step plus a digest check, because the route was documented as
+owner-only. It is drivable from the Air, with one credential stored once:
+
+- `POST /api/companies/:companyId/me/user-secrets/:secretId/rotate` calls `assertBoard(req)`
+  (`@paperclipai/server` 2026.1012.0, `dist/routes/secrets.js:678-683`).
+- `assertBoard` checks only `req.actor.type === "board"` (`dist/routes/authz.js:23-27`).
+- A bearer that `boardAuth.findBoardApiKeyByToken()` recognises becomes
+  `{type: "board", userId: <key owner>, source: "board_key"}` (`dist/middleware/auth.js:239-253`);
+  board keys are `pcp_board_<48 hex>` (`dist/services/board-auth.js:17-19`) and expire after 30 days
+  unless created with another `expiresAt`.
+
+So the owner is a **board API key in SOPS** away from one command; an agent key still gets 403, and
+stays that way on purpose. `host/paperclip-air/bin/homelab-claude-token-store.sh --rotate` takes the
+token on stdin, writes the SOPS copy, POSTs it with the bearer on a file descriptor and the body on
+stdin (never argv, so `ps` cannot see it), then prints `MATCH … version N`.
+
+The server's own `claude setup-token` login route is not a path here: it requires
+`options.setupTokenLogin` (a sandbox login transport), which is null on this instance, so it answers
+`503` (`dist/routes/agents.js:317`, `:5595-5608`).
+
+**What the shape guard can and cannot do.** It accepts only `sk-ant-oat01-…` and names an
+`sk-ant-api03-…` key as the wrong thing (per-token billing). It cannot tell a *setup* OAuth token
+from a *Connect* OAuth token of the same family — both are `sk-ant-oat…`, and the CLI itself only
+tests the `sk-ant-oat` prefix. That is exactly why the digest comparison, not the shape, is the
+detector for a Connect overwrite.
+
+## Monitoring (GUL-691)
+
+`hermes-memory-watchdog.sh` grew a `check9b` next to the auth check:
+
+- daily (hourly daemon, 24 h alert dedupe) digest comparison of the SOPS copy against the newest live
+  `company_secret_versions` row: `mismatch` = the credential is no longer the setup token;
+- shape assertion on the SOPS value: `badshape`;
+- the mint date (`~/.config/homelab/claude-token-mint`, metadata only) drives `expiring` at 30 days
+  left and `expired` after the year;
+- unknown is never green and never pages: a missing SOPS copy or an unreadable vault is logged, not
+  alerted.
+
+Alerts go out on the same channel as the other watchdog conditions (GUL-641), and every message
+carries the exact fix command. No new channel, no new secret.
 
 ## Consequences
 
