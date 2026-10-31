@@ -3,11 +3,16 @@
 #
 # OMV is the only durable store in the homelab (btrfs volumes + MinIO), and it
 # sits outside Kubernetes, so none of the chart's default rules cover it. These
-# four alerts close the gap GUL-558 exposed: /dev/sdc was returning unreadable
+# alerts close the gap GUL-558 exposed: /dev/sdc was returning unreadable
 # sectors from 2026-10-28 while MinIO took the only drive offline for 30 s at a
 # time, every S3 write failed intermittently, and nothing paged anyone. The
 # metrics were scraped by job=omv-node the whole time; only the rules were
 # missing.
+#
+# OMVBtrfsSustainedReadErrors was added the same day, after the burst rule
+# proved blind to the slow trickle that followed the incident: sdc kept
+# logging about 2 errors every 15 minutes for hours without ever hitting 5 in
+# 10 minutes, even though the disk was still failing.
 #
 # Labels follow homelab-node-prometheus-rules.yaml:
 #   release: prometheus-stack  -> the Prometheus ruleSelector matchLabels
@@ -41,6 +46,23 @@ spec:
           annotations:
             summary: "OMV btrfs device {{ $labels.device }} is returning read errors"
             description: "openmediavault btrfs device {{ $labels.device }} ({{ $labels.btrfs_dev_uuid }}) logged {{ $value | humanize }} read I/O errors in 10 minutes. The disk is failing: expect MinIO drive-offline flaps and failed S3 writes until it is replaced."
+
+        # The burst rule above only sees the critical phase. After the 04:48
+        # burst on 2026-10-29 the same disk kept logging about 2 read errors
+        # every 15 minutes for hours, never reaching 5 in 10 minutes. 20 errors
+        # in 6 hours is zero for a healthy disk; sdc was at 30 by 18:00. This
+        # pages early enough to plan a replacement instead of waiting for the
+        # next burst to take MinIO down.
+        - alert: OMVBtrfsSustainedReadErrors
+          expr: increase(node_btrfs_device_errors_total{job="omv-node",type="read"}[6h]) > 20
+          for: 30m
+          labels:
+            severity: critical
+            alertgroup: omv-storage
+            namespace: observability
+          annotations:
+            summary: "OMV btrfs device {{ $labels.device }} keeps returning read errors"
+            description: "openmediavault btrfs device {{ $labels.device }} ({{ $labels.btrfs_dev_uuid }}) logged {{ $value | humanize }} read I/O errors in 6 hours. That is a disk failing slowly, not a burst. Plan a replacement before it starts dropping S3 writes."
 
         # corruption = checksum/metadata mismatch, generation = the on-disk
         # generation does not match what btrfs expects. Any increase at all is

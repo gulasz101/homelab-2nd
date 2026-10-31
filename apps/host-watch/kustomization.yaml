@@ -24,6 +24,11 @@ resources:
   - host-watch-prometheus-rules.yaml
   - host-watch-alertmanager-config.yaml
   - host-watch-mattermost-webhook-url.sops.yaml
+  # The heartbeat token (GUL-643). Same value as
+  # ~/.config/homelab/heartbeat-token on the Air (0600). Without it the receiver
+  # fails closed and rejects every beat, exporting
+  # hostwatch_heartbeat_configured 0 — which is exactly the state GUL-643 found.
+  - host-watch-heartbeat-token.sops.yaml
 configMapGenerator:
   - name: host-watch-server
     namespace: host-watch
