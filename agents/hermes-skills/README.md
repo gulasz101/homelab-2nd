@@ -8,6 +8,7 @@ in this repo. Decision record: [ADR-076](../../docs/adr/adr-076-paperclip-is-the
 |---|---|---|
 | `paperclip-chat-intake` | this directory | Wojtek asks for work in Mattermost: no issue, a closed record, or a Paperclip hand-off |
 | `deadline-bound-task-scope` | this directory | A run with a hard wall-clock budget: deliver the artifact before investigating |
+| `paperclip-claude-auth` | this directory | A Claude Code agent in Paperclip lost its login, or the connection credential needs rotating |
 | `paperclip` | the installed Paperclip (`~/.paperclip/cli/current/node_modules/@paperclipai/server/skills/paperclip`), linked, not copied | Paperclip woke the agent for a GUL issue |
 
 ## How Hermes loads them
@@ -16,6 +17,7 @@ in this repo. Decision record: [ADR-076](../../docs/adr/adr-076-paperclip-is-the
 ~/agent-skills/homelab-2nd/                 # clone of this repo, on main
 ~/agent-skills/hermes-paperclip/            # listed in skills.external_dirs of each profile
 ├── paperclip-chat-intake -> ~/agent-skills/homelab-2nd/agents/hermes-skills/paperclip-chat-intake
+├── paperclip-claude-auth -> ~/agent-skills/homelab-2nd/agents/hermes-skills/paperclip-claude-auth
 └── paperclip             -> ~/.paperclip/cli/current/node_modules/@paperclipai/server/skills/paperclip
 ```
 

@@ -166,6 +166,70 @@ The heartbeat also carries per-component health (`hermes-gateway`, `paperclip`, 
 `gemini-tunnel`, `syncthing`), which is how the Hermes API gets watched at all: it binds
 `127.0.0.1:8642` on the Air and only a process on the Air can see it.
 
+### 5a. Claude Code auth is dead (GUL-641, signal corrected in GUL-661)
+
+- **Symptom:** Claude Code runs finish in about 13 seconds with `errorCode: claude_auth_required` and
+  `Failed to authenticate: OAuth session expired and could not be refreshed`, and the ticket sits
+  parked. On 2026-10-30 it sat there for nine hours with nobody told.
+- **What does NOT mean it is broken:** `claude auth status` printing `"loggedIn": false`. A managed
+  run never touches `~/.claude`: Paperclip builds a throwaway home per run
+  (`$TMPDIR/paperclip-ai-<company>-<grant>-`), points `CLAUDE_CONFIG_DIR` at its `provider/`
+  subdirectory, blanks every inherited auth env var and passes the token from the AI connection in
+  the child environment. `~/.claude/.credentials.json` can stay an empty 192-byte stub for days
+  while every run authenticates. The agent row is no better: `status` is live-only and
+  `errorReason` is sticky, so it keeps naming a failure that has already been fixed.
+- **Check (what does mean it):** the newest *finished* run for the agent. The hourly
+  `com.gulasz101.hermes-memory-watchdog` reads it and logs `check9 claude_auth=alive` or
+  `check9 claude_auth=dead reason=run-claude_auth_required` to
+  `~/.hermes/logs/hermes-memory-watchdog.log`. For the verdict alone:
+  `/usr/local/libexec/homelab/hermes-memory-watchdog.sh --claude-auth-only`. By hand:
+
+  ```bash
+  set -a; . ~/.hermes/.env; set +a
+  curl -s -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+    "http://127.0.0.1:3100/api/companies/0e2eb054-4cb6-4ea1-a2e7-2b1894285d8c/heartbeat-runs?agentId=97efeb2d-5b3a-4110-b893-6cbcbb29164c&limit=5" \
+    | python3 -c 'import json,sys; [print(r["status"], r["errorCode"], r["finishedAt"]) for r in json.load(sys.stdin)]'
+  ```
+
+  `succeeded` on the top finished row is healthy. `failed claude_auth_required` is dead. A row with
+  no `finishedAt` is still running and proves nothing either way.
+- **Fix:** re-authenticate the Anthropic AI connection (Agents, Claude Code, AI connection, Test, then
+  Save changes) **and then rotate the credential to a setup token** — see 5b. Re-authenticating alone
+  buys about eight hours: the connection stores one `claudeAiOauth.accessToken`, keeps no refresh
+  token, and has no write-back path for Anthropic (`ai-connection-runtime.js` skips the credential-file
+  branch for anthropic; ADR-110). `claude auth login` or `/login` only matters when the adapter uses
+  the host login instead of a managed connection. Re-authentication is a **human** action: no daemon
+  kickstart, no agent restart and no reboot will refresh an expired OAuth session, and `claude login`
+  is not a subcommand.
+
+### 5b. Give the Claude connection a setup token (GUL-642, ADR-110)
+
+Do this once a year, and immediately after any re-authentication in 5a. Order matters: the Connect
+step writes its own eight-hour access-token version, so the rotation has to come **after** it.
+
+```bash
+# 1. Mint a long-lived token (browser sign-in; prints sk-ant-oat01-…).
+claude setup-token
+
+# 2. Store it in SOPS and compare digests against the Paperclip vault. Neither value is printed.
+claude setup-token | ~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh
+#    …or, if the token is already on the clipboard:
+~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh   # paste, Ctrl-D once
+
+# 3. Put the same value into Paperclip, as a new version of the user-scoped ai.credential secret.
+#    Board UI: Secrets → "…'s Claude subscription account" → Rotate. It is a user-scoped secret, so
+#    only the owner can rotate it: POST /api/companies/<company>/me/user-secrets/<secretId>/rotate
+#    with {"value": "…"}.
+
+# 4. Prove the two copies are the same value, and that the vault has moved past version 1.
+~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh --verify   # expect: MATCH … version N
+```
+
+`MATCH` plus a version number above the pre-rotation one is the whole check; the next managed run
+picks the value up because the grant's credential ref is `versionSelector: "latest"`. A setup token
+lives about a year — renew before it lapses, and revoke the old one from the Claude account settings.
+
+
 Seeding the heartbeat token (once, after `apps/host-watch` has reconciled):
 
 ```bash
