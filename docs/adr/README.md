@@ -101,6 +101,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-098 | One supervisor per host service on the Air: root LaunchDaemons for the headless five, LaunchAgents only where Aqua is required | Accepted | 2026-10-29 |
 | ADR-099 | A consolidation-failed memory is a debt, not a tombstone — requeue it and alert on the stock | Accepted | 2026-10-29 |
 | ADR-100 | A factory work order on riff_radar is an OpenSpec change (the change dir is the spec, the Paperclip `spec` document is the envelope) | Proposed | 2026-10-29 |
+| ADR-101 | The factory raises no merge card; the hourly tick reads the merge on GitHub | Accepted | 2026-10-29 |
 | ADR-102 | A demo of one app is not a database platform: Riff Radar runs SQLite on `local-path` with a nightly MinIO backup, behind Cloudflare Access | Accepted | 2026-10-29 |
 | ADR-103 | One read-only pull credential for every private image, not one per service | Accepted | 2026-10-29 |
 | ADR-105 | DeepSeek's own API joins LiteLLM as the `-ds` family, and `deepseek-v4.1-flash-1017` is served by the upstream id `deepseek-flash` | Accepted | 2026-10-29 |

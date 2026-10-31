@@ -11,6 +11,7 @@ Exit 0 = every case passed. Non-zero = at least one failed.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -127,6 +128,9 @@ def make_handler(state):
             if parts[:2] == ["api", "issues"] and len(parts) == 5 and parts[3] == "documents":
                 doc = state.documents.get((parts[2], parts[4]))
                 return self._send(200, {"document": doc}) if doc else self._send(404, {"error": "no doc"})
+            if parts[:2] == ["api", "issues"] and len(parts) == 4 and parts[3] == "interactions":
+                mine = [c for c in state.interactions if c.get("issueId") == parts[2]]
+                return self._send(200, mine)
             if parts[:2] == ["api", "issues"] and len(parts) == 4 and parts[3] == "runs":
                 return self._send(200, state.runs.get(parts[2], []))
             if parts[:2] == ["api", "agents"] and len(parts) == 3:
@@ -155,11 +159,19 @@ def make_handler(state):
             if parts[:2] == ["api", "issues"] and parts[3:] == ["comments"]:
                 state.comments.append({"issueId": parts[2], "body": body.get("body")})
                 return self._send(201, {"id": str(uuid.uuid4())})
+            if parts[:2] == ["api", "issues"] and len(parts) == 6 and parts[5] == "withdraw":
+                for card in state.interactions:
+                    if card.get("id") == parts[4]:
+                        card["status"] = "withdrawn"
+                        card["result"] = {"outcome": "withdrawn", "reason": body.get("reason")}
+                        return self._send(200, card)
+                return self._send(404, {"error": "no interaction"})
             if parts[:2] == ["api", "issues"] and parts[3:] == ["work-products"]:
                 state.work_products.append(dict(body, issueId=parts[2]))
                 return self._send(201, {"id": str(uuid.uuid4())})
             if parts[:2] == ["api", "issues"] and parts[3:] == ["interactions"]:
-                state.interactions.append(dict(body, issueId=parts[2]))
+                state.interactions.append(dict(body, issueId=parts[2],
+                                               id=str(uuid.uuid4()), status="pending"))
                 return self._send(201, {"id": str(uuid.uuid4())})
             return self._send(404, {"error": "API route not found"})
 
@@ -853,6 +865,227 @@ def make_green_repo(name="green-repo"):
     return repo, origin, base_sha, red_sha, branch
 
 
+# --------------------------------------------------------------------------
+# GUL-553: the gate raises no card; the tick notices the GitHub merge
+# --------------------------------------------------------------------------
+
+GATE_VIEW = {"headRefOid": "aaaa", "baseRefOid": "bbbb", "additions": 3, "deletions": 1,
+             "files": [{"path": "src/a.py", "changeType": "MODIFIED"}]}
+
+
+def write_merge_gh_stub(path):
+    """A gh that serves `pr view` from $GH_VIEW_FILE and a green `pr checks`."""
+    with open(path, "w") as fh:
+        fh.write("#!/usr/bin/env bash\n"
+                 'printf "%s|%s\\n" "$1" "$2" >> "$GH_CALL_LOG"\n'
+                 'case "$1 $2" in\n'
+                 '  "pr view")   cat "$GH_VIEW_FILE" ;;\n'
+                 '  "pr checks") cat "$GH_CHECKS_FILE" ;;\n'
+                 '  *) echo "stub gh: not stubbed: $*" >&2; exit 1 ;;\n'
+                 "esac\n")
+    os.chmod(path, 0o755)
+    return path
+
+
+def merge_env(tag, view):
+    """Env for one decide/tick run: a stub gh answering `pr view` with `view`."""
+    view_path = os.path.join(WORKDIR, "view-%s.json" % tag)
+    checks_path = os.path.join(WORKDIR, "checks-%s.json" % tag)
+    with open(view_path, "w") as fh:
+        json.dump(view, fh)
+    with open(checks_path, "w") as fh:
+        json.dump([{"name": "check", "state": "SUCCESS"}], fh)
+    return {"FACTORY_GH": write_merge_gh_stub(os.path.join(WORKDIR, "gh-merge.sh")),
+            "GH_VIEW_FILE": view_path, "GH_CHECKS_FILE": checks_path,
+            "GH_CALL_LOG": os.path.join(WORKDIR, "gh-merge-calls.log")}
+
+
+def ledger_of(stub, wo):
+    return json.loads(stub.state.documents[(wo["id"], "ledger")]["body"]
+                      .split("```json")[1].split("```")[0])
+
+
+def write_ledger(stub, wo, ledger):
+    stub.state.documents[(wo["id"], "ledger")]["body"] = (
+        "# Factory ledger\n\n```json\n%s\n```\n" % json.dumps(ledger))
+
+
+def gate_work_order(stub, repo, identifier, pr_number):
+    """A work order that already passed the gate: PR recorded, gate stage done."""
+    wo = base_work_order(stub, "base-sha", repo, identifier=identifier)
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": pr_number,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/%d" % pr_number}
+    gate = stage_issue(stub, wo, "[gate] %s - Merge" % identifier, status="done")
+    ledger["stages"] = {"gate": {"issueId": gate["id"], "identifier": gate["identifier"],
+                                 "round": 1, "attempts": 0, "sha": None}}
+    write_ledger(stub, wo, ledger)
+    stub.state.issues[wo["id"]]["status"] = "in_review"
+    return wo, gate
+
+
+def comments_on(stub, issue_id):
+    return [c["body"] for c in stub.state.comments if c["issueId"] == issue_id]
+
+
+def case_gate_leaves_no_card(stub):
+    """GUL-553: the gate pass raises no card; the work order waits on a monitor."""
+    repo, base = make_repo("gate-repo")
+    wo = base_work_order(stub, base, repo, identifier="GUL-910")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 91,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/91"}
+    write_ledger(stub, wo, ledger)
+    gate = stage_issue(stub, wo, "[gate] GUL-910 - Merge")
+
+    code, out, raw = run(stub, ["decide", gate["identifier"], "--apply"],
+                         extra_env=merge_env("gate", GATE_VIEW))
+    cards = [c for c in stub.state.interactions if c.get("issueId") == wo["id"]]
+    issue = stub.state.issues[wo["id"]]
+    monitor = (issue.get("executionPolicy") or {}).get("monitor") or {}
+    said = comments_on(stub, wo["id"])
+
+    check("gate decide: the pass still marks the gate stage done",
+          code == 0 and stub.state.issues[gate["id"]]["status"] == "done", raw[-500:])
+    check("gate decide: no 'Merge PR' card is raised", not cards,
+          [c.get("title") for c in cards])
+    check("gate decide: the work order waits in_review on an external_service monitor",
+          issue["status"] == "in_review" and monitor.get("kind") == "external_service"
+          and bool(monitor.get("nextCheckAt")), monitor)
+    # the live API validates the stamp with a Z-only ISO regex (`+00:00` is a 422),
+    # so the format is part of the contract, not a detail of one format call.
+    check("gate decide: nextCheckAt ends in Z, the only datetime the API accepts",
+          bool(re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                        str(monitor.get("nextCheckAt") or ""))), monitor.get("nextCheckAt"))
+    check("gate decide: the monitor names the PR in notes (externalRef is redacted server-side)",
+          "PR #91" in str(monitor.get("notes") or ""), monitor.get("notes"))
+    check("gate decide: the comment says merge on GitHub and that there is no card",
+          any("Merge PR #91 on GitHub" in c and "no card to accept" in c for c in said), said[-1:])
+
+
+def case_tick_notices_the_merge(stub):
+    """GUL-553: a merge on GitHub moves the work order on with nobody clicking."""
+    repo, _base = make_repo("merge-repo")
+    wo, _gate = gate_work_order(stub, repo, "GUL-911", 92)
+    leftover = {"id": "card-left", "issueId": wo["id"], "kind": "request_confirmation",
+                "title": "Merge PR #92?", "status": "pending",
+                "payload": {"version": 1, "prompt": "Merge PR #92?"}}
+    stub.state.interactions.append(leftover)
+
+    code, out, raw = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "merged", {"state": "MERGED", "mergedAt": "2026-10-28T17:13:00Z",
+                   "mergeCommit": {"oid": "c0ffee123"}}))
+    issue = stub.state.issues[wo["id"]]
+    ledger = ledger_of(stub, wo)
+    said = comments_on(stub, wo["id"])
+
+    check("tick merged: the work order is done without anyone touching a card",
+          code == 0 and issue["status"] == "done", raw[-500:])
+    check("tick merged: the comment carries the merge commit",
+          any("c0ffee123" in c for c in said), said[-1:])
+    check("tick merged: the ledger records the merge",
+          (ledger.get("merge") or {}).get("state") == "merged" and ledger.get("outcome") == "merged",
+          ledger.get("merge"))
+    check("tick merged: a leftover merge card is withdrawn", leftover["status"] == "withdrawn",
+          leftover.get("status"))
+    check("tick merged: the monitor is cleared", issue.get("executionPolicy") is None,
+          issue.get("executionPolicy"))
+
+
+def case_tick_waits_on_an_open_pr(stub):
+    """GUL-553: an open PR changes nothing but keeps the wait a real path."""
+    repo, _base = make_repo("open-repo")
+    wo, _gate = gate_work_order(stub, repo, "GUL-912", 93)
+    env = merge_env("open", {"state": "OPEN", "mergedAt": None, "mergeCommit": None})
+    before = len(comments_on(stub, wo["id"]))
+
+    code, out, raw = run(stub, ["tick"], extra_env=env)
+    issue = stub.state.issues[wo["id"]]
+    check("tick dry: an open PR writes nothing",
+          code == 0 and issue["status"] == "in_review"
+          and len(comments_on(stub, wo["id"])) == before
+          and issue.get("executionPolicy") is None, raw[-400:])
+    check("tick dry: the sweep line flags the open PR",
+          any("pr-open" in line for line in (out or {}).get("reasons", [])),
+          (out or {}).get("reasons"))
+
+    code2, out2, raw2 = run(stub, ["tick", "--apply"], extra_env=env)
+    monitor = (stub.state.issues[wo["id"]].get("executionPolicy") or {}).get("monitor") or {}
+    check("tick open: --apply re-arms the monitor and leaves the work order waiting",
+          code2 == 0 and stub.state.issues[wo["id"]]["status"] == "in_review"
+          and monitor.get("kind") == "external_service" and bool(monitor.get("nextCheckAt")),
+          monitor)
+    check("tick open: no comment and no status change",
+          len(comments_on(stub, wo["id"])) == before, comments_on(stub, wo["id"]))
+    # keep the later cases clean: an open work order would be re-read by them
+    stub.state.issues[wo["id"]]["status"] = "done"
+
+
+def case_tick_blocks_a_closed_pr(stub):
+    """GUL-553: a PR closed without a merge is one plain sentence, not a mystery."""
+    repo, _base = make_repo("closed-repo")
+    wo, _gate = gate_work_order(stub, repo, "GUL-913", 94)
+
+    code, out, raw = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "closed", {"state": "CLOSED", "mergedAt": None, "mergeCommit": None}))
+    issue = stub.state.issues[wo["id"]]
+    said = [c for c in comments_on(stub, wo["id"]) if "closed without a merge" in c]
+    ledger = ledger_of(stub, wo)
+
+    check("tick closed: the work order is blocked",
+          code == 0 and issue["status"] == "blocked", raw[-500:])
+    check("tick closed: one sentence says nothing shipped", len(said) == 1, said)
+    check("tick closed: the ledger records the close",
+          (ledger.get("merge") or {}).get("state") == "closed", ledger.get("merge"))
+
+
+def case_tick_survives_a_stale_stage_row(stub):
+    """GUL-557: a ledger row naming a deleted stage issue is one flag on one
+    work order; the sweep still reads and settles the others."""
+    repo, _base = make_repo("stale-repo")
+    stale = base_work_order(stub, "base-sha", repo, identifier="GUL-914")
+    ledger = ledger_of(stub, stale)
+    ledger["stages"] = {"red": {"issueId": "red-gone", "identifier": "GUL-914-red",
+                                "round": 1, "attempts": 0, "sha": None}}
+    write_ledger(stub, stale, ledger)
+
+    # the merge watch rides the same loop: a deleted *gate* issue must be a flag
+    # too, not a 404 before the work order is even reached.
+    stale_gate = base_work_order(stub, "base-sha", repo, identifier="GUL-915")
+    ledger = ledger_of(stub, stale_gate)
+    ledger["pr"] = {"number": 95,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/95"}
+    ledger["stages"] = {"gate": {"issueId": "gate-gone", "identifier": "GUL-915-gate",
+                                  "round": 1, "attempts": 0, "sha": None}}
+    write_ledger(stub, stale_gate, ledger)
+    stub.state.issues[stale_gate["id"]]["status"] = "in_review"
+
+    merged_wo, _gate = gate_work_order(stub, repo, "GUL-916", 96)
+
+    code, out, raw = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "stale", {"state": "MERGED", "mergedAt": "2026-10-28T17:13:00Z",
+                  "mergeCommit": {"oid": "beef123"}}))
+    lines = (out or {}).get("reasons") or []
+    ledger = ledger_of(stub, merged_wo)
+
+    check("tick stale: one missing stage issue does not kill the sweep",
+          code == 0 and (out or {}).get("ok") is True, raw[-600:])
+    check("tick stale: the work order with the stale row is flagged, not dropped",
+          any(line.startswith("GUL-914") and "stage-missing" in line for line in lines), lines)
+    check("tick stale: the missing id is named on stderr with its 404, once",
+          raw.count("stage issue red-gone") == 1 and "404" in raw,
+          raw[-600:])
+    check("tick stale: a stale gate row is flagged too, and that work order stays put",
+          any(line.startswith("GUL-915") and "stage-missing" in line for line in lines)
+          and stub.state.issues[stale_gate["id"]]["status"] == "in_review", lines)
+    check("tick stale: the other work order is still settled by its merged PR",
+          any(line.startswith("GUL-916") and "pr-merged" in line for line in lines)
+          and stub.state.issues[merged_wo["id"]]["status"] == "done"
+          and (ledger.get("merge") or {}).get("state") == "merged", raw[-600:])
+    for issue in (stale, stale_gate, merged_wo):
+        stub.state.issues[issue["id"]]["status"] = "done"
+
+
 def main():
     global WORKDIR
     WORKDIR = tempfile.mkdtemp(prefix="factory-pc-tests-")
@@ -874,6 +1107,11 @@ def main():
             case_commit_is_idempotent(stub)
             case_ledger_write_precedes_done(stub)
             case_green_approve_opens_one_pr(stub)
+            case_gate_leaves_no_card(stub)
+            case_tick_notices_the_merge(stub)
+            case_tick_waits_on_an_open_pr(stub)
+            case_tick_blocks_a_closed_pr(stub)
+            case_tick_survives_a_stale_stage_row(stub)
         finally:
             stub.close()
     finally:
