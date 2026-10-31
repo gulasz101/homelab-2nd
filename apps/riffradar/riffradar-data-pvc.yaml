@@ -1,0 +1,27 @@
+---
+# Riff Radar demo data — GUL-550 / ADR-102.
+#
+# SQLite (data/db/riffradar.db) plus the generated tab files (data/tabs) live on
+# a local-path PVC. homelab-2nd is rebuildable, so the disk is NOT the durability
+# story: the nightly riffradar-backup CronJob copies the database with sqlite3's
+# online backup API and tars the tab files into s3://riffradar-backups/riffradar/
+# on OMV MinIO.
+#
+# local-path and not OMV NFS: SQLite wants low-latency random writes and the
+# volume has a single writer anyway (Deployment strategy Recreate). The volume is
+# node-local, so the Deployment and the backup Job both pin
+# kubernetes.io/hostname=homelab-2nd — otherwise the pod could be scheduled
+# somewhere that can never mount this claim.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: riffradar-data
+  namespace: riffradar
+  labels:
+    app.kubernetes.io/name: riffradar
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi

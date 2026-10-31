@@ -1,0 +1,29 @@
+---
+# LAN door for the demo (GUL-550): http://192.168.1.179:30300
+#
+# The public hostname (riffradar.voitech.dev) is behind Cloudflare Access, which
+# needs a Zero Trust application created by the owner. Until that exists there is
+# nowhere to click, so the demo also gets a LAN NodePort, the same pattern as
+# speaches-api-lan, firecrawl-api-lan and sou-ingest-lan.
+#
+# This is deliberately NOT reachable from the internet: it binds on the node's
+# LAN interface only, the tunnel origin points at the app through the ClusterIP
+# service, and no Cloudflare route mentions this port.
+apiVersion: v1
+kind: Service
+metadata:
+  name: riffradar-lan
+  namespace: riffradar
+  labels:
+    app.kubernetes.io/name: riffradar
+    app.kubernetes.io/component: app
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: riffradar
+    app.kubernetes.io/component: app
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      nodePort: 30300

@@ -11,6 +11,7 @@ Exit 0 = every case passed. Non-zero = at least one failed.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -951,6 +952,13 @@ def case_gate_leaves_no_card(stub):
     check("gate decide: the work order waits in_review on an external_service monitor",
           issue["status"] == "in_review" and monitor.get("kind") == "external_service"
           and bool(monitor.get("nextCheckAt")), monitor)
+    # the live API validates the stamp with a Z-only ISO regex (`+00:00` is a 422),
+    # so the format is part of the contract, not a detail of one format call.
+    check("gate decide: nextCheckAt ends in Z, the only datetime the API accepts",
+          bool(re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                        str(monitor.get("nextCheckAt") or ""))), monitor.get("nextCheckAt"))
+    check("gate decide: the monitor names the PR in notes (externalRef is redacted server-side)",
+          "PR #91" in str(monitor.get("notes") or ""), monitor.get("notes"))
     check("gate decide: the comment says merge on GitHub and that there is no card",
           any("Merge PR #91 on GitHub" in c and "no card to accept" in c for c in said), said[-1:])
 

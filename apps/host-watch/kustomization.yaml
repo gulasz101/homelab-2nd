@@ -1,0 +1,36 @@
+---
+# host-watch — off-host monitoring for the M1 Air (H2-336, ADR-098).
+#
+# Named `host-watch` and not `monitoring` because it is one thing: probes and a
+# heartbeat receiver for the host the rest of the platform runs on. Everything
+# here is delivered by Flux from this repo; nothing is applied by hand.
+#
+# The ConfigMap is generated from server.py in this directory rather than being
+# pasted into YAML: the script is code, it is unit-tested, and a diff to it should
+# read like a diff. The name suffix hash is deliberately LEFT ON so that editing
+# server.py rolls the pod — without it, Flux would update the ConfigMap and the
+# old code would keep running until someone noticed.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: host-watch
+resources:
+  - namespace.yaml
+  - host-watch-service.yaml
+  - host-watch-lan-service.yaml
+  - host-watch-deployment.yaml
+  - host-watch-networkpolicy.yaml
+  - host-watch-service-monitor.yaml
+  - host-watch-prometheus-rules.yaml
+  - host-watch-alertmanager-config.yaml
+  - host-watch-mattermost-webhook-url.sops.yaml
+  # The heartbeat token (GUL-643). Same value as
+  # ~/.config/homelab/heartbeat-token on the Air (0600). Without it the receiver
+  # fails closed and rejects every beat, exporting
+  # hostwatch_heartbeat_configured 0 — which is exactly the state GUL-643 found.
+  - host-watch-heartbeat-token.sops.yaml
+configMapGenerator:
+  - name: host-watch-server
+    namespace: host-watch
+    files:
+      - server.py

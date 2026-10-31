@@ -1,0 +1,51 @@
+---
+# Dedicated Cloudflare Tunnel for riffradar.voitech.dev -> riffradar:3000.
+# One tunnel per service (guardrail 5, ADR-032); the token is SOPS-encrypted and
+# the ingress origin is remote-managed (config_src=cloudflare).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-riffradar
+  namespace: riffradar
+  labels:
+    app.kubernetes.io/name: cloudflared-riffradar
+    app.kubernetes.io/component: tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-riffradar
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-riffradar
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.10.5
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: riffradar-tunnel-token
+                  key: token
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

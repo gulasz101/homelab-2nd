@@ -410,11 +410,26 @@ spec:
             description: "Async operations have been in the failed (stranded) state for 15 minutes. They are recoverable through the operations API - check the api logs in Loki for why they exhausted their retries."
 
         - alert: HindsightConsolidationBacklogHigh
-          # pending_consolidation as a gauge: source memories waiting to be folded
-          # into observations. A deep backlog means recall answers from raw
-          # memories only, and the knowledge base is not caught up.
+          # pending_consolidation as a gauge: source memories (world+experience
+          # facts) waiting to be folded into observations. Depth is a LAG, not a
+          # fault: pending / drain rate = how far behind the knowledge base is.
+          #
+          # Measured 2026-10-29 (GUL-556). The old threshold of 100 predates
+          # hermes-matejko writing ~374 memories/h (one document per Paperclip
+          # issue), so the rule had been permanently red since 10-28 10:30Z and
+          # carried no signal. Standing baseline at that feed rate is ~3,800 =
+          # ~8-10 h of lag, and it is stable: over 12 h, 5,591 memories arrived
+          # and 5,641 were consolidated. Consolidation is LLM-latency bound at
+          # 2-3 concurrent ops (one op per bank), so neither a bigger DB pool
+          # nor worker.enabled=true would shorten the queue for one bank.
+          #
+          # 8000 = roughly twice the observed peak (4,516 on 10-28 18:52Z) and
+          # ~16 h of lag at the current drain rate: deep enough to be a real
+          # problem, not a normal working day. Growth is caught early by
+          # HindsightConsolidationBacklogGrowing below, which is the rule that
+          # would have fired during yesterday's 09:52Z ramp.
           expr: |
-            sum(hindsight_consolidation_backlog) > 100
+            sum(hindsight_consolidation_backlog) > 8000
           for: 1h
           labels:
             severity: warning
@@ -422,4 +437,68 @@ spec:
             namespace: observability
           annotations:
             summary: "Hindsight consolidation backlog is deep"
-            description: "More than 100 source memories have been queued for consolidation for over an hour. With worker.enabled=false this competes with request traffic on one event loop - consider enabling the dedicated worker."
+            description: "More than 8,000 source memories (about 16 h of lag at the current drain rate) have been waiting to be consolidated for over an hour. Recall is answering from raw memories only. This is not a per-bank concurrency problem any more - check that consolidation ops are completing at all (hindsight_async_operations, llm_requests scope=consolidation) and whether the retain feed has grown."
+
+        - alert: HindsightConsolidationBacklogGrowing
+          # The signal the depth rule cannot give: a queue that is filling faster
+          # than it drains. 2026-10-29 the backlog went 13 -> 4,516 in ten hours
+          # (a ~4,500-memory retain burst) and the depth rule only noticed after
+          # an hour of it; this fires on the ramp itself.
+          #
+          # Net +1,500 memories over 6 h is +250/h sustained - half the measured
+          # drain rate - which means arrivals have outgrown consolidation and the
+          # queue will keep climbing until the feed is throttled or the backlog is
+          # worked off. Both terms are required: depth > 1,500 keeps a small bank's
+          # normal churn out of it, and the offset comparison keeps a steady queue
+          # quiet (a 100 -> 200 move is +100% but harmless).
+          expr: |
+            sum(hindsight_consolidation_backlog) > 1500
+              and
+            (sum(hindsight_consolidation_backlog) - sum(hindsight_consolidation_backlog offset 6h)) > 1500
+          for: 1h
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight consolidation backlog is growing"
+            description: "The consolidation queue has grown by more than 1,500 source memories over the last 6 hours and is above 1,500: consolidation is no longer keeping up with retains, so the lag will keep growing. Find the writing bank (memory_units where consolidated_at is null, grouped by bank_id) and decide whether the feed is legitimate or a loop."
+
+        - alert: HindsightConsolidationFailedRows
+          # THE ALERT FOR "PERMANENTLY FAILED" IS NOT THE SAME AS "BEHIND".
+          #
+          # `hindsight_consolidation_failed` (instrument hindsight.consolidation.failed,
+          # gauge, reproduced from hindsight-api-slim/hindsight_api/metrics.py @ 0.10.3)
+          # counts source memories whose consolidation was marked permanently failed:
+          # the LLM call exhausted its retries *and* adaptive bisection could not
+          # rescue the batch, so the row got `consolidation_failed_at`. Those rows are
+          # excluded from BOTH the backlog gauge above and the reconcile sweep's work
+          # set (banks_needing_consolidation() filters `consolidation_failed_at IS NULL`),
+          # so nothing will ever pick them up again. The facts stay recallable - they
+          # simply never fold into observations, i.e. the knowledge base quietly stops
+          # synthesising them. That state has no other signal: no operation fails, no
+          # backlog grows, no error is logged after the fact.
+          #
+          # Measured 2026-10-29 (GUL-559): 1,633 rows were sitting in that state - 1,609
+          # in hermes-andrzej, mostly the 2026-10-19 OpenViking migration ingest hit by
+          # the 10-23 gpt-oss/FreeLLMAPI schema-rejection outages, 1,468 of them marked
+          # in a single hour. They had been invisible since, because the gauge existed
+          # and nothing alerted on it. Hence: alert on the STOCK, with a zero baseline
+          # (all 1,633 were requeued on 2026-10-29), not on a delta - one row in this
+          # state is already a lost synthesis and the expected value is 0.
+          #
+          # for: 30m, not 5m: rows only land here after retries AND bisection have both
+          # failed, so a 30-minute delay cannot turn a recoverable blip into damage, and
+          # it keeps a single row that failed on a transient route hiccup from paging
+          # instantly if the following consolidation pass would have rescued it.
+          expr: |
+            sum(hindsight_consolidation_failed) > 0
+          for: 30m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight has {{ $value }} memories stuck in consolidation-failed"
+            description: "Source memories are marked permanently consolidation-failed and are excluded from the backlog gauge and from the reconcile sweep - they will never fold into observations on their own. Check llm_requests (scope=consolidation, status=error) for the cause, then requeue the bank with POST /v1/default/banks/{bank_id}/consolidation/recover (clears consolidation_failed_at for the whole bank; batch it if the count is large, because every requeued row returns to the consolidation queue)."
+

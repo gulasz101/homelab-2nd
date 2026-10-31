@@ -1,0 +1,122 @@
+---
+# The alerts that would have caught 2026-10-29 in five minutes.
+#
+# Two independent signals, because they fail differently:
+#   * the probe notices "the public URL is 502" while the host may still be alive;
+#   * the heartbeat notices "the host stopped talking", which is the only thing
+#     that survives a logout, sleep or power loss.
+# Thresholds match the issue's contract: 3 consecutive probe failures, and 7
+# minutes of heartbeat silence (7 missed 60 s beats).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: host-watch-alerts
+  namespace: host-watch
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: host-watch.probes
+      interval: 30s
+      rules:
+        - alert: HostWatchProbeFailing
+          # 3 failures at 60 s = ~3 minutes of outage; `for: 1m` means a page at
+          # roughly minute four, comfortably inside the five-minute target.
+          expr: hostwatch_probe_consecutive_failures >= 3
+          for: 1m
+          labels:
+            severity: critical
+            namespace: host-watch
+          annotations:
+            summary: "{{ $labels.target }} has failed {{ $value }} probes in a row"
+            description: >-
+              {{ $labels.target }} returned no answer or a 5xx for {{ $value }} consecutive
+              60 s probes. On 2026-10-29 this was Cloudflare 502/503 with a live tunnel and a
+              dead origin on the Air (WindowServer logout unloaded every LaunchAgent).
+              Check: stat -f%Su /dev/console on the Air, then run
+              /usr/local/libexec/homelab/homelab-recover-appliance.sh.
+
+    - name: host-watch.leaks
+      interval: 30s
+      rules:
+        - alert: HostWatchOrphanKubectlForward
+          # GUL-680. A `kubectl port-forward` older than 15 minutes is a leaked
+          # child: Hermes spawns it as `bash -lic set +m; kubectl …`, the run ends
+          # (or the 180 s tool timeout fires), the kubectl survives reparented to
+          # launchd, and the process-registry checkpoint re-adopts it on every
+          # gateway start. Warning, not critical: a leaked forward holds a
+          # localhost port, it does not take the platform down.
+          expr: hostwatch_host_leak{name="kubectl_port_forward"} > 0
+          for: 15m
+          labels:
+            severity: warning
+            namespace: host-watch
+          annotations:
+            summary: "{{ $value }} leaked kubectl port-forward(s) on the Air"
+            description: >-
+              The Air reports {{ $value }} `kubectl ... port-forward` process(es) running for
+              more than 15 minutes. Find them with
+              `ps -axo pid=,ppid=,etime=,command= | grep port-forward` and kill the pid(s); the
+              wrapper `bash -lic` parent is usually also orphaned (ppid 1) and can go too.
+
+    - name: host-watch.heartbeat
+      interval: 30s
+      rules:
+        - alert: HostWatchHeartbeatMissing
+          # The only check that survives the host being logged out, asleep or off.
+          expr: hostwatch_heartbeat_configured == 1 and (time() - hostwatch_heartbeat_last_seen_timestamp_seconds) > 420
+          for: 2m
+          labels:
+            severity: critical
+            namespace: host-watch
+          annotations:
+            summary: "no heartbeat from the Air for over 7 minutes"
+            description: >-
+              The heartbeat sender (a user LaunchAgent on the Air, on purpose) has been silent
+              for more than 420 s. The host is logged out, asleep, hung or off — or the sender
+              is broken. This is the signal that was missing on 2026-10-29. Check
+              hostwatch_heartbeat_last_seen_timestamp_seconds in Grafana for the exact last beat.
+
+        - alert: HostWatchHeartbeatNotConfigured
+          expr: hostwatch_heartbeat_configured == 0
+          for: 10m
+          labels:
+            severity: warning
+            namespace: host-watch
+          annotations:
+            summary: "heartbeat receiver has no token — every beat is being rejected"
+            description: >-
+              Seed host-watch-heartbeat-token (see host/paperclip-air/RUNBOOK.md section 5) and
+              put the same value in ~/.config/homelab/heartbeat-token on the Air. Until then the
+              half of the alerting that survives a dead host is not armed.
+
+        - alert: HostWatchComponentDown
+          # The Air reports per-component health; this is how the Hermes gateway
+          # (127.0.0.1:8642, no public front) gets watched at all.
+          expr: hostwatch_component_up == 0
+          for: 5m
+          labels:
+            severity: critical
+            namespace: host-watch
+          annotations:
+            summary: "{{ $labels.component }} on the Air has been down for 5 minutes"
+            description: >-
+              The Air's own heartbeat says {{ $labels.component }} is not serving, while the host
+              itself is up. Restart path:
+              sudo launchctl kickstart -k system/dev.voitech.homelab.{{ $labels.component }}.
+
+    - name: host-watch.self
+      interval: 30s
+      rules:
+        - alert: HostWatchReceiverDown
+          # If the watchdog is not being scraped, silence must not look like health.
+          expr: up{namespace="host-watch"} == 0 or absent(up{namespace="host-watch"})
+          for: 3m
+          labels:
+            severity: critical
+            namespace: host-watch
+          annotations:
+            summary: "host-watch is not answering scrapes — host alerting is blind"
+            description: >-
+              Prometheus cannot scrape the host-watch receiver, so neither the probe nor the
+              heartbeat can raise anything. Treat silence as an outage until this clears.

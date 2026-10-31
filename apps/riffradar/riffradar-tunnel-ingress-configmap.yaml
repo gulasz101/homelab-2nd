@@ -1,0 +1,20 @@
+---
+# Reminder of the public hostname rule. The real rule lives in Cloudflare Zero
+# Trust (remote-managed tunnel config_src=cloudflare), created with the scoped API
+# token; the DNS CNAME riffradar -> f2d44a23-2f3e-4293-8a8e-bc74fdc1e6d9.cfargotunnel.com
+# is proxied at the edge. TLS terminates at Cloudflare; no router ports.
+#
+#   riffradar.voitech.dev -> http://riffradar.riffradar.svc.cluster.local:3000
+#
+# Cloudflare Access (email allowlist) sits in front of the hostname: the demo
+# serves a copyrighted song tab and is not for the open internet (ADR-102).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: riffradar-tunnel-ingress
+  namespace: riffradar
+data:
+  note: |
+    # riffradar.voitech.dev -> http://riffradar.riffradar.svc.cluster.local:3000
+    # Ingress is remote-managed: change it via the Cloudflare API, not here.
+    # Access policy: allow wojtek's address + one guest address; everything else denied.
