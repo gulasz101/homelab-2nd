@@ -71,7 +71,11 @@ data:
             req = urllib.request.Request(
                 API + "/auth",
                 data=json.dumps({"password": PASSWORD}).encode(),
-                headers={"Content-Type": "application/json"},
+                # Cloudflare in front of chat.voitech.dev answers 403 to the default
+                # "Python-urllib/x.y" User-Agent (bot rule). Send our own or the report
+                # never lands — this cost a live run to find.
+                headers={"Content-Type": "application/json",
+                         "User-Agent": "pihole-roster-audit/1.0 (homelab-2nd)"},
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=15) as resp:
