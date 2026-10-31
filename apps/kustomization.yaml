@@ -404,6 +404,10 @@ resources:
   # H2-75: S-group curfew (21:00 enable / 07:00 disable, Europe/Warsaw)
   - pihole/pihole-curfew-configmap.yaml
   - pihole/pihole-curfew-cronjob.yaml
+  # GUL-392: declarative deny-entry seeds + 05:00 seeder (closes the rebuild gap:
+  # enforcement state must not live only in the live FTL database)
+  - pihole/pihole-deny-seeds.yaml
+  - pihole/pihole-deny-seed-cronjob.yaml
   # H2-76: Sylwia's Pixel — Instagram-only evening curfew (21:00 enable / 08:00 disable).
   # Dedicated "S-IG" marker so it does NOT arm the general W/S social list for S.
   - pihole/pihole-s-ig-cronjob.yaml

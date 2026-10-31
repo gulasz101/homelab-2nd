@@ -78,3 +78,18 @@ spec:
           annotations:
             summary: "Pi-hole curfew job {{ $labels.job_name }} failed"
             description: "A Pi-hole curfew CronJob ({{ $labels.job_name }}) failed. Check the job pod logs (FTL API auth, group PUT, gravity, or the refuse-to-arm-nothing guard). Family devices are on the wrong blocking schedule until it succeeds. Manual re-run: kubectl -n pihole create job --from=cronjob/<name> manual-curfew"
+
+        # GUL-392: the deny-entry seeder. If this fails, the declarative seed list
+        # (pihole-deny-seeds ConfigMap) and the live FTL database have diverged —
+        # meaning enforcement could be missing entries after a rebuild, or the
+        # markers the curfew reconcilers key on are wrong.
+        - alert: PiholeDenySeedJobFailed
+          expr: |
+            kube_job_status_failed{namespace="pihole", job_name=~"pihole-deny-seed-.*"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            namespace: pihole
+          annotations:
+            summary: "Pi-hole deny seeder {{ $labels.job_name }} failed"
+            description: "pihole-deny-seed failed: the declarative seed list and the live FTL deny entries are out of sync (API auth, a rejected PUT, gravity, or the verification read-back). Check the pod logs, then re-run: kubectl -n pihole create job --from=cronjob/pihole-deny-seed seed-now"
