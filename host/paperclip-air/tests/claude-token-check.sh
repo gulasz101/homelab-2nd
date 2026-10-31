@@ -345,10 +345,13 @@ export PAPERCLIP_API_URL="http://127.0.0.1:$PORT/api"
 printf '1|%s\n' "$(sha "$STANDIN")" > "$FAKE_VAULT_FILE"
 ( printf '%s' "$STANDIN" | "$STORE" --rotate > "$FIX/slow.out" 2>&1 ) &
 ROT_PID=$!
+# The needle goes in a file: a grep pattern on the command line would put the
+# token itself into `ps` and the sweep would always "find" its own search.
+printf '%s' "$STANDIN" > "$FIX/needle"
 leak=0
 i=0
 while [ "$i" -lt 40 ]; do
-  if ps -Ao args 2>/dev/null | grep -q "sk-ant-oat01-STANDIN"; then leak=1; fi
+  if ps -Ao args 2>/dev/null | grep -qF -f "$FIX/needle"; then leak=1; fi
   kill -0 "$ROT_PID" 2>/dev/null || break
   i=$((i + 1))
   sleep 0.1
