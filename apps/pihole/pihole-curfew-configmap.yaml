@@ -17,21 +17,30 @@ data:
     Converges the group membership of ALL deny entries (exact+regex) carrying
     the marker comment to the desired state, then gravity + restartdns + read-back.
 
-    Usage: pihole_curfew.py enable|disable|seed
+    Usage: pihole_curfew.py enable|disable|seed|seed-clients|audit-clients
       enable  (21:00): marker entries -> groups [9,10]  (S group gets the blocks)
       disable (07:00): marker entries -> groups [9]     (S group released)
       seed    (05:00): create/reinstate the deny entries themselves from a
                        declarative ConfigMap (pihole-deny-seeds). Existence,
                        marker comment and enabled flag only — group membership
                        stays with the curfew modes above.
+      seed-clients (05:10): create/repair the CLIENT ROSTER (which device is in
+                       which group) from pihole-clients-seeds. Never deletes,
+                       refuses an empty set. Client groups are not time-varying
+                       (see seed_clients()), so this is safe at any hour.
+      audit-clients (Mon 09:00): diff unregistered-but-active devices against
+                       the roster and post the report to Mattermost. Exits 2
+                       when a last-line-of-defence group has lost a member.
 
     Desired-state, not toggle: idempotent, drift-healing, safe to re-run.
     Exits 0 on success (incl. "nothing to do"), non-zero on failure so the
-    PiholeCurfewJobFailed alert fires.
+    PiholeCurfewJobFailed / PiholeClientSeedJobFailed alert fires.
     """
     import json
     import os
+    import re
     import sys
+    import time
     import urllib.error
     import urllib.parse
     import urllib.request
@@ -41,6 +50,14 @@ data:
     MARKER = os.environ.get("PIHOLE_MARKER", "W/S block")
     RESTORE_MARKER = os.environ.get("RESTORE_MARKER", "")
     SEED_FILE = os.environ.get("PIHOLE_SEED_FILE", "/seeds/denies.json")
+    CLIENT_SEED_FILE = os.environ.get("PIHOLE_CLIENT_SEED_FILE", "/seeds/clients.json")
+    MATTERMOST_WEBHOOK = os.environ.get("MATTERMOST_WEBHOOK_URL", "")
+    AUDIT_WINDOW_S = int(os.environ.get("PIHOLE_AUDIT_WINDOW_HOURS", "24")) * 3600
+    AUDIT_REQUIRED_GROUPS = [
+        int(g) for g in os.environ.get("PIHOLE_AUDIT_REQUIRED_GROUPS", "10").split(",")
+        if g.strip()
+    ]
+    MAC_RE = re.compile(r"^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$")
     GROUP_W = 9
     GROUP_S = 10
     KINDS = ("exact", "regex")
@@ -185,12 +202,258 @@ data:
         return 0
 
 
+    def seed_clients():
+        """Create/repair the CLIENT ROSTER from the declarative seed ConfigMap.
+
+        The roster — which device sits in which group — is the other half of a DNS
+        curfew and used to live only in the live FTL database. Groups in this file
+        are the device's CLASSIFICATION and are not time-varying: the curfew modes
+        move the groups of deny ENTRIES (enable -> [9,10], disable -> [9]), never a
+        client row. A device in group 10 keeps receiving the S-IG blocks while the
+        entry carries group 10, so repairing a client's groups at 05:10 cannot
+        disarm a curfew armed between 21:00 and 08:00.
+
+        Owns existence, comment and groups of every seeded row. Never deletes: a
+        live row absent from the seed is reported and left alone. No gravity and no
+        restartdns — client matching is read live from the FTL database.
+        """
+        try:
+            with open(CLIENT_SEED_FILE, encoding="utf-8") as fh:
+                seeds = json.load(fh)
+        except (OSError, ValueError) as exc:
+            print(f"FATAL: cannot read client seed file {CLIENT_SEED_FILE}: {exc}", file=sys.stderr)
+            return 1
+        if not seeds:
+            print(f"FATAL: {CLIENT_SEED_FILE} has zero rows — refusing to seed nothing", file=sys.stderr)
+            return 1
+        for s in seeds:
+            mac = str(s.get("client") or "").lower()
+            if not MAC_RE.match(mac) or not s.get("groups"):
+                print(f"FATAL: bad client seed row {s!r} (needs a MAC in `client` and non-empty `groups`)",
+                      file=sys.stderr)
+                return 1
+
+        pihole = Pihole()
+        pihole.reauth()
+        st, raw = pihole.call("GET", "/clients")
+        if st != 200:
+            print(f"FATAL: list clients HTTP {st}: {raw[:200]}", file=sys.stderr)
+            return 1
+        live = {}
+        for c in json.loads(raw)["clients"]:
+            mac = str(c.get("client") or "").lower()
+            if MAC_RE.match(mac):
+                live[mac] = c
+        print(f"[seed-clients] {len(seeds)} seeded rows from {CLIENT_SEED_FILE}, "
+              f"{len(live)} live MAC rows")
+
+        created = 0
+        repaired = 0
+        for s in seeds:
+            mac = str(s["client"]).lower()
+            want_comment = s.get("comment") or ""
+            want_groups = sorted(int(g) for g in s["groups"])
+            body = {"client": mac, "comment": want_comment, "groups": want_groups}
+            key = urllib.parse.quote(mac, safe=":")
+            cur = live.get(mac)
+
+            if cur is None:
+                st, raw = pihole.call("POST", "/clients", body)
+                if st not in (200, 201):
+                    print(f"FATAL: create client {mac} HTTP {st}: {raw[:200]}", file=sys.stderr)
+                    return 1
+                created += 1
+                print(f"[seed-clients]   + created {mac} groups={want_groups} comment={want_comment!r}")
+                continue
+
+            if ((cur.get("comment") or "") == want_comment
+                    and sorted(int(g) for g in (cur.get("groups") or [])) == want_groups):
+                continue
+
+            st, raw = pihole.call("PUT", f"/clients/{key}", body)
+            if st != 200:
+                print(f"FATAL: repair client {mac} HTTP {st}: {raw[:200]}", file=sys.stderr)
+                return 1
+            repaired += 1
+            print(f"[seed-clients]   ~ repaired {mac}: groups {cur.get('groups')} -> {want_groups} "
+                  f"comment {cur.get('comment')!r} -> {want_comment!r}")
+
+        extra = sorted(set(live) - {str(s["client"]).lower() for s in seeds})
+        if extra:
+            print(f"[seed-clients] note: {len(extra)} live row(s) not in the seed, left alone "
+                  f"(never deleted): {', '.join(extra)}")
+
+        st, raw = pihole.call("GET", "/clients")
+        if st != 200:
+            print(f"FATAL: verify read-back clients HTTP {st}: {raw[:200]}", file=sys.stderr)
+            return 1
+        now_live = {str(c.get("client") or "").lower(): c for c in json.loads(raw)["clients"]}
+        bad = []
+        for s in seeds:
+            mac = str(s["client"]).lower()
+            c = now_live.get(mac)
+            if c is None:
+                bad.append(f"{mac}:missing")
+            elif ((c.get("comment") or "") != (s.get("comment") or "")
+                  or sorted(int(g) for g in (c.get("groups") or []))
+                  != sorted(int(g) for g in s["groups"])):
+                bad.append(f"{mac}:{c.get('groups')}:{c.get('comment')!r}")
+        if bad:
+            print(f"FATAL: verification failed: {bad}", file=sys.stderr)
+            return 1
+        print(f"[seed-clients] verified: {len(seeds)} rows present with the seeded comment+groups")
+        print(f"[seed-clients] done: {created} created, {repaired} repaired")
+        return 0
+
+
+    def _age(seconds):
+        hours = max(seconds, 0) / 3600.0
+        return f"{hours:.1f}h" if hours < 48 else f"{hours / 24:.1f}d"
+
+
+    def post_mattermost(text):
+        if not MATTERMOST_WEBHOOK:
+            print("[audit-clients] MATTERMOST_WEBHOOK_URL not set — report printed only")
+            return True
+        req = urllib.request.Request(
+            MATTERMOST_WEBHOOK,
+            data=json.dumps({"text": text}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                if not 200 <= resp.status < 300:
+                    print(f"WARN: mattermost HTTP {resp.status}", file=sys.stderr)
+                    return False
+                return True
+        except (urllib.error.URLError, OSError) as exc:
+            print(f"WARN: mattermost post failed: {exc}", file=sys.stderr)
+            return False
+
+
+    def audit_clients():
+        """Weekly roster audit: live traffic vs the registered rows. Read-only.
+
+        Differs GET /clients (the roster) against GET /clients/_suggestions (devices
+        that queried recently and have no row). _suggestions is the device
+        inventory; GET /network/devices returns a much shorter list and would
+        declare live devices non-existent. Devices active inside the window with no
+        row are reported to Mattermost; a seeded row in a required group that has
+        vanished or changed groups exits 2 so the Prometheus alert fires.
+        """
+        pihole = Pihole()
+        pihole.reauth()
+        st, raw = pihole.call("GET", "/clients")
+        if st != 200:
+            print(f"FATAL: list clients HTTP {st}: {raw[:200]}", file=sys.stderr)
+            return 1
+        clients = [c for c in json.loads(raw)["clients"]
+                   if MAC_RE.match(str(c.get("client") or "").lower())]
+        registered = {c["client"].lower(): c for c in clients}
+
+        st, raw = pihole.call("GET", "/clients/_suggestions")
+        if st != 200:
+            print(f"FATAL: list client suggestions HTTP {st}: {raw[:200]}", file=sys.stderr)
+            return 1
+        suggestions = json.loads(raw)["clients"]
+
+        st, raw = pihole.call("GET", "/network/devices")
+        seen = set()
+        if st == 200:
+            for d in json.loads(raw).get("devices", []):
+                hw = str(d.get("hwaddr") or "").lower()
+                if MAC_RE.match(hw):
+                    seen.add(hw)
+
+        now = int(time.time())
+        unknown = []
+        for s in suggestions:
+            hw = str(s.get("hwaddr") or "").lower()
+            if not MAC_RE.match(hw):   # "ip-192.168.1.179" pseudo-devices are not devices
+                continue
+            last = int(s.get("lastQuery") or 0)
+            if last and now - last <= AUDIT_WINDOW_S:
+                unknown.append({
+                    "mac": hw,
+                    "vendor": s.get("macVendor") or "unknown vendor",
+                    "addresses": s.get("addresses") or "",
+                    "age": now - last,
+                })
+        unknown.sort(key=lambda d: d["age"])
+
+        seeded = {}
+        seed_err = None
+        try:
+            with open(CLIENT_SEED_FILE, encoding="utf-8") as fh:
+                for s in json.load(fh):
+                    seeded[str(s["client"]).lower()] = s
+        except (OSError, ValueError) as exc:
+            seed_err = str(exc)
+            print(f"WARN: cannot read {CLIENT_SEED_FILE}: {exc} — required-group check skipped",
+                  file=sys.stderr)
+
+        lost = []
+        quiet = []
+        for mac, s in sorted(seeded.items()):
+            want = sorted(int(g) for g in (s.get("groups") or []))
+            cur = registered.get(mac)
+            live_groups = sorted(int(g) for g in ((cur or {}).get("groups") or []))
+            if cur is None or live_groups != want:
+                lost.append(f"{mac} {s.get('comment') or '(no comment)'} — expected {want}, live "
+                            f"{'absent' if cur is None else live_groups}")
+            elif any(g in want for g in AUDIT_REQUIRED_GROUPS) and mac not in seen:
+                quiet.append(f"{mac} {s.get('comment') or '(no comment)'}")
+
+        stamp = time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(now))
+        lines = [f"**Pi-hole roster audit — {stamp}**",
+                 f"registered {len(clients)} rows · {len(unknown)} unregistered device(s) active "
+                 f"in the last {AUDIT_WINDOW_S // 3600}h"]
+        if unknown:
+            lines.append("")
+            lines.append(":warning: **queried this resolver with no roster row:**")
+            for d in unknown:
+                ip = ",".join(a for a in d["addresses"].split(",") if a.startswith("192.168.")) or "—"
+                lines.append(f"- `{d['mac']}` · {d['vendor']} · {ip} · last query {_age(d['age'])} ago")
+            lines.append("")
+            lines.append("_Register a device with the seeder: add it to `apps/pihole/pihole-clients-seeds.yaml`._")
+        else:
+            lines.append(":white_check_mark: every device that queried in the window has a roster row.")
+        if lost:
+            lines.append("")
+            lines.append(":rotating_light: **seeded rows that drifted (the seeder should have caught these):**")
+            lines.extend(f"- `{x}`" for x in lost)
+        if quiet:
+            lines.append("")
+            lines.append("_quiet in /network/devices (may simply be away):_ " +
+                         ", ".join(f"`{m.split(' ')[0]}`" for m in quiet))
+        if seed_err:
+            lines.append("")
+            lines.append(f":warning: could not read the seed roster ({seed_err}) — drift check incomplete")
+        report = "\n".join(lines)
+        print(report)
+
+        posted = post_mattermost(report)
+        if lost:
+            print(f"[audit-clients] FAIL: {len(lost)} seeded row(s) drifted", file=sys.stderr)
+            return 2
+        if not posted:
+            print("[audit-clients] FAIL: report could not be posted to Mattermost", file=sys.stderr)
+            return 1
+        print("[audit-clients] done: no seeded row drifted")
+        return 0
+
+
     def main():
         mode = sys.argv[1] if len(sys.argv) > 1 else ""
         if mode == "seed":
             return seed()
+        if mode == "seed-clients":
+            return seed_clients()
+        if mode == "audit-clients":
+            return audit_clients()
         if mode not in WANTED:
-            print("FATAL: mode must be enable|disable|seed", file=sys.stderr)
+            print("FATAL: mode must be enable|disable|seed|seed-clients|audit-clients", file=sys.stderr)
             return 2
         wanted = WANTED[mode]
         restore = RESTORE_MARKER if (RESTORE_MARKER and mode == "disable") else None
