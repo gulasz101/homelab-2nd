@@ -109,6 +109,14 @@ detector for a Connect overwrite.
 Alerts go out on the same channel as the other watchdog conditions (GUL-641), and every message
 carries the exact fix command. No new channel, no new secret.
 
+**The mint date is only as good as the path that wrote it.** `--rotate` records it on the way past,
+because it holds the fresh token at that moment. The manual fallback in RUNBOOK §5b does not: a person
+pastes a value into the Paperclip UI and this host never sees it, so the file keeps whatever date the
+last successful `--rotate` wrote — and a stale date is worse than a missing one, because it makes a
+year-old token look fresh. `--record-mint` is the one step that makes the fallback an aged credential.
+A missing file stays survivable and honest: the check reads `ok:vN` with no days-left figure and makes
+no expiry claim rather than inventing one. Whoever adds a third rotation path owes it a `write_mint`.
+
 ## Consequences
 
 - The PM round survives a week of silence from the human. That is the whole point of the ticket.

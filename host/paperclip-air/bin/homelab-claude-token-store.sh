@@ -22,6 +22,12 @@
 #   bin/homelab-claude-token-store.sh --rotate                        # rotate the stored SOPS value only
 #   bin/homelab-claude-token-store.sh --verify                        # compare only
 #   bin/homelab-claude-token-store.sh --store-board-key               # store the board API key (stdin)
+#   bin/homelab-claude-token-store.sh --record-mint [YYYY-MM-DD]      # age the credential (metadata only)
+#
+# `--record-mint` exists for the manual fallback in RUNBOOK §5b: when the vault
+# is rotated by hand (no board key, or another machine), nothing on this host
+# sees the new value, so the watchdog's 30-day expiry warning has nothing to
+# age. It writes the date only, never the token, and defaults to today, UTC.
 #
 # `--rotate` needs an owner-scoped Paperclip board API key in SOPS. Create one
 # in the Paperclip UI (your user -> API keys), then
@@ -124,12 +130,47 @@ board_key() { # reads the board key out of SOPS; prints it on stdout only
     | tr -d '"'"'"''"'"' \r\n'
 }
 
-record_mint() { # metadata only: the date, never the token
+# A real calendar day, not just a YYYY-MM-DD shape: 2026-02-30 is refused.
+mint_date_valid() { # $1 = YYYY-MM-DD
+  case "$1" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) return 1 ;;
+  esac
+  local py
+  if py=$(command -v python3 2>/dev/null); then
+    "$py" - "$1" >/dev/null 2>&1 <<'PY'
+import sys
+from datetime import date
+date.fromisoformat(sys.argv[1])
+PY
+    return $?
+  fi
+  return 0
+}
+
+# THE writer of the mint file — one path, so the store/--rotate flow and the
+# manual fallback cannot disagree about the shape. $1 = YYYY-MM-DD; empty means
+# today, UTC. Metadata only: never the token.
+write_mint() {
+  local d=${1:-$(date -u +%Y-%m-%d)}
+  if ! mint_date_valid "$d"; then
+    printf 'ERROR: %s is not a date (expected YYYY-MM-DD)\n' "$d" >&2
+    return 1
+  fi
   mkdir -p "$(dirname "$MINT_FILE")" 2>/dev/null
-  printf 'minted=%s\n' "$(date -u +%Y-%m-%d)" > "$MINT_FILE" \
-    || say "WARNING: could not record the mint date in $MINT_FILE"
+  if ! printf 'minted=%s\n' "$d" > "$MINT_FILE"; then
+    printf 'ERROR: could not write %s\n' "$MINT_FILE" >&2
+    return 1
+  fi
   chmod 644 "$MINT_FILE" 2>/dev/null
-  say "minted  $MINT_FILE records $(date -u +%Y-%m-%d) (metadata only, no token)"
+  say "minted  $MINT_FILE records $d (metadata only, no token)"
+}
+
+# The store/--rotate path: the token was minted now. A failed write is a
+# warning, not a failure — the credential itself is already stored and proven.
+record_mint() {
+  write_mint "$(date -u +%Y-%m-%d)" \
+    || say "WARNING: could not record the mint date in $MINT_FILE"
 }
 
 # Store $1 (already shape-checked) in SOPS. Plaintext never survives: the file
@@ -243,6 +284,10 @@ case "${1:-store}" in
     say "wrote $BOARD_TOKEN_SOPS_FILE (encrypted)"
     exit 0
     ;;
+  --record-mint|record-mint)
+    write_mint "${2:-}" || exit 1
+    exit 0
+    ;;
   --rotate|rotate)
     if [ -t 0 ]; then
       # No stdin: rotate the value already stored in SOPS.
@@ -253,7 +298,7 @@ case "${1:-store}" in
     ROTATE=1
     ;;
   store|--store) ROTATE=0 ;;
-  *) die "unknown argument: $1 (use --verify, --rotate or --store-board-key)" ;;
+  *) die "unknown argument: $1 (use --verify, --rotate, --record-mint or --store-board-key)" ;;
 esac
 
 command -v sops >/dev/null || die "sops is not installed"
