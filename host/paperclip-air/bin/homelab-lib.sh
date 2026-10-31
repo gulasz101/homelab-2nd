@@ -375,3 +375,194 @@ claude_auth_alert_message() { # $1 = verdict, e.g. dead:run-claude_auth_required
 # out Mac keeps a stale console entry in utmp, which cost us an hour on
 # 2026-10-29.
 console_owner() { stat -f%Su /dev/console 2>/dev/null || echo unknown; }
+
+# ---------------------------------------------------------------------------
+# Claude Code credential drift and expiry (GUL-691, ADR-110)
+#
+# Two copies of one credential exist: the SOPS file (survives a Paperclip
+# rebuild) and the user-scoped `ai.credential` secret in Paperclip's vault
+# (what a managed run is actually handed). They are equal only until someone
+# accepts a "Connect Anthropic" card: Connect writes a fresh ~8 h access token
+# as a NEW vault version and never touches the SOPS copy. The grant reads
+# `versionSelector: "latest"`, so the next 05:30 round authenticates with the
+# wrong credential and dies, and nothing has ever noticed until it does.
+#
+# So: compare the two digests, assert the SOPS value still has setup-token
+# shape, and report the token's age. Never print, log or compare values — the
+# digests are sha256(utf8 value), which is what Paperclip stores.
+# ---------------------------------------------------------------------------
+
+CLAUDE_TOKEN_SOPS_FILE=${CLAUDE_TOKEN_SOPS_FILE:-$HOMELAB_HOME/claude-code-oauth.sops.yaml}
+# Mint date only: "minted=YYYY-MM-DD". Metadata, never the token.
+CLAUDE_TOKEN_MINT_FILE=${CLAUDE_TOKEN_MINT_FILE:-$HOMELAB_STATE_DIR/claude-token-mint}
+CLAUDE_TOKEN_COMPANY_ID=${CLAUDE_TOKEN_COMPANY_ID:-0e2eb054-4cb6-4ea1-a2e7-2b1894285d8c}
+CLAUDE_TOKEN_KUBE_NS=${CLAUDE_TOKEN_KUBE_NS:-paperclip}
+CLAUDE_TOKEN_KUBE_DB_POD=${CLAUDE_TOKEN_KUBE_DB_POD:-paperclip-db-1}
+CLAUDE_TOKEN_SECRET_ID=${CLAUDE_TOKEN_SECRET_ID:-}
+# A setup token lives about a year; alert 30 days out.
+CLAUDE_TOKEN_LIFETIME_DAYS=${CLAUDE_TOKEN_LIFETIME_DAYS:-365}
+CLAUDE_TOKEN_WARN_DAYS=${CLAUDE_TOKEN_WARN_DAYS:-30}
+
+# Which family a value belongs to, as a word. Never prints the value: a caller
+# decides what to say, and the answer is one of these three tokens.
+claude_token_shape() { # $1 = the credential value
+  case "$1" in
+    sk-ant-oat01-*) printf 'setup' ;;
+    sk-ant-api03-*) printf 'api-key' ;;
+    '') printf 'empty' ;;
+    *) printf 'other' ;;
+  esac
+}
+
+# kubectl, wherever it lives. A system LaunchDaemon's PATH does not include
+# ~/.local/bin, which is where the Air keeps the binary.
+claude_token_kubectl() {
+  if [ -n "${KUBECTL_BIN:-}" ] && [ -x "$KUBECTL_BIN" ]; then printf '%s' "$KUBECTL_BIN"; return 0; fi
+  local c
+  c=$(command -v kubectl 2>/dev/null) && { printf '%s' "$c"; return 0; }
+  for c in "$HOMELAB_HOME/.local/bin/kubectl" /opt/homebrew/bin/kubectl /usr/local/bin/kubectl; do
+    [ -x "$c" ] && { printf '%s' "$c"; return 0; }
+  done
+  return 1
+}
+
+# "<version>|<sha256>" of the live vault value, or empty. Read-only, and the
+# only reader of the Paperclip database in this file.
+claude_token_vault_digest() {
+  local kc
+  kc=$(claude_token_kubectl) || return 0
+  "$kc" exec -n "$CLAUDE_TOKEN_KUBE_NS" "$CLAUDE_TOKEN_KUBE_DB_POD" -c postgres -- \
+    psql -U postgres -d paperclip -At -F'|' -c \
+    "select v.version, v.value_sha256 from company_secret_versions v
+       join company_secrets s on s.id = v.secret_id
+      where v.revoked_at is null
+        and s.company_id = '$CLAUDE_TOKEN_COMPANY_ID'
+        and s.scope = 'user'
+        and s.name ilike '%claude%'
+      order by v.version desc limit 1;" 2>/dev/null | head -1
+}
+
+# "<sha256> <shape>" of the SOPS copy, or empty when it cannot be read. The
+# value never leaves this function.
+claude_token_sops_fields() {
+  [ -f "$CLAUDE_TOKEN_SOPS_FILE" ] || return 0
+  command -v sops >/dev/null 2>&1 || return 0
+  local plain val
+  plain=$(sops --decrypt "$CLAUDE_TOKEN_SOPS_FILE" 2>/dev/null) || return 0
+  val=$(printf '%s\n' "$plain" | awk -F': *' '/CLAUDE_CODE_OAUTH_TOKEN:/ {print $2; exit}' \
+          | tr -d '"'"'"'\r\n')
+  [ -n "$val" ] || return 0
+  printf '%s %s\n' "$(printf '%s' "$val" | shasum -a 256 | awk '{print $1}')" "$(claude_token_shape "$val")"
+  unset val plain
+}
+
+# Mint date as YYYY-MM-DD, or empty. Metadata file, not a credential.
+claude_token_mint_date() {
+  [ -f "$CLAUDE_TOKEN_MINT_FILE" ] || return 0
+  awk -F= '/^minted=/ {print $2; exit}' "$CLAUDE_TOKEN_MINT_FILE" 2>/dev/null | tr -d ' \r'
+}
+
+# Days left on a ~1-year token. Prints "bad-date" rather than guessing.
+claude_token_days_left() { # $1 = minted YYYY-MM-DD, $2 = today YYYY-MM-DD
+  local py
+  py=$(command -v python3 2>/dev/null) || { printf 'bad-date'; return 0; }
+  "$py" - "$1" "${2:-$(date -u +%Y-%m-%d)}" "${CLAUDE_TOKEN_LIFETIME_DAYS}" <<'PY'
+import sys
+from datetime import date
+try:
+    mint = date.fromisoformat(sys.argv[1])
+    today = date.fromisoformat(sys.argv[2])
+    life = int(sys.argv[3])
+except ValueError:
+    print("bad-date")
+    raise SystemExit(0)
+print(life - (today - mint).days)
+PY
+}
+
+# The verdict, from four non-secret inputs so a fixture can drive every branch.
+#   $1 = SOPS sha256 (empty when unreadable)
+#   $2 = shape word (setup|api-key|other|empty)
+#   $3 = vault "<version>|<sha256>" (empty when unreadable)
+#   $4 = minted YYYY-MM-DD (may be empty: then no expiry claim is made)
+#   $5 = today YYYY-MM-DD (defaults to UTC today)
+claude_token_verdict() {
+  local sops_sha="$1" shape="$2" vault="$3" mint="$4" today="${5:-$(date -u +%Y-%m-%d)}"
+  local version vault_sha days
+  case "$shape" in
+    setup) ;;
+    *) printf 'badshape:%s\n' "${shape:-empty}"; return 0 ;;
+  esac
+  if [ -z "$sops_sha" ]; then printf 'unknown:no-sops-digest\n'; return 0; fi
+  case "$vault" in
+    *'|'*) ;;
+    *) printf 'unknown:vault-unreadable\n'; return 0 ;;
+  esac
+  version=${vault%%|*}
+  vault_sha=${vault##*|}
+  if [ "$vault_sha" != "$sops_sha" ]; then
+    printf 'mismatch:v%s\n' "$version"
+    return 0
+  fi
+  if [ -z "$mint" ]; then
+    printf 'ok:v%s\n' "$version"
+    return 0
+  fi
+  days=$(claude_token_days_left "$mint" "$today")
+  case "$days" in
+    bad-date) printf 'unknown:bad-mint-date\n' ;;
+    *)
+      if [ "$days" -le 0 ]; then
+        printf 'expired:%s\n' "$days"
+      elif [ "$days" -le "$CLAUDE_TOKEN_WARN_DAYS" ]; then
+        printf 'expiring:%s\n' "$days"
+      else
+        printf 'ok:v%s %s days left\n' "$version" "$days"
+      fi
+      ;;
+  esac
+}
+
+# Gather the inputs and return the verdict. Unknown is never green and never a
+# page: a check that cannot read its two sources must say so in the log, not
+# pretend the credential is fine.
+claude_token_state() {
+  local fields sops_sha shape vault mint
+  fields=$(claude_token_sops_fields)
+  if [ -z "$fields" ]; then
+    if [ ! -f "$CLAUDE_TOKEN_SOPS_FILE" ]; then
+      printf 'unknown:no-sops-copy\n'
+    else
+      printf 'unknown:sops-unreadable\n'
+    fi
+    return 0
+  fi
+  sops_sha=${fields%% *}
+  shape=${fields##* }
+  vault=$(claude_token_vault_digest)
+  mint=$(claude_token_mint_date)
+  claude_token_verdict "$sops_sha" "$shape" "$vault" "$mint"
+}
+
+# The words the daemon sends. One place, so the alert and the RUNBOOK cannot
+# drift. Every message that needs a human names the exact command.
+claude_token_alert_message() { # $1 = verdict
+  local store="$HOMELAB_HOME/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh"
+  case "$1" in
+    mismatch:*)
+      printf '%s' "claude code credential drifted: Paperclip's vault secret (${1#mismatch:}) is no longer the setup token in the SOPS copy. That is what accepting a 'Connect Anthropic' card does - it writes a fresh 8-hour access token over the setup token, and the next 05:30 round dies with claude_auth_required. HUMAN action: run 'claude setup-token | $store --rotate' on the Air (mint, store, rotate and prove in one command). Do NOT just click Connect: that is the overwrite. Not a restart, not a reboot."
+      ;;
+    badshape:*)
+      printf '%s' "claude code credential has the wrong shape (${1#badshape:}): the SOPS copy is not an 'sk-ant-oat01-' setup token, so replacing the vault value with it would break the PM round. An 'sk-ant-api03-' key moves the agent onto per-token billing; anything else is not a Claude Code setup token. HUMAN action: run 'claude setup-token | $store --rotate' on the Air."
+      ;;
+    expired:*)
+      printf '%s' "claude code setup token has EXPIRED (${1#expired:} days left): renew it before the 05:30 round fails. HUMAN action: run 'claude setup-token | $store --rotate' on the Air."
+      ;;
+    expiring:*)
+      printf '%s' "claude code setup token expires in ${1#expiring:} days. Not urgent, but do it while the Mac is awake: 'claude setup-token | $store --rotate'. HUMAN action, not a restart."
+      ;;
+    *)
+      printf '%s' "claude code credential check: ${1} (no action)"
+      ;;
+  esac
+}

@@ -39,6 +39,32 @@ Order matters:
    fresh access-token version.
 3. The grant's credential ref is `versionSelector: "latest"`, so the next run picks it up.
 
+## The rotate route from a shell (not the UI)
+
+"Owner/board only" means `req.actor.type === "board"`, not "a human in a browser" — so an
+**owner-scoped board API key** drives the route from a script:
+
+- `dist/routes/secrets.js`: the rotate route calls `assertBoard(req)` then `currentUserId(req)`.
+- `dist/routes/authz.js`: `assertBoard` only tests `req.actor.type === "board"`.
+- `dist/middleware/auth.js`: a bearer matched by `boardAuth.findBoardApiKeyByToken()` becomes a
+  `board` actor with `source: "board_key"` and the key owner's `userId`; keys are
+  `pcp_board_<48 hex>` and expire after 30 days unless created with another `expiresAt`.
+
+An agent key still 403s — do not try to substitute one. Keep the bearer off `ps`: pass it as a curl
+config on a file descriptor (`-K <(printf 'header = "Authorization: Bearer %s"\n' "$key")`) and the
+JSON body on stdin (`--data @-`). No temp file, no argv.
+
+The bundle also ships a `claude setup-token` login route that drives the CLI on a pseudo-terminal,
+but it needs `options.setupTokenLogin` (a sandbox login transport); a local instance answers 503.
+
+## Shape cannot tell a setup token from a Connect token
+
+Both are `sk-ant-oat…` (the CLI only tests that prefix), so a shape guard rejects an
+`sk-ant-api03-…` API key and anything outside the family, and nothing more. The detector for a
+Connect-card overwrite — a new vault version over the setup token, which the `latest` selector then
+hands to the next run — is the **digest comparison** of the SOPS copy against
+`company_secret_versions.value_sha256`, run daily by the Air's watchdog (`check9b`).
+
 ## Proving it without printing the value
 
 `company_secret_versions.value_sha256` is `sha256(utf8 value)`. Compare it with the digest of the
