@@ -146,6 +146,25 @@ class HeartbeatTests(unittest.TestCase):
         self.assertFalse(store.record("not json", now=1000.0))
         self.assertIsNone(store.age(now=1001.0))
 
+    def test_leak_counters_are_recorded_and_rendered(self):
+        # GUL-680: a beat may carry counts of leaked child processes.
+        store, _ = self._store("t")
+        store.record(json.dumps({
+            "host": "paperclip-air", "ts": 1000, "components": {"paperclip": True},
+            "leaks": {"kubectl_port_forward": 3},
+        }), now=1000.0)
+        self.assertEqual(store.leaks, {"kubectl_port_forward": 3})
+        out = hw.render_metrics([], store, now=1000.0)
+        self.assertIn('hostwatch_host_leak{name="kubectl_port_forward"} 3', out)
+
+    def test_leak_counters_tolerate_a_bad_value_without_losing_the_beat(self):
+        store, _ = self._store("t")
+        self.assertTrue(store.record(json.dumps({
+            "host": "paperclip-air", "leaks": {"kubectl_port_forward": "two", "other": -1},
+        }), now=1000.0))
+        self.assertEqual(store.leaks, {"other": 0}, "junk skipped, negatives clamped")
+
+
 
 class MetricsTests(unittest.TestCase):
     def _render(self, targets=None, store=None, now=2000.0):

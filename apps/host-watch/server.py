@@ -141,6 +141,10 @@ class HeartbeatStore:
         self.host = ""
         self.console_user = ""
         self.components = {}
+        # GUL-680: host-reported leak counters (leaked child processes). Kept
+        # separate from components because "0 leaked forwards" is good news and
+        # "0 components up" is bad news — same shape, opposite meaning.
+        self.leaks = {}
         self.last_payload_ts = 0
         self.rejected = 0
         self.accepted = 0
@@ -182,6 +186,15 @@ class HeartbeatStore:
             for key, value in components.items():
                 clean[str(key)] = 1 if value in (True, 1, "1", "true", "up") else 0
             self.components = clean
+        leaks = payload.get("leaks")
+        if isinstance(leaks, dict):
+            counters = {}
+            for key, value in leaks.items():
+                try:
+                    counters[str(key)] = max(0, int(value))
+                except (TypeError, ValueError):
+                    continue
+            self.leaks = counters
         self.accepted += 1
         return True
 
@@ -294,6 +307,12 @@ def render_metrics(targets, store, now=None):
     for component in sorted(store.components):
         lines.append('hostwatch_component_up{component="%s"} %d'
                      % (component, store.components[component]))
+    lines += [
+        "# HELP hostwatch_host_leak Leaked child processes the host found still running (0 = clean).",
+        "# TYPE hostwatch_host_leak gauge",
+    ]
+    for name in sorted(store.leaks):
+        lines.append('hostwatch_host_leak{name="%s"} %d' % (name, store.leaks[name]))
     lines += [
         "# HELP hostwatch_heartbeat_host_info Identity of the last beating host.",
         "# TYPE hostwatch_heartbeat_host_info gauge",

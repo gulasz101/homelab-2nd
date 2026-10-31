@@ -60,8 +60,21 @@ done
 # Trim the trailing comma; an empty object is valid JSON too.
 components="${components%,}"
 
-payload=$(printf '{"host":"paperclip-air","ts":%s,"console_user":"%s","components":{%s}}' \
-  "$(now_s)" "$(console_owner)" "$components")
+# GUL-680: leaked `kubectl ... port-forward` processes. Hermes runs them as
+# `bash -lic set +m; kubectl …`; when the run ends (or the 180 s tool timeout
+# fires) the kubectl child survives, gets reparented to launchd, and the crash
+# recovery checkpoint re-adopts it on every gateway start — so it lives forever.
+# Nothing legitimate needs a forward older than 15 minutes (durable access is a
+# NodePort or a LAN service), so age is the whole test. Report only, never kill.
+forwards=$(ps -axo etime=,command= 2>/dev/null | awk '
+function secs(t,  d,a,p,n){ d=0; if (index(t,"-")>0){ split(t,a,"-"); d=a[1]+0; t=a[2] } n=split(t,p,":"); if (n==3) return d*86400+p[1]*3600+p[2]*60+p[3]; if (n==2) return d*86400+p[1]*60+p[2]; return d*86400+p[1] }
+/kubectl/ && /port-forward/ && !/bash/ && !/awk/ { if (secs($1) > 900) n++ }
+END { print n+0 }')
+
+payload=$(printf '{"host":"paperclip-air","ts":%s,"console_user":"%s","components":{%s},"leaks":{"kubectl_port_forward":%s}}' \
+  "$(now_s)" "$(console_owner)" "$components" "$forwards")
+[ "$forwards" -gt 0 ] && log "leak: $forwards kubectl port-forward process(es) older than 15 min — see GUL-680"
+
 
 code=$(curl -s -o /tmp/homelab-heartbeat.out -m 10 -w '%{http_code}' \
   -X POST "$URL" \
