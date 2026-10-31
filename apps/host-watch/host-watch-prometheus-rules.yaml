@@ -36,6 +36,29 @@ spec:
               Check: stat -f%Su /dev/console on the Air, then run
               /usr/local/libexec/homelab/homelab-recover-appliance.sh.
 
+    - name: host-watch.leaks
+      interval: 30s
+      rules:
+        - alert: HostWatchOrphanKubectlForward
+          # GUL-680. A `kubectl port-forward` older than 15 minutes is a leaked
+          # child: Hermes spawns it as `bash -lic set +m; kubectl …`, the run ends
+          # (or the 180 s tool timeout fires), the kubectl survives reparented to
+          # launchd, and the process-registry checkpoint re-adopts it on every
+          # gateway start. Warning, not critical: a leaked forward holds a
+          # localhost port, it does not take the platform down.
+          expr: hostwatch_host_leak{name="kubectl_port_forward"} > 0
+          for: 15m
+          labels:
+            severity: warning
+            namespace: host-watch
+          annotations:
+            summary: "{{ $value }} leaked kubectl port-forward(s) on the Air"
+            description: >-
+              The Air reports {{ $value }} `kubectl ... port-forward` process(es) running for
+              more than 15 minutes. Find them with
+              `ps -axo pid=,ppid=,etime=,command= | grep port-forward` and kill the pid(s); the
+              wrapper `bash -lic` parent is usually also orphaned (ppid 1) and can go too.
+
     - name: host-watch.heartbeat
       interval: 30s
       rules:
