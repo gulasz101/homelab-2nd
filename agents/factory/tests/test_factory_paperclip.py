@@ -794,9 +794,6 @@ def case_green_approve_opens_one_pr(stub):
     check("decide green: the re-run leaves the stage done and the ledger intact",
           stub.state.issues[stage["id"]]["status"] == "done"
           and '"number": 80' in stub.state.documents[(wo["id"], "ledger")]["body"], raw2[-400:])
-    # the tick cases sweep every open work order, and this fixture's ledger
-    # names a stage issue the stub never created (red-1): close it here.
-    stub.state.issues[wo["id"]]["status"] = "done"
 
 
 GREEN_SPEC_BODY = """# Spec
@@ -1042,6 +1039,53 @@ def case_tick_blocks_a_closed_pr(stub):
           (ledger.get("merge") or {}).get("state") == "closed", ledger.get("merge"))
 
 
+def case_tick_survives_a_stale_stage_row(stub):
+    """GUL-557: a ledger row naming a deleted stage issue is one flag on one
+    work order; the sweep still reads and settles the others."""
+    repo, _base = make_repo("stale-repo")
+    stale = base_work_order(stub, "base-sha", repo, identifier="GUL-914")
+    ledger = ledger_of(stub, stale)
+    ledger["stages"] = {"red": {"issueId": "red-gone", "identifier": "GUL-914-red",
+                                "round": 1, "attempts": 0, "sha": None}}
+    write_ledger(stub, stale, ledger)
+
+    # the merge watch rides the same loop: a deleted *gate* issue must be a flag
+    # too, not a 404 before the work order is even reached.
+    stale_gate = base_work_order(stub, "base-sha", repo, identifier="GUL-915")
+    ledger = ledger_of(stub, stale_gate)
+    ledger["pr"] = {"number": 95,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/95"}
+    ledger["stages"] = {"gate": {"issueId": "gate-gone", "identifier": "GUL-915-gate",
+                                  "round": 1, "attempts": 0, "sha": None}}
+    write_ledger(stub, stale_gate, ledger)
+    stub.state.issues[stale_gate["id"]]["status"] = "in_review"
+
+    merged_wo, _gate = gate_work_order(stub, repo, "GUL-916", 96)
+
+    code, out, raw = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "stale", {"state": "MERGED", "mergedAt": "2026-10-28T17:13:00Z",
+                  "mergeCommit": {"oid": "beef123"}}))
+    lines = (out or {}).get("reasons") or []
+    ledger = ledger_of(stub, merged_wo)
+
+    check("tick stale: one missing stage issue does not kill the sweep",
+          code == 0 and (out or {}).get("ok") is True, raw[-600:])
+    check("tick stale: the work order with the stale row is flagged, not dropped",
+          any(line.startswith("GUL-914") and "stage-missing" in line for line in lines), lines)
+    check("tick stale: the missing id is named on stderr with its 404, once",
+          raw.count("stage issue red-gone") == 1 and "404" in raw,
+          raw[-600:])
+    check("tick stale: a stale gate row is flagged too, and that work order stays put",
+          any(line.startswith("GUL-915") and "stage-missing" in line for line in lines)
+          and stub.state.issues[stale_gate["id"]]["status"] == "in_review", lines)
+    check("tick stale: the other work order is still settled by its merged PR",
+          any(line.startswith("GUL-916") and "pr-merged" in line for line in lines)
+          and stub.state.issues[merged_wo["id"]]["status"] == "done"
+          and (ledger.get("merge") or {}).get("state") == "merged", raw[-600:])
+    for issue in (stale, stale_gate, merged_wo):
+        stub.state.issues[issue["id"]]["status"] = "done"
+
+
 def main():
     global WORKDIR
     WORKDIR = tempfile.mkdtemp(prefix="factory-pc-tests-")
@@ -1067,6 +1111,7 @@ def main():
             case_tick_notices_the_merge(stub)
             case_tick_waits_on_an_open_pr(stub)
             case_tick_blocks_a_closed_pr(stub)
+            case_tick_survives_a_stale_stage_row(stub)
         finally:
             stub.close()
     finally:

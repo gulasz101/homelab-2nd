@@ -324,7 +324,10 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
 
 **`tick [--apply]`** — read-only without `--apply`. One line per open work order: stage,
 agent, age, rounds, and flags (`idle>2h`, `no-run`, `runs-unknown`,
-`recovery-hold`, `STOP`, `pr-open`, `pr-merged`, `pr-closed`, `merge-unknown`). Config drift: every factory agent's
+`recovery-hold`, `stage-missing`, `STOP`, `pr-open`, `pr-merged`, `pr-closed`, `merge-unknown`). A ledger row whose
+`issueId` the API no longer returns is `stage-missing`: the id and the 404 go to
+stderr, that one work order is flagged, and the sweep reads the rest (GUL-557).
+Config drift: every factory agent's
 `adapterConfig.extraArgs` must carry the guard extension and its stage's
 `--factory-role`; the agents API returns the key, so it is parsed in code and
 only names and booleans are printed. An entry whose `factoryRole` is `null` runs
@@ -346,7 +349,9 @@ no `merge` record, `tick` reads
 - `CLOSED` without a merge → ledger `outcome: closed`, work order `blocked` with
   one sentence: *PR #N was closed without a merge, so nothing shipped.*
 - `gh` errors → the line carries `merge-unknown`, the reason goes to stderr, and
-  nothing is written. One unreadable PR never stops the sweep.
+  nothing is written. One unreadable PR never stops the sweep. A `gate` row whose
+  issue is gone is `stage-missing` and the merge is not settled, for the same
+  reason: an unknown gate is not a passed gate.
 
 `--apply` is ignored while the STOP flag exists: a stopped factory writes nothing.
 

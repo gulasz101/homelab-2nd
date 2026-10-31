@@ -1652,6 +1652,29 @@ def _age_hours(stamp: str) -> float:
     return round(delta.total_seconds() / 3600.0, 1)
 
 
+def _stage_issue(api, entry, flags, work_order, label):
+    """Resolve one ledger row's stage issue; a 404 is a flag, not a dead sweep.
+
+    A deleted or moved stage issue used to raise out of `tick` and blind every
+    other work order (GUL-557). Only a 404 is survivable: any other API error
+    still means the sweep cannot be trusted.
+    """
+    import pc
+    issue_id = (entry or {}).get("issueId")
+    if not issue_id:
+        return None
+    try:
+        return api.issue(issue_id)
+    except pc.ApiError as exc:
+        if exc.status != 404:
+            raise
+        if "stage-missing" not in flags:
+            flags.append("stage-missing")
+        sys.stderr.write("factory tick: %s: stage issue %s (%s) is gone: %s\n"
+                         % (work_order, issue_id, label, exc))
+        return None
+
+
 def cmd_factory_tick(args) -> int:
     _sys_path_for_modules()
     import pc
@@ -1679,19 +1702,26 @@ def cmd_factory_tick(args) -> int:
             continue
         ledger = load_json_document(api, item["id"], "ledger") or {}
         stages = ledger.get("stages") or {}
+        flags = []
+        resolved = {}
+
+        def stage_issue(entry, key):
+            # one API call per ledger row: the stage resolution and the merge
+            # watch must not look up the same row twice (GUL-557).
+            if key not in resolved:
+                resolved[key] = _stage_issue(api, entry, flags, item.get("identifier"), key)
+            return resolved[key]
+
         current_key, current = None, None
         order = list(stages.keys())
         for key in reversed(order):
-            entry = stages[key]
-            child = api.issue(entry["issueId"]) if entry.get("issueId") else None
+            child = stage_issue(stages[key], key)
             if child and child.get("status") not in ("done", "cancelled"):
                 current_key, current = key, child
                 break
         if current is None and order:
-            entry = stages[order[-1]]
             current_key = order[-1]
-            current = api.issue(entry["issueId"]) if entry.get("issueId") else None
-        flags = []
+            current = stage_issue(stages[order[-1]], order[-1])
         agent_name = "-"
         model = "-"
         age = 0.0
@@ -1724,7 +1754,7 @@ def cmd_factory_tick(args) -> int:
         pr = ledger.get("pr") or {}
         gate_entry = stages.get("gate") or {}
         if pr.get("number") and not ledger.get("merge") and gate_entry.get("issueId"):
-            gate_issue = api.issue(gate_entry["issueId"])
+            gate_issue = stage_issue(gate_entry, "gate")
             if gate_issue and gate_issue.get("status") == "done":
                 try:
                     view = pr_merge_view(ledger.get("repo") or "", pr["number"])
