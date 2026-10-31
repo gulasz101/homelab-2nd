@@ -23,8 +23,10 @@ provider. So the connection dies about 8 hours after each login, by design. The 
    `active` and `tool_connections.health_status` to `ok`. `select()` refuses a run otherwise.
 3. **Rotate, after the reconnect.** `claude setup-token` mints `sk-ant-oat01-…` (~1 year); rotate the
    user-scoped `ai.credential` secret with it (`POST /api/companies/:id/me/user-secrets/:id/rotate`,
-   `{"value": "…"}`). Owner/board only. Rotating first gets overwritten, because Connect writes its
-   own access-token version.
+   `{"value": "…"}`). Owner/board only — an owner **board API key** works, an agent key does not, and
+   the token can stay off `ps` (bearer on a curl fd, body on stdin):
+   [references/mechanism.md](references/mechanism.md#the-rotate-route-from-a-shell-not-the-ui).
+   Rotating first gets overwritten, because Connect writes its own access-token version.
 4. **Verify without printing.** `company_secret_versions.value_sha256` is `sha256(utf8 value)`.
    `host/paperclip-air/bin/homelab-claude-token-store.sh --verify` compares it with the SOPS copy and
    prints `MATCH` plus the version number.
