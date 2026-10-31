@@ -13,7 +13,13 @@ spec:
   chart:
     spec:
       chart: litellm-helm
-      version: "1.85.7"
+      # GUL-690: 1.85.7 -> 1.106.6. The old DeepSeek transform dropped
+      # `thinking: {"type":"disabled"}` (and mapped reasoning_effort "none" to
+      # no thinking field at all, which DeepSeek reads as thinking ON), so the
+      # `-ds` route could never turn thinking off and refused forced tool calls
+      # with 400 "Thinking mode does not support this tool_choice". Fixed
+      # upstream; verified in the v1.106.6 transform source.
+      version: "1.106.6"
       sourceRef:
         kind: HelmRepository
         name: litellm
@@ -37,8 +43,10 @@ spec:
     image:
       repository: ghcr.io/berriai/litellm-database
       pullPolicy: IfNotPresent
-      # Chart default appVersion is fine; pin only if needed
-      tag: "v1.85.7"
+      # Pinned deliberately (GUL-690): chart version and image tag move together,
+      # one bump per release, so the running binary is always the one the chart
+      # was cut for.
+      tag: "v1.106.6"
 
     nameOverride: "litellm"
 
