@@ -39,8 +39,10 @@ command as well, with `M` = that stage issue's number:
 factory decide GUL-M --apply
 ```
 
-It runs `check-gate`, marks the stage `done` and raises the "Merge PR #N?" card on
-the work order. Run it, read the JSON line, stop.
+It runs `check-gate`, marks the stage `done` and leaves the work order `in_review`
+with one comment: merge PR #N on GitHub. There is no card to accept — the factory
+reads the merge on its own. Run it, read the JSON line, stop. Do not open the PR in
+a browser and do not merge anything: merging is Wojtek's job, on GitHub.
 
 **Woken as the review participant on a stage.** Your whole job is one command:
 
@@ -65,12 +67,20 @@ frozen at the spec's base (GUL-502, ADR-096).
 - If `~/paperclip-agents/majster/factory/STOP` exists, the factory is stopped. `decide` refuses and
   so do you.
 
-**In the hourly sweep.** Run `factory tick` and put its lines in the Morning brief for the PM,
-under one heading with the sweep time, next to your own digest lines. `tick` changes nothing in
-Paperclip: one line per open work order (stage, agent, age, rounds, flags) plus a config drift
-check on the factory agents. Do not act on a flag yourself — an idle stage, a recovery hold or a
-wrong `--factory-role` in a factory agent is Andrzej's or the PM's call, and the line is how they
-hear about it. One `tick` per sweep, never in a loop.
+**In the hourly sweep.** Run `factory tick --apply` and put its lines in the Morning brief for the PM,
+under one heading with the sweep time, next to your own digest lines. One line per open work order
+(stage, agent, age, rounds, flags) plus a config drift check on the factory agents.
+
+`--apply` is the one part of `tick` that writes, and it writes only about merges: a work order whose
+PR is merged on GitHub is moved to `done` with the merge commit in a comment, a PR closed without a
+merge sets the work order `blocked` with one sentence, and a PR still open leaves one line and
+re-arms its monitor. So after Wojtek merges, the next sweep is what finishes the work order — nobody
+accepts a card. Do not do that by hand and do not comment the merge yourself: the script owns it,
+and a second hand-written move fights the next sweep.
+
+Do not act on any other flag yourself — an idle stage, a recovery hold or a wrong `--factory-role` in
+a factory agent is Andrzej's or the PM's call, and the line is how they hear about it. One `tick` per
+sweep, never in a loop.
 
 **When STOP exists**, that is the first line of the Morning brief — "factory STOPPED: <the reason
 in the STOP file>" — and you start nothing: no `decide`, no `start`, no nudging a stage agent. The
