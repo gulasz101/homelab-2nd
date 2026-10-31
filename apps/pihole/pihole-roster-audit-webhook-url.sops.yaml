@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: pihole-roster-audit-webhook-url
+    namespace: pihole
+type: Opaque
+stringData:
+    url: ENC[AES256_GCM,data:GQXjB44LpKuf81eL12B25nODQ9NFUFJlW403Vj7qFxkzT7PpjESEKCVuCzPe7KaCd1YMvsM+Zw2N,iv:8iwfX58Mu1t31x9Ix2ySdroS1o5lZ0Ip/9ag+Mh/cp4=,tag:Z8gpSj8LjUC30mS+nq8BgQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSArYThDU2sycGVQSU5BakFC
+            ZEpza0t2K21CQlpMK1FsbXpjSWlvcDJCNkEwCmxDNDJiUkJqZHFDRzRwSWx4YnYy
+            bXRxS2xlVWdXRzBqYXFFZnVFMzE1VWcKLS0tIDcwYzRROG02ZHRBZVN6R1o5UTll
+            MStYMmdHOUNXUEltcTlxY0NhTGlQQWcKay8x+FHUVo173zH2iwor2NWuEwCv7nGO
+            CK+DAXEuKUquIV525H4fEXDR+KRYGma6tIFlrsxUYDzNpv5qUGiGCA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-31T21:43:48Z"
+    mac: ENC[AES256_GCM,data:wu9xYlHsH2X6Mccj3JFZXvUyz4nEuilgjcD51hwoXQHFbV0dUQ/HxqooVnDkzA5Lba2nncD/fPbrz3l5aWL1q59xKtTKYZUz8kGtLw+ElwZ8CJ4ZwEV7FQxnTWOWGyhKm17OUz+/vLUPVZZ82WXEbVxsjVFFY32aHBzeOTi0ibM=,iv:DPJF4l4df7j9GhjSKVwSwU6zQQ6AC0lkCaCoKEWLqoc=,tag:CGb9poZfBBVYm2iZytkZoA==,type:str]
+    version: 3.13.3

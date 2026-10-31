@@ -1,0 +1,159 @@
+---
+# Pi-hole CLIENT ROSTER seeds (GUL-712) — the other half of the family-shield curfew.
+#
+# WHY THIS EXISTS
+#   Every `client -> group` row lived only in the live FTL database. The deny-entry
+#   seeder (pihole-deny-seeds) restores the *lists*, the CronJobs restore the
+#   *schedule*, and the groups are seeded by the chart — but on a rebuild every
+#   device falls back to group 0 (Default, porn list only). The 21:00-08:00
+#   Instagram curfew then protects nobody, silently. This file is the roster in Git.
+#
+# WHAT THE SEEDER DOES (pihole-client-seed, 05:10 Europe/Warsaw)
+#   - creates any missing row with the comment and groups below;
+#   - repairs the comment and the groups of an existing row;
+#   - never deletes: a live row absent from this file is printed and left alone;
+#   - refuses to run on an empty list (an empty roster would mean "everyone is
+#     unregistered", the exact blast radius this file exists to remove);
+#   - read-backs every row afterwards. No gravity/restartdns: client matching is
+#     read live from the FTL database.
+#
+# GROUPS ARE NOT A DAYTIME BASELINE — and that is deliberate.
+#   The curfew modes move the groups of DENY ENTRIES (enable -> [9,10], disable ->
+#   [9]); they never touch a client row. A device in group 10 keeps receiving the
+#   S-IG blocks for exactly as long as the entry carries group 10. So repairing a
+#   client's groups at 05:10 cannot disarm a curfew armed between 21:00 and 08:00.
+#   The groups here are the device CLASSIFICATION, valid at any hour:
+#     9  = W-wojtek-247      Wojtek's devices, curfew 21:00-08:00
+#     10 = S-sylwia-curfew   Sylwia's devices, curfew 21:00-08:00
+#     11 = P-permissive      permissive (same porn list as Default; NO curfew)
+#     12 = INFRA-exempt      infrastructure: never filtered, never curfewed
+#
+# EDITING: change rows here, commit, let Flux apply it. The next 05:10 run (or
+#   kubectl -n pihole create job --from=cronjob/pihole-client-seed seed-now)
+#   converges the live API to this file. Apple rotates private Wi-Fi MACs, so a
+#   stale row is normal — the weekly audit (pihole-client-audit) is the detector,
+#   not this file's memory.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pihole-client-seeds
+  namespace: pihole
+  labels:
+    app.kubernetes.io/name: pihole-client-seed
+    app.kubernetes.io/part-of: pihole-family-shield
+data:
+  clients.json: |
+    [
+      {
+        "client": "4c:77:cb:1d:87:c4",
+        "comment": "Wojtek Framework omarchy (W)",
+        "groups": [
+          9
+        ]
+      },
+      {
+        "client": "c2:e5:c4:59:9a:76",
+        "comment": "Wojtek M2 work MacBook (W)",
+        "groups": [
+          9
+        ]
+      },
+      {
+        "client": "5e:6e:28:f3:96:e6",
+        "comment": "Wojtek Xperia",
+        "groups": [
+          9
+        ]
+      },
+      {
+        "client": "da:93:94:e7:c7:7b",
+        "comment": "Sylwia Pixel-7a",
+        "groups": [
+          10
+        ]
+      },
+      {
+        "client": "9c:69:d3:ac:69:92",
+        "comment": "Wojtek Air Hermes (.191 usb-eth)",
+        "groups": [
+          11
+        ]
+      },
+      {
+        "client": "6e:12:b8:89:46:54",
+        "comment": "Wojtek M1 Max (.119 Wi-Fi private MAC)",
+        "groups": [
+          11
+        ]
+      },
+      {
+        "client": "18:3e:ef:ce:b6:21",
+        "comment": "Wojtek M1 Max (.152 hw-mac, unverified)",
+        "groups": [
+          11
+        ]
+      },
+      {
+        "client": "ba:fe:a8:fc:fd:a2",
+        "comment": "Wojtek M1 Max Hermes (en0) \u2014 ROTATED, dead; now 6e:12:\u2026 (.119)",
+        "groups": [
+          11
+        ]
+      },
+      {
+        "client": "30:52:53:09:55:10",
+        "comment": "JetKVM (.143)",
+        "groups": [
+          12
+        ]
+      },
+      {
+        "client": "70:85:c2:35:f5:7d",
+        "comment": "OMV",
+        "groups": [
+          12
+        ]
+      },
+      {
+        "client": "f8:bc:12:6c:22:39",
+        "comment": "arr-box",
+        "groups": [
+          12
+        ]
+      },
+      {
+        "client": "80:fa:5b:2c:f9:cd",
+        "comment": "homelab-2nd",
+        "groups": [
+          12
+        ]
+      },
+      {
+        "client": "00:e0:4c:68:74:f3",
+        "comment": "homelab-one",
+        "groups": [
+          12
+        ]
+      },
+      {
+        "client": "dc:a6:32:46:fe:9b",
+        "comment": "kubecraft1",
+        "groups": [
+          12
+        ]
+      },
+      {
+        "client": "e0:72:a1:5e:cd:cc",
+        "comment": "power-AI",
+        "groups": [
+          12
+        ]
+      },
+      {
+        "client": "c8:5b:76:20:60:d9",
+        "comment": "t460",
+        "groups": [
+          12
+        ]
+      }
+    ]
