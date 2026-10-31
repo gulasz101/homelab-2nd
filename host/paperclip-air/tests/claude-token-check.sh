@@ -363,6 +363,57 @@ else
   pass "the token never appeared in any process command line ($i samples)"
 fi
 
+# ===========================================================================
+# 5d. --record-mint (GUL-695): the fallback rotation path gets to age the
+#     credential, a bad date is refused, and a missing file still makes no
+#     expiry claim rather than inventing one.
+# ===========================================================================
+export CLAUDE_TOKEN_MINT_FILE="$FIX/mint-695"
+export MINT_FILE="$CLAUDE_TOKEN_MINT_FILE"
+rm -f "$CLAUDE_TOKEN_MINT_FILE"
+
+# An explicit date is written verbatim, in the shape the library reads back.
+out=$("$STORE" --record-mint 2026-10-28 2>&1)
+rc=$?
+[ "$rc" -eq 0 ] && pass "--record-mint exits 0" || fail "--record-mint exited $rc: $out"
+check "minted=2026-10-28" "$(cat "$CLAUDE_TOKEN_MINT_FILE" 2>/dev/null)" \
+  "--record-mint writes minted=YYYY-MM-DD"
+contains "$out" "2026-10-28" "--record-mint prints the date it recorded"
+check "2026-10-28" "$(claude_token_mint_date)" "the library reads the recorded date back"
+absent "$out" "sk-ant-[a-z0-9]+-[A-Za-z0-9_-]{20,}" "--record-mint output carries no token"
+
+# Bare --record-mint means today, UTC.
+TODAY_UTC=$(date -u +%Y-%m-%d)
+out=$("$STORE" --record-mint 2>&1)
+rc=$?
+[ "$rc" -eq 0 ] && pass "bare --record-mint exits 0" || fail "bare --record-mint exited $rc: $out"
+check "minted=$TODAY_UTC" "$(cat "$CLAUDE_TOKEN_MINT_FILE")" \
+  "bare --record-mint defaults to today, UTC"
+
+# A bad date is refused, with a reason, and the file is left alone.
+before=$(cat "$CLAUDE_TOKEN_MINT_FILE")
+for bad in "not-a-date" "2026-13-01" "2026-02-30"; do
+  out=$("$STORE" --record-mint "$bad" 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] && pass "--record-mint refuses '$bad' ($rc)" \
+    || fail "--record-mint accepted '$bad'"
+  contains "$out" "is not a date" "--record-mint says why '$bad' was refused"
+done
+check "$before" "$(cat "$CLAUDE_TOKEN_MINT_FILE")" \
+  "a refused date leaves the mint file untouched"
+
+# No mint file at all: ok:vN, and no days-left figure to be wrong about.
+rm -f "$CLAUDE_TOKEN_MINT_FILE"
+export CLAUDE_TOKEN_SOPS_FILE="$FIX/mint-ok.sops.yaml"
+sops_manifest "$STANDIN" > "$CLAUDE_TOKEN_SOPS_FILE"
+printf '5|%s\n' "$(sha "$STANDIN")" > "$FAKE_VAULT_FILE"
+state=$(claude_token_state)
+check "ok:v5" "$state" "a missing mint file still reads ok with the live version"
+case "$state" in
+  *"days left"*) fail "a missing mint file invented an expiry claim: $state" ;;
+  *) pass "a missing mint file makes no expiry claim" ;;
+esac
+
 if [ "$RC" -eq 0 ]; then
   printf '\nall claude-token checks passed\n'
 else

@@ -258,6 +258,20 @@ prefix you should see. Paste the value into <https://paperclip.voitech.dev/compa
 ~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh --verify   # expect: MATCH … version N
 ```
 
+**Then record the mint date.** The hand rotation writes nothing on this host, so without this line the
+watchdog's 30-day expiry warning has nothing to age: it will report `ok:vN` with no days-left figure,
+and the token goes from "looks fine" to dead without a warning. Metadata only — a date, never a value.
+Defaults to today, UTC; pass the date you actually minted if it was not today:
+
+```bash
+~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh --record-mint
+#   minted  ~/.config/homelab/claude-token-mint records 2026-10-31 (metadata only, no token)
+~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh --record-mint 2026-10-28
+```
+
+`--rotate` does this for you on the way past; the fallback is a person pasting a value into the UI, so
+it is the one path that has to be told when the credential was born.
+
 `MATCH` plus a version number above the pre-rotation one is the whole check; the next managed run
 picks the value up because the grant's credential ref is `versionSelector: "latest"`. A setup token
 lives about a year — the watchdog warns 30 days out — and the old one is revoked from the Claude
