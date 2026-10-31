@@ -110,6 +110,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-108 | The Air's scheduled jobs run from the repo, not from `~/.hermes/scripts` | Accepted | 2026-10-30 |
 | ADR-109 | The Cloudflare token carries Access write, so ingress is API-only | Accepted | 2026-10-29 |
 | ADR-110 | Claude Code runs on a setup token, because an Anthropic subscription connection cannot refresh | Proposed | 2026-10-31 |
+| ADR-111 | The ADR number and its index row are allocated at adoption, never by the branch that writes the ADR | Accepted | 2026-10-29 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,
