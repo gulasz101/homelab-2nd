@@ -13,10 +13,9 @@ resources:
   - riffradar-jwt-secret.sops.yaml
   - riffradar-minio-backup-creds.sops.yaml
   - riffradar-tunnel-token.sops.yaml
-  # Private GHCR pull credential (dockerconfigjson, ns riffradar + ns flux-system).
-  # Two documents in one encrypted file: the kubelet in `riffradar` needs it to
-  # pull, and image-reflector-controller in `flux-system` needs it to scan tags.
-  - riffradar-ghcr-pull-secret.sops.yaml
+  # The pull credential is NOT here any more: the platform `ghcr-pull` Secret
+  # (apps/ghcr-pull/, ADR-103) already carries this namespace, and the deployment
+  # and ImageRepository reference it by name.
   # Data volume + workload
   - riffradar-data-pvc.yaml
   - riffradar-deployment.yaml
