@@ -1,6 +1,6 @@
-# The ADR number and its index row are allocated at adoption, never by the branch that writes the ADR
+# ADR-111: The ADR number and its index row are allocated at adoption, never by the branch that writes the ADR
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-10-29
 - **Issue**: GUL-582
 - **Related**: ADR-093 (the owner keeps the merge button), ADR-098 (the tick reads the merge), GUL-553 (PR #87, the pull request that paid the bill)
