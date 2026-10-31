@@ -127,6 +127,23 @@ if [ "${1:-}" = "--claude-auth-only" ]; then
     exit 0
 fi
 
+# Same idea for the credential itself (GUL-691): does the SOPS copy still equal
+# the vault's live version, is it still setup-token shaped, how old is it.
+if [ "${1:-}" = "--claude-token-only" ]; then
+    if ! declare -F claude_token_state >/dev/null 2>&1; then
+        echo "claude-token: unknown:homelab-lib-not-found"
+        exit 0
+    fi
+    verdict="$(claude_token_state)"
+    echo "claude-token: ${verdict}"
+    case "${verdict}" in
+        mismatch:*|badshape:*|expired:*|expiring:*)
+            echo "$(claude_token_alert_message "${verdict}")"
+            ;;
+    esac
+    exit 0
+fi
+
 # ---- 1 + 2. provider must be hindsight; hindsight must not be disabled -------
 CONFIG_PATHS=()
 for profile in default andrzej florian szarik zdzislaw; do
@@ -518,6 +535,33 @@ if [[ "${CLAUDE_AUTH_CHECK}" -eq 1 ]]; then
     esac
 else
     log "check9 skipped: homelab-lib.sh is not installed next to this script"
+fi
+
+# ---- 9b. the Claude credential is still the setup token, and not expiring ---
+# GUL-691 / ADR-110. Accepting a "Connect Anthropic" card writes a fresh 8-hour
+# access token as a NEW vault version, leaves the SOPS copy alone, and the grant
+# reads "latest" — so the next 05:30 round dies and nobody is told until it has.
+# This compares the two digests daily, asserts the SOPS value still looks like a
+# setup token, and reports the token's age. Digests and dates only, never values.
+if [ "${CLAUDE_TOKEN_CHECK:-1}" -eq 1 ] && declare -F claude_token_state >/dev/null 2>&1; then
+    token_verdict="$(claude_token_state)"
+    case "${token_verdict}" in
+        ok:*)
+            log "check9b claude_token=${token_verdict}"
+            ;;
+        mismatch:*|badshape:*|expired:*|expiring:*)
+            # 24 h dedupe lives in maybe_alert, same channel as the other checks.
+            log "check9b claude_token=${token_verdict}"
+            maybe_alert "claude-token-${token_verdict%%:*}" "$(claude_token_alert_message "${token_verdict}")"
+            ;;
+        *)
+            # No SOPS copy yet, or the vault was unreadable: say so in the log
+            # and do not page. Unknown is never green.
+            log "check9b claude_token=${token_verdict} - not alerting"
+            ;;
+    esac
+else
+    log "check9b skipped: homelab-lib.sh has no claude_token_state"
 fi
 
 if [[ "${alert_count}" -eq 0 ]]; then

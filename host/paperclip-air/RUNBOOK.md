@@ -201,33 +201,88 @@ The heartbeat also carries per-component health (`hermes-gateway`, `paperclip`, 
   the host login instead of a managed connection. Re-authentication is a **human** action: no daemon
   kickstart, no agent restart and no reboot will refresh an expired OAuth session, and `claude login`
   is not a subcommand.
+- **The trap that makes it recurrent (GUL-691):** accepting the "Connect Anthropic" card writes a
+  fresh 8-hour access token as a **new vault version over the setup token**. The SOPS copy still looks
+  right, the grant reads `versionSelector: "latest"`, and the next 05:30 round dies. Since GUL-691 the
+  hourly `hermes-memory-watchdog` compares the SOPS digest with the live vault digest (`check9b`) and
+  alerts `claude code credential drifted: …` with the fix command, so this is caught the first morning
+  after it happens, not by a dead round. Verdict on demand:
 
-### 5b. Give the Claude connection a setup token (GUL-642, ADR-110)
+  ```bash
+  /usr/local/libexec/homelab/hermes-memory-watchdog.sh --claude-token-only
+  #   claude-token: ok:v3 355 days left
+  #   claude-token: mismatch:v4      -> the Connect overwrite, fix it with 5b
+  #   claude-token: expiring:29      -> the token is nearly a year old, renew with 5b
+  #   claude-token: unknown:no-sops-copy -> 5b has never been done on this host
+  ```
 
-Do this once a year, and immediately after any re-authentication in 5a. Order matters: the Connect
-step writes its own eight-hour access-token version, so the rotation has to come **after** it.
+  `unknown:*` is never green and never pages: it means the check cannot read one of its two sources
+  (SOPS file or the Paperclip database), and the fix for that is not a login.
+
+### 5b. Give the Claude connection a setup token — one command (GUL-642, GUL-691, ADR-110)
+
+Do this once a year, and immediately after any re-authentication in 5a. The whole owner step is one
+line. It stores the token in SOPS, rotates the Paperclip vault secret, records the mint date, and
+proves both copies match — printing `MATCH … version N` and nothing token-shaped.
 
 ```bash
-# 1. Mint a long-lived token (browser sign-in; prints sk-ant-oat01-…).
-claude setup-token
+claude setup-token | ~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh --rotate
+#   wrote …/claude-code-oauth.sops.yaml (encrypted, N bytes)
+#   minted  ~/.config/homelab/claude-token-mint records 2026-10-31 (metadata only, no token)
+#   rotated  vault secret <id> to version 4 via http://127.0.0.1:3100/api
+#   MATCH  vault secret <id> version 4 has the same sha256 as the SOPS copy
+```
 
-# 2. Store it in SOPS and compare digests against the Paperclip vault. Neither value is printed.
-claude setup-token | ~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh
-#    …or, if the token is already on the clipboard:
-~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh   # paste, Ctrl-D once
+The token goes in on stdin and never on a command line: the SOPS write is `umask 077` + in-place
+encryption, the HTTP body is stdin, and the bearer rides in a curl config on a file descriptor. `ps`
+cannot see it, and the script greps its own SOPS file for the token prefix before finishing.
 
-# 3. Put the same value into Paperclip, as a new version of the user-scoped ai.credential secret.
-#    Board UI: Secrets → "…'s Claude subscription account" → Rotate. It is a user-scoped secret, so
-#    only the owner can rotate it: POST /api/companies/<company>/me/user-secrets/<secretId>/rotate
-#    with {"value": "…"}.
+**One-time, before the first `--rotate`:** the rotate route needs a **board** credential, not an agent
+key (`assertBoard`). Create a board API key for your own user in the Paperclip UI —
+<https://paperclip.voitech.dev/company/settings/secrets>, your user → API keys → Create — then:
 
-# 4. Prove the two copies are the same value, and that the vault has moved past version 1.
+```bash
+printf '%s' '<the pcp_board_… key>' | ~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh --store-board-key
+```
+
+That writes `~/paperclip-board-token.sops.yaml` (encrypted, 0600, plaintext removed). Board keys expire
+after 30 days by default, so expect to repeat this line monthly; the rotate path says so plainly when
+the key is missing or rejected.
+
+**Fallback, if `--rotate` cannot run** (no board key, or you are on a machine without the vault): the
+script still writes and encrypts the SOPS copy, then prints the board URL of the secret and the sha256
+prefix you should see. Paste the value into <https://paperclip.voitech.dev/company/settings/secrets>
+(rotate the "…'s Claude subscription account" secret), then prove it:
+
+```bash
 ~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh --verify   # expect: MATCH … version N
 ```
 
+**Then record the mint date.** The hand rotation writes nothing on this host, so without this line the
+watchdog's 30-day expiry warning has nothing to age: it will report `ok:vN` with no days-left figure,
+and the token goes from "looks fine" to dead without a warning. Metadata only — a date, never a value.
+Defaults to today, UTC; pass the date you actually minted if it was not today:
+
+```bash
+~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh --record-mint
+#   minted  ~/.config/homelab/claude-token-mint records 2026-10-31 (metadata only, no token)
+~/Projects/homelab-2nd/host/paperclip-air/bin/homelab-claude-token-store.sh --record-mint 2026-10-28
+```
+
+`--rotate` does this for you on the way past; the fallback is a person pasting a value into the UI, so
+it is the one path that has to be told when the credential was born.
+
 `MATCH` plus a version number above the pre-rotation one is the whole check; the next managed run
 picks the value up because the grant's credential ref is `versionSelector: "latest"`. A setup token
-lives about a year — renew before it lapses, and revoke the old one from the Claude account settings.
+lives about a year — the watchdog warns 30 days out — and the old one is revoked from the Claude
+account settings.
+
+**What the shape guard does and does not prove.** It refuses anything that is not `sk-ant-oat01-…`,
+and it names an `sk-ant-api03-…` key for what it is (per-token billing, wrong connection method). It
+cannot tell a setup token from a Connect access token of the same family; the digest comparison in
+`check9b` is what catches that overwrite, which is why the alarm exists.
+
+Do not "fix" a drift by clicking Connect: that is the overwrite. Rotate.
 
 
 Seeding the heartbeat token (once, after `apps/host-watch` has reconciled):
