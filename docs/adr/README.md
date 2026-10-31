@@ -108,6 +108,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-107 | Every scheduled job on the Air is a system LaunchDaemon, never a LaunchAgent | Accepted | 2026-10-30 |
 | ADR-108 | The Air's scheduled jobs run from the repo, not from `~/.hermes/scripts` | Accepted | 2026-10-30 |
 | ADR-109 | The Cloudflare token carries Access write, so ingress is API-only | Accepted | 2026-10-29 |
+| ADR-110 | Claude Code runs on a setup token, because an Anthropic subscription connection cannot refresh | Proposed | 2026-10-31 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,
