@@ -1,0 +1,368 @@
+---
+# Pi-hole deny-entry seeds (H2-72 / GUL-392 hardening).
+#
+# WHY THIS EXISTS
+#   Every deny entry on the live Pi-hole was created imperatively through the FTL
+#   API. The curfew CronJobs (pihole-curfew-*, pihole-s-ig-*) are drift-healers, not
+#   seeders — their `enable` mode deliberately refuses to arm an empty set. So a
+#   cluster rebuild restored the *schedules* but not the *entries they manage*, and
+#   every curfew job then failed loudly until someone re-seeded by hand. Enforcement
+#   state living outside Git is a GitOps violation (guardrail 1).
+#
+# WHAT THE SEEDER DOES (pihole-deny-seed CronJob, 05:00 Europe/Warsaw)
+#   - creates any missing deny entry (exact or regex) with the comment marker and
+#     enabled flag from this file, at the daytime group set recorded here;
+#   - repairs a mangled marker comment or enabled flag on an existing entry;
+#   - never touches group membership of an existing entry — that belongs to the
+#     curfew reconcilers (enable -> [9,10], disable -> [9]);
+#   - never deletes anything;
+#   - gravity + restartdns when it changed something, then read-back verification.
+#
+# EDITING: change entries here, commit, and Flux applies it. The next 05:00 run (or a
+# manual `kubectl -n pihole create job --from=cronjob/pihole-deny-seed seed-now`)
+# converges the live API to this file. Groups in this file are the daytime baseline.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pihole-deny-seeds
+  namespace: pihole
+  labels:
+    app.kubernetes.io/name: pihole-deny-seed
+    app.kubernetes.io/part-of: pihole-family-shield
+data:
+  denies.json: |
+    [
+      {
+        "kind": "exact",
+        "domain": "facebook.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "instagram.com",
+        "groups": [
+          9
+        ],
+        "comment": "S-IG",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "reddit.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "tiktok.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "tiktokcdn.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "tiktokv.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "twitter.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "www.facebook.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "www.instagram.com",
+        "groups": [
+          9
+        ],
+        "comment": "S-IG",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "www.reddit.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "www.tiktok.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "www.twitter.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "www.x.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "www.youtube.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "x.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "youtu.be",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "youtube.com",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)cdninstagram\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "S-IG",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)facebook\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)fb\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)googlevideo\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)instagram\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "S-IG",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)redd\\.it$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)reddit\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)redditmedia\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)redditspace\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)redditstatic\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)t\\.co$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)tiktok\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)tiktokcdn\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)tiktokv\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)twimg\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)twitter\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)x\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)youtu\\.be$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)youtube\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)ytimg\\.com$",
+        "groups": [
+          9
+        ],
+        "comment": "W/S block",
+        "enabled": true
+      }
+    ]
