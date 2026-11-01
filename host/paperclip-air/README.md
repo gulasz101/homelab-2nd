@@ -29,6 +29,7 @@ host/paperclip-air/
 │   ├── homelab-recover-appliance.sh       # break-glass: bring back anything not serving, headless
 │   ├── homelab-drill-session-loss.sh      # the drills, and the numbers they write down
 │   ├── homelab-heartbeat.sh               # 60 s heartbeat + per-component health to k3s
+│   ├── kubectl-forward-probe.sh           # ad-hoc cluster access whose tunnel dies with the script
 │   └── homelab-appliance-watchdog.sh      # LEGACY (2026-10-29 interim); refuses to run under model A
 ├── launchd/
 │   ├── daemons/                           # system domain, UserName=paperclip, KeepAlive
@@ -42,6 +43,7 @@ host/paperclip-air/
 │   └── agents/
 │       └── dev.voitech.homelab.heartbeat.plist   # user session ON PURPOSE (see ADR-098)
 ├── tests/host-tree-check.sh               # CI gate: plist shape, one owner, no secrets, plan renders
+├── tests/kubectl-forward-probe-check.sh   # CI gate: port-forwards cannot outlive the script
 ├── RUNBOOK.md                             # what a human does when something is down
 └── README.md                              # this file
 ```
@@ -67,6 +69,44 @@ The scripts live here (ADR-108) because a script that exists only in `~/.hermes/
 host cannot be reviewed, restored onto a replacement Air, or fixed through GitOps. `HERMES_HOME` is
 passed in the plist — the installed script is no longer inside the Hermes tree and cannot infer it
 from `$0`.
+
+## Ad-hoc cluster access: a forward must die with the script that opened it
+
+The Air is not in the cluster, so a one-off check against a Service — Prometheus rules, Alertmanager
+routing, a CNPG status — means a `kubectl port-forward` from here. Never open one with a detached
+subshell:
+
+```bash
+# WRONG. This exact shape left two forwards running for 20 hours (GUL-728,
+# and the same family in GUL-680).
+cd /tmp && (kubectl -n observability port-forward svc/some-svc 19091:9090 >/dev/null 2>&1 &) ; sleep 4
+curl -s http://127.0.0.1:19091/api/v1/rules
+```
+
+The subshell exits the moment the next command runs, and `kubectl port-forward` never exits on its
+own. The child is reparented to launchd (`ppid 1`), keeps its local port for ever, and no supervisor
+knows it exists: not the Hermes process registry (nothing registered it), not a shell, not this repo.
+The next job that wants that port gets `address already in use` and no idea who owns it.
+
+Use the wrapper. It runs the forward as a foreground child of the script, polls the socket until it
+listens, runs the command you asked for, and kills the tunnel from a `trap ... EXIT` — on success, on
+a failing command, and on `SIGTERM`/`Ctrl-C`. A busy local port is reported as a busy local port,
+with the command that names the owner, instead of as a delayed kubectl error:
+
+```bash
+./bin/kubectl-forward-probe.sh observability prometheus-stack-kube-prom-prometheus \
+    19091:9090 -- sh -c 'curl -sf http://127.0.0.1:19091/api/v1/rules > /tmp/rules.json'
+```
+
+No install step: run it straight out of the repo clone on the Air. `tests/kubectl-forward-probe-check.sh`
+runs in CI and proves the socket is gone after success, after `exit 7`, and after `SIGTERM`, so the
+next script copies this pattern instead of the subshell.
+
+That is the fix. The net is `bin/homelab-heartbeat.sh`, which counts `kubectl ... port-forward`
+processes older than 15 minutes into `leaks.kubectl_port_forward`; `HostWatchOrphanKubectlForward`
+alerts when the count is above zero. The net only works if the installed sender is the one in this
+repo — check with `diff -q bin/homelab-heartbeat.sh ~/bin/homelab-heartbeat.sh`. It didn't, once
+(GUL-728): the sender here gained the leak counter and the Air kept the old copy for a day.
 
 ## First install on a fresh Air
 
