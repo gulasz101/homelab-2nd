@@ -161,8 +161,14 @@ fi
 
 # --- apply -----------------------------------------------------------------
 say "== 1/3 power =="
-pmset -c sleep 0 displaysleep 0 standby 0 powernap 0 hibernatemode 0 autopoweroff 0 autorestart 1
-pmset -a disablesleep 1
+# One key per call. `pmset` does accept several pairs, but a single key this
+# model does not know turns the whole call into a usage error and silently
+# applies nothing (measured: `autorestartatconnect` on macOS 26).
+for KV in "sleep 0" "displaysleep 0" "standby 0" "powernap 0" "hibernatemode 0" "autopoweroff 0" "autorestart 1"; do
+  set -- $KV
+  pmset -c "$1" "$2" >/dev/null 2>&1 || warn "pmset -c $1 $2 was refused by this Mac"
+done
+pmset -a disablesleep 1 >/dev/null 2>&1 || warn "pmset -a disablesleep 1 was refused by this Mac"
 say "applied; readback:"
 for k in sleep displaysleep standby hibernatemode powernap autorestart SleepDisabled; do
   V=$(pm "$k"); [ -n "$V" ] || V="<unset>"
