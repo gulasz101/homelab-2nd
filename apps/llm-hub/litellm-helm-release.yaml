@@ -189,6 +189,16 @@ spec:
         # carries DeepSeek's own params, so `reasoning_effort` (low|high|max)
         # maps to its thinking mode instead of being rejected as unknown
         # (ADR-036 note; see the -ollama sibling's allowed_openai_params).
+      - model_name: mimo-v2.6-flash-ollama
+        litellm_params:
+          model: openai/mimo-v2.6-flash
+          api_base: https://ollama.com/v1
+          api_key: os.environ/OLLAMA_API_KEY
+      - model_name: mimo-v2.6-pro-ollama
+        litellm_params:
+          model: openai/mimo-v2.6-pro
+          api_base: https://ollama.com/v1
+          api_key: os.environ/OLLAMA_API_KEY
       - model_name: deepseek-v4.1-flash-1017-ds
         litellm_params:
           model: deepseek/deepseek-flash

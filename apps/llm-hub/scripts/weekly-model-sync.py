@@ -4,6 +4,10 @@
 GitOps-native: edits the repo, commits, pushes, and lets Flux reconcile. New models are
 probed with a real chat completion before being added. Stale models are only removed when
 explicitly allowed and after confirming no consumer references them.
+
+`main` carries the `protect-main` ruleset, so the sync cannot push to it. When that push is
+rejected it leaves the commit on a dated branch with a PR open and exits 4 (awaiting the
+owner's merge) instead of dying half-way through the release (GUL-721).
 """
 
 from __future__ import annotations
@@ -167,6 +171,43 @@ def preflight() -> bool:
         return False
 
     return True
+
+
+# Rejection markers GitHub puts on a push that `protect-main` blocks (observed 2026-11-01,
+# GUL-721: "GH013: Repository rule violations ... Required status check \"check\" is expected").
+PROTECTED_MAIN_MARKERS = (
+    "GH013",
+    "repository rule violations",
+    "protected branch",
+    "Required status check",
+)
+
+
+def push_to_main() -> tuple[bool, str]:
+    """Push the sync commit to main. Returns (ok, combined output); never raises on refusal."""
+    proc = subprocess.run(["git", "push", "origin", "main"], cwd=REPO, capture_output=True, text=True)
+    return proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
+
+
+def open_sync_pr(commit_msg: str, body: str) -> str:
+    """Push the commit to a dated sync branch and open its PR. Returns the PR URL.
+
+    The owner keeps the merge button (ADR-093) and `protect-main` requires the `check`
+    status, so the sync cannot land its own commit. It stops with the work reviewable
+    instead of dying on a rejected push: one branch, one PR, one click.
+    """
+    short = run(["git", "rev-parse", "--short=7", "HEAD"], cwd=REPO, check=True).strip()
+    branch = f"feat/weekly-model-sync-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{short}"
+    run(["git", "push", "-u", "origin", f"HEAD:refs/heads/{branch}"], cwd=REPO, check=True)
+    url = run(
+        ["gh", "pr", "create", "--base", "main", "--head", branch, "--title", commit_msg, "--body", body],
+        cwd=REPO,
+        check=True,
+    ).strip()
+    last = url.splitlines()[-1].strip() if url else ""
+    if not last.startswith("http"):
+        raise RuntimeError(f"gh pr create did not print a URL: {url[:200]!r}")
+    return last
 
 
 # ---------------------------------------------------------------------------
@@ -978,7 +1019,33 @@ Co-Authored-By: Paperclip <noreply@paperclip.ing>
     for path in (LITELLM_RELEASE, OPENWEBUI_RELEASE, PROVISIONER_CM):
         run(["git", "add", "--", str(path)], cwd=REPO, check=True)
     run(["git", "commit", "-m", commit_msg, "-m", commit_body], cwd=REPO, check=True)
-    run(["git", "push", "origin", "main"], cwd=REPO, check=True)
+
+    # ------------------------------------------------------------------
+    # Land it. `protect-main` requires the `check` status on main, so a direct push is
+    # refused (GUL-721). Then the commit goes to a branch with a PR open and the run
+    # STOPS before touching the cluster: nothing is reconciled or provisioned for a
+    # change that is not in git. Exit 4 tells the caller "reviewable, awaiting merge".
+    # ------------------------------------------------------------------
+    pushed, push_out = push_to_main()
+    if not pushed:
+        if not any(marker in push_out for marker in PROTECTED_MAIN_MARKERS):
+            print(push_out, file=sys.stderr)
+            raise RuntimeError("git push origin main failed for a reason other than the protect-main ruleset")
+        print("\n-- main is protected; opening a PR instead of pushing --")
+        url = open_sync_pr(
+            commit_msg,
+            "Weekly LLM model-list sync — automated output of\n"
+            "`apps/llm-hub/scripts/weekly-model-sync.py`.\n\n" + commit_body,
+        )
+        # Leave the checkout as the next run expects to find it: clean `main` at origin.
+        run(["git", "reset", "--hard", "origin/main"], cwd=REPO, check=True)
+        print("\n=== Sync complete, NOT live: PR awaiting the owner's merge ===")
+        print(f"PR: {url}")
+        print("Flux and the key provisioner are untouched. Merge the PR; the next Flux")
+        print("interval applies it, and the provisioner's own schedule mints the keys.")
+        print("Exit 4 = awaiting merge.")
+        return 4
+
     print(f"\nCommitted and pushed: {commit_msg}")
 
     # ------------------------------------------------------------------

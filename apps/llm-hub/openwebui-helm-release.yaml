@@ -165,7 +165,7 @@ spec:
     - name: DEFAULT_MODELS
       value: "gemma-4-12b-uncensored"
     - name: DEFAULT_PINNED_MODELS
-      value: "deepseek-v4.1-flash-1017-ollama,gemma-4-12b-uncensored,glm-5.3-flash-ollama,glm-5.3-ollama,kimi-k2.7-code,minimax-m3.1-flash-go,minimax-m3.1-flash-ollama"
+      value: "deepseek-v4.1-flash-1017-ollama,gemma-4-12b-uncensored,glm-5.3-flash-ollama,glm-5.3-ollama,kimi-k2.7-code,mimo-v2.6-flash-ollama,minimax-m3.1-flash-go,minimax-m3.1-flash-ollama"
       # Use LiteLLM proxy for small background tasks too
       # GUL-123 / ADR-085: glm-5.2-zai left LiteLLM (z.ai dropped). The Go
       # DeepSeek Flash route falls back to Ollama Cloud inside LiteLLM.
