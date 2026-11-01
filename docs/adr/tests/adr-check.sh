@@ -10,6 +10,9 @@
 #   1. directory consistency: every docs/adr/adr-NNN-*.md agrees with its own
 #      filename and has an index row in docs/adr/README.md whose title is
 #      byte-equal to the file's H1 text (the house convention for every row).
+#   1b. number uniqueness: no two files claim the same number, no number has two
+#      index rows, and a gap in the sequence is reported with its numbers. Gaps
+#      are a note, never a failure — some numbers are burnt on purpose (GUL-727).
 #   2. ADR-052 carries the six house sections, the epic and tracking-note links,
 #      the five rejected alternatives by name, and the concrete revisit triggers.
 #   3. the facts ADR-052 states are still true in apps/hindsight/ — a later
@@ -99,7 +102,74 @@ for file in "$ADR_DIR"/adr-*.md; do
 done
 note "rows without files are allowed on purpose (ADR-001..005/010 live in the vault; 045 is reserved)"
 
-head1 "1b. pending ADRs carry no number and no index row (GUL-582)"
+head1 "1b. every ADR number belongs to exactly one file (GUL-727)"
+# A number is free only at the moment you read origin/main. Two branches can each
+# take ADR-101 in good faith, both pass this gate, and both edit the index row —
+# which a rebase resolves by keeping both rows. Nothing in a single branch can
+# see the sibling, so the tree is checked for the collision after the fact.
+adr_nums=()
+for file in "$ADR_DIR"/adr-*.md; do
+  [ -e "$file" ] || continue
+  adr_nums+=("$(basename "$file" | sed -E 's/^adr-([0-9]{3})-.*$/\1/')")
+done
+if [ "${#adr_nums[@]}" -eq 0 ]; then
+  bad "no docs/adr/adr-NNN-*.md files found - the duplicate check cannot run"
+else
+  dupes=$(printf '%s\n' "${adr_nums[@]}" | sort | uniq -d)
+  if [ -z "$dupes" ]; then
+    ok "every ADR number belongs to exactly one file (${#adr_nums[@]} files)"
+  else
+    for n in $dupes; do
+      bad "ADR-$n is claimed by more than one file: $(cd "$ADR_DIR" && printf '%s ' adr-"$n"-*.md)"
+    done
+  fi
+fi
+# The same collision shows up in the index even when only one file survives, so
+# the table is checked too: one row per number, exactly.
+row_dupes=$(grep -E '^\| ADR-[0-9]{3} \|' "$INDEX" | sed -E 's/^\| (ADR-[0-9]{3}) \|.*$/\1/' | sort | uniq -d)
+if [ -z "$row_dupes" ]; then
+  ok "every ADR number has exactly one index row"
+else
+  for n in $row_dupes; do
+    bad "docs/adr/README.md has more than one row for $n"
+  done
+fi
+
+# Gaps are reported, never enforced. A number can be absent on purpose: the
+# 001-010 vault era, 045 reserved by H2-212, 055/056 burnt by the SOU renumber,
+# 104 the draft that became ADR-111. Each documented reason is in README.md, so
+# the note stays a reminder instead of noise. A gap nobody has written down is
+# called out separately — still a note, because a missing file is not a defect.
+gap_reason() {
+  case "$1" in
+    006|007|008|009) printf 'vault era, never written' ;;
+    045) printf 'reserved by H2-212' ;;
+    055|056) printf 'burnt by the SOU 054-056 -> 057-059 renumber' ;;
+    104) printf 'draft that became ADR-111' ;;
+    *) printf 'UNEXPLAINED' ;;
+  esac
+}
+gaps=''; unexplained=''
+lo=$(printf '%s\n' "${adr_nums[@]}" | sort -n | head -1)
+hi=$(printf '%s\n' "${adr_nums[@]}" | sort -n | tail -1)
+for ((i = 10#$lo; i <= 10#$hi; i++)); do
+  n=$(printf '%03d' "$i")
+  printf '%s\n' "${adr_nums[@]}" | grep -qx "$n" && continue
+  # An index row without a file is legitimate (see the note above), not a gap.
+  [ -n "$(row_field "$n" 3)" ] && continue
+  case "$(gap_reason "$n")" in
+    UNEXPLAINED) unexplained="$unexplained $n" ;;
+    *) gaps="$gaps $n" ;;
+  esac
+done
+if [ -z "$gaps" ] && [ -z "$unexplained" ]; then
+  ok "the ADR sequence has no gap between $lo and $hi"
+else
+  [ -n "$gaps" ] && note "numbers with no file and no index row, absent on purpose:$gaps"
+  [ -n "$unexplained" ] && note "UNEXPLAINED gap in the sequence (warning, not a failure):$unexplained"
+fi
+
+head1 "1c. pending ADRs carry no number and no index row (GUL-582)"
 PENDING_DIR="$ADR_DIR/pending"
 pending_n=0
 if [ -d "$PENDING_DIR" ]; then
