@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.gulasz101.repin-fleet-model-gul769 — ONE-SHOT. Fires once, at 02:20 local
+  on 2 Nov 2026, to move the agent fleet off the pay-per-token DeepSeek API
+  (`-ds`) and back onto the Ollama Pro subscription (`-ollama`) once that
+  subscription's weekly allowance has rolled over (GUL-769, ADR-106's
+  "when to revisit").
+
+  This directory is `launchd/oneshot/`, not `launchd/daemons/`, and
+  bin/homelab-install-scheduled-jobs.sh does NOT know about it. That is
+  deliberate: the installer's job list is for things that should exist on a
+  rebuilt Air forever, and this is not one of them. It lives in the repo only
+  so that what was installed on the host is reviewable after the fact — the
+  point of ADR-108 — and it was installed by hand, as break-glass, because the
+  window it targets is hours away and a PR cannot be merged in time.
+
+  WHY 02:20 LOCAL. The host is CET (UTC+1), so this is 01:20 UTC. The Ollama
+  usage API buckets by UTC day and the heavy spend that exhausted the
+  allowance began on 26 Oct, so the seven-day window rolls at 00:00 UTC on
+  2 Nov. 01:20 UTC is eighty minutes of margin past that, in the quietest part
+  of the night. The time is an estimate, which is why the script does not trust
+  it: it probes the route and only repins once the route actually serves,
+  retrying every 20 minutes until 04:00 UTC. If the allowance has not reset by
+  then the fleet is left on `-ds` — still costing money, still working, which
+  is the cheaper of the two mistakes.
+
+  SELF-DELETING. A StartCalendarInterval carrying a Day key recurs MONTHLY, so
+  left installed this would fire again on 2 Dec and repin a fleet that may
+  deliberately be somewhere else. repin-fleet-model-oneshot.sh boots itself out
+  and deletes this file as its last step. The one exception is a partial repin
+  (some pins moved, some did not): then it leaves everything in place, because
+  a fleet split across two billing models needs a human, not a tidy exit.
+
+  Install (break-glass; see the GUL-769 issue comment for the full command):
+    sudo install -m 0755 -o root -g wheel \
+      bin/repin-fleet-model.sh bin/repin-fleet-model-oneshot.sh \
+      /usr/local/libexec/homelab/
+    sudo install -m 0644 -o root -g wheel \
+      launchd/oneshot/com.gulasz101.repin-fleet-model-gul769.plist \
+      /Library/LaunchDaemons/
+    sudo launchctl bootstrap system \
+      /Library/LaunchDaemons/com.gulasz101.repin-fleet-model-gul769.plist
+
+  Prove it is scheduled:
+    sudo launchctl print system/com.gulasz101.repin-fleet-model-gul769 | head -20
+  Read the outcome in the morning:
+    tail -40 ~/Library/Logs/homelab/repin-fleet-model.log
+    cat ~/Library/Logs/homelab/repin-fleet-model.status.json
+  Cancel it before it fires:
+    sudo launchctl bootout system/com.gulasz101.repin-fleet-model-gul769
+    sudo rm /Library/LaunchDaemons/com.gulasz101.repin-fleet-model-gul769.plist
+
+  UserName is required: a LaunchDaemon is root by default, and every path the
+  scripts touch is paperclip's. HOME is required because launchd does not
+  guarantee it for system daemons and ~/.hermes, ~/.config/opencode and
+  ~/.paperclip/auth.json are all $HOME-based (ADR-107, ADR-108).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.gulasz101.repin-fleet-model-gul769</string>
+
+  <key>UserName</key>
+  <string>paperclip</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/usr/local/libexec/homelab/repin-fleet-model-oneshot.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/paperclip</string>
+    <key>HERMES_HOME</key>
+    <string>/Users/paperclip/.hermes</string>
+  </dict>
+
+  <!-- 2 Nov 2026, 02:20 local (01:20 UTC). Month+Day pin it to one date; the
+       wrapper removes the job afterwards so the monthly recurrence of Day
+       never gets a second chance. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Month</key>
+    <integer>11</integer>
+    <key>Day</key>
+    <integer>2</integer>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>20</integer>
+  </dict>
+
+  <!-- The script sleeps between probes for up to ~2h40m, so it must not be
+       killed for being idle, and it must survive the machine being busy. -->
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>AbandonProcessGroup</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/Users/paperclip/Library/Logs/homelab/repin-fleet-model.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/paperclip/Library/Logs/homelab/repin-fleet-model.launchd.log</string>
+</dict>
+</plist>
