@@ -6,8 +6,19 @@
 #
 #   riffradar.voitech.dev -> http://riffradar.riffradar.svc.cluster.local:3000
 #
-# Cloudflare Access (email allowlist) sits in front of the hostname: the demo
-# serves a copyrighted song tab and is not for the open internet (ADR-102).
+# Exposure (GUL-757, superseding decision 2 of ADR-102): the GAME is public on
+# purpose — riffradar.voitech.dev/ answers 200 to anyone. The ADMIN SURFACE is
+# not: Cloudflare Access guards two path-scoped applications, both with the
+# owner allowlist and a deny-everything catch-all:
+#
+#   riffradar.voitech.dev/admin      -> the admin SPA  (apps/api/src/index.ts:39)
+#   riffradar.voitech.dev/api/admin  -> the admin API  (apps/api/src/index.ts:28)
+#
+# There is deliberately NO hostname-wide Access application any more. Adding one
+# back closes the game to everyone, which is the thing this configmap exists to
+# stop somebody doing by accident. Path matching is per whole segment and
+# inherited by subpaths, so /admin/* and /api/admin/* are covered while
+# /adminfoo and /api/adminx are not.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,4 +28,11 @@ data:
   note: |
     # riffradar.voitech.dev -> http://riffradar.riffradar.svc.cluster.local:3000
     # Ingress is remote-managed: change it via the Cloudflare API, not here.
-    # Access policy: allow wojtek's address + one guest address; everything else denied.
+    # The game at / is public on purpose (GUL-757). No hostname-wide Access app.
+    # Access (email allowlist + deny everyone) covers exactly two path roots,
+    # and subpaths inherit them:
+    #   /admin      app "RiffRadar admin panel"  fb2e672d-6910-46cc-a111-0a463425de15
+    #   /api/admin  app "RiffRadar admin API"    827c5ca8-a2c0-4efe-bdfe-b4016c13065a
+    # A 200 on /admin or /api/admin without an Access session is a bug.
+    # A rate limit on POST /api/admin/login is the second lock; it needs the
+    # Cloudflare token to carry a zone WAF scope, tracked in GUL-757.
