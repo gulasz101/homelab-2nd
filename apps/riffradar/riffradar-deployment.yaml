@@ -66,6 +66,51 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /app/data
+        # First boot only, and it is an init container now on purpose.
+        #
+        # `seed.ts` is not additive for the admin user: it upserts id
+        # `admin-001` with the built-in demo password and must_reset_password=1
+        # (apps/api/src/db/seed.ts:214-228), and scripts/start.sh runs it on
+        # every container start when SEED_ON_START=true. Restarting the pod was
+        # therefore resetting the admin credential back to a password printed in
+        # the public repo (GUL-757). The seed still has to run on an empty PVC —
+        # that is what makes a rebuild a re-deploy (ADR-102) — so it moves here,
+        # gated on the database file not existing, and the app container no
+        # longer seeds at all.
+        - name: seed-if-empty
+          image: ghcr.io/gulasz101/riff_radar:0.1.0 # {"$imagepolicy": "flux-system:riffradar"}
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              if [ -f /app/data/db/riffradar.db ]; then
+                echo "riffradar.db present - not seeding (a seed would reset the admin password)"
+                exit 0
+              fi
+              echo "empty data dir - migrating and seeding the demo"
+              bun run /app/apps/api/src/db/migrate.ts
+              bun run /app/apps/api/src/db/seed.ts
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: HOME
+              value: /tmp
+            - name: DATABASE_URL
+              value: file:/app/data/db/riffradar.db
+            - name: TAB_FILES_DIR
+              value: /app/data/tabs
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
       containers:
         - name: riffradar
           image: ghcr.io/gulasz101/riff_radar:0.1.0 # {"$imagepolicy": "flux-system:riffradar"}
@@ -84,11 +129,13 @@ spec:
               value: file:/app/data/db/riffradar.db
             - name: TAB_FILES_DIR
               value: /app/data/tabs
-            # First boot only: seeds the demo challenge. Left on because a
-            # rebuild from an empty PVC has to come up demo-ready; the seed is
-            # idempotent in the app (GUL-549 smoke ran it twice).
+            # Never seeds. `seed.ts` resets the admin password to the built-in
+            # demo credential on every run (GUL-757), so seeding belongs to the
+            # `seed-if-empty` init container above, which only acts on an empty
+            # PVC. Leave this false: true re-arms a published password on every
+            # restart, whatever the password was rotated to.
             - name: SEED_ON_START
-              value: "true"
+              value: "false"
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
