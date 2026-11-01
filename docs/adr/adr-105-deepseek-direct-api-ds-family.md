@@ -99,5 +99,5 @@ route and never looked at it again — a route nobody checks is how GUL-105 happ
 - The key's spend stops being trivial against the subscription plans: either cap it with
   a LiteLLM budget on the consuming key, or retire the route.
 - A `-ds` route is ever needed in a fallback chain: decide the spend policy first.
-- ADR-104's pending-ADR mechanism lands: this ADR's number and index row move into the
-  adoption step like every other one.
+- The pending-ADR mechanism lands (ADR-111): this ADR predates it and keeps its
+  hand-written number and index row; adoption allocates numbers for new ADRs only.
