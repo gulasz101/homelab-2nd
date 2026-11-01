@@ -70,6 +70,8 @@ data:
         "mistral-large-4-ollama",
         "muse-spark-open-ollama",
         "clef-27b-ollama",
+        "mimo-v2.6-flash-ollama",
+        "mimo-v2.6-pro-ollama",
         # OpenCode Go subscription models (2026-10-02: 29 verified live
         # + deepseek-v4.1-flash OpenChamber native route; 7 endpoint ids
         # excluded - chat-completions 400s, see litellm-helm-release.yaml)
@@ -117,6 +119,9 @@ data:
         "minimax-m3.1-flash-go",
         "muse-spark-1.2-contributor-go",
         "muse-spark-1.3-contributor-go",
+        "gemini-4-argon-go",
+        "iceman-contributor-free-go",
+        "kimi-k3.1-pro-go",
     ]
 
     def expand_models(models):
