@@ -119,6 +119,9 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-117 | The Pi-hole client roster is declarative in Git, and a weekly audit names the devices nobody registered | Accepted | 2026-10-31 |
 | ADR-118 | RiffRadar's game is public on purpose, its admin panel is not | Accepted | 2026-11-01 |
 | ADR-119 | The weekly model sync stops at a pull request, never at a pushed main | Accepted | 2026-11-01 |
+| ADR-120 | Hindsight reflect rides the fleet's route, with thinking off, not the metered DeepSeek key | Accepted | 2026-11-02 |
+| ADR-121 | the fleet's primary route carries a fallback chain, and its last hop is the paid one | Accepted | 2026-11-02 |
+| ADR-122 | Loki rule delivery is monitored as a pipeline, not as a pod | Accepted | 2026-11-02 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,

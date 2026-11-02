@@ -1,6 +1,6 @@
-# ADR: the fleet's primary route carries a fallback chain, and its last hop is the paid one
+# ADR-121: the fleet's primary route carries a fallback chain, and its last hop is the paid one
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-02
 - **Issue**: GUL-783
 - **Related**: GUL-769 (fleet moved onto `deepseek-v4.1-flash-1017-ollama`), GUL-593 (the same hole while the fleet rode `-1017-ds`), GUL-662 (DeepSeek balance guard), ADR-091 (the free route is in no chain), ADR-106 (the fleet ran on DeepSeek direct), pending ADR GUL-690 (thinking can be turned off on DeepSeek routes)

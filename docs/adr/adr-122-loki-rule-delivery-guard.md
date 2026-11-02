@@ -1,6 +1,6 @@
-# ADR: Loki rule delivery is monitored as a pipeline, not as a pod
+# ADR-122: Loki rule delivery is monitored as a pipeline, not as a pod
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-02
 - **Issue**: GUL-805
 - **Related**: GUL-783 (the rule that was dead on arrival), ADR-013 (mesh), the loki HelmRelease in `infrastructure/observability/loki-helm-release.yaml`

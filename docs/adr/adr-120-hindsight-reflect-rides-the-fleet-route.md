@@ -1,6 +1,6 @@
-# ADR: Hindsight reflect rides the fleet's route, with thinking off, not the metered DeepSeek key
+# ADR-120: Hindsight reflect rides the fleet's route, with thinking off, not the metered DeepSeek key
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-02
 - **Issue**: GUL-787 (unblocks GUL-476, GUL-143)
 - **Approved**: the owner accepted the merge card `3ff1b734` on 2026-11-02 ("Merge it")
