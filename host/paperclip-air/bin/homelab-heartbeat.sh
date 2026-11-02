@@ -3,7 +3,7 @@
 # homelab-heartbeat.sh — beats every 60 s so an off-host receiver can tell
 # "the host is gone" from "a component on the host is gone" (H2-336, GUL-732).
 #
-# Runs as a SYSTEM LaunchDaemon (UserName=paperclip, ADR-113). It used to be a
+# Runs as a SYSTEM LaunchDaemon (UserName=paperclip, ADR-123). It used to be a
 # user LaunchAgent that deliberately died with the GUI session (ADR-098); on a
 # headless appliance that meant it never ran at all, so the outage signal was a
 # permanent alert nobody read and the leak counter never reached the cluster.
@@ -56,7 +56,7 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-# GUL-732 / ADR-113: report the session, do not die with it. `console_user` is
+# GUL-732 / ADR-123: report the session, do not die with it. `console_user` is
 # the device owner, not `who` — a logged-out Mac keeps a stale utmp entry, and
 # /dev/console owned by root is the reliable "nobody is logged in" answer.
 # `gui_session` is 1 when an Aqua session exists at all; gui/<uid> is not

@@ -1,4 +1,4 @@
-# ADR-113: The heartbeat sender is a system daemon that reports the session, not one that dies with it
+# ADR-123: The heartbeat sender is a system daemon that reports the session, not one that dies with it
 
 - **Status**: Accepted
 - **Date**: 2026-11-02

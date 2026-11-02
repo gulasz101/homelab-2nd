@@ -254,22 +254,72 @@ spec:
             description: "More than 5 million tokens (input + output) in the last hour for model {{ $labels.model }}. Expected shape: bursty retain/consolidation batches. A flat sustained burn is a loop."
 
         - alert: HindsightConsolidationSchemaRejections
-          # The docs' own recommended alert: consolidation batch calls the model
-          # answered with something the response schema rejects (failure_class
-          # fail_fast - a re-send of the same payload cannot help). No other
-          # metric exposes this, and `failed_consolidation` stays 0 because
-          # bisection rescues what it can, so the supersession/delete path can
-          # silently do nothing.
+          # The docs' own recommended alert - with the docs' own missing floor.
+          # The upstream example is
+          #   sum(rate(hindsight_consolidation_batch_failures_total{failure_class="fail_fast"}[15m])) > 0
+          # and `> 0` over 15m with for: 15m is a hair trigger: one reject keeps
+          # the rate non-zero for ~15 min and the rule then stays red for another
+          # 15, so a single bad batch costs half an hour of `firing`. Measured
+          # 2026-11-02 (GUL-791) it had been red since 05:03:59Z on 3 rejects
+          # while the backlog was drained (4) and consolidation was completing
+          # normally.
+          #
+          # WHAT THE REAL RATE IS (measured, not modelled). Over the 7 days to
+          # 2026-11-02 05:30Z:
+          #   hindsight_consolidation_batch_failures_calls_total{failure_class="fail_fast"}  = 26
+          #   hindsight_llm_calls_total{scope="consolidation"}                               = 24,219
+          # i.e. a 0.11% baseline - roughly one rejected batch per 930
+          # consolidation LLM calls, spread over 17 hours of the week. Against
+          # 51 consolidation *operations* in 6 h on 11-02 that same day it read
+          # 7/51, which is why "rejects per operation" is the wrong denominator:
+          # one operation makes tens of calls.
+          #
+          # SO: TWO TERMS, BOTH REQUIRED.
+          #   - a floor of 3 rejects in an hour. The busiest hour of the last
+          #     week had 3 and the median non-zero hour had 1, so 3 means "this
+          #     hour is already an outlier", and a single blip can never fire it.
+          #   - a ratio against the lane's own call counter, > 2% = ~20x the
+          #     measured baseline. Without it, a quiet hour with 3 rejects and
+          #     40 calls looks identical to a busy hour with 3 rejects and 900
+          #     calls, and only one of those is a model problem.
+          # Replaying both over the last 168 hours selects exactly 2 hours
+          # (2026-10-26 10Z and 2026-11-02 05Z) and is silent on the other 15
+          # hours that contained a reject. It fires on the burst that produced
+          # the stranded rows instead of on every individual bad batch.
+          #
+          # WHAT THIS RULE IS *NOT* FOR: damage. A reject that bisection cannot
+          # rescue strands the row, and HindsightConsolidationFailedRows below
+          # already alerts on that stock with a zero baseline. This rule is the
+          # earlier signal - "the pool is degrading right now" - so it can afford
+          # to be quiet and the damage rule stays the one that must not be.
+          #
+          # Fix the cause, not the threshold, first: measured on 2026-11-02,
+          # FreeLLMAPI `auto` served this scope from voxtral-small-latest /
+          # mistral-code / ministral-3b / poolside-laguna, and every reject was a
+          # missing-required-field ValidationError. `auto` accepts and honours
+          # json_schema strict, so consolidation now runs with
+          # HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION=true
+          # (apps/hindsight/hindsight-helm-release.yaml). This threshold assumes
+          # that fix lands; a stricter rate here would be dishonest if the
+          # reject rate were still 1 in 8 operations.
           expr: |
-            sum(rate(hindsight_consolidation_batch_failures_calls_total{failure_class="fail_fast"}[15m])) > 0
-          for: 15m
+            (
+              sum(increase(hindsight_consolidation_batch_failures_calls_total{failure_class="fail_fast"}[1h])) >= 3
+            )
+            and
+            (
+              sum(rate(hindsight_consolidation_batch_failures_calls_total{failure_class="fail_fast"}[1h]))
+              / clamp_min(sum(rate(hindsight_llm_calls_total{scope="consolidation"}[1h])), 1e-9)
+              > 0.02
+            )
+          for: 10m
           labels:
             severity: warning
             alertgroup: hindsight
             namespace: observability
           annotations:
             summary: "Hindsight consolidation is rejecting model output"
-            description: "The consolidation model is returning output the response schema rejects (failure_class fail_fast), at a sustained rate. Usually a model that cannot emit reliable JSON for the schema - switch models or enable HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION."
+            description: "At least 3 consolidation batches in the last hour were rejected by the response schema (failure_class fail_fast) and they are more than 2% of the lane's LLM calls - roughly 20x the measured baseline. Usually a model in the FreeLLMAPI pool that cannot emit the constrained JSON: check llm_requests (scope=consolidation, status=error) for the ValidationError field, and see whether `auto` has moved onto a smaller model. Each rejected batch is re-sent split, so it costs extra calls; batches that bisection cannot rescue strand rows, which HindsightConsolidationFailedRows reports."
 
         - alert: HindsightEventLoopStalled
           # Hindsight runs request handlers and task work on one event loop; the

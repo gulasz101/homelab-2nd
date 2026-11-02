@@ -40,7 +40,7 @@ host/paperclip-air/
 │   │   ├── dev.voitech.homelab.syncthing.plist
 │   │   ├── com.gulasz101.hermes-state-backup.plist      # scheduled 03:30 (ADR-107/108)
 │   │   ├── com.gulasz101.hermes-memory-watchdog.plist   # scheduled hourly (ADR-107/108)
-│   │   └── dev.voitech.homelab.heartbeat.plist          # every 60 s, headless (ADR-113)
+│   │   └── dev.voitech.homelab.heartbeat.plist          # every 60 s, headless (ADR-123)
 │   └── agents/                            # empty: nothing on this host may need a login any more
 ├── tests/host-tree-check.sh               # CI gate: plist shape, one owner, no secrets, plan renders
 ├── tests/kubectl-forward-probe-check.sh   # CI gate: port-forwards cannot outlive the script
@@ -107,7 +107,7 @@ processes older than 15 minutes into `leaks.kubectl_port_forward`; `HostWatchOrp
 alerts when the count is above zero. The net only works if the installed sender is the one in this
 repo — check with `diff -q bin/homelab-heartbeat.sh /usr/local/libexec/homelab/homelab-heartbeat.sh`.
 It didn't, once (GUL-728): the sender here gained the leak counter and the Air kept the old copy for a
-day. Since ADR-113 the installed copy is deployed by `homelab-install-scheduled-jobs.sh`, so a repo
+day. Since ADR-123 the installed copy is deployed by `homelab-install-scheduled-jobs.sh`, so a repo
 change plus that one command is the whole upgrade.
 
 ## First install on a fresh Air
@@ -130,7 +130,7 @@ sudo ./bin/homelab-install-daemons.sh --status
 #    ~/.config/homelab/services.env, retires the agent, bootstraps the daemon
 sudo ./bin/homelab-install-daemons.sh
 
-# 4. heartbeat sender — a SYSTEM daemon since GUL-732 (ADR-113): it must beat
+# 4. heartbeat sender — a SYSTEM daemon since GUL-732 (ADR-123): it must beat
 #    with nobody logged in. Installed by step 6 below, not with launchctl by hand.
 #    Seed its token first, as the appliance user:
 mkdir -p ~/.config/homelab && chmod 700 ~/.config/homelab

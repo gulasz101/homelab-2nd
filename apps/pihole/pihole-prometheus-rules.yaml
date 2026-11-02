@@ -93,3 +93,32 @@ spec:
           annotations:
             summary: "Pi-hole deny seeder {{ $labels.job_name }} failed"
             description: "pihole-deny-seed failed: the declarative seed list and the live FTL deny entries are out of sync (API auth, a rejected PUT, gravity, or the verification read-back). Check the pod logs, then re-run: kubectl -n pihole create job --from=cronjob/pihole-deny-seed seed-now"
+
+        # GUL-712: the client-roster seeder. A failure means the roster in Git and
+        # the live FTL client table have diverged — after a rebuild that means
+        # family devices are sitting in group 0 with no curfew at all.
+        - alert: PiholeClientSeedJobFailed
+          expr: |
+            kube_job_status_failed{namespace="pihole", job_name=~"pihole-client-seed-.*"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            namespace: pihole
+          annotations:
+            summary: "Pi-hole client-roster seeder {{ $labels.job_name }} failed"
+            description: "pihole-client-seed failed: the roster in apps/pihole/pihole-clients-seeds.yaml and the live FTL client table are out of sync (API auth, a rejected POST/PUT, or the verification read-back). Devices may be in the wrong group, which means the 21:00-08:00 curfew may not be protecting them. Check the pod logs, then re-run: kubectl -n pihole create job --from=cronjob/pihole-client-seed seed-now"
+
+        # GUL-712: the weekly roster audit exits 2 when a seeded row that carries a
+        # required curfew group has vanished or changed groups — that is a MAC
+        # rotation (Apple rotates private Wi-Fi MACs) or a hand edit, and either way
+        # the device silently falls out of the curfew.
+        - alert: PiholeClientAuditDrift
+          expr: |
+            kube_job_status_failed{namespace="pihole", job_name=~"pihole-client-audit-.*"} > 0
+          for: 5m
+          labels:
+            severity: warning
+            namespace: pihole
+          annotations:
+            summary: "Pi-hole roster audit {{ $labels.job_name }} reported drift"
+            description: "pihole-client-audit failed: either a seeded client row in a required curfew group (default 10) is missing or has changed groups, or the report could not be posted to Mattermost. The audit report is in the pod logs and the channel. Re-run: kubectl -n pihole create job --from=cronjob/pihole-client-audit audit-now"

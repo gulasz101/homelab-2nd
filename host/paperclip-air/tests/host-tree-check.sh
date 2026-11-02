@@ -14,7 +14,7 @@
 #     has a companion LaunchAgent shipped in this tree (two owners is the
 #     defect ADR-098 forbids);
 #   * the heartbeat is a *system* daemon that reports the session (GUL-732,
-#     ADR-113): it must run with nobody logged in, carry UserName/HOME, and beat
+#     ADR-123): it must run with nobody logged in, carry UserName/HOME, and beat
 #     every 60 s with a payload that says whether a GUI session exists;
 #   * every script parses (bash -n) and the installer's plan can be rendered
 #     without root (--dry-run), which is the only way CI can run it;
@@ -155,7 +155,7 @@ else
 fi
 
 # ---- 4. the heartbeat is a system daemon that reports the session ---------
-# GUL-732 / ADR-113 superseded ADR-098 decision 6. The sender used to die with
+# GUL-732 / ADR-123 superseded ADR-098 decision 6. The sender used to die with
 # the GUI session on purpose; on a headless appliance that meant it never ran at
 # all, so the alert fired forever and the leak counter never reached k8s. It now
 # runs in system/ and puts console_user, gui_session and gui_expected in the
@@ -196,7 +196,7 @@ for m in problems:
 sys.exit(1 if problems else 0)
 PY
   [ "$RC" -eq 0 ] && ok "heartbeat daemon plist"
-  # two owners is the defect ADR-098 forbids and ADR-113 does not reintroduce
+  # two owners is the defect ADR-098 forbids and ADR-123 does not reintroduce
   if [ -f "$HERE/launchd/agents/$DOMAIN.heartbeat.plist" ]; then
     fail "launchd/agents/$DOMAIN.heartbeat.plist still exists: the sender would run twice"
   fi

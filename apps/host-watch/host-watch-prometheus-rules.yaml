@@ -64,7 +64,7 @@ spec:
       rules:
         - alert: HostWatchHeartbeatMissing
           # The only check that survives the host being logged out, asleep or off.
-          # Since ADR-113 the sender is a system LaunchDaemon, so this alert no
+          # Since ADR-123 the sender is a system LaunchDaemon, so this alert no
           # longer fires for "nobody is logged in" — that is the steady state of a
           # headless appliance and it is reported inside the beat instead
           # (HostWatchSessionGone). Silence here means the host or its launchd
@@ -77,7 +77,7 @@ spec:
           annotations:
             summary: "no heartbeat from the Air for over 7 minutes"
             description: >-
-              The heartbeat sender (system LaunchDaemon on the Air, ADR-113) has been silent
+              The heartbeat sender (system LaunchDaemon on the Air, ADR-123) has been silent
               for more than 420 s. The host is asleep, hung, off, or the sender/launchd domain
               is broken. This is the signal that was missing on 2026-10-29. Check
               `sudo launchctl print system/dev.voitech.homelab.heartbeat` on the Air, then
