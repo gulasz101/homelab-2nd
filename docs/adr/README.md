@@ -118,6 +118,13 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 > ADR-044, ADR-047, ADR-049 and ADR-062). ADR-055 and ADR-056 have no file: the numbers are
 > unassigned, not missing.
 
+> Note: **ADR-104 has no file and never had one.** It was the number claimed by the draft of
+> what became ADR-111 (the number and its index row are allocated at adoption). While that
+> draft waited, ADR-105…109 landed on `main`; the draft moved to `docs/adr/pending/` and
+> adoption gave it 111. Nothing was written at 104, so nothing was lost in a rebase — and
+> because a printed number keeps its meaning forever, 104 stays burnt. The gap is deliberate.
+> ADR-006…009 were never used either: the vault-era ADRs are 001…005 and 010.
+
 > Note: ADR-052 was booked as ADR-050 while epic H2-232 was being planned (the directory then
 > ended at ADR-046 with 045 reserved); 047–051 landed from unrelated work before stage 1 was
 > committed, so the decision is recorded as 052. The epic's older internal references to
