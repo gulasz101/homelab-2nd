@@ -486,6 +486,7 @@ for kv in \
   'HINDSIGHT_API_DB_STATEMENT_TIMEOUT: 60' \
   'HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT: 50' \
   'HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM: 6' \
+  'HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION: true' \
   'HINDSIGHT_API_DB_POOL_MAX_SIZE: 30' \
   'HINDSIGHT_API_WORKER_ID: hindsight-api' \
   'HINDSIGHT_API_RERANKER_MAX_CANDIDATES_LOW: 100' \
@@ -621,6 +622,11 @@ done
 #     longer structured answers). The app default is 8, so the key must be gone
 #     and not merely set back to 8 - an explicit 8 would hide the next person's
 #     attempt to raise it (H2-306).
+#     Re-measured 2026-11-02 (GUL-791): the default 8 still lets ~0.11% of
+#     consolidation calls fail the same way (26 in 24,219 over 7 days), because
+#     the fix belongs on the structured-output path, not on the batch size.
+#     That fix is HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION=true, asserted
+#     positively above. Neither knob may come back here.
 for kv in \
   'HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT: reasoning_effort is unsupported on the :nitro route - LiteLLM answers 400 UnsupportedParamsError and every retain fails (H2-306)' \
   'HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT: reasoning_effort is unsupported on the :nitro route - LiteLLM answers 400 UnsupportedParamsError and every retain fails (H2-306)' \

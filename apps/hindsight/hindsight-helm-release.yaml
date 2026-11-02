@@ -299,6 +299,46 @@ spec:
         #     several work_mem buffers; 100 busy connections pushed the DB to its
         #     memory limit during the backfill (H2-306).
         HINDSIGHT_API_DB_POOL_MAX_SIZE: "30"
+        # GUL-791 (2026-11-02): grammar-enforce consolidation's response schema.
+        #
+        # Measured, not guessed. Over the 7 days to 2026-11-02 05:30Z the
+        # fail_fast counter (the model answered something the response schema
+        # rejects) fired 26 times against 24,219 consolidation LLM calls - a
+        # 0.11% baseline - but it is lumpy: 3 rejects inside 15 minutes on
+        # 11-02 05:03-05:18, and 7 in 6 h against 51 consolidation operations.
+        # Each reject costs a bisected re-run (extra LLM calls) and can strand
+        # rows in consolidation-failed (2 at the time of writing).
+        #
+        # The cause is the free pool, not the prompt. FreeLLMAPI `auto` routed
+        # consolidation to voxtral-small-latest, mistral-code-latest,
+        # ministral-3b-latest and poolside/laguna-xs-2.1 in a five-minute
+        # window, and the llm_requests errors are all missing-required-field
+        # ValidationErrors (updates[N].observation_id, creates[N].
+        # source_fact_ids) - the model DID get the schema appended to the
+        # system prompt by the soft `json_object` path and dropped fields
+        # anyway. Same pathology as H2-306, which was mitigated by dropping
+        # CONSOLIDATION_LLM_BATCH_SIZE from 16 to 8; the default 8 is still not
+        # enough now that the pool's members have changed.
+        #
+        # Probe on 2026-11-02 (hindsight-api-0, the real constrained response
+        # model built by _build_response_model with 8 fact ids, same prompt):
+        #   soft (json_object + schema in the prompt): 3/6 rejected, all on
+        #     creates.maxItems ignored, served by 4 different models;
+        #   strict (json_schema, strict:true): 5/5 valid, served by 5 different
+        #     models (mistral-code, mistral-code-fim, voxtral-small,
+        #     ministral-3b-2512, codestral), and 2.8-6.7 s per call against
+        #     4.7-23.5 s soft.
+        # So the FreeLLMAPI route accepts and honours json_schema strict, and
+        # compliance becomes the provider's job instead of the model's.
+        #
+        # Retain is deliberately NOT flipped: its schema failures are a
+        # different, measured problem (#GUL-428 timeouts) and it answers on the
+        # same pool. This is a per-operation knob (config.py
+        # _resolve_operation_strict_schema), so consolidation can be strict
+        # while retain stays soft. If a future `auto` member 400s on
+        # json_schema the way Bedrock does on maxItems, this is the flag to
+        # turn off - reverting it restores exactly today's behaviour.
+        HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION: "true"
         # Stable worker id (H2-306). On startup a worker only recovers tasks left
         # in 'processing' under ITS OWN worker_id, which defaults to the hostname,
         # i.e. the pod name, and that changes on every rollout. So every restart
