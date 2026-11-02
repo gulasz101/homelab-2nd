@@ -10,6 +10,7 @@ in this repo. Decision record: [ADR-076](../../docs/adr/adr-076-paperclip-is-the
 | `deadline-bound-task-scope` | this directory | A run with a hard wall-clock budget: deliver the artifact before investigating |
 | `paperclip-claude-auth` | this directory | A Claude Code agent in Paperclip lost its login, or the connection credential needs rotating |
 | `paperclip` | the installed Paperclip (`~/.paperclip/cli/current/node_modules/@paperclipai/server/skills/paperclip`), linked, not copied | Paperclip woke the agent for a GUL issue |
+| `homelab-http-probes` | this directory | Probing a `*.voitech.dev` host: a 403 from Python's `urllib` is a client problem until curl agrees |
 
 ## How Hermes loads them
 

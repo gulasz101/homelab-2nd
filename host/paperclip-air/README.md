@@ -134,6 +134,13 @@ mkdir -p ~/.config/homelab && chmod 700 ~/.config/homelab
 printf '%s' "<the token from the host-watch SOPS secret>" > ~/.config/homelab/heartbeat-token
 chmod 600 ~/.config/homelab/heartbeat-token
 mkdir -p ~/bin && install -m 0755 bin/homelab-heartbeat.sh ~/bin/homelab-heartbeat.sh
+# the sender sources homelab-lib.sh from its own directory — install both or it
+# runs with no functions and silently sends nothing
+install -m 0755 bin/homelab-lib.sh ~/bin/homelab-lib.sh
+# gui/<uid> only exists while somebody is logged in at the console. If this says
+# "Domain does not support specified action" the Mac is sitting at the login
+# window: the agent is installed and will load at the next login, and until then
+# the heartbeat is (correctly) silent.
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.voitech.homelab.heartbeat.plist
 tail -5 ~/Library/Logs/homelab/heartbeat.err.log      # expect silence or "components down: ..."
 
