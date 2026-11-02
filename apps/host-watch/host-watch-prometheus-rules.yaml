@@ -64,6 +64,11 @@ spec:
       rules:
         - alert: HostWatchHeartbeatMissing
           # The only check that survives the host being logged out, asleep or off.
+          # Since ADR-113 the sender is a system LaunchDaemon, so this alert no
+          # longer fires for "nobody is logged in" — that is the steady state of a
+          # headless appliance and it is reported inside the beat instead
+          # (HostWatchSessionGone). Silence here means the host or its launchd
+          # domain is genuinely gone, which is what makes this signal worth paging.
           expr: hostwatch_heartbeat_configured == 1 and (time() - hostwatch_heartbeat_last_seen_timestamp_seconds) > 420
           for: 2m
           labels:
@@ -72,10 +77,35 @@ spec:
           annotations:
             summary: "no heartbeat from the Air for over 7 minutes"
             description: >-
-              The heartbeat sender (a user LaunchAgent on the Air, on purpose) has been silent
-              for more than 420 s. The host is logged out, asleep, hung or off — or the sender
+              The heartbeat sender (system LaunchDaemon on the Air, ADR-113) has been silent
+              for more than 420 s. The host is asleep, hung, off, or the sender/launchd domain
               is broken. This is the signal that was missing on 2026-10-29. Check
+              `sudo launchctl print system/dev.voitech.homelab.heartbeat` on the Air, then
               hostwatch_heartbeat_last_seen_timestamp_seconds in Grafana for the exact last beat.
+
+        - alert: HostWatchSessionGone
+          # The other half of the 2026-10-29 failure, and the reason the sender no
+          # longer dies with the session: the beat arrives, but the host says it
+          # has no GUI session while its config says it should have one. That is a
+          # WindowServer death / logout on a Mac that is meant to be attended, so
+          # it keeps its own alert instead of hiding inside a staleness alert or
+          # being swallowed as "normal" on a host where a session is expected.
+          # gui_expected is host configuration (HOMELAB_GUI_EXPECTED); the Air is a
+          # headless appliance and reports 0, which is why this alert is dormant
+          # there and armed for any host that says 1.
+          expr: hostwatch_gui_session_expected == 1 and hostwatch_gui_session == 0
+          for: 5m
+          labels:
+            severity: warning
+            namespace: host-watch
+          annotations:
+            summary: "{{ $labels.host }} has no GUI session but is supposed to have one"
+            description: >-
+              The host is beating, so it is alive, but it reports no Aqua session: nothing owns
+              /dev/console and `gui/<uid>` does not exist. On 2026-10-29 this was the WindowServer
+              userspace-watchdog kill followed by a direct logout. GUI tooling is dead while the
+              daemons keep running. Check `stat -f%Su /dev/console` and
+              `launchctl print gui/$(id -u)` on {{ $labels.host }}.
 
         - alert: HostWatchHeartbeatNotConfigured
           expr: hostwatch_heartbeat_configured == 0

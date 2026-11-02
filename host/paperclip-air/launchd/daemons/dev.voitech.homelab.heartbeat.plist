@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  heartbeat — SYSTEM LaunchDaemon, UserName=paperclip (GUL-732, ADR-113).
+
+  It used to be a user LaunchAgent on purpose (ADR-098 decision 6): the sender
+  died with the GUI session, so a logout looked like a dead host to the off-host
+  receiver. That was right while a human sat in front of the Air.
+
+  The Air is now a headless appliance and spends weeks at a time with no Aqua
+  session (`launchctl print gui/501` → "Domain does not support specified
+  action"). The old design produced the opposite of its intent: the heartbeat
+  never ran at all, so `HostWatchHeartbeatMissing` fired permanently and the
+  leak detector (hostwatch_host_leak) never reached the cluster — GUL-728.
+
+  ADR-113 supersedes that section: the sender stops dying and STARTS REPORTING.
+  Every beat carries `console_user` and `gui_session` (does an Aqua session
+  exist at all) plus `gui_expected` (is this host supposed to have one). The
+  receiver then splits one beat into two alerts:
+
+    * no beat at all          → HostWatchHeartbeatMissing  (host gone / sender dead)
+    * beat with no session    → HostWatchSessionGone       (the 2026-10-29 WindowServer failure)
+
+  The script is deployed from this repo to /usr/local/libexec/homelab (ADR-108),
+  not run out of ~/bin: one path, reviewable, restorable on a replacement host.
+
+  Install (root, from host/paperclip-air):
+    sudo ./bin/homelab-install-scheduled-jobs.sh
+  Prove it (nobody logged in, console owner root):
+    sudo launchctl print system/dev.voitech.homelab.heartbeat | head -20
+    sudo launchctl kickstart -k system/dev.voitech.homelab.heartbeat
+    tail -3 ~/Library/Logs/homelab/heartbeat.err.log
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.voitech.homelab.heartbeat</string>
+
+	<key>UserName</key>
+	<string>paperclip</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/usr/local/libexec/homelab/homelab-heartbeat.sh</string>
+	</array>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>60</integer>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<!-- launchd does not guarantee HOME for system daemons and every default
+		     in homelab-lib.sh is $HOME-based (token, env file, logs). -->
+		<key>HOME</key>
+		<string>/Users/paperclip</string>
+	</dict>
+
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>/Users/paperclip/Library/Logs/homelab/heartbeat.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/paperclip/Library/Logs/homelab/heartbeat.err.log</string>
+</dict>
+</plist>

@@ -28,7 +28,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://paperclip.voitech.dev  # what t
 | `:3100` refuses, `/dev/console` = root | service down, session gone | `homelab-recover-appliance.sh` |
 | `:3100` refuses, `launchctl print` says running | process wedged | `sudo launchctl kickstart -k system/dev.voitech.homelab.paperclip` |
 | public 502/503 but `:3100` answers | Cloudflare tunnel (`cloudflared` is a daemon, it should be up) | `sudo launchctl print system/com.cloudflare.cloudflared` |
-| no heartbeat in the cluster for >7 min, services answer | heartbeat sender/agent broken, or the LAN path to k3s | `launchctl print gui/$(id -u) \| grep heartbeat` |
+| no heartbeat in the cluster for >7 min, services answer | heartbeat sender broken, or the LAN path to k3s | `sudo launchctl print system/dev.voitech.homelab.heartbeat` |
 | Mattermost says `HostWatchHeartbeatMissing` and the Mac is unreachable | host asleep/off/hung | check power and `pmset -g`; expect Cloudflare 502s |
 
 ## 2. Supervision: what must be true
@@ -38,7 +38,8 @@ sudo ./bin/homelab-install-daemons.sh --status
 ```
 
 Five system daemons (`hermes-gateway`, `paperclip`, `minio-lan-proxy`, `gemini-tunnel`, `syncthing`),
-**no** matching user agents, and the heartbeat as a user agent. If a service shows both `loaded` and
+**no** matching user agents, and the heartbeat sender as a system daemon too (ADR-113 — it used to be
+a user agent, which on a headless host meant it never ran). If a service shows both `loaded` and
 `YES` (agent present) you have two owners: run the installer, which fixes it.
 
 Legacy watchdog: if `sudo launchctl print system/dev.voitech.homelab-watchdog` still exists, remove
@@ -158,9 +159,17 @@ alert about itself when it is the thing that is dead:
 
 1. **HTTP probe**, every 60 s, of `https://paperclip.voitech.dev`, `https://chat.voitech.dev` and
    `https://status.voitech.dev`; Mattermost after 3 consecutive failures.
-2. **Heartbeat**, expected every 60 s from `homelab-heartbeat.sh`; the alert fires when the last
-   beat is older than 7 minutes. This is the only check that survives the host being logged out,
-   asleep or switched off — and it is why the sender must stay a user agent.
+2. **Heartbeat**, expected every 60 s from `homelab-heartbeat.sh`; `HostWatchHeartbeatMissing` fires
+   when the last beat is older than 7 minutes. This is the only check that survives the host being
+   logged out, asleep or switched off — which is exactly why the sender is a *system* daemon since
+   ADR-113: it has to keep beating while nobody is logged in.
+
+The beat also reports the session, and that is a second alert rather than a hidden detail:
+`console_user` (who owns `/dev/console`, `root` = nobody), `gui_session` (does an Aqua session exist
+at all) and `gui_expected` (is this host supposed to have one, from `HOMELAB_GUI_EXPECTED` in
+`~/.config/homelab/heartbeat.env`, default 0). `HostWatchSessionGone` fires when `gui_expected` is 1
+and `gui_session` is 0 — the 2026-10-29 WindowServer logout — while silence means the host is gone.
+On the Air `gui_expected` stays 0 on purpose: nobody is supposed to be logged in.
 
 The heartbeat also carries per-component health (`hermes-gateway`, `paperclip`, `minio-lan-proxy`,
 `gemini-tunnel`, `syncthing`), which is how the Hermes API gets watched at all: it binds

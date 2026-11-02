@@ -10,10 +10,14 @@ from outside — two independent signals:
   1. HTTP probe  — every 60 s, three public URLs. Any answer below 500 counts as
      up (401/403 means the app is alive and guarding); 502/503 is THE signature of
      "tunnel up, origin dead". Alert after 3 consecutive failures.
-  2. Heartbeat   — the Air posts every 60 s (LaunchAgent, dies with the session on
-     purpose). Silence for 7 minutes means the host is logged out, asleep or off:
-     the only check that survives any of those. The beat also carries per-component
-     health, which is how the Hermes gateway on 127.0.0.1:8642 gets watched at all.
+  2. Heartbeat   — the Air posts every 60 s from a system LaunchDaemon (ADR-113,
+     superseding ADR-098 decision 6). Silence for 7 minutes means the host is
+     logged out, asleep or off: the only check that survives any of those. The
+     beat also carries per-component health, which is how the Hermes gateway on
+     127.0.0.1:8642 gets watched at all, and the host's view of its own GUI
+     session (`gui_session`) against what that host is configured to expect
+     (`gui_expected`), so a lost session keeps its own alert instead of looking
+     like a dead host — or worse, looking healthy.
 
 Stdlib only: no packages, no build step, the file is mounted from a ConfigMap and
 tested by apps/host-watch/tests/hostwatch-unit-check.sh exactly as it ships.
@@ -140,6 +144,13 @@ class HeartbeatStore:
         self.last_seen = 0.0
         self.host = ""
         self.console_user = ""
+        # GUL-732 / ADR-113: the beat reports the GUI session instead of dying
+        # with it. `gui_session` is host truth (an Aqua session exists or not),
+        # `gui_expected` is host configuration (should one exist?). Two alerts
+        # come out of one beat: no beat at all = host gone; beat with
+        # gui_session 0 where gui_expected is 1 = session gone.
+        self.gui_session = 0
+        self.gui_expected = 0
         self.components = {}
         # GUL-680: host-reported leak counters (leaked child processes). Kept
         # separate from components because "0 leaked forwards" is good news and
@@ -176,6 +187,10 @@ class HeartbeatStore:
         self.last_seen = float(now)
         self.host = str(payload.get("host", ""))
         self.console_user = str(payload.get("console_user", ""))
+        # Missing or junk flags mean 0, never "unknown": a host that does not
+        # report a session flag must not light up HostWatchSessionGone.
+        self.gui_session = _flag(payload.get("gui_session"))
+        self.gui_expected = _flag(payload.get("gui_expected"))
         try:
             self.last_payload_ts = int(payload.get("ts", 0))
         except (TypeError, ValueError):
@@ -229,6 +244,11 @@ def probe_once(targets, fetch=None, now=None):
         if not up:
             failing += 1
     return failing
+
+
+def _flag(value):
+    """0/1 out of whatever a host put in a boolean field, defaulting to 0."""
+    return 1 if value in (True, 1, "1", "true", "True", "yes") else 0
 
 
 def _fmt(value):
@@ -314,6 +334,12 @@ def render_metrics(targets, store, now=None):
     for name in sorted(store.leaks):
         lines.append('hostwatch_host_leak{name="%s"} %d' % (name, store.leaks[name]))
     lines += [
+        "# HELP hostwatch_gui_session 1 when the host reported a live Aqua (GUI) session.",
+        "# TYPE hostwatch_gui_session gauge",
+        'hostwatch_gui_session{host="%s"} %d' % (store.host or "", store.gui_session),
+        "# HELP hostwatch_gui_session_expected 1 when this host is configured to expect a GUI session.",
+        "# TYPE hostwatch_gui_session_expected gauge",
+        'hostwatch_gui_session_expected{host="%s"} %d' % (store.host or "", store.gui_expected),
         "# HELP hostwatch_heartbeat_host_info Identity of the last beating host.",
         "# TYPE hostwatch_heartbeat_host_info gauge",
         'hostwatch_heartbeat_host_info{host="%s",console_user="%s"} 1'

@@ -42,7 +42,11 @@ TREE_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 # shellcheck source=homelab-lib.sh
 . "$SCRIPT_DIR/homelab-lib.sh"
 
-SCHEDULED_JOBS="hermes-state-backup hermes-memory-watchdog"
+# GUL-732: the heartbeat sender joined this list. It is a system LaunchDaemon
+# for the same reason the backups are — it must run with nobody logged in — but
+# it keeps its own label (dev.voitech.homelab.heartbeat, the historical name the
+# receiver's docs and every tracking note use) and its own script name.
+SCHEDULED_JOBS="hermes-state-backup hermes-memory-watchdog heartbeat"
 TS=$(date '+%Y%m%d-%H%M%S')
 BACKUP_DIR="$HOMELAB_HOME/Library/LaunchAgents.h2-336-backup-$TS"
 SCRIPTS_BACKUP_DIR="$HOMELAB_HOME/.hermes/scripts.superseded-$TS"
@@ -68,9 +72,17 @@ die()  { printf 'FATAL: %s\n' "$*" >&2; exit 1; }
 # tracking note. Moving the domain does not require renaming the job; renaming
 # it during a recovery is churn with a new failure mode (a half-renamed job is
 # scheduled twice under two names).
-sched_label()  { printf 'com.gulasz101.%s' "$1"; }
+sched_label()  { case "$1" in
+                   heartbeat) printf 'dev.voitech.homelab.heartbeat' ;;
+                   *)         printf 'com.gulasz101.%s' "$1" ;;
+                 esac; }
 sched_plist()  { printf '%s/%s.plist' "$TREE_DIR/launchd/daemons" "$(sched_label "$1")"; }
 sched_script() { printf '%s/%s.sh' "$HOMELAB_LIBEXEC" "$1"; }
+# Source file in this tree. Only the heartbeat predates the <job>.sh convention.
+sched_src()    { case "$1" in
+                   heartbeat) printf '%s/homelab-heartbeat.sh' "$SCRIPT_DIR" ;;
+                   *)         printf '%s/%s.sh' "$SCRIPT_DIR" "$1" ;;
+                 esac; }
 
 print_plan() {
   say "plan: install the Air's scheduled jobs as system LaunchDaemons (ADR-107)"
@@ -81,6 +93,7 @@ print_plan() {
   say "job                     label                                    schedule"
   say "hermes-state-backup     $(sched_label hermes-state-backup)       daily 03:30 (StartCalendarInterval)"
   say "hermes-memory-watchdog  $(sched_label hermes-memory-watchdog)    hourly (StartInterval 3600)"
+  say "heartbeat               $(sched_label heartbeat)     every 60 s (StartInterval 60, ADR-113)"
   say ""
   say "steps: deploy scripts -> retire gui agent (backup kept) -> install plist ->"
   say "       bootstrap system/<label> -> kickstart -k -> assert username = $HOMELAB_USER"
@@ -93,7 +106,7 @@ preflight() {
   local job missing=0
   for job in $SCHEDULED_JOBS; do
     [ -f "$(sched_plist "$job")" ] || { warn "missing launchd/daemons/$(sched_label "$job").plist"; missing=1; }
-    [ -f "$SCRIPT_DIR/$job.sh" ] || { warn "missing bin/$job.sh"; missing=1; }
+    [ -f "$(sched_src "$job")" ] || { warn "missing $(basename "$(sched_src "$job")")"; missing=1; }
   done
   [ "$missing" -eq 0 ] || die "the repo tree is incomplete; refusing to touch the host"
 }
@@ -134,7 +147,7 @@ do_apply() {
     || die "could not install $HOMELAB_LIBEXEC/homelab-lib.sh (the watchdog imports its checks from it)"
   say "installed $HOMELAB_LIBEXEC/homelab-lib.sh"
   for job in $SCHEDULED_JOBS; do
-    install -m 0755 -o root -g wheel "$SCRIPT_DIR/$job.sh" "$(sched_script "$job")" \
+    install -m 0755 -o root -g wheel "$(sched_src "$job")" "$(sched_script "$job")" \
       || die "could not install $(sched_script "$job")"
     say "installed $(sched_script "$job")"
   done
@@ -183,6 +196,12 @@ do_apply() {
         && say "superseded ~/.hermes/scripts/$job.sh -> $SCRIPTS_BACKUP_DIR/"
     fi
   done
+  # GUL-732: the heartbeat used to be installed into ~/bin and bootstrapped into
+  # gui/<uid>. Retire that copy too — one script, one owner, one path.
+  if [ -f "$HOMELAB_HOME/bin/homelab-heartbeat.sh" ]; then
+    mv "$HOMELAB_HOME/bin/homelab-heartbeat.sh" "$SCRIPTS_BACKUP_DIR/homelab-heartbeat.sh" \
+      && say "superseded ~/bin/homelab-heartbeat.sh -> $SCRIPTS_BACKUP_DIR/"
+  fi
 
   step "asserting the domain, the user and the schedule"
   local failed=0 printed
@@ -207,6 +226,7 @@ do_apply() {
   say "1. read the logs the kickstart just wrote:"
   say "     tail -3 ~/.hermes/logs/hermes-state-backup.log"
   say "     tail -3 ~/.hermes/logs/hermes-memory-watchdog.log"
+  say "     tail -3 ~/Library/Logs/homelab/heartbeat.err.log   # heartbeat, ADR-113"
   say "2. the 03:30 run tomorrow is the real proof; a missed run still shows as"
   say "   'backup-job-not-run' from the watchdog only if the watchdog itself runs."
   [ "$failed" -eq 0 ] || die "finished with warnings: the jobs above are not scheduled"
