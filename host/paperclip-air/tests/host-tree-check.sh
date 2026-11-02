@@ -13,8 +13,9 @@
 #   * no daemon carries a UserName other than the appliance user, and no daemon
 #     has a companion LaunchAgent shipped in this tree (two owners is the
 #     defect ADR-098 forbids);
-#   * the heartbeat is a *user* agent on purpose (session loss must look like
-#     host loss to the off-host receiver);
+#   * the heartbeat is a *system* daemon that reports the session (GUL-732,
+#     ADR-113): it must run with nobody logged in, carry UserName/HOME, and beat
+#     every 60 s with a payload that says whether a GUI session exists;
 #   * every script parses (bash -n) and the installer's plan can be rendered
 #     without root (--dry-run), which is the only way CI can run it;
 #   * the tree carries no credential material.
@@ -153,38 +154,73 @@ else
   fail "bin/homelab-install-scheduled-jobs.sh missing (ADR-108)"
 fi
 
-# ---- 4. the heartbeat is a user agent on purpose -----------------------
-hb="$HERE/launchd/agents/$DOMAIN.heartbeat.plist"
+# ---- 4. the heartbeat is a system daemon that reports the session ---------
+# GUL-732 / ADR-113 superseded ADR-098 decision 6. The sender used to die with
+# the GUI session on purpose; on a headless appliance that meant it never ran at
+# all, so the alert fired forever and the leak counter never reached k8s. It now
+# runs in system/ and puts console_user, gui_session and gui_expected in the
+# beat, which is what lets the receiver split "host gone" from "session gone".
+hb="$HERE/launchd/daemons/$DOMAIN.heartbeat.plist"
 if [ -f "$hb" ]; then
-  python3 - "$hb" "$DOMAIN" "$APPLIANCE_HOME" <<'PY' || RC=1
+  python3 - "$hb" "$DOMAIN" "$APPLIANCE_HOME" "$APPLIANCE_USER" <<'PY' || RC=1
 import plistlib, sys, os
-path, domain, home = sys.argv[1:4]
+path, domain, home, user = sys.argv[1:5]
 problems = []
 def bad(m): problems.append(m)
 with open(path, 'rb') as fh:
     p = plistlib.load(fh)
 if p.get('Label') != domain + '.heartbeat':
     bad('Label must be %s.heartbeat' % domain)
-if 'UserName' in p:
-    bad('UserName must be absent: the heartbeat must die with the GUI session (that is the signal)')
+if os.path.basename(path) != domain + '.heartbeat.plist':
+    bad('filename must equal <Label>.plist')
+if p.get('UserName') != user:
+    bad('UserName must be %r: a LaunchDaemon defaults to root and the script needs the appliance home' % user)
 if p.get('StartInterval') != 60:
-    bad('StartInterval must be 60 (the off-host receiver alerts after 3 missed beats)')
+    bad('StartInterval must be 60 (the off-host receiver alerts after 7 missed beats)')
 if p.get('RunAtLoad') is not True:
-    bad('RunAtLoad must be true so a login starts beating immediately')
+    bad('RunAtLoad must be true so a boot starts beating immediately, session or not')
+env = p.get('EnvironmentVariables') or {}
+if env.get('HOME') != home:
+    bad('EnvironmentVariables.HOME must be %r: every path in the script is $HOME-based' % home)
+if 'PATH' not in env:
+    bad('EnvironmentVariables.PATH missing')
 args = p.get('ProgramArguments') or []
-if not args or not args[-1].startswith(home + '/'):
-    bad('ProgramArguments must invoke a script under %s' % home)
+want = '/usr/local/libexec/homelab/homelab-heartbeat.sh'
+if len(args) != 2 or args[0] != '/bin/bash' or args[1] != want:
+    bad('ProgramArguments must be ["/bin/bash", %r] (ADR-108: jobs run from the repo), got %r' % (want, args))
 for key in ('StandardOutPath', 'StandardErrorPath'):
     if not (p.get(key) or '').startswith(home + '/Library/Logs/homelab/'):
         bad('%s must live under %s/Library/Logs/homelab/' % (key, home))
 for m in problems:
-    print('FAIL: heartbeat agent: %s' % m)
+    print('FAIL: heartbeat daemon: %s' % m)
 sys.exit(1 if problems else 0)
 PY
-  [ "$RC" -eq 0 ] && ok "heartbeat agent plist"
+  [ "$RC" -eq 0 ] && ok "heartbeat daemon plist"
+  # two owners is the defect ADR-098 forbids and ADR-113 does not reintroduce
+  if [ -f "$HERE/launchd/agents/$DOMAIN.heartbeat.plist" ]; then
+    fail "launchd/agents/$DOMAIN.heartbeat.plist still exists: the sender would run twice"
+  fi
 else
-  fail "missing launchd/agents/$DOMAIN.heartbeat.plist (the off-host receiver needs a sender)"
+  fail "missing launchd/daemons/$DOMAIN.heartbeat.plist (the off-host receiver needs a sender)"
 fi
+
+# the payload contract: the receiver's session alert keys on these fields
+for field in console_user gui_session gui_expected; do
+  grep -q "\"$field\"" "$HERE/bin/homelab-heartbeat.sh" \
+    && ok "heartbeat payload carries $field" \
+    || fail "heartbeat payload does not carry $field (HostWatchSessionGone reads it)"
+done
+# and the session is discovered from the host, with no GUI needed to ask
+grep -q 'launchctl print "gui/\$uid"' "$HERE/bin/homelab-heartbeat.sh" \
+  && grep -q 'console_owner' "$HERE/bin/homelab-heartbeat.sh" \
+  && ok "heartbeat detects the GUI session from the host itself" \
+  || fail "heartbeat has no GUI-session detection (stat /dev/console + launchctl print gui/<uid>)"
+
+# the scheduled-jobs installer must convert it (system domain, ADR-107/113)
+sched_hb=$(bash "$HERE/bin/homelab-install-scheduled-jobs.sh" --dry-run 2>&1)
+printf '%s\n' "$sched_hb" | grep -q -- "$DOMAIN.heartbeat" \
+  && ok "scheduled installer plans the heartbeat daemon" \
+  || fail "homelab-install-scheduled-jobs.sh --dry-run does not mention $DOMAIN.heartbeat"
 
 # ---- 5. every script parses; the legacy watchdog refuses to double-run --
 for f in "$HERE"/bin/*.sh "$HERE"/tests/*.sh; do

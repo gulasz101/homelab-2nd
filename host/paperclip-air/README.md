@@ -22,13 +22,13 @@ host/paperclip-air/
 │   ├── homelab-lib.sh                     # what the Air runs: services, ports, RTOs, probes
 │   ├── homelab-find-agent.sh              # locate the LaunchAgent a service used to run under
 │   ├── homelab-install-daemons.sh         # THE installer: agents -> daemons, one owner, + rollback
-│   ├── homelab-install-scheduled-jobs.sh  # ADR-107: the two scheduled jobs -> system daemons
+│   ├── homelab-install-scheduled-jobs.sh  # ADR-107: the scheduled jobs -> system daemons
 │   ├── hermes-state-backup.sh             # nightly state.db -> MinIO (installed, never run from here)
 │   ├── hermes-memory-watchdog.sh          # hourly: memory config + backup-job health
 │   ├── homelab-service-run.sh             # exec wrapper every daemon calls (installed to /usr/local/libexec/homelab)
 │   ├── homelab-recover-appliance.sh       # break-glass: bring back anything not serving, headless
 │   ├── homelab-drill-session-loss.sh      # the drills, and the numbers they write down
-│   ├── homelab-heartbeat.sh               # 60 s heartbeat + per-component health to k3s
+│   ├── homelab-heartbeat.sh               # 60 s heartbeat: components, leaks, session -> k3s
 │   ├── kubectl-forward-probe.sh           # ad-hoc cluster access whose tunnel dies with the script
 │   └── homelab-appliance-watchdog.sh      # LEGACY (2026-10-29 interim); refuses to run under model A
 ├── launchd/
@@ -39,9 +39,9 @@ host/paperclip-air/
 │   │   ├── dev.voitech.homelab.gemini-tunnel.plist
 │   │   ├── dev.voitech.homelab.syncthing.plist
 │   │   ├── com.gulasz101.hermes-state-backup.plist      # scheduled 03:30 (ADR-107/108)
-│   │   └── com.gulasz101.hermes-memory-watchdog.plist   # scheduled hourly (ADR-107/108)
-│   └── agents/
-│       └── dev.voitech.homelab.heartbeat.plist   # user session ON PURPOSE (see ADR-098)
+│   │   ├── com.gulasz101.hermes-memory-watchdog.plist   # scheduled hourly (ADR-107/108)
+│   │   └── dev.voitech.homelab.heartbeat.plist          # every 60 s, headless (ADR-113)
+│   └── agents/                            # empty: nothing on this host may need a login any more
 ├── tests/host-tree-check.sh               # CI gate: plist shape, one owner, no secrets, plan renders
 ├── tests/kubectl-forward-probe-check.sh   # CI gate: port-forwards cannot outlive the script
 ├── RUNBOOK.md                             # what a human does when something is down
@@ -105,8 +105,10 @@ next script copies this pattern instead of the subshell.
 That is the fix. The net is `bin/homelab-heartbeat.sh`, which counts `kubectl ... port-forward`
 processes older than 15 minutes into `leaks.kubectl_port_forward`; `HostWatchOrphanKubectlForward`
 alerts when the count is above zero. The net only works if the installed sender is the one in this
-repo — check with `diff -q bin/homelab-heartbeat.sh ~/bin/homelab-heartbeat.sh`. It didn't, once
-(GUL-728): the sender here gained the leak counter and the Air kept the old copy for a day.
+repo — check with `diff -q bin/homelab-heartbeat.sh /usr/local/libexec/homelab/homelab-heartbeat.sh`.
+It didn't, once (GUL-728): the sender here gained the leak counter and the Air kept the old copy for a
+day. Since ADR-113 the installed copy is deployed by `homelab-install-scheduled-jobs.sh`, so a repo
+change plus that one command is the whole upgrade.
 
 ## First install on a fresh Air
 
@@ -128,20 +130,21 @@ sudo ./bin/homelab-install-daemons.sh --status
 #    ~/.config/homelab/services.env, retires the agent, bootstraps the daemon
 sudo ./bin/homelab-install-daemons.sh
 
-# 4. heartbeat sender (as the appliance user, NOT with sudo)
-cp launchd/agents/dev.voitech.homelab.heartbeat.plist ~/Library/LaunchAgents/
+# 4. heartbeat sender — a SYSTEM daemon since GUL-732 (ADR-113): it must beat
+#    with nobody logged in. Installed by step 6 below, not with launchctl by hand.
+#    Seed its token first, as the appliance user:
 mkdir -p ~/.config/homelab && chmod 700 ~/.config/homelab
 printf '%s' "<the token from the host-watch SOPS secret>" > ~/.config/homelab/heartbeat-token
 chmod 600 ~/.config/homelab/heartbeat-token
-mkdir -p ~/bin && install -m 0755 bin/homelab-heartbeat.sh ~/bin/homelab-heartbeat.sh
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.voitech.homelab.heartbeat.plist
-tail -5 ~/Library/Logs/homelab/heartbeat.err.log      # expect silence or "components down: ..."
+#    On a host that is supposed to have somebody logged in, also put in
+#    ~/.config/homelab/heartbeat.env:  HOMELAB_GUI_EXPECTED=1
+#    Headless (the Air): leave it unset, the default is 0 and no session alert fires.
 
 # 5. break-glass command, installed where sudo can find it
 sudo install -m 0755 bin/homelab-recover-appliance.sh /usr/local/libexec/homelab/
 sudo install -m 0755 bin/homelab-lib.sh /usr/local/libexec/homelab/
 
-# 6. the scheduled jobs (state backup + memory watchdog) — ADR-107/108
+# 6. the scheduled jobs (state backup, memory watchdog, heartbeat) — ADR-107/108/113
 sudo ./bin/homelab-install-scheduled-jobs.sh --dry-run     # the plan
 sudo ./bin/homelab-install-scheduled-jobs.sh --status      # who is scheduled where
 sudo ./bin/homelab-install-scheduled-jobs.sh               # install + prove both once

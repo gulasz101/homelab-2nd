@@ -164,6 +164,30 @@ class HeartbeatTests(unittest.TestCase):
         }), now=1000.0))
         self.assertEqual(store.leaks, {"other": 0}, "junk skipped, negatives clamped")
 
+    def test_gui_session_is_recorded_and_rendered(self):
+        # GUL-732 / ADR-113: one beat, two alerts. A host that says it expects a
+        # session but reports none is the 2026-10-29 WindowServer logout; a host
+        # that expects none is a headless appliance being honest.
+        store, _ = self._store("t")
+        store.record(json.dumps({
+            "host": "m1max", "ts": 1000, "console_user": "root",
+            "gui_session": 0, "gui_expected": 1,
+        }), now=1000.0)
+        self.assertEqual((store.gui_session, store.gui_expected), (0, 1))
+        out = hw.render_metrics([], store, now=1000.0)
+        self.assertIn('hostwatch_gui_session{host="m1max"} 0', out)
+        self.assertIn('hostwatch_gui_session_expected{host="m1max"} 1', out)
+
+    def test_gui_flags_default_to_zero_and_tolerate_junk(self):
+        store, _ = self._store("t")
+        self.assertTrue(store.record(json.dumps({"host": "paperclip-air"}), now=1000.0))
+        self.assertEqual((store.gui_session, store.gui_expected), (0, 0))
+        self.assertTrue(store.record(json.dumps({
+            "host": "paperclip-air", "gui_session": "true", "gui_expected": "banana",
+        }), now=1001.0))
+        self.assertEqual((store.gui_session, store.gui_expected), (1, 0),
+                         "a truthy flag counts, junk means 0 and never fires the alert")
+
 
 
 class MetricsTests(unittest.TestCase):
@@ -185,6 +209,8 @@ class MetricsTests(unittest.TestCase):
             "hostwatch_heartbeat_configured",
             "hostwatch_heartbeat_last_seen_timestamp_seconds",
             "hostwatch_heartbeat_rejected_total",
+            "hostwatch_gui_session",
+            "hostwatch_gui_session_expected",
             "hostwatch_up",
         ):
             self.assertIn(name, text, "%s must be exported (the alert rules key on it)" % name)

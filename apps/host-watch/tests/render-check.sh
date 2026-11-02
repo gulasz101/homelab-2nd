@@ -59,9 +59,14 @@ grep -qE '(>=|>) 420' "$RULES" \
 grep -q 'hostwatch_component_up == 0' "$RULES" \
   && ok "per-component down alert present" || fail "no per-component alert (the Hermes API rides on it)"
 grep -q 'severity: critical' "$RULES" && ok "severity labels present" || fail "alerts carry no severity label"
-for alarm in HostWatchProbeFailing HostWatchHeartbeatMissing HostWatchHeartbeatNotConfigured HostWatchComponentDown; do
+for alarm in HostWatchProbeFailing HostWatchHeartbeatMissing HostWatchHeartbeatNotConfigured HostWatchComponentDown HostWatchSessionGone; do
   grep -q "alert: $alarm" "$RULES" && ok "alert $alarm" || fail "missing alert $alarm"
 done
+# GUL-732 / ADR-113: the session alert must be gated on the host's own
+# expectation, or it fires forever on a headless appliance and gets ignored.
+grep -q 'hostwatch_gui_session_expected == 1 and hostwatch_gui_session == 0' "$RULES" \
+  && ok "session alert keys on gui_expected==1 and gui_session==0" \
+  || fail "no expectation-gated session alert (host gone vs session gone must stay separate)"
 
 # ---- 5. routing to Mattermost, secret by reference only ------------------
 AM="$WORK/am.yaml"
