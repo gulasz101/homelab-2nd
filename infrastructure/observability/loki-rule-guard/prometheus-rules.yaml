@@ -1,0 +1,74 @@
+---
+# The two metric signals that make a wedged Loki rule sidecar visible (GUL-805).
+#
+# Measured on 2026-11-02, live, which is why the expressions look like this:
+#   * loki_ruler_sync_rules_total{reason="periodic"} advances about once a minute --
+#     it is a heartbeat of the RULER POLLING its rule directory. It keeps ticking
+#     when the sidecar is wedged, because the ruler is not the broken part.
+#   * loki_ruler_config_last_reload_successful_seconds only advances when the rule
+#     files actually CHANGED and were loaded. It froze for 65 minutes on a healthy
+#     ruler while nothing rewrote a rule file.
+# So "reload timestamp frozen while periodic syncs keep ticking" is the wedge, and
+# neither number alone means anything. The third condition -- the guard ran
+# recently -- removes the false positive where the canary simply was not rewritten.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: loki-rule-delivery-alerts
+  namespace: observability
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: loki-rule-delivery
+      interval: 1m
+      rules:
+        # Primary detector is the loki-rule-guard CronJob, which posts to Mattermost
+        # at 15 minutes with the names of the rule files that are missing. This rule
+        # is the backstop for the case where the guard's own message cannot get out:
+        # 20 minutes without a rule-file reload, while the ruler keeps polling and the
+        # guard keeps running.
+        - alert: LokiRuleReloadStalled
+          expr: |
+            (time() - max(loki_ruler_config_last_reload_successful_seconds)) > 1200
+            and on()
+            (increase(loki_ruler_sync_rules_total{reason="periodic"}[15m]) > 5)
+            and on()
+            (time() - max(kube_cronjob_status_last_successful_time{namespace="observability", cronjob="loki-rule-guard"})) < 900
+          for: 5m
+          labels:
+            severity: critical
+            namespace: observability
+            alertgroup: loki-rule-guard
+          annotations:
+            summary: "Loki ruler has not loaded a rule-file change for over 20 minutes"
+            description: >-
+              The ruler is polling its rule directory (loki_ruler_sync_rules_total keeps
+              climbing) and the loki-rule-guard CronJob is running, so the canary rule has
+              been rewritten -- but no reload happened. That is the signature of the
+              rule sidecar in loki-0 failing to write /rules/fake, the same failure that
+              made the LiteLLM1017ChainFellBack rule dead on arrival on 2026-11-01.
+              Check `kubectl -n observability logs loki-0 -c loki-sc-rules --tail=20` for a
+              frozen timestamp, then
+              `kubectl -n observability rollout restart statefulset/loki`.
+
+        # Watchdog on the guard itself. Without this, a guard that dies quietly leaves a
+        # directory of green objects and no detector -- the same shape as the original bug.
+        - alert: LokiRuleGuardNotRunning
+          expr: |
+            (time() - max(kube_cronjob_status_last_successful_time{namespace="observability", cronjob="loki-rule-guard"}) > 1800)
+            or
+            (absent(kube_cronjob_status_last_successful_time{namespace="observability", cronjob="loki-rule-guard"})
+              and (time() - max(kube_cronjob_created{namespace="observability", cronjob="loki-rule-guard"})) > 1800)
+          for: 5m
+          labels:
+            severity: warning
+            namespace: observability
+            alertgroup: loki-rule-guard
+          annotations:
+            summary: "loki-rule-guard has not completed a run for over 30 minutes"
+            description: >-
+              The only detector for a silently wedged Loki rule sidecar is not running, so
+              nothing currently proves that merged Loki rules reach the ruler.
+              `kubectl -n observability get jobs -l app.kubernetes.io/name=loki-rule-guard`
+              and read the newest job's log.
