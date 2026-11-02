@@ -1,7 +1,7 @@
 ---
 # Flux image automation for Riff Radar (same shape as apps/star-office/).
 #
-# The package is private (ADR-101), so the ImageRepository authenticates with the
+# The package is private (ADR-115), so the ImageRepository authenticates with the
 # platform pull credential (ADR-103). image-reflector-controller can only read a
 # secretRef from its own namespace, so `ghcr-pull` exists in flux-system too —
 # same file, same bytes as the kubelet's copy.
