@@ -53,6 +53,35 @@ data:
               description: "{{ $labels.pod }} logged 'Go usage limit exceeded' in the last 15 minutes — the whole OpenCode Zen Go account is walled until the provider's weekly window resets. All Go-gateway models (qwen3.8-flash[(-go)]/deepseek-v4.1-flash[(-go)]) are down at once; the cross-account openrouter fallback (ADR-068) is the only rescue path. Runner sessions will silently 429 their turns if the fallback fails."
               runbook_url: "https://grafana.voitech.dev/explore?orgId=1&left=%7B%22datasource%22%3A%22Loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bk8s_namespace_name%3D%5C%22llm-hub%5C%22%7D%20%7C%3D%20%5C%22Go%20usage%20limit%20exceeded%5C%22%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-3h%22%2C%22to%22%3A%22now%22%7D%7D"
 
+          # GUL-783 (2026-11-02): the whole fleet's executor primary is
+          # deepseek-v4.1-flash-1017-ollama (GUL-769). A fallback off it is a
+          # fleet-wide event, not noise, and until this rule existed it was only
+          # visible by reading the proxy log. Two lines identify it, and either one
+          # is enough: the failing deployment is logged by upstream id
+          # (`litellm.acompletion(model=openai/deepseek-v4.1-flash:1017) Exception`,
+          # which names the SOURCE group, unlike "Falling back to model_group = X"),
+          # or the request reached the paid DeepSeek hop, whose group name no other
+          # chain in this file targets. Matching `Falling back to
+          # model_group = deepseek-v4.1-flash-ollama` alone would also fire for the
+          # qwen3.8-flash chains, so it is deliberately not used.
+          - alert: LiteLLM1017ChainFellBack
+            expr: |
+              sum by (pod, namespace) (
+                count_over_time(
+                  {k8s_namespace_name="llm-hub", k8s_pod_name=~"litellm.*"}
+                    |~ "model=openai/deepseek-v4.1-flash:1017. Exception|Falling back to model_group = deepseek-v4.1-flash-1017-ds"
+                  [10m]
+                )
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              namespace: llm-hub
+            annotations:
+              summary: "The 1017 chain fell back: the fleet's primary route failed"
+              description: "{{ $labels.pod }} logged a failure of the 1017 primary (upstream id deepseek-v4.1-flash:1017) or a fallback onto the paid deepseek-v4.1-flash-1017-ds hop in the last 10 minutes. Chain order is deepseek-v4.1-flash-ollama (same Ollama allowance, no extra cost) then deepseek-v4.1-flash-1017-ds (paid DeepSeek API, does not serve forced tool calls). One fallback is a rescued request; a sustained one means the whole fleet is running on the backstop and the paid key is draining (see the GUL-662 balance guard). Check the litellm log around the first failure for the provider error."
+              runbook_url: "https://grafana.voitech.dev/explore?orgId=1&left=%7B%22datasource%22:%22Loki%22,%22queries%22:%5B%7B%22refId%22:%22A%22,%22expr%22:%22%7Bk8s_namespace_name%3D%5C%22llm-hub%5C%22%7D%20%7C%3D%20%5C%22deepseek-v4.1-flash:1017%5C%22%22%7D%5D,%22range%22:%7B%22from%22:%22now-3h%22,%22to%22:%22now%22%7D%7D"
+
           - alert: OpenChamberBridgeEmptySession
             expr: |
               sum by (pod, namespace) (

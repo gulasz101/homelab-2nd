@@ -767,6 +767,40 @@ spec:
         - {"deepseek-v4.1-flash-go": ["deepseek-v4.1-flash-ollama"]}
         - {"qwen3.8-flash-go": ["deepseek-v4.1-flash-ollama"]}
         - {"hindsight-consolidation-go": ["deepseek-v4.1-flash-go", "deepseek-v4.1-flash-ollama"]}
+        # GUL-783 (2026-11-02): the fleet's executor primary is
+        # deepseek-v4.1-flash-1017-ollama (GUL-769) and it appeared in no chain at
+        # all, as a source or as a target. So Ollama unloads the model, the
+        # `:1017` snapshot tag vanishes on the next weekly model sync, or the
+        # account gets walled, and every agent in the company gets a hard error on
+        # its first call instead of a degraded answer. The same hole existed while
+        # everything was pinned to `-1017-ds` (GUL-593); it just became the only
+        # point of failure. Two hops, cheapest billing identity first:
+        #   1. deepseek-v4.1-flash-ollama - same Ollama Cloud allowance and the
+        #      unversioned tag of the same family, so it costs nothing extra and it
+        #      rescues the realistic failure: the snapshot tag moves, one model id
+        #      goes bad, or the model is unloaded. Measured 2026-11-02: it answers
+        #      as itself and serves a forced tool call exactly as the primary does.
+        #   2. deepseek-v4.1-flash-1017-ds - DeepSeek's own API on Wojtek's paid
+        #      key (GUL-591), a different vendor AND a different balance, the only
+        #      hop that survives an Ollama account wall. Measured 2026-11-02: it
+        #      answers chat, and it serves a forced tool_choice ONLY when the
+        #      caller asks for thinking off (`reasoning_effort: none`, pending ADR
+        #      GUL-690); with thinking on the upstream rejects the tool_choice with
+        #      400 "Thinking mode does not support this tool_choice". None of the
+        #      executor lanes send `none` today, so in practice this hop rescues
+        #      plain turns, and a 400 there is no worse than the hard failure it
+        #      replaces. Paid traffic fires only when both Ollama routes are down
+        #      and the GUL-662 balance guard pages the owner within the hour if it
+        #      starts draining: a small leak beats a dead fleet at 09:00.
+        #      ADR (pending: litellm-1017-route-has-a-fallback-chain).
+        # The chain on `-1017-ds` is the same judgement backwards: if the paid key
+        # errors, the balance empties, or the route is retired, the fleet drops
+        # back onto the allowance it was moved onto (GUL-769) instead of going
+        # dark. The terminal hop is the unversioned Ollama tag for the case where
+        # the `:1017` tag itself is what broke.
+        # gpt-oss-120b-freellmapi stays out of every chain (ADR-091).
+        - {"deepseek-v4.1-flash-1017-ollama": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-1017-ds"]}
+        - {"deepseek-v4.1-flash-1017-ds": ["deepseek-v4.1-flash-1017-ollama", "deepseek-v4.1-flash-ollama"]}
         content_policy_fallbacks:
         - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama"]}
         - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama"]}
