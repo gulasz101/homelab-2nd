@@ -4,7 +4,7 @@
 - **Date**: 2026-11-01
 - **Issue**: GUL-757 (parent GUL-749 — "drop Cloudflare auth" for the demo)
 - **Supersedes**: decision 2 of ADR-102 (hostname-wide Cloudflare Access in front of the demo). Decisions 1 (SQLite on `local-path` + nightly MinIO backup), 3 (private image) and 4 (observability) of ADR-102 stand.
-- **Related**: ADR-101/ADR-103 (private image, platform pull credential), ADR-032 (tunnels created via the Cloudflare API), ADR-005 (per-namespace observability), `apps/riffradar/riffradar-tunnel-ingress-configmap.yaml`, `apps/riffradar/riffradar-deployment.yaml`, tracking note `homelab/tracking/2026-11-01-riffradar-public-game-admin-gated.md`
+- **Related**: ADR-115/ADR-103 (private image, platform pull credential), ADR-032 (tunnels created via the Cloudflare API), ADR-005 (per-namespace observability), `apps/riffradar/riffradar-tunnel-ingress-configmap.yaml`, `apps/riffradar/riffradar-deployment.yaml`, tracking note `homelab/tracking/2026-11-01-riffradar-public-game-admin-gated.md`
 
 ## Context
 
