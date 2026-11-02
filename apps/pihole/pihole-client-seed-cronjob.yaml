@@ -1,0 +1,91 @@
+---
+# Pi-hole CLIENT ROSTER seeder (GUL-712) — closes the rebuild gap the deny seeder
+# (GUL-392) left open.
+#
+# The curfew CronJobs converge GROUP MEMBERSHIP of deny entries. The deny seeder
+# creates those entries. Neither one restores WHICH DEVICE IS IN WHICH GROUP —
+# that roster lived only in the live FTL database, so after a rebuild every
+# family device fell back to group 0 (Default, porn list only) and the
+# 21:00-08:00 Instagram curfew protected nobody, silently.
+#
+#   apps/pihole/pihole-clients-seeds.yaml = the source of truth (16 rows)
+#   pihole-client-seed (this job, 05:10)  = creates a missing row, repairs the
+#                                           comment and groups of an existing
+#                                           one, never deletes, refuses an empty
+#                                           seed, then reads every row back.
+#
+# 05:10 Europe/Warsaw = ten minutes after the deny seeder, still outside the
+# 21:00-08:00 window in which entry groups are armed. Repairing CLIENT groups
+# there cannot disarm anything: the curfew moves the groups of deny ENTRIES,
+# never of a client (see the seed file header). Re-running by hand is safe and
+# idempotent:
+#   kubectl -n pihole create job --from=cronjob/pihole-client-seed seed-now
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pihole-client-seed
+  namespace: pihole
+  labels:
+    app.kubernetes.io/name: pihole-client-seed
+    app.kubernetes.io/part-of: pihole-family-shield
+spec:
+  schedule: "10 5 * * *"
+  timeZone: Europe/Warsaw
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: pihole-client-seed
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: client-seed
+              image: python@sha256:f3ebba2ace255c93267a0278da88c7f1044432991abc4e6ad20d22e34dd0f8ee
+              imagePullPolicy: IfNotPresent
+              command: ["python3", "/scripts/pihole_curfew.py", "seed-clients"]
+              env:
+                - name: PIHOLE_API
+                  value: "http://192.168.1.179:80/api"
+                - name: PIHOLE_CLIENT_SEED_FILE
+                  value: "/seeds/clients.json"
+                - name: PIHOLE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: pihole-app-secrets
+                      key: password
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+                - name: seeds
+                  mountPath: /seeds
+                  readOnly: true
+          volumes:
+            - name: script
+              configMap:
+                name: pihole-curfew-script
+            - name: seeds
+              configMap:
+                name: pihole-client-seeds

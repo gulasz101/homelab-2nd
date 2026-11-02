@@ -1,0 +1,101 @@
+---
+# Weekly Pi-hole CLIENT ROSTER audit (GUL-712).
+#
+# Apple rotates private Wi-Fi MACs. When a device's MAC rotates, its roster row
+# becomes a dead row and the device silently drops out of the group that carries
+# the 21:00-08:00 curfew — nobody notices until someone says "Instagram still
+# works". The only detector is a diff between the roster and live traffic, and
+# that used to be run by hand every few weeks.
+#
+# What it does (read-only, Monday 09:00 Europe/Warsaw, so the weekend is in the
+# window and the report is read with the first coffee):
+#   - GET /api/clients/_suggestions  = devices that queried recently with NO row
+#     (this is the device inventory; /api/network/devices returns a short list
+#     and would declare live devices non-existent);
+#   - reports every one of those with traffic inside PIHOLE_AUDIT_WINDOW_HOURS
+#     to Mattermost, with vendor, LAN address and the age of its last query;
+#   - compares the seeded roster against the live one: a seeded row in a
+#     required group (default 10, Sylwia's curfew group) that has vanished or
+#     changed groups exits 2 -> PiholeClientAuditDrift alert;
+#   - a device that is merely away is reported as quiet, never as an alarm.
+#
+# Manual run:
+#   kubectl -n pihole create job --from=cronjob/pihole-client-audit audit-now
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pihole-client-audit
+  namespace: pihole
+  labels:
+    app.kubernetes.io/name: pihole-client-audit
+    app.kubernetes.io/part-of: pihole-family-shield
+spec:
+  schedule: "0 9 * * 1"
+  timeZone: Europe/Warsaw
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: pihole-client-audit
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: client-audit
+              image: python@sha256:f3ebba2ace255c93267a0278da88c7f1044432991abc4e6ad20d22e34dd0f8ee
+              imagePullPolicy: IfNotPresent
+              command: ["python3", "/scripts/pihole_curfew.py", "audit-clients"]
+              env:
+                - name: PIHOLE_API
+                  value: "http://192.168.1.179:80/api"
+                - name: PIHOLE_CLIENT_SEED_FILE
+                  value: "/seeds/clients.json"
+                - name: PIHOLE_AUDIT_WINDOW_HOURS
+                  value: "24"
+                - name: PIHOLE_AUDIT_REQUIRED_GROUPS
+                  value: "10"
+                - name: PIHOLE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: pihole-app-secrets
+                      key: password
+                - name: MATTERMOST_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: pihole-roster-audit-webhook-url
+                      key: url
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+                - name: seeds
+                  mountPath: /seeds
+                  readOnly: true
+          volumes:
+            - name: script
+              configMap:
+                name: pihole-curfew-script
+            - name: seeds
+              configMap:
+                name: pihole-client-seeds
