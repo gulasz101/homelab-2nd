@@ -309,3 +309,41 @@ printf '%s' '<that value>' > ~/.config/homelab/heartbeat-token && chmod 600 ~/.c
   schedule that fires.
 - **After a macOS major upgrade,** re-run `--status` and one drill: system-domain launchd semantics
   and `UserName` daemons' access to the user's home are the things that break.
+
+## 7. Moving the whole fleet between models (GUL-769)
+
+Every agent's primary model is pinned in four places, and they have to agree or the fleet ends up
+half on a subscription and half on a metered API. `bin/repin-fleet-model.sh` moves all of them:
+
+| surface | where |
+|---|---|
+| Hermes root (Bill Cipher) | `~/.hermes/config.yaml` → `model.default` |
+| Hermes profiles | `~/.hermes/profiles/*/config.yaml` → `model.default` |
+| Paperclip runners | `adapterConfig.model`, via `PATCH /agents/:id` on the local API |
+| OpenCode CLI | `~/.config/opencode/opencode.json` → `model` **and** `small_model` |
+
+```bash
+R=/usr/local/libexec/homelab/repin-fleet-model.sh
+$R --to-ollama --dry-run     # what would move, changes nothing
+$R --to-ollama               # onto the Ollama Pro subscription; probes first and
+                             # refuses if the weekly allowance is still walled
+$R --to-ds                   # back onto DeepSeek's metered API; never waits
+tail -40 ~/Library/Logs/homelab/repin-fleet-model.log
+cat ~/Library/Logs/homelab/repin-fleet-model.status.json
+```
+
+Things worth knowing before you run it:
+
+- **`--to-ds` is the escape hatch** and is always safe: the metered API has no allowance to exhaust.
+  If the fleet starts throwing 429s mid-week, that one command ends it.
+- **Every edit is backed up** next to the original as `*.bak-gul769-<ts>`, and the script restores
+  the backup itself if the result is not exactly a one-line change to the key it aimed at.
+- **No gateway restart.** The Hermes API server re-reads `config.yaml` per request, so a
+  `model.default` change lands on the next run. Restarting `ai.hermes.gateway` hits every profile at
+  once and is the owner's call (house rule), never this script's.
+- **`-ollama` has a 128k context window, `-ds` has 1M.** Nothing in the fleet prompts anywhere near
+  128k today, but a long Pi session is where that would first bite.
+- **Claude Code is deliberately not touched** — it spends the Anthropic subscription, a different
+  pocket (ADR-106).
+- Exit codes: `0` repinned · `2` route walled, fleet left where it was · `1` **partial — the fleet is
+  split, fix it by hand.**
