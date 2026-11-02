@@ -33,7 +33,7 @@ spec:
         app.kubernetes.io/name: riffradar
         app.kubernetes.io/component: app
     spec:
-      # Private GHCR package (ADR-101/ADR-103): the kubelet needs the platform
+      # Private GHCR package (ADR-115/ADR-103): the kubelet needs the platform
       # dockerconfigjson Secret from apps/ghcr-pull/ghcr-pull.sops.yaml. Shared
       # with every other private image, so a new namespace is a script run, not
       # a new GitHub token.
