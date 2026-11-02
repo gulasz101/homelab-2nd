@@ -8,7 +8,12 @@ metadata:
   name: host-watch-mattermost-alerts
   namespace: host-watch
   labels:
-    release: prometheus-stack
+    # The Alertmanager CR selects AlertmanagerConfigs by label
+    # release=kube-prometheus-stack; the Prometheus CR selects rules by
+    # release=prometheus-stack. Two different selectors, and this file had the
+    # rules' label, so the operator ignored it and every host-watch alert fired
+    # into a void (GUL-643).
+    release: kube-prometheus-stack
 spec:
   route:
     receiver: host-watch-mattermost
