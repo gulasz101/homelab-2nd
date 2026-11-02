@@ -3,6 +3,7 @@
 - **Status**: Pending
 - **Date**: 2026-11-02
 - **Issue**: GUL-787 (unblocks GUL-476, GUL-143)
+- **Approved**: the owner accepted the merge card `3ff1b734` on 2026-11-02 ("Merge it")
 - **Related**: ADR-094 (reflect and the refresh leave the FreeLLMAPI pool), ADR-106 (the fleet runs on
   DeepSeek direct), ADR-109 (the DeepSeek balance is watched), GUL-769 (the fleet left the paid key),
   GUL-690 / PR #116 (LiteLLM 1.106.6)
