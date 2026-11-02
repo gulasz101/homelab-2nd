@@ -1,6 +1,6 @@
-# In-house app images are built and smoked in GitHub Actions, published to private GHCR on a version tag
+# ADR-115: In-house app images are built and smoked in GitHub Actions, published to private GHCR on a version tag
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-10-29
 - **Issue**: GUL-549 (first application: Riff Radar), GUL-262
 - **Deciders**: Wojtek (owner), Andrzej (CTO, homelab-2nd)

@@ -1,6 +1,6 @@
-# ADR: RiffRadar's game is public on purpose, its admin panel is not
+# ADR-118: RiffRadar's game is public on purpose, its admin panel is not
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-01
 - **Issue**: GUL-757 (parent GUL-749 — "drop Cloudflare auth" for the demo)
 - **Supersedes**: decision 2 of ADR-102 (hostname-wide Cloudflare Access in front of the demo). Decisions 1 (SQLite on `local-path` + nightly MinIO backup), 3 (private image) and 4 (observability) of ADR-102 stand.

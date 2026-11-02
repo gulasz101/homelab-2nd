@@ -1,6 +1,6 @@
-# ADR: The Pi-hole client roster is declarative in Git, and a weekly audit names the devices nobody registered
+# ADR-117: The Pi-hole client roster is declarative in Git, and a weekly audit names the devices nobody registered
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-10-31
 - **Issue**: GUL-712 (follow-up to GUL-711 / GUL-392)
 - **Related**: ADR-022 (family shield), ADR-038 (curfew scope), the deny-entry seeder from GUL-392
