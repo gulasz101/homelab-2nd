@@ -77,7 +77,10 @@ sched_label()  { case "$1" in
                    *)         printf 'com.gulasz101.%s' "$1" ;;
                  esac; }
 sched_plist()  { printf '%s/%s.plist' "$TREE_DIR/launchd/daemons" "$(sched_label "$1")"; }
-sched_script() { printf '%s/%s.sh' "$HOMELAB_LIBEXEC" "$1"; }
+sched_script() { case "$1" in
+                   heartbeat) printf '%s/homelab-heartbeat.sh' "$HOMELAB_LIBEXEC" ;;
+                   *)         printf '%s/%s.sh' "$HOMELAB_LIBEXEC" "$1" ;;
+                 esac; }
 # Source file in this tree. Only the heartbeat predates the <job>.sh convention.
 sched_src()    { case "$1" in
                    heartbeat) printf '%s/homelab-heartbeat.sh' "$SCRIPT_DIR" ;;
@@ -217,6 +220,16 @@ do_apply() {
       || { warn "$label does not report username = $HOMELAB_USER"; failed=1; }
     if [ -f "$HOMELAB_AGENT_DIR/$label.plist" ]; then
       warn "$label still has a LaunchAgent — TWO OWNERS"
+      failed=1
+    fi
+    # GUL-732: a plist pointing at a script this installer does not deploy is
+    # the quiet version of "not installed" — launchd runs /bin/bash against a
+    # missing file, exits 127 every 60 s and only the log knows.
+    prog=$(/usr/bin/plutil -extract ProgramArguments json -o - "$HOMELAB_DAEMON_DIR/$label.plist" 2>/dev/null \
+      | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)[-1])' 2>/dev/null)
+    want=$(sched_script "$job")
+    if [ "$prog" != "$want" ]; then
+      warn "$label runs '$prog' but this installer deployed '$want'"
       failed=1
     fi
     say "ok   $label loaded in system/, user $HOMELAB_USER, no agent copy"
