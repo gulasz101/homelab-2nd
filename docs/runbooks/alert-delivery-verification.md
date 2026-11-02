@@ -11,10 +11,13 @@ different defects both present as "the hook is dead", and only one of them is re
    `alertmanagerConfigSelector` is never loaded. Nothing errors. The rule fires, the pod is green,
    the channel stays quiet. Seen on GUL-643 (`release=prometheus-stack` instead of
    `kube-prometheus-stack`); `scripts/check_alert_delivery.py` still finds one live instance of it.
-2. **The client trap.** `https://chat.voitech.dev` sits behind Cloudflare, which answers **403** to
-   Python's TLS fingerprint. A probe written with `requests` or `urllib` reports a perfectly healthy
-   hook as dead. On GUL-712 that cost a false "Pi-hole alerts reach nobody" conclusion, and the
-   follow-up ticket GUL-726 opened to repoint a webhook that had never been broken.
+2. **The client trap.** `https://chat.voitech.dev` sits behind Cloudflare, whose Browser Integrity
+   Check answers **403** (`error code: 1010`) to the stock Python `urllib` User-Agent
+   (`Python-urllib/<ver>`). A probe written with `urllib` reports a perfectly healthy hook as dead.
+   On GUL-712 that cost a false "Pi-hole alerts reach nobody" conclusion, and the follow-up ticket
+   GUL-726 opened to repoint a webhook that had never been broken. Measurements, the verdict and the
+   Cloudflare-side explanation live in `docs/cloudflare-urllib-403.md`; `scripts/probe-url.sh` is the
+   probe that gets it right.
 
 ## Step 1: static audit (read-only, no messages sent)
 
@@ -51,7 +54,7 @@ Reading status codes from a Mattermost incoming webhook:
 | `200 ok` | hook is valid, message delivered |
 | `400 web.incoming_webhook.decode.app_error` | hook reached, body was not a JSON or form payload with a `text` field |
 | `400 web.incoming_webhook.general.app_error` | hook reached; payload had no usable `text` (also what a bogus token returns, so this one proves nothing) |
-| `403` from Python, `200` from curl | Cloudflare TLS fingerprint block, **not** a dead hook |
+| `403` from Python `urllib`, `200` from curl | Cloudflare Browser Integrity Check on the UA, **not** a dead hook. Confirm with `curl -A 'Python-urllib/3.15'` (403) against a plain curl (200) |
 | `404` | no such hook on this Mattermost |
 
 ## Step 3: prove delivery end to end with a real alert

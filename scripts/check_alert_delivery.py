@@ -9,9 +9,11 @@ Two silent failures have bitten us on alert routing:
    CR's ``alertmanagerConfigSelector`` is simply not loaded. The rules fire, the pods
    look green, and no message is ever sent. (GUL-643)
 2. The client trap. ``https://chat.voitech.dev`` sits behind Cloudflare, which answers
-   **403** to Python's TLS fingerprint. A probe written with ``requests``/``urllib``
-   reports a perfectly healthy Mattermost hook as dead, and somebody "fixes" a
-   webhook that was never broken. (GUL-712 finding, disproved on GUL-726)
+   **403** to the stock Python ``urllib`` User-Agent (``Python-urllib/<ver>``,
+   Cloudflare Browser Integrity Check, body ``error code: 1010``). A probe written
+   with ``urllib`` reports a perfectly healthy Mattermost hook as dead, and
+   somebody "fixes" a webhook that was never broken. (GUL-712 finding, disproved on
+   GUL-726; measured properly on GUL-785, see docs/cloudflare-urllib-403.md)
 
 Both checks are read-only. The hook probe is opt-in (``--probe``) because it posts a
 real message to the channel.
@@ -156,9 +158,10 @@ def generated_config(am: dict) -> str | None:
 def probe(value: str, label: str) -> tuple[str, int]:
     """POST one real message with curl. Returns (status, http code).
 
-    curl on purpose: Cloudflare blocks Python's TLS fingerprint with a 403 that looks
-    exactly like a dead webhook. Using anything but curl here re-creates the bug this
-    script exists to catch.
+    curl on purpose, with its own stock User-Agent: Cloudflare's Browser Integrity
+    Check answers 403 to the stock Python ``urllib`` signature, and that 403 looks
+    exactly like a dead webhook. Using urllib here re-creates the bug this script
+    exists to catch. See docs/cloudflare-urllib-403.md.
     """
     text = f"probe from scripts/check_alert_delivery.py ({label}) at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}"
     body = json.dumps({"text": text})
