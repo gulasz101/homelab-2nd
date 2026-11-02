@@ -178,8 +178,47 @@ spec:
         # `openai` and LiteLLM speaks the OpenAI API
         # (memory_engine.py: reflect provider falls back to the memory provider).
         HINDSIGHT_API_REFLECT_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
-        HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b-ollama
+        # GUL-787 (2026-11-02): reflect moves off `gpt-oss-120b-ollama` to
+        # `deepseek-v4.1-flash-1017-ollama`, the route the rest of the fleet
+        # already runs on. GUL-476 spent two days on the theory that the fix
+        # was `-1017-ds` plus `{"thinking":{"type":"disabled"}}`; that is the
+        # metered DeepSeek API, and at 2.17M input tokens a day it re-opened
+        # the $9-19/month bill GUL-769 had just paid a night's work to close.
+        #
+        # Measured on this route before the change, from inside this pod, at
+        # the size reflect actually sends (20,622 input tokens):
+        #   10/10 forced `search_mental_models` -> finish_reason=tool_calls,
+        #   parseable JSON arguments, 0.84-1.45 s; the full loop
+        #   (search -> read_mental_models -> closing synthesis at
+        #   tool_choice:auto) completes on the same route.
+        #
+        # Two things differ from the `-ds` route and both are load-bearing:
+        #   1. `thinking` is NOT accepted here. The route is
+        #      `openai/deepseek-v4.1-flash:1017` on https://ollama.com/v1, and
+        #      LiteLLM's openai/ provider answers 400 UnsupportedParamsError for
+        #      an unknown parameter instead of dropping it - copying the `-ds`
+        #      extra body over would fail every reflect call, not some. Do not
+        #      add HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY here.
+        #   2. Thinking is ON by default (6 of 10 probes returned
+        #      reasoning_content, and a small max_tokens comes back
+        #      finish_reason=length with empty content). `reasoning_effort:
+        #      none` is the knob that turns it off on this route: 5/5 tool
+        #      calls, 0/5 reasoning_content.
+        # This is a per-operation setting (ENV_REFLECT_LLM_REASONING_EFFORT),
+        # so the H2-306 revert - which was about retain/consolidation on the
+        # `:nitro` route rejecting `reasoning_effort` - does not apply.
+        #
+        # Known trade, recorded rather than hidden: Ollama's OpenAI-compatible
+        # layer IGNORES `tool_choice` (a call with tool_choice:"none" and one
+        # naming a nonexistent tool both still returned search_mental_models).
+        # On this route the reflect ladder is followed because the reflect
+        # prompt states the plan, not because the API pins the first turns.
+        HINDSIGHT_API_REFLECT_LLM_MODEL: deepseek-v4.1-flash-1017-ollama
+        HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT: none
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
+        # Unchanged on purpose (GUL-787): the refresh stayed on
+        # `gpt-oss-120b-ollama`, 0 failed of 139 measured on 2026-10-29. Only
+        # reflect was failing.
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-ollama
         # Ollama answers a reflect call in ~2 s. The budgets stay generous on
         # purpose: a cold start or an upstream queue is cheaper to wait out
