@@ -8,7 +8,15 @@ metadata:
   name: host-watch-mattermost-alerts
   namespace: host-watch
   labels:
-    release: prometheus-stack
+    # GUL-643, still unfixed on main: the Alertmanager only picks up an
+    # AlertmanagerConfig whose label matches its own
+    # alertmanagerConfigSelector (release=kube-prometheus-stack, verified on the
+    # live Alertmanager CR). This said `release: prometheus-stack` — the
+    # Prometheus ruleSelector — so the CR existed in the namespace, looked
+    # healthy, and was never loaded: host-watch alerts fired in Prometheus and
+    # reached nobody. Every other namespace (pihole, arr-stack, ...) carries the
+    # right label, which is why only host-watch was silent.
+    release: kube-prometheus-stack
 spec:
   route:
     receiver: host-watch-mattermost
