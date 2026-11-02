@@ -1,6 +1,10 @@
 ---
 # AlertmanagerConfig: route pihole namespace alerts to the Mattermost webhook.
 # The webhook secret must live in the same namespace as this AlertmanagerConfig.
+# The hook itself is the same Mattermost incoming webhook as the observability one
+# (identical value, proven live 2026-11-01). A 403 from a Python client is
+# Cloudflare blocking the TLS fingerprint, not a dead hook: probe with curl.
+# See docs/runbooks/alert-delivery-verification.md.
 apiVersion: monitoring.coreos.com/v1alpha1
 kind: AlertmanagerConfig
 metadata:
