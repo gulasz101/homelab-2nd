@@ -1,6 +1,6 @@
-# The agent fleet runs on Ollama Cloud routes, not on the OpenCode Go allowance
+# ADR-113: The agent fleet runs on Ollama Cloud routes, not on the OpenCode Go allowance
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-10-29
 - **Issue**: GUL-581
 - **Related**: ADR-085 (LiteLLM carries paid subscriptions only), ADR-094 (Hindsight reflect on a paid Ollama route), ADR-075 (Paperclip org and agent runtimes), GUL-122 / GUL-480 (Pi sends `reasoning_effort`)

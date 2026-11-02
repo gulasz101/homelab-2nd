@@ -1,6 +1,6 @@
-# ADR: A headless Mac appliance runs FileVault off, or it does not come back on its own
+# ADR-114: A headless Mac appliance runs FileVault off, or it does not come back on its own
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-01
 - **Issue**: GUL-745
 - **Related**: ADR-073 (Hermes runs on the M1 Air), ADR-107 (scheduled jobs are system daemons), ADR-108 (backups are daemons), `host/paperclip-air/RUNBOOK.md` step 3 (auto-login is only proven by an attended reboot)
