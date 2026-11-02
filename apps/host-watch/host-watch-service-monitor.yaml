@@ -1,7 +1,12 @@
 ---
-# Prometheus scrapes /metrics every 30 s. Two scrapes per probe interval means a
-# 60 s probe is never reported late, and `up{namespace="host-watch"}` doubles as
-# the "the watchdog itself is dead" signal.
+# Prometheus scrapes /metrics every 30 s. One scrape per 60 s probe interval is
+# enough to report every probe result on time; the endpoint is cheap and this is
+# the "the watchdog itself is dead" signal via `up{namespace="host-watch"}`.
+#
+# The selector names the metrics face explicitly. Both Services in this namespace
+# carry app.kubernetes.io/name=host-watch, so a name-only selector scraped the
+# heartbeat-ingest NodePort as well and every metric existed twice — which turned
+# every host-watch alert into two identical alert instances (GUL-643).
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -14,6 +19,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: host-watch
+      app.kubernetes.io/component: metrics
   endpoints:
     - port: http
       path: /metrics
