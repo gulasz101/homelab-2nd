@@ -1,6 +1,6 @@
-# ADR: The weekly model sync stops at a pull request, never at a pushed main
+# ADR-119: The weekly model sync stops at a pull request, never at a pushed main
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-01
 - **Issue**: GUL-721
 - **Related**: ADR-093 (the owner keeps the merge button), ADR-111 (ADR numbers are allocated at adoption), GUL-302 (CI is one job named `check`)
