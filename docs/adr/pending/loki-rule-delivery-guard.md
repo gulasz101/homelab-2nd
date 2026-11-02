@@ -72,8 +72,10 @@ break.
 
 ## Consequences
 
-- A merged Loki rule that never reaches the ruler is reported in Mattermost within ~15 minutes
-  instead of never. A rule ConfigMap landing with no rule group is reported at the next run (≤5 min).
+- A merged Loki rule that never reaches the ruler is reported in Mattermost within **15–20 minutes**
+  (15-minute staleness threshold, five-minute check interval — measured end to end: last successful
+  rule-file write 11:40:01Z, page at 12:00:01Z). A rule ConfigMap landing with no rule group is
+  reported at the next run (≤5 min): a test ConfigMap reached the ruler in 48 s and left it in 48 s.
 - One extra CronJob pod every 5 minutes in `observability`, ~10 mCPU and 32 MiB for a few seconds, plus
   one small ConfigMap write per run. The ConfigMap write also gives the ruler a rule change to reload
   every cycle, so "rule files were reloaded" becomes a live signal rather than a monthly accident.
