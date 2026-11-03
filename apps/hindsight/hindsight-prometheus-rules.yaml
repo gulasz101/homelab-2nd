@@ -143,12 +143,78 @@ spec:
         - alert: HindsightOperationFailures
           # Operation-level failures: extraction (retain), retrieval (recall),
           # reasoning (reflect) and async worker completions. `source="worker"`
-          # failures mean retries were exhausted. More than two failures in an
-          # hour is abnormal for one user; a single blip must not page.
+          # failures mean retries were exhausted.
+          #
+          # A SHARE, NOT A COUNT (GUL-866). This rule used to be
+          # `increase(...{success="false"}[1h]) > 2`, which measures bursts and is
+          # structurally blind to a steady trickle: on 28 Oct reflect lost ~24% of
+          # its calls (8 failures in a 16 h sample) at ~0.5 failures/hour, so the
+          # count never crossed 2 in a quiet hour while a quarter of the answers
+          # were missing. A count answers "how many"; the question is "what
+          # fraction".
+          #
+          # TWO WINDOWS, ONE RATIO, ONE FLOOR:
+          #   * 1h  > 5% of at least 10 operations - "it is failing right now" for
+          #     an operation with real volume (retain and consolidation run at tens
+          #     of operations an hour here).
+          #   * 6h  > 5% of at least 20 operations - "it has been losing calls"
+          #     for a quiet operation. reflect runs at roughly 6 calls/hour, and a
+          #     1 h window on 6 operations cannot tell 1 failure from 6 noise; six
+          #     hours accumulate ~36 operations, so the same 24% trickle becomes
+          #     a measurable share. The 20-operation floor means a single lost call
+          #     never pages at any volume (1 of 20 is exactly 5%, not above it).
+          #
+          # Behaviour on the real 28 Oct series (replayed from Prometheus, no
+          # guessing): the 1 h arm alone would have fired in the 16:00 and 18:00
+          # hours only; with the 6 h arm the alert enters firing at 13:00 and stays
+          # up through 23:00 - the whole sustained-loss window the count rule spent
+          # green. `for: 15m` still damps a single evaluation blip, and a resolved
+          # incident keeps the alert up until the 6 h window drains, which is what
+          # "6 h of degraded reflect" should look like. A low-traffic operation is
+          # NOT paged for one failure in six: 1 of 6 is 16.7% but 6 < 10 in the
+          # hour arm, and 1 of ~36 over the six-hour window is 2.8%.
+          # `and` keeps the ratio as the sample value, so `$value` in the
+          # annotations is the failing share in both arms.
           expr: |
-            sum by (operation) (
-              increase(hindsight_operation_operations_total{success="false"}[1h])
-            ) > 2
+            (
+              (
+                sum by (operation) (
+                  increase(hindsight_operation_operations_total{success="false"}[1h])
+                )
+                / clamp_min(
+                  sum by (operation) (
+                    increase(hindsight_operation_operations_total[1h])
+                  ), 1
+                )
+                > 0.05
+              )
+              and
+              (
+                sum by (operation) (
+                  increase(hindsight_operation_operations_total[1h])
+                ) >= 10
+              )
+            )
+            or
+            (
+              (
+                sum by (operation) (
+                  increase(hindsight_operation_operations_total{success="false"}[6h])
+                )
+                / clamp_min(
+                  sum by (operation) (
+                    increase(hindsight_operation_operations_total[6h])
+                  ), 1
+                )
+                > 0.05
+              )
+              and
+              (
+                sum by (operation) (
+                  increase(hindsight_operation_operations_total[6h])
+                ) >= 20
+              )
+            )
           for: 15m
           labels:
             severity: warning
@@ -156,7 +222,7 @@ spec:
             namespace: observability
           annotations:
             summary: "Hindsight {{ $labels.operation }} operations are failing"
-            description: "More than two failed {{ $labels.operation }} operations in the last hour. Check the FreeLLMAPI gateway (LLM failures surface here as failed operations) and hindsight-api logs in Loki."
+            description: "{{ $labels.operation }} failed {{ $value | humanizePercentage }} of its operations (over 5% of at least 10 in the last hour, or of at least 20 in the last six hours). Check the FreeLLMAPI gateway (LLM failures surface here as failed operations) and hindsight-api logs in Loki. Hindsight Operations dashboard: https://grafana.voitech.dev/d/hindsight-operations"
 
         - alert: HindsightNoFactsShareHigh
           # THE ALERT THAT GUARDS THE LIGHTWEIGHT-MODEL DECISION.
