@@ -541,6 +541,9 @@ def settle_merge(api, work_order: dict, ledger: dict, pr: dict, view: dict,
         save_ledger(api, work_order["id"], ledger, "PR #%s closed without a merge" % number)
         api.patch_issue(work_order["id"], {
             "status": "blocked", "executionPolicy": None,
+            "unblockDescriptor": _unblock_descriptor(
+                api, "PR #%s was closed unmerged: reopen it or start a new work order, then "
+                     "clear this block; the factory owns this park." % number),
             "comment": ("PR #%s was closed without a merge, so nothing shipped. "
                         "Reopen it or start a new work order." % number),
         })
@@ -1384,6 +1387,23 @@ def _apply_stage_comment(api, stage_issue: dict, text: str) -> None:
     api.comment(stage_issue["id"], text)
 
 
+def _unblock_descriptor(api, action: str) -> dict:
+    """A `blocked` write the server will actually store (GUL-898).
+
+    Paperclip refuses `PATCH {"status": "blocked"}` when the issue is entering
+    blocked from any other status unless it carries an unresolved blocker edge,
+    a pending interaction/approval, or an `unblockDescriptor`
+    (`server/src/routes/issues.ts`, "Entering blocked requires unresolved
+    blockers, a pending interaction/approval, or unblockDescriptor"). The
+    factory parks three things that have none of the first three: an escalated
+    work order, an escalated stage issue, and a work order whose PR was closed
+    unmerged. The fourth rule is the awkward one: an agent may only name
+    ITSELF as the owner, so the owner is whoever's key is running this command,
+    not the board and not the stage's assignee.
+    """
+    return {"owner": {"agentId": api.self_agent_id()}, "action": action}
+
+
 def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: str) -> None:
     ledger["outcome"] = "escalate"
     ledger["escalated"] = reason
@@ -1391,6 +1411,9 @@ def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: st
     api.patch_issue(work_order_id, {
         "status": "blocked",
         "executionPolicy": None,
+        "unblockDescriptor": _unblock_descriptor(
+            api, "Wojtek decides on the escalated stage %s; then clear this block (or re-run "
+                 "`factory decide %s --apply`) so the work order can move." % (identifier, identifier)),
         "comment": "factory escalate: %s — no more retries. Wojtek decides." % reason,
     })
 
@@ -1415,10 +1438,23 @@ ESCALATED_STAGE_POLICY = {"mode": "normal", "commentRequired": True, "stages": [
 
 
 def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
-    """Park an escalated stage issue: `blocked`, no pending stage, no re-arm."""
+    """Park an escalated stage issue: `blocked`, no pending stage, no re-arm.
+
+    GUL-898: `blocked` alone is not enough. The empty-stage policy fixes the
+    stage *resolution* bug (GUL-889), but Paperclip answers the write one rule
+    later — a blocked issue must say what would unblock it, or the whole PATCH
+    is refused 422 and the stage stays `in_progress`. The factory has no
+    blocker edge on a stage issue and raises no card here, so the park carries
+    a self-owned descriptor: the agent running `factory decide` owns reopening
+    it once the work order is decided.
+    """
+    identifier = stage_issue.get("identifier", "?")
     api.patch_issue(stage_issue["id"], {
         "status": "blocked",
         "executionPolicy": dict(ESCALATED_STAGE_POLICY),
+        "unblockDescriptor": _unblock_descriptor(
+            api, "Re-run `factory decide %s --apply` once the factory tooling can park this "
+                 "stage; that agent owns clearing this block." % identifier),
         "comment": comment,
     })
 
