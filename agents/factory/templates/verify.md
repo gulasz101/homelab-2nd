@@ -12,14 +12,36 @@ verdict, backed by evidence you produced yourself.
    the `verdicts` document on THIS issue, markdown plus exactly one fenced `json`
    block (see `agents/factory/CONTRACT.md` point 4):
    `{"id": "F-1", "verdict": "confirmed|rejected|unproven", "evidence": "the command run and the output line, or file:line"}`
+   Write it with this call — the only write this role may make through the API.
+   The `-d` value is one JSON string, so the markdown's newlines are `\n` and its
+   inner quotes are `\"`. Keep the document short and do it in ONE turn:
+
+   ```
+   curl -s -X PUT "$PAPERCLIP_API_URL/api/issues/$PAPERCLIP_TASK_ID/documents/verdicts" \
+     -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+     -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+     -H "Content-Type: application/json" \
+     -d '{"title":"Verdicts","format":"markdown","baseRevisionId":null,"body":"# Verdicts\n\n```json\n[{\"id\":\"F-1\",\"verdict\":\"rejected\",\"evidence\":\"bash tests/ac.sh -> AC-1: PASS\"}]\n```\n"}'
+   ```
+
+   A `200` carrying a `document` object means it landed. If the document already
+   exists — a re-run after `changes_requested` — the PUT answers `409` unless you
+   pass the current revision as `baseRevisionId`, so read it first:
+
+   ```
+   curl -s "$PAPERCLIP_API_URL/api/issues/$PAPERCLIP_TASK_ID/documents/verdicts" \
+     -H "Authorization: Bearer $PAPERCLIP_API_KEY"
+   ```
+
+   then send the same PUT with `"baseRevisionId":"<latestRevisionId>"`.
 3. Exactly one verdict per finding, no extra ids, `evidence` never empty. A
    `confirmed` verdict on a `blocking` finding sends the work order back for a
    fix round.
 4. Do not edit code and do not commit.
 
-Post a short comment after each step, **before** the hand-off; this role cannot post a comment
-through the API, so the short comments are for the write stages and your report goes in the hand-off.
-The hand-off is the last call of this run: it reassigns the issue and Paperclip cancels the sending
+Do **not** try to post a comment at any point — `POST /issues/<id>/comments` is refused for this
+role, and each refused call burns a turn you need for the verification. The report goes in the
+hand-off. The hand-off is the last call of this run: it reassigns the issue and Paperclip cancels the sending
 run, so nothing you send afterwards lands. Its `comment` is the report.
 
 When every finding has a verdict, hand off to the gate stage:

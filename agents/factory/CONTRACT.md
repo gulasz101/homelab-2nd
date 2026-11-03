@@ -319,7 +319,13 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
 - **Escalate** on a third request-changes for one stage, or when a third fix round
   would start: work order `blocked` with `"executionPolicy": null` in the same
   PATCH (otherwise Paperclip reads `blocked` as request-changes), one sentence
-  why, recorded in the ledger, no more retries.
+  why, recorded in the ledger, no more retries. A **missing stage document**
+  escalates the same way and for the same reason (GUL-868): a review with no
+  `findings`, or a verify missing its `verdicts` or the review's `findings`, is a
+  stage nobody can judge. It used to `return 1` before any board write, so the
+  stage parked with no blocked, no comment and no wake — indistinguishable from a
+  quiet refusal. Now both issues are `blocked`, each comment names the missing
+  document, and the ledger records `outcome: escalate`.
 - Without `--apply` nothing is written: it prints the decision only.
 
 **`tick [--apply]`** — read-only without `--apply`. One line per open work order: stage,
