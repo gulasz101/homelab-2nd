@@ -105,6 +105,49 @@ cat > "$TMP/spec-unknownkey.md" <<'EOF'
 EOF
 run $PY "$FACTORY" lint-spec --spec "$TMP/spec-unknownkey.md"; expect_rc "unknown key -> fail" 1 "$LAST_RC"
 
+# GUL-853: a check that can never print an AC line must not lint. These two are
+# the exact rev-2 checks of GUL-833 that cost three red rounds and an escalation.
+cat > "$TMP/spec-silent-validate.md" <<'EOF'
+```json
+{"repo": "gulasz101/homelab-2nd", "base": "main", "kind": "code", "allowedPaths": ["openspec/**"],
+ "acs": [{"id": "AC-1", "text": "the change validates", "check": "npx --yes @fission-ai/openspec@1.15.0 validate static-miss-404 --strict && ! grep -q '\\[ \\]' openspec/changes/static-miss-404/tasks.md"}],
+ "maxDiffLines": 40}
+```
+EOF
+run $PY "$FACTORY" lint-spec --spec "$TMP/spec-silent-validate.md"
+expect_rc "silent validator check -> fail" 1 "$LAST_RC"
+grep -q 'can never print an AC line' "$LAST_OUT" \
+  && ok "silent validator check: reason names the fix" \
+  || bad "silent validator check: reason names the fix"
+cat > "$TMP/spec-silent-exists.md" <<'EOF'
+```json
+{"repo": "gulasz101/homelab-2nd", "base": "main", "kind": "code", "allowedPaths": ["apps/**"],
+ "acs": [{"id": "AC-6", "text": "static assets ship", "check": "grep -q 'static-serving' apps/api/src/index.ts && for f in icon-192.png icon-512.png; do test -f apps/web/public/$f || exit 1; done"}],
+ "maxDiffLines": 40}
+```
+EOF
+run $PY "$FACTORY" lint-spec --spec "$TMP/spec-silent-exists.md"
+expect_rc "silent file-exists check -> fail" 1 "$LAST_RC"
+cat > "$TMP/spec-reports-inline.md" <<'EOF'
+```json
+{"repo": "gulasz101/homelab-2nd", "base": "main", "kind": "code", "allowedPaths": ["apps/**"],
+ "acs": [{"id": "AC-1", "text": "a ships", "check": "sh -c 'test -f apps/a.txt && echo \"AC-1: PASS\" || echo \"AC-1: FAIL apps/a.txt missing\"'"}],
+ "maxDiffLines": 40}
+```
+EOF
+run $PY "$FACTORY" lint-spec --spec "$TMP/spec-reports-inline.md"
+expect_rc "wrapped check that echoes its AC line -> ok" 0 "$LAST_RC"
+cat > "$TMP/spec-reports-script.md" <<'EOF'
+```json
+{"repo": "gulasz101/homelab-2nd", "base": "main", "kind": "code", "allowedPaths": ["apps/**"],
+ "acs": [{"id": "AC-1", "text": "a ships", "check": "bash apps/api/tests/a-check.sh"},
+         {"id": "AC-2", "text": "b ships", "check": "bash apps/api/tests/a-check.sh"}],
+ "maxDiffLines": 40}
+```
+EOF
+run $PY "$FACTORY" lint-spec --spec "$TMP/spec-reports-script.md"
+expect_rc "delegated check script covering two ACs -> ok" 0 "$LAST_RC"
+
 # ---------- 2. check-red ----------
 echo "== check-red =="
 R="$TMP/red"
@@ -126,6 +169,15 @@ run $PY "$FACTORY" check-red --repo "$R" --base HEAD --spec "$TMP/red-spec.md"
 expect_rc "red: setup error (exit 3) -> rc 2, FAILS" 2 "$LAST_RC"
 json_is false && ok "red setup: ok:false" || bad "red setup: ok:false"
 grep -q "setup error" "$LAST_OUT" && ok "red setup: reason names setup error" || bad "red setup reason"
+# GUL-853: a check that prints no AC line is the setup error that cost GUL-833
+# three red rounds. lint-spec now refuses it at start; this case keeps the red
+# stage's own answer (exit 2, never a verdict) honest as the backstop.
+printf '#!/bin/bash\ntest -f src/a.py\n' > "$R/tests/silent.sh"
+spec_file "$TMP/red-silent.md" '["src/**", "tests/**"]' 400 '"bash tests/silent.sh"'
+run $PY "$FACTORY" check-red --repo "$R" --base HEAD --spec "$TMP/red-silent.md"
+expect_rc "red: check prints no AC line -> setup error" 2 "$LAST_RC"
+grep -q "no AC line" "$LAST_OUT" && ok "red silent: reason says no AC line" || bad "red silent reason"
+rm "$R/tests/silent.sh"
 printf '#!/bin/bash\nexit 1\n' > "$R/tests/ac.sh"
 run $PY "$FACTORY" check-red --repo "$R" --base HEAD --spec "$TMP/red-spec.md"
 expect_rc "red: missing AC line -> rc 2" 2 "$LAST_RC"

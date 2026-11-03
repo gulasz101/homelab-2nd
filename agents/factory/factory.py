@@ -215,6 +215,37 @@ def read_text_file(path: str) -> str:
 # spec validation (CONTRACT.md point 1)
 # --------------------------------------------------------------------------
 
+# GUL-853: a check that cannot print an `AC-<n>: PASS|FAIL` line is a work order
+# that can never pass the red stage, whatever the Tester writes — `check-red`
+# answers "setup error: no AC line for AC-n" three rounds running and the whole
+# work order escalates. Bash is Turing-complete, so lint cannot prove that a
+# command reports; it can reject the shapes that are *structurally* unable to:
+# a command that never mentions its own AC ids, and one that is not a
+# delegation to a script that might print them. Everything else is decided by
+# running the check (check-red is the proof), as point 2 says.
+_SCRIPT_CHECK = re.compile(
+    r"^(?:bash|sh|dash|zsh|python3?|node|deno|bun|tsx)\s+"
+    r"(?:-[A-Za-z-]+(?:[ =][^\s]+)?\s+)*"          # runner flags, e.g. -I, --yes
+    r"[\w./@%+-]+\.(?:sh|bash|py|js|mjs|cjs|ts|mts)\b"
+)
+
+
+def _check_reports(cmd: str, aid: str) -> bool:
+    """The command mentions the AC id it has to report: `echo "AC-1: FAIL x"`."""
+    return re.search(r"(?<![\w-])%s:(?!\w)" % re.escape(aid), cmd) is not None
+
+
+def _silent_check_reason(aid: str, cmd: str) -> str:
+    return (
+        "%s: check %r can never print an AC line: name the id in the command "
+        "(sh -c '... && echo \"%s: PASS\" || echo \"%s: FAIL <reason>\"') or "
+        "delegate to a script that prints it (bash path/to/check.sh). A check "
+        "that only runs `test`, `grep` or a validator is a setup error in every "
+        "stage and the red stage can never pass it (GUL-853)"
+        % (aid, cmd, aid, aid)
+    )
+
+
 def validate_spec(value, is_lint: bool) -> list:
     reasons: list = []
     if not isinstance(value, dict):
@@ -263,6 +294,9 @@ def validate_spec(value, is_lint: bool) -> list:
         chk = ac["check"]
         if not (isinstance(chk, str) and chk.strip() and "\n" not in chk):
             reasons.append("spec: %s: check must be one single-line command" % aid)
+        elif (is_lint and isinstance(aid, str) and re.match(r"^AC-[1-9][0-9]*$", aid)
+              and not (_check_reports(chk, aid) or _SCRIPT_CHECK.match(chk.strip()))):
+            reasons.append(_silent_check_reason(aid, chk))
     return reasons
 
 
