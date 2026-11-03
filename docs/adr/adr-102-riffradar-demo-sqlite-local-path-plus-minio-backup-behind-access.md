@@ -4,7 +4,7 @@
 **Status:** Accepted
 **Deciders:** Wojtek Gula
 **Project:** homelab-2nd / riffradar demo environment
-**Related:** GUL-550, GUL-262 (why the demo exists), GUL-549 + ADR-101 (the private image),
+**Related:** GUL-550, GUL-262 (why the demo exists), GUL-549 + ADR-115 (the private image),
 ADR-005 (per-namespace observability), ADR-032 (tunnels created via the Cloudflare API),
 tracking note `homelab/tracking/2026-10-29-riffradar-demo.md`
 
@@ -69,7 +69,7 @@ allowlist) in front of it, not a public hostname.**
 
 **3. The image is private, and so is the credential.**
 
-`ghcr.io/gulasz101/riff_radar` is a private package (ADR-101). The cluster pulls
+`ghcr.io/gulasz101/riff_radar` is a private package (ADR-115). The cluster pulls
 it with a SOPS-encrypted `kubernetes.io/dockerconfigjson` Secret present twice —
 in `riffradar` for the kubelet and in `flux-system` for
 image-reflector-controller, which can only read a `secretRef` from its own

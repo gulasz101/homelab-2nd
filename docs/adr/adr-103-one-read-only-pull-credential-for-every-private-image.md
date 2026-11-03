@@ -4,13 +4,13 @@
 - **Date:** 2026-10-29
 - **Deciders:** Wojtek (owner), Andrzej (CTO, homelab-2nd)
 - **Tracked by:** GUL-579; first application: Riff Radar (GUL-550)
-- **Amends:** ADR-101 ("its own pull secret when the package is private" — the pull side is now a
-  platform concern, the publish side stays per-app). ADR-101 was still open in PR #95 when this
+- **Amends:** ADR-115 ("its own pull secret when the package is private" — the pull side is now a
+  platform concern, the publish side stays per-app). ADR-115 was still open in PR #95 when this
   landed; the practice it describes is what we already run.
 
 ## Context
 
-ADR-101 settled how our own images are **built and published**: Actions builds, a version tag
+ADR-115 settled how our own images are **built and published**: Actions builds, a version tag
 publishes `ghcr.io/gulasz101/<repo>:<version>`, and the package stays private because the source is
 private. It left the **pull** side as an exercise for each service, and that is where Riff Radar
 stopped dead: the package is private, `imagePullSecrets` pointed at a Secret that cannot exist,
@@ -90,17 +90,17 @@ a script run.
 
 - **In-house OCI registry in k3s (Zot or `registry:2`, S3-backed on OMV MinIO)** — GUL-579 option 1.
   Attractive because the cluster would pull over the ClusterIP with no credential at all. It does not
-  survive contact with ADR-101: the images are built in Actions and published to GHCR, so an
+  survive contact with ADR-115: the images are built in Actions and published to GHCR, so an
   in-cluster registry holding them is a **mirror**, and a mirror of a private package must
   authenticate to GHCR to fetch the tag — the same credential, one hop earlier. Removing the
-  credential entirely requires moving the *build* in-house too, which ADR-101 rejected (the cluster
+  credential entirely requires moving the *build* in-house too, which ADR-115 rejected (the cluster
   consumes images, it does not produce them) and which needs a runner, layer cache and build
   privileges the homelab does not have. On top of that: a stateful service, a MinIO bucket, a backup
   story, an upgrade path and a public push endpoint for CI (or a push credential sitting in GitHub,
   which is worse than a read credential in SOPS). Deferred, not refuted — see *When to revisit*.
-- **Make the packages public** — GUL-579 option 3. Rejected by ADR-101 and by `riff_radar` being a
+- **Make the packages public** — GUL-579 option 3. Rejected by ADR-115 and by `riff_radar` being a
   private repo: a public image publishes the source it was built from.
-- **Per-service PAT** — the shape ADR-101 implied, and what GUL-550 was about to do. Rejected: N
+- **Per-service PAT** — the shape ADR-115 implied, and what GUL-550 was about to do. Rejected: N
   clicks, N rotations, N credentials to forget, and no single command that proves the fleet is
   consistent.
 - **Put the owner's `gh` token in a Secret.** Banned by the house rules and by common sense:
