@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  sou-claude-code-reporter — the Lodge reporter for the Paperclip PM (GUL-831).
+
+  A SYSTEM daemon, not a user agent, for the same reason ADR-107 gives for the
+  scheduled jobs: the Air is headless most days, so gui/<uid> does not exist and
+  nothing in it runs. install-daemons.sh installs this one too; the pairing rule
+  in tests/host-tree-check.sh fails the tree if a LaunchAgent with this label
+  ever appears.
+
+  The wrapper decrypts host/paperclip-air/secrets/sou-claude-code-reporter.sops.yaml
+  (SOPS/age, never in git in plaintext) to a 0600 config for the reporter. It
+  holds still, quietly, until both credentials are present, so this daemon can be
+  installed before the board has minted its Paperclip agent key.
+
+  This daemon listens on no port, so the status table in install-daemons is not
+  the place to look: the health check is bin/homelab-install-sou-reporter.sh.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.voitech.homelab.sou-claude-code-reporter</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>/usr/local/libexec/homelab/homelab-sou-claude-code-reporter.sh</string>
+	</array>
+
+	<key>UserName</key>
+	<string>paperclip</string>
+	<key>GroupName</key>
+	<string>staff</string>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<!-- A dead secret must not become a spin: the wrapper waits internally,
+	     this only paces genuine crashes. -->
+	<key>ThrottleInterval</key>
+	<integer>60</integer>
+	<key>ExitTimeOut</key>
+	<integer>20</integer>
+
+	<key>WorkingDirectory</key>
+	<string>/Users/paperclip</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<!-- launchd does not guarantee HOME for a system daemon; the wrapper
+		     resolves the state dir, the age key and the reporter from it. -->
+		<key>HOME</key>
+		<string>/Users/paperclip</string>
+		<key>LANG</key>
+		<string>en_GB.UTF-8</string>
+	</dict>
+
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>/Users/paperclip/Library/Logs/homelab/sou-claude-code-reporter.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/paperclip/Library/Logs/homelab/sou-claude-code-reporter.err.log</string>
+</dict>
+</plist>
