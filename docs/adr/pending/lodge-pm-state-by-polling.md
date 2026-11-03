@@ -7,9 +7,15 @@
 
 ## Context
 
-The owner wants the Paperclip PM — the agent "Claude Code", the `claude_local` adapter, running on the Air — to have its own room in the Lodge and to move with its runs. It had been registered in the Star Office agent registry since 2026-10-18 with a token, a room type and a hoodie, and had **zero events**. The renderer only gives an agent an office when it has an event inside a 24 h window, so a registered agent with no reporter is invisible. The registration was never the problem; the writer was missing.
+The owner wants the Paperclip PM — the agent "Claude Code", the `claude_local` adapter, running on the Air — to have its own room in the Lodge and to move with its runs.
 
-The obvious writer is a Claude Code hook, and it does not work. Paperclip runs the adapter with a sandboxed `HOME`, so `~/.claude/settings.json` — and every hook in it — is never read (GUL-826). Whatever mechanism we pick has to work from **outside** the run.
+It had one, and lost it. The registry row dates from 2026-10-18 with a token, a room type and a hoodie, and something was writing to it: **2,972 events between 2026-10-18 09:19 and 2026-10-25 20:06** — `tool_call`, `command_run`, `session_start`, `session_end`, the full hook vocabulary. Then it stopped dead. Nothing for eight days. The renderer only gives an agent an office when it has an event inside a 24 h window, so once the writer stopped the room silently emptied and nobody noticed, because a missing room looks exactly like an agent that was never there.
+
+The cause of the stop is not proven here; the mechanism is known. GUL-826, found on the same agent a day before this work, established that Claude Code hooks do not load in Paperclip runs because the adapter sandboxes `HOME`. A hook-based reporter that worked in October and reads `~/.claude/settings.json` is exactly what that would kill.
+
+So the decision below is not "add a reporter to an agent that never had one". It is "replace a hook-based writer that a harness change can silently switch off with one that cannot be switched off that way".
+
+The obvious writer is a Claude Code hook, and in October it was one. It does not work now: Paperclip runs the adapter with a sandboxed `HOME`, so `~/.claude/settings.json` — and every hook in it — is never read (GUL-826). Whatever mechanism we pick has to work from **outside** the run, and has to keep working when Paperclip changes how it launches the process.
 
 "Outside" is constrained: the Paperclip HTTP API is the only place that knows which runs are live, and it is guarded. Minting an **agent** API key is a board action (`403 Board access required` for an agent key, which is how GUL-827 hit the wall); the board key is the owner's own login and is not available to any agent process.
 
@@ -34,7 +40,7 @@ The obvious writer is a Claude Code hook, and it does not work. Paperclip runs t
 
 ## Alternatives
 
-- **Claude Code hook in `~/.claude/settings.json`** — the intended design, dead on arrival: sandboxed `HOME` (GUL-826).
+- **Claude Code hook in `~/.claude/settings.json`** — what was actually in use until 2026-10-25, and dead now: sandboxed `HOME` (GUL-826). Worth recording that this design *worked for a week*; it failed silently when the harness changed, which is the strongest argument against rebuilding it.
 - **Hook from the project's `.claude/` directory**, which does survive the sandbox — rejected: it means committing a hook block into every repository the PM touches, and it still cannot report a run that dies before its first hook fires.
 - **Detect the `claude` process** — rejected after testing it. A `claude` process was alive for nine days inside a `tmux` session on this Mac, so process presence is not run presence, and telling a Paperclip-spawned child from an interactive one means walking process ancestry that the adapter does not promise to keep.
 - **Watch the per-run `.ndjson` log files** (`~/.paperclip/instances/*/data/run-logs/<company>/<agent>/`) — rejected: `lsof` showed no open handle even on a demonstrably live run, because the server appends and closes, so "being written" cannot be distinguished from "finished".
