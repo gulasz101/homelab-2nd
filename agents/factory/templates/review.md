@@ -13,11 +13,34 @@ not the description of it.
    `{"id": "F-1", "file": "path", "line": 12, "severity": "blocking|minor", "claim": "one sentence"}`
    An empty list means you found nothing worth blocking. Be concrete: a claim
    without a file and a line is a finding the script rejects.
+
+   Write it with this call — the only write this role may make through the API.
+   The `-d` value is one JSON string, so the markdown's newlines are `\n` and its
+   inner quotes are `\"`. Keep the document short and do it in ONE turn:
+
+   ```
+   curl -s -X PUT "$PAPERCLIP_API_URL/api/issues/$PAPERCLIP_TASK_ID/documents/findings" \
+     -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+     -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+     -H "Content-Type: application/json" \
+     -d '{"title":"Findings","format":"markdown","baseRevisionId":null,"body":"# Findings\n\nBlocking: none.\n\n```json\n[]\n```\n"}'
+   ```
+
+   A `200` carrying a `document` object means it landed. If the document already
+   exists — a re-run after `changes_requested` — the PUT answers `409` unless you
+   pass the current revision as `baseRevisionId`, so read it first:
+
+   ```
+   curl -s "$PAPERCLIP_API_URL/api/issues/$PAPERCLIP_TASK_ID/documents/findings" \
+     -H "Authorization: Bearer $PAPERCLIP_API_KEY"
+   ```
+
+   then send the same PUT with `"baseRevisionId":"<latestRevisionId>"`.
 3. Do not edit code and do not commit. Review only. The factory script decides
    the stage from your document.
 
-Post a short comment after each step, **before** the hand-off; this role cannot post a comment
-through the API, so the short comments are for the write stages and your report goes in the hand-off.
+Do **not** try to post a comment at any point — `POST /issues/<id>/comments` is refused for this
+role, and each refused call burns a turn you need for the review. The report goes in the hand-off.
 The hand-off is the last call of this run: it reassigns the issue and Paperclip cancels the sending
 run, so nothing you send afterwards lands. Its `comment` is the report.
 

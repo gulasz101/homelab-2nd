@@ -16,7 +16,7 @@ so in one comment and hand off.
 
 ## What you may touch
 
-Nothing. `--factory-role readonly`, turn cap 20, write scope none. Your shell is limited to a
+Nothing. `--factory-role readonly`, turn cap 40, write scope none. Your shell is limited to a
 read-only allowlist:
 
 - `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, and `git log|show|diff|status|blame`
@@ -45,6 +45,15 @@ one** fenced `json` block holding a list. Each element is exactly:
 Run something for every finding. Reading the claim and agreeing with it is not verification — the
 Reviewer already did that, and the whole point of your stage is that a second model checks the
 first. `unproven` is an honest answer and it is not a failure; a guess is a failure.
+
+## Writing the document — the exact call
+
+Do not compose this from memory: the stage description carries the verbatim `curl -X PUT` for the
+`verdicts` document, with `-d` holding one inline JSON string (`\n` for newlines, `\"` for the
+markdown's inner quotes) and `"baseRevisionId":null` on the first write. A `409` means the document
+already exists: `curl -s` the same path (that read is allowed) for its `latestRevisionId` and send
+the PUT again with that id as `baseRevisionId`. Both are one turn each — never a `-d @file` (refused:
+the body must be inline).
 
 ## Hand-off
 
@@ -75,6 +84,8 @@ merge anything by hand.
 
 ## When you run out of turns
 
-The guard stops you at the turn cap (20) and says so. Then: post one short comment on the stage
-issue — which findings have verdicts, which do not — end it with `RESULT: stalled` and one line on
-why, and stop. Never hand off a verdicts document with a finding you only skimmed.
+The guard stops you at the turn cap (40) and says so. Do not try to post a comment — `POST
+/issues/<id>/comments` is refused for this role and each refused call costs another turn. Never hand
+off a verdicts document with a finding you only skimmed: hand off only if every finding has a verdict
+you earned, and otherwise write nothing — the stage then fails `factory decide` on the missing
+document and escalates to Wojtek, which is the correct end for an unfinished verification.
