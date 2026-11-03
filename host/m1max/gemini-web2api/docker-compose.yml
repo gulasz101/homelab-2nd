@@ -1,0 +1,41 @@
+# gemini-web2api-go — Gemini web → OpenAI-compatible API (the fleet's gemini4 provider)
+#
+# Ops-managed by Andrzej (GUL-896). This file is the source of truth for the container's
+# runtime shape: pinned image digest, restart policy, port binding, volume, log rotation.
+#
+# Rules baked in here:
+#   * image pinned by DIGEST, never :latest — every agent that needs Gemini goes through this.
+#     To upgrade: `docker pull ghcr.io/zexadev/gemini-web2api-go:<tag>` then `docker inspect
+#     --format '{{json .RepoDigests}}' <tag>` and paste the new @sha256 into `image:`.
+#   * restart: unless-stopped — survives an OrbStack/Docker engine restart, like zeroclaw.
+#   * loopback only. The Air reaches it through an SSH local forward on 127.0.0.1:8083.
+#   * secrets come from container.env (0600, ADMIN_TOKEN only) — never argv, never this file.
+#
+# Apply: cd ~/gemini2api && docker compose up -d
+# Health: curl -s http://127.0.0.1:8083/   (unauthenticated, returns {"status":"ok","version":...})
+name: gemini-web2api
+
+services:
+  gemini-web2api:
+    image: ghcr.io/zexadev/gemini-web2api-go@sha256:dac7b994e48735a9d03c3cc590c58644792513e948ac62126d2d5dc0d8a705ca  # v4.27.0
+    container_name: gemini-web2api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8083:8083"
+    volumes:
+      - gemini2api-data:/data
+    env_file:
+      - container.env
+    environment:
+      DB_PATH: /data/gemini.db
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+    command: ["--db", "/data/gemini.db", "--port", "8083"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  gemini2api-data:
+    external: true
