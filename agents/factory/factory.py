@@ -1395,6 +1395,65 @@ def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: st
     })
 
 
+# GUL-889: a stage issue that still carries a pending review stage cannot be
+# written `blocked`, and the reason is Paperclip's stage resolution, not the echo
+# check.
+#
+# `PATCH {"status": "blocked", "executionPolicy": null}` is resolved against the
+# stage first: the issue is `in_review` and carries an executionState with a
+# return assignee, so clearing the policy dissolves the review *back to that
+# assignee* — the server sets `in_progress`, reassigns the stage agent, and
+# overwrites the requested `blocked`. The echo check then raises, the stage never
+# settles, its agent re-runs and hands it back, and the next wake escalates
+# again: a loop that burns a run every few minutes on a decision already made.
+# (Kept in `pc.patch_issue`: a status the server silently drops is a failed write,
+# not a style issue.)
+#
+# A policy with no stages leaves the server nothing to dissolve: it clears
+# executionState, keeps `blocked`, and arms nobody.
+ESCALATED_STAGE_POLICY = {"mode": "normal", "commentRequired": True, "stages": []}
+
+
+def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
+    """Park an escalated stage issue: `blocked`, no pending stage, no re-arm."""
+    api.patch_issue(stage_issue["id"], {
+        "status": "blocked",
+        "executionPolicy": dict(ESCALATED_STAGE_POLICY),
+        "comment": comment,
+    })
+
+
+def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: dict,
+                           stage: str, reason: str, apply: bool) -> int:
+    """GUL-868: a stage that never wrote its artefact is an escalation, not a quiet `ok: false`.
+
+    `decide` used to `return 1` before any board write, so the stage parked with
+    nobody told: no blocked, no comment, no wake, and the work order sat still
+    until a human noticed by hand. A stage with no document is a stage nobody can
+    judge, so apply mode escalates it exactly like a third failure and the reason
+    says which artefact is missing.
+    """
+    result = {
+        "ok": False,
+        "check": "decide",
+        "reasons": [reason],
+        "stage": stage,
+        "decision": "escalate",
+        "applied": bool(apply),
+        "workOrder": work_order.get("identifier"),
+    }
+    if apply:
+        identifier = stage_issue.get("identifier", "?")
+        _escalate(api, work_order["id"], ledger, reason, identifier)
+        _block_stage_issue(api, stage_issue,
+                           "escalated: %s — the stage produced no artefact, so there is nothing to "
+                           "decide. This stage is parked, not returned to its agent: the work order "
+                           "is blocked on Wojtek's decision. Re-arm it only after that." % reason)
+
+    emit(False, "decide", [reason], result)
+    return 1
+
+
 def cmd_factory_decide(args) -> int:
     _sys_path_for_modules()
     import pc
@@ -1422,6 +1481,20 @@ def cmd_factory_decide(args) -> int:
     if stage not in STAGE_ORDER:
         raise SetupError("unknown stage %r on %s" % (stage, args.stage_issue))
 
+    # GUL-889: an escalation that already landed must not be re-run. The loop
+    # that followed the broken escalate write was driven by a wake that repeated
+    # this decision; even with the write fixed, a second `decide --apply` on a
+    # settled stage has nothing to decide and must not touch the board.
+    if ledger.get("outcome") == "escalate" and \
+            stage_issue.get("status") in ("blocked", "done", "cancelled"):
+        reason = "already escalated: %s" % (ledger.get("escalated") or "see the ledger")
+        emit(False, "decide", [reason], {
+            "ok": False, "check": "decide", "reasons": [reason], "stage": stage,
+            "round": round_no, "decision": "escalate", "applied": False,
+            "workOrder": work_order.get("identifier"),
+        })
+        return 1
+
     cwd = ledger["cwd"]
     spec_doc = api.document(work_order["id"], "spec")
     if not spec_doc or not spec_doc.get("body"):
@@ -1443,8 +1516,10 @@ def cmd_factory_decide(args) -> int:
         review_key = key
         findings = api.document(stage_issue["id"], "findings")
         if not findings or not findings.get("body"):
-            emit(False, "decide", ["review issue has no `findings` document"], {"stage": "review"})
-            return 1
+            return _stage_document_missing(
+                api, work_order, ledger, stage_issue, "review",
+                "review issue %s has no `findings` document" % stage_issue.get("identifier", "?"),
+                args.apply)
         findings_path = os.path.join(tmp, "findings.md")
         with open(findings_path, "w", encoding="utf-8") as fh:
             fh.write(findings["body"])
@@ -1456,9 +1531,16 @@ def cmd_factory_decide(args) -> int:
         review_doc = api.document(review_entry.get("issueId", ""), "findings") if review_entry else None
         verdicts = api.document(stage_issue["id"], "verdicts")
         if not review_doc or not verdicts:
-            emit(False, "decide", ["verify needs both the review `findings` and its own `verdicts`"],
-                 {"stage": "verify"})
-            return 1
+            missing = []
+            if not review_doc:
+                missing.append("review `findings`")
+            if not verdicts:
+                missing.append("own `verdicts`")
+            return _stage_document_missing(
+                api, work_order, ledger, stage_issue, "verify",
+                "verify issue %s is missing its %s document"
+                % (stage_issue.get("identifier", "?"), " and ".join(missing)),
+                args.apply)
         findings_path = os.path.join(tmp, "findings.md")
         verdicts_path = os.path.join(tmp, "verdicts.md")
         with open(findings_path, "w", encoding="utf-8") as fh:
@@ -1510,10 +1592,13 @@ def cmd_factory_decide(args) -> int:
 
     if decision == "escalate":
         if args.apply:
-            _escalate(api, work_order["id"], ledger, reasons[0] if reasons else "escalated",
+            reason = reasons[0] if reasons else "escalated"
+            _escalate(api, work_order["id"], ledger, reason,
                       stage_issue.get("identifier", "?"))
-            api.patch_issue(stage_issue["id"], {"status": "blocked", "executionPolicy": None,
-                                                "comment": "escalated: %s" % (reasons[0] if reasons else "")})
+            _block_stage_issue(api, stage_issue,
+                               "escalated: %s — this stage is parked, not returned to its agent, "
+                               "and it will not be decided again. The work order is blocked on "
+                               "Wojtek's decision." % reason)
         emit(False, "decide", reasons, result)
         return 1
 

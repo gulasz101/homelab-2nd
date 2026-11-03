@@ -408,6 +408,16 @@ resources:
   # enforcement state must not live only in the live FTL database)
   - pihole/pihole-deny-seeds.yaml
   - pihole/pihole-deny-seed-cronjob.yaml
+  # GUL-712: the CLIENT ROSTER in Git (MAC -> comment -> groups) + 05:10 seeder and
+  # the Monday 09:00 audit. The roster lived only in the live FTL database, so a
+  # rebuild dropped every family device to group 0 and the curfew protected nobody.
+  - pihole/pihole-clients-seeds.yaml
+  - pihole/pihole-client-seed-cronjob.yaml
+  - pihole/pihole-client-audit-cronjob.yaml
+  # GUL-712: the audit posts to Mattermost. The older pihole-mattermost-webhook-url
+  # Secret answers 403 (hook disabled in Mattermost) and is still referenced by the
+  # AlertmanagerConfig — see the tracking note; this Secret carries a hook that works.
+  - pihole/pihole-roster-audit-webhook-url.sops.yaml
   # H2-76: Sylwia's Pixel — Instagram-only evening curfew (21:00 enable / 08:00 disable).
   # Dedicated "S-IG" marker so it does NOT arm the general W/S social list for S.
   - pihole/pihole-s-ig-cronjob.yaml

@@ -3,7 +3,7 @@
 Decision: [ADR-103](../../docs/adr/adr-103-one-read-only-pull-credential-for-every-private-image.md).
 First consumer: Riff Radar ([GUL-550](/GUL/issues/GUL-550)).
 
-Private images (`ghcr.io/gulasz101/<repo>`, private package per ADR-101) cannot be pulled by the
+Private images (`ghcr.io/gulasz101/<repo>`, private package per ADR-115) cannot be pulled by the
 kubelet without a credential, and GitHub only mints that credential in a browser. So the platform
 holds **one** narrow credential and every private service reuses it. This directory is where the
 encrypted Secret lives.
@@ -83,7 +83,7 @@ its existing image and only the *next* pull uses the new credential.
 ## Why not an in-house registry
 
 Because it would not remove the credential: the images are built in Actions and published to GHCR
-(ADR-101), so an in-cluster registry is a mirror, and a mirror of a private package must
+(ADR-115), so an in-cluster registry is a mirror, and a mirror of a private package must
 authenticate to GHCR to fetch it. The credential disappears only when the build moves in-house —
 that is the revisit trigger recorded in ADR-103, not a reason to run a registry today.
 

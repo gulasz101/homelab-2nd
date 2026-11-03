@@ -1,6 +1,6 @@
-# ADR: LiteLLM is pinned at 1.106.6 so DeepSeek routes can turn thinking off
+# ADR-116: LiteLLM is pinned at 1.106.6 so DeepSeek routes can turn thinking off
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-10-31
 - **Issue**: GUL-690 (unblocks GUL-476)
 - **Related**: ADR-106 (the fleet runs on DeepSeek direct), ADR-052 (Hindsight is the agent-memory platform)

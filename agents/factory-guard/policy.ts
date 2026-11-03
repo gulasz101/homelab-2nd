@@ -597,16 +597,19 @@ function writerTargets(c0: string, args: string[]): string[] {
 const READONLY_CMDS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "git"]);
 
 /**
- * GUL-468: the two network calls a read-only stage agent is allowed.
+ * GUL-468: the network calls a read-only stage agent is allowed.
  *
- * A `[review]` or `[verify]` stage has to do exactly two things through the API:
- * write its `findings`/`verdicts` document (`PUT /issues/<id>/documents/<key>`)
- * and hand the stage back (`PATCH /issues/<id>` to `in_review`). Both are in the
- * stage templates, and the API is the only channel. So `curl` is allowed when —
- * and only when — it is one of those two calls, to the Paperclip API, with an
- * inline body. Everything that could read or write a local file, upload one,
- * every other verb and every other host is refused, so the role stays read only
- * on the filesystem and cannot reach a second API.
+ * A `[review]` or `[verify]` stage has to do exactly three things through the API:
+ * write its `findings`/`verdicts` document (`PUT /issues/<id>/documents/<key>`),
+ * read that document back when it already exists (GUL-868: a second `PUT` needs
+ * the revision id for `baseRevisionId`), and hand the stage back
+ * (`PATCH /issues/<id>` to `in_review`). All three are in the stage templates,
+ * and the API is the only channel. So `curl` is allowed when — and only when —
+ * it is one of those calls, to the Paperclip API, with an inline body for the
+ * two writes and no body at all for the read. Everything that could read or
+ * write a local file, upload one, every other verb and every other host is
+ * refused, so the role stays read only on the filesystem and cannot reach a
+ * second API.
  */
 const HANDOFF_URL_RE =
   /^(?:\$\{?PAPERCLIP_API_URL\}?|https?:\/\/(?:127\.0\.0\.1|localhost|paperclip\.voitech\.dev)(?::\d+)?)\//;
@@ -628,7 +631,7 @@ function curlHost(url: string): string {
 }
 
 /**
- * GUL-472: why this curl is not one of the two calls a read-only stage may make.
+ * GUL-472: why this curl is not one of the calls a read-only stage may make.
  * The message names the offending token — a legal curl refused for its `-o` flag
  * used to read as "curl is banned" and cost two runs on the wrong diagnosis.
  * Returns undefined when the call is allowed.
@@ -659,9 +662,13 @@ function curlHandoffRefusal(args: string[]): string | undefined {
     if (/^--data(?:-raw)?=@/.test(a)) return `curl ${a.split("=")[0]} refused: body must be inline`;
     if (/^--data(?:-raw)?=./.test(a)) inlineBody = true;
   }
-  if (!method) return "curl refused: no -X PATCH or -X PUT";
-  if (method !== "PATCH" && method !== "PUT") return `curl -X ${method} refused: only PATCH and PUT are allowed`;
-  if (!inlineBody) return `curl -X ${method} refused: no inline body`;
+  // GUL-868: a method-less curl (or `-X GET`) is the document read-back.
+  const isRead = method === null || method === "GET";
+  if (!isRead && method !== "PATCH" && method !== "PUT") {
+    return `curl -X ${method} refused: only PATCH (hand-off), PUT (document) and the document GET are allowed`;
+  }
+  if (isRead && inlineBody) return "curl refused: the document read-back sends no body";
+  if (!isRead && !inlineBody) return `curl -X ${method} refused: no inline body`;
 
   const urls = args.filter((a) => /^https?:\/\//.test(a) || /^\$\{?PAPERCLIP_API_URL\}?\//.test(a));
   if (urls.length !== 1) return `curl refused: ${urls.length} URLs, exactly one is allowed`;
@@ -672,6 +679,11 @@ function curlHandoffRefusal(args: string[]): string | undefined {
     .replace(/^[a-z]+:\/\/[^/]+/i, "")
     .replace(/^\$\{?PAPERCLIP_API_URL\}?/, "")
     .replace(/[?#].*$/, "");
+  if (isRead) {
+    return /\/issues\/[^/]+\/documents\/[^/]+$/.test(path)
+      ? undefined
+      : `curl ${path} refused: only /issues/<id>/documents/<key> is readable`;
+  }
   const ok = method === "PATCH"
     ? /\/issues\/[^/]+$/.test(path)
     : /\/issues\/[^/]+\/documents\/[^/]+$/.test(path); // PUT: the stage document

@@ -1,0 +1,50 @@
+---
+# Routes the two backstop alerts above to the ops channel in Mattermost.
+#
+# The webhook Secret is the platform ops hook already used by the homelab-node and
+# omv-storage alerts (same channel, same escalation: platform plumbing is dead).
+# It is referenced, not copied: an AlertmanagerConfig can only name a Secret in its
+# own namespace, and this one lives where the hook already lives.
+#
+# Why there are two delivery paths at all: the guard posts its findings directly to
+# Mattermost, because a detector whose message depends on the alerting pipeline cannot
+# report a broken alerting pipeline. These rules fire only when that direct message
+# did not happen (guard dead) or did not arrive (reload stalled past the guard's own
+# threshold). Duplicate pages are therefore avoided by threshold, not by hope.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: loki-rule-guard-mattermost-alerts
+  namespace: observability
+  labels:
+    # The Alertmanager CR selects AlertmanagerConfigs by release=kube-prometheus-stack;
+    # the Prometheus CR selects rules by release=prometheus-stack. Two different
+    # selectors, and getting this one wrong is the classic silent-drop (GUL-643).
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: loki-rule-guard-mattermost
+    groupBy:
+      - alertname
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+    matchers:
+      - name: alertgroup
+        value: loki-rule-guard
+        matchType: "="
+  receivers:
+    - name: loki-rule-guard-mattermost
+      slackConfigs:
+        - apiURL:
+            name: homelab-node-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] loki rule delivery: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} — {{ .Annotations.description }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            loki rule delivery alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

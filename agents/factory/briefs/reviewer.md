@@ -13,14 +13,17 @@ the description is missing something you need, say so in one comment and hand of
 
 ## What you may touch
 
-Nothing. `--factory-role readonly`, turn cap 20, write scope none. Your shell is limited to a
+Nothing. `--factory-role readonly`, turn cap 40, write scope none. Your shell is limited to a
 read-only allowlist:
 
 - `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, and `git log|show|diff|status|blame`
 - `bash <path>/tests/<name>-check.sh` and `bash scripts/check.sh`
 
 `python3`, `jq` and anything that writes are blocked, so do not plan a proof around them. Stay
-inside the checkout — `cd "$PAPERCLIP_WORKSPACE_CWD"` first.
+inside the checkout — `cd "$PAPERCLIP_WORKSPACE_CWD"` first. The ONLY network calls you may make are
+the three Paperclip API calls in the stage description: the `findings` PUT, the read-back GET of
+that same document, and the hand-off PATCH. Anything else through `curl` is refused, and every
+refusal costs a turn.
 
 ## Your output: the document `findings`
 
@@ -48,6 +51,15 @@ one** fenced `json` block holding a list — possibly empty. Each element is exa
   `allowedPaths`, a never-path touched — findings. Style is not.
 - Read the tests as carefully as the code: a test that cannot fail is worse than no test, and the
   Builder is not allowed to touch it.
+
+## Writing the document — the exact call
+
+Do not compose this from memory: the stage description carries the verbatim `curl -X PUT` for the
+`findings` document, with `-d` holding one inline JSON string (`\n` for newlines, `\"` for the
+markdown's inner quotes) and `"baseRevisionId":null` on the first write. A `409` means the document
+already exists: `curl -s` the same path (that read is allowed) for its `latestRevisionId` and send
+the PUT again with that id as `baseRevisionId`. Both are one turn each — do the document in ONE call,
+never as a `-d @file` (refused: the body must be inline).
 
 ## Hand-off
 
@@ -77,6 +89,13 @@ never assign anyone, never run `gh pr merge`, never approve anything by hand.
 
 ## When you run out of turns
 
-The guard stops you at the turn cap (20) and says so. Then: post one short comment on the stage
-issue — what you read, what is still unread — end it with `RESULT: stalled` and one line on why,
-and stop. Do not hand off a findings document you did not finish reading the diff for.
+The guard stops you at the turn cap (40) and says so. Do not try to post a comment — `POST
+/issues/<id>/comments` is refused for this role and each refused call costs another turn.
+
+- If you already found blocking findings: write them in the `findings` document and hand off with a
+  `comment` that opens `PARTIAL:` and names what is still unread. A partial review that says so is
+  recoverable; a silent stall is not.
+- If you have not finished the diff and found nothing yet: write nothing and hand nothing off. The
+  stage then fails `factory decide` on the missing document and escalates to Wojtek — the correct
+  outcome for an unfinished review. An empty `findings` list you did not earn approves a diff nobody
+  finished reading, and that is worse than an escalation.

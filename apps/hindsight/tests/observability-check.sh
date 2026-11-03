@@ -21,7 +21,9 @@
 #      it generates, so every alert the config must route has to carry that exact
 #      namespace label. Asserted as an equality between the two files.
 #   6. the rule families the ticket names all exist, and every hindsight_* series
-#      they reference is in METRIC_TABLE - the exposition reproduced locally from
+#      they reference is in METRIC_TABLE. 6b adds the reflect 499 rule's shape:
+#      its endpoint literal and its two minimum-volume floors, both of which can
+#      be dropped without breaking any check that only looks for names - the exposition reproduced locally from
 #      hindsight-api-slim/hindsight_api/metrics.py @ v0.10.3 with
 #      opentelemetry-exporter-prometheus 0.65b0 (the exporter folds the OTel unit
 #      into the series name, so the docs' example queries are partly wrong).
@@ -126,6 +128,19 @@ alert_blocks() {
     /^        - alert:/ { if (buf != "") printf "%s\x1e", buf; buf = "" }
     { if (buf != "" || /^        - alert:/) buf = buf $0 "\n" }
     END { if (buf != "") printf "%s\x1e", buf }
+  ' "$1"
+}
+
+# Print ONE `- alert: <name>` block, for the rules whose shape matters and not
+# just their labels.
+alert_block() {
+  awk -v want="$2" '
+    /^    - name:/ { inb = 0 }
+    /^        - alert:/ {
+      name = $0; sub(/^        - alert:[[:space:]]*/, "", name)
+      inb = (name == want)
+    }
+    inb { print }
   ' "$1"
 }
 
@@ -277,6 +292,7 @@ for pair in \
   "HindsightApiNoAvailableReplica:hindsight-api" \
   "HindsightControlPlaneNoAvailableReplica:hindsight-control-plane" \
   "HindsightOperationFailures:hindsight_operation_operations_total" \
+  "HindsightReflectClientAborts:hindsight_http_requests_total" \
   "HindsightNoFactsShareHigh:hindsight_retain_documents_total" \
   "HindsightNoFactsShareCritical:hindsight_retain_documents_total" \
   "HindsightLlmCallFailureRateHigh:hindsight_llm_calls_total" \
@@ -324,6 +340,59 @@ if grep -v '^[[:space:]]*#' "$RULES_FILE" | grep -q 'hindsight_operation_total[^
   bad "the rules use hindsight_operation_total - that series does not exist (the unit is folded in: hindsight_operation_operations_total)"
 else
   ok "the rules do not use the docs' non-existent hindsight_operation_total"
+fi
+
+# 6b. THE REFLECT CLIENT-ABORT RULE (GUL-869).
+# This is the one rule whose selector carries a route TEMPLATE and whose meaning
+# depends on a FLOOR, and both break silently: a selector that matches nothing is
+# not red, it is absent, and a share rule without a floor is 100% on one
+# abandoned call. So the block is asserted structurally rather than by presence.
+# Whitespace is removed before matching because PromQL does not care about it:
+# re-wrapping the expression must not fail this test, dropping a label or a floor
+# must.
+REFLECT_BLOCK=$(alert_block "$RULES_FILE" HindsightReflectClientAborts \
+  | grep -v '^[[:space:]]*#' | tr -d '[:space:]')
+# The route template, braces and all: the app is scraped through
+# opentelemetry-exporter-prometheus, which prefixes its own attributes with
+# `exported_`, and the label value is the path FastAPI declared.
+ENDPOINT_LITERAL='exported_endpoint="/v1/default/banks/{bank_id}/reflect"'
+if [ -z "$REFLECT_BLOCK" ]; then
+  bad "no HindsightReflectClientAborts alert - the reflect 499 share has no rule"
+else
+  # Three terms per arm (numerator, denominator, floor clause) x 2 arms.
+  n_endpoint=$(printf '%s' "$REFLECT_BLOCK" | grep -oF "$ENDPOINT_LITERAL" | wc -l | tr -d ' ')
+  [ "$n_endpoint" = "6" ] \
+    && ok "the 499 rule selects $ENDPOINT_LITERAL in all 6 terms" \
+    || bad "the 499 rule carries the endpoint literal $n_endpoint times, not 6: a renamed label (exported_endpoint -> endpoint) or a resolved {bank_id} matches no series, so the rule would be silent forever"
+  n_499=$(printf '%s' "$REFLECT_BLOCK" | grep -oF 'status_code="499"' | wc -l | tr -d ' ')
+  [ "$n_499" = "2" ] \
+    && ok "the 499 rule filters status_code=\"499\" in exactly the 2 numerators" \
+    || bad "status_code=\"499\" appears $n_499 times, not 2 - once per arm, in the numerators only"
+  n_share=$(printf '%s' "$REFLECT_BLOCK" | grep -oF 'clamp_min(' | wc -l | tr -d ' ')
+  n_thr=$(printf '%s' "$REFLECT_BLOCK" | grep -oF '>0.5' | wc -l | tr -d ' ')
+  [ "$n_share" = "2" ] && [ "$n_thr" = "2" ] \
+    && ok "the 499 rule is a share in both arms (2 clamp_min denominators, 2 x >0.5)" \
+    || bad "the 499 rule is not the 2-arm share it must be (clamp_min: $n_share, >0.5: $n_thr)"
+  # The floors as exact strings. Each one must sit on the WHOLE endpoint, all
+  # statuses, or $value stops being the abort share and the floor could be
+  # satisfied by the aborts themselves. >50% of at least 4 calls in an hour means
+  # at least 3 aborts (one abandoned call cannot page); >50% of at least 6 in six
+  # hours means at least 4.
+  # `[^]]*` walks the selector, braces in `{bank_id}` included, and stops at the
+  # window's `]`, so each floor comes out on its own line. A `[^}]*` class would
+  # stop inside `{bank_id}` and match nothing.
+  guards=$(printf '%s' "$REFLECT_BLOCK" | grep -oE 'sum\(increase\(hindsight_http_requests_total\{[^]]*\]\)\)>=[0-9]+')
+  for arm in '1h 4' '6h 6'; do
+    aw=${arm% *}; af=${arm#* }
+    want="sum(increase(hindsight_http_requests_total{${ENDPOINT_LITERAL},method=\"POST\"}[${aw}]))>=${af}"
+    printf '%s\n' "$guards" | grep -qxF "$want" \
+      && ok "the 499 rule keeps its ${aw} floor (>= $af calls, all statuses)" \
+      || bad "the 499 rule lost or moved its ${aw} minimum-volume floor, expected '$want' - without it one abandoned call on a quiet night pages at 100%"
+  done
+  n_guards=$(printf '%s\n' "$guards" | grep -c .)
+  [ "$n_guards" = "2" ] \
+    && ok "exactly 2 volume floors (no arm left unguarded)" \
+    || bad "found $n_guards floor clauses, expected 2"
 fi
 
 head1 "7. dashboards"

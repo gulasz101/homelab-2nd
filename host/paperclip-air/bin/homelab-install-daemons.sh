@@ -76,6 +76,7 @@ print_plan() {
       "$svc" "$(svc_label "$svc")" "$(svc_port "$svc")" "$(svc_rto "$svc")" "$(svc_throttle "$svc")"
   done
   say "daemon  (retired)      dev.voitech.homelab-watchdog  -    -   superseded: launchd is the supervisor now"
+  say "daemon  sou-claude-code-reporter             (no port)  -   installed by bin/homelab-install-sou-reporter.sh, called below (GUL-831)"
   say ""
   say "agent (user session)                         why it stays an agent"
   say "agent   heartbeat      $(printf '%s.heartbeat' "$HOMELAB_DOMAIN")   must die with the GUI session, or a logout looks healthy to the off-host receiver"
@@ -275,6 +276,22 @@ do_apply() {
       failed=1
     fi
   done
+
+  step "the Lodge reporter for the Paperclip PM (GUL-831)"
+  # Not a port service, so it cannot live in HOMELAB_SERVICES: that table is
+  # derived from LaunchAgents and probed on 127.0.0.1:<port>. Its own installer
+  # owns the shape (secret -> 0600 config -> reporter), and this call is what
+  # makes one command install the whole host. A failure here is loud but does
+  # not roll back the services above.
+  if [ -x "$SCRIPT_DIR/homelab-install-sou-reporter.sh" ]; then
+    "$SCRIPT_DIR/homelab-install-sou-reporter.sh" --install || {
+      warn "the sou-reporter daemon did not install; the services above are unaffected"
+      failed=1
+    }
+  else
+    warn "bin/homelab-install-sou-reporter.sh is missing: the PM's Lodge room will not move"
+    failed=1
+  fi
 
   step "next"
   say "1. log out and back in, or just leave it: the daemons do not care about the session."

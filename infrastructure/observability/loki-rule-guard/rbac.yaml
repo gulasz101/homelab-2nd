@@ -1,0 +1,55 @@
+---
+# loki-rule-guard RBAC (GUL-805).
+#
+# The guard reads every ConfigMap the rule sidecar is meant to collect, and it owns
+# exactly one ConfigMap: its canary. That canary is runtime state, not a GitOps
+# object -- the guard rewrites its stamp every run, and a ConfigMap that Flux also
+# manages would be reverted to the committed (old) stamp on every reconcile, which
+# would read to the guard as a stale delivery path. Deleting it is harmless: the
+# next run recreates it.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: loki-rule-guard
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: loki-rule-guard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: loki-rule-guard
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: loki-rule-guard
+rules:
+  # Reading the rule ConfigMaps needs a namespace-wide list with a label selector.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["list"]
+  # Everything else is limited to the canary by name. `create` cannot carry a
+  # resourceName (the API server authorises it before the name exists), which is
+  # why the guard creates only its own canary and nothing else in this namespace.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["loki-rule-canary"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: loki-rule-guard
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: loki-rule-guard
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: loki-rule-guard
+subjects:
+  - kind: ServiceAccount
+    name: loki-rule-guard
+    namespace: observability
