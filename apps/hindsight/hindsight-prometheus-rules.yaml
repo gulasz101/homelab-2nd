@@ -224,6 +224,126 @@ spec:
             summary: "Hindsight {{ $labels.operation }} operations are failing"
             description: "{{ $labels.operation }} failed {{ $value | humanizePercentage }} of its operations (over 5% of at least 10 in the last hour, or of at least 20 in the last six hours). Check the FreeLLMAPI gateway (LLM failures surface here as failed operations) and hindsight-api logs in Loki. Hindsight Operations dashboard: https://grafana.voitech.dev/d/hindsight-operations"
 
+        - alert: HindsightReflectClientAborts
+          # THE FAILURE NO OPERATION REPORTS (GUL-806 measured it, GUL-869 alerts
+          # on it). A caller that hangs up while reflect is still working is
+          # recorded by uvicorn as HTTP 499, the server finishes the reflect
+          # anyway, and no operation is ever completed - so
+          # hindsight_operation_operations_total, and HindsightOperationFailures
+          # above it, stay green while the callers get nothing back. Measured
+          # 2026-11-03: 43 reflect traces written against 9 completed operations
+          # in one 24 h window; on this endpoint the 24 h counts went from
+          # 44.5 x 200 + 6.0 x 499 (healthy day) to 9.0 x 200 + 32.0 x 499.
+          #
+          # A SHARE WITH A FLOOR, NOT A COUNT. Aborts are not zero at rest: the
+          # healthy day read 6 of 51 calls (12%), so "any 499" or "above 5%" is
+          # red on a normal night and a count of callers cannot answer "is this
+          # normal?". The line is 50%: more callers hung up than got an answer.
+          #
+          # TWO WINDOWS, because this endpoint is quiet (1-5 calls/hour) and the
+          # incident was two shapes at once:
+          #   * 1h, > 50% of at least 4 calls - the storm. The nightly 04:00
+          #     batch arrived as 12 aborts in one hour (100% of that hour). With
+          #     the floor met, > 50% means at least 3 aborts, so one abandoned
+          #     call can never page from a quiet hour (1 of 1 is 100% but 1 < 4;
+          #     1 of 3 is 33%).
+          #   * 6h, > 50% of at least 6 calls - the trickle. The incident then ran
+          #     at roughly 1 abort/hour for 18 hours, which no single hour can
+          #     separate from noise; six hours accumulate ~6 aborts against ~4
+          #     answers. The floor of 6 means at least 4 aborts (4 of 7 is 57%),
+          #     and the measured baseline never put more than 3 aborts in any 6 h
+          #     window.
+          # Replayed against the live series at 5-minute steps before shipping:
+          # silent on all 289 samples of the healthy 24 h (2026-11-01T12:15Z ->
+          # 2026-11-02T12:15Z), and above the line on 261 consecutive samples of
+          # the incident 24 h (2026-11-02T12:15Z -> 2026-11-03T12:15Z, 32 x 499),
+          # from 13:05Z through 10:45Z the next morning, with the 1 h arm reaching
+          # the 04:40Z batch early.
+          #
+          # THE SELECTOR IS LITERAL, AND `{bank_id}` IS PART OF THE LABEL VALUE.
+          # The app exports through opentelemetry-exporter-prometheus, which
+          # prefixes its own attributes with `exported_`, and the endpoint label
+          # carries the route template exactly as FastAPI declared it. So it is
+          # `exported_endpoint` with the braces still in it: the real-path form
+          # (`/v1/default/banks/hermes-andrzej/reflect`) and the bare `endpoint`
+          # label both match nothing, and a rule that matches nothing is silent
+          # forever - the hand-run gate asserts this literal.
+          #
+          # `and` keeps the ratio as the sample value, so `$value` in the
+          # annotations is the abort share in both arms.
+          expr: |
+            (
+              (
+                sum(
+                  increase(
+                    hindsight_http_requests_total{
+                      exported_endpoint="/v1/default/banks/{bank_id}/reflect",
+                      method="POST", status_code="499"}[1h]
+                  )
+                )
+                / clamp_min(
+                  sum(
+                    increase(
+                      hindsight_http_requests_total{
+                        exported_endpoint="/v1/default/banks/{bank_id}/reflect",
+                        method="POST"}[1h]
+                    )
+                  ), 1
+                )
+                > 0.5
+              )
+              and
+              (
+                sum(
+                  increase(
+                    hindsight_http_requests_total{
+                      exported_endpoint="/v1/default/banks/{bank_id}/reflect",
+                      method="POST"}[1h]
+                    )
+                ) >= 4
+              )
+            )
+            or
+            (
+              (
+                sum(
+                  increase(
+                    hindsight_http_requests_total{
+                      exported_endpoint="/v1/default/banks/{bank_id}/reflect",
+                      method="POST", status_code="499"}[6h]
+                  )
+                )
+                / clamp_min(
+                  sum(
+                    increase(
+                      hindsight_http_requests_total{
+                        exported_endpoint="/v1/default/banks/{bank_id}/reflect",
+                        method="POST"}[6h]
+                    )
+                  ), 1
+                )
+                > 0.5
+              )
+              and
+              (
+                sum(
+                  increase(
+                    hindsight_http_requests_total{
+                      exported_endpoint="/v1/default/banks/{bank_id}/reflect",
+                      method="POST"}[6h]
+                    )
+                ) >= 6
+              )
+            )
+          for: 15m
+          labels:
+            severity: warning
+            alertgroup: hindsight
+            namespace: observability
+          annotations:
+            summary: "Hindsight reflect callers are giving up (HTTP 499)"
+            description: "{{ $value | humanizePercentage }} of the recent reflect calls were abandoned by the caller (HTTP 499) - over 50% of at least 4 calls in the last hour, or of at least 6 in the last six hours. uvicorn records a 499 when the caller hangs up while the server keeps working, so the reflect still runs and is still paid for, and no operation ever completes: the operation metrics and HindsightOperationFailures look healthy. Measured 2026-11-03, every abort landed inside 30 s, i.e. the route got slower than the caller's patience - check the reflect p95 on https://grafana.voitech.dev/d/hindsight-operations and the reflect model in hindsight-helm-release.yaml (HINDSIGHT_API_REFLECT_LLM_MODEL)."
+
         - alert: HindsightNoFactsShareHigh
           # THE ALERT THAT GUARDS THE LIGHTWEIGHT-MODEL DECISION.
           # outcome="no_facts" means a document was stored but produced no memory
