@@ -1,0 +1,103 @@
+---
+# loki-rule-guard -- the detector for a Loki rule sidecar that wedges silently (GUL-805).
+#
+# On 2026-11-01 the `loki-sc-rules` sidecar in `loki-0` stopped reacting to ConfigMap
+# changes with no restart and no error; the rule merged that day never reached the
+# ruler and nothing noticed. This Job is the thing that notices: it compares what the
+# cluster labels as a rule with what the ruler actually serves, read from the ruler's
+# own API, and it rewrites a canary rule file every run so "no rule change has been
+# loaded for N minutes" is measurable from the outside.
+#
+# Every 5 minutes: one run is a few HTTP calls and one small ConfigMap write.
+# The state lives in the canary's annotations, so a restarted guard does not re-page.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: loki-rule-guard
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: loki-rule-guard
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  # A missed tick is a normal thing (node reboot); a tick that runs 2 minutes late is
+  # not, so skip it rather than stacking runs behind a wedged one.
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 120
+      ttlSecondsAfterFinished: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: loki-rule-guard
+        spec:
+          restartPolicy: Never
+          serviceAccountName: loki-rule-guard
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: guard
+              image: python:3.13-alpine
+              imagePullPolicy: IfNotPresent
+              command: ["python3", "/guard/loki_rule_guard.py"]
+              env:
+                - name: PYTHONDONTWRITEBYTECODE
+                  value: "1"
+                # Direct to the ruler, not through loki-gateway: the guard must read the
+                # component that serves the rules, not the query front door.
+                - name: RULER_URL
+                  value: "http://loki.observability.svc.cluster.local:3100/prometheus/api/v1/rules"
+                - name: GUARD_NAMESPACE
+                  value: "observability"
+                - name: CANARY_CONFIGMAP
+                  value: "loki-rule-canary"
+                - name: CANARY_DATA_KEY
+                  value: "loki-rule-canary.yaml"
+                # 15 minutes = three missed runs. The ruler re-reads the local rule
+                # directory about once a minute, so a healthy path is never more than
+                # ~6 minutes old even with a missed tick.
+                - name: STALE_SECONDS
+                  value: "900"
+                # One reminder per six hours while it stays broken, so a forgotten
+                # incident does not scroll away but also does not spam the channel.
+                - name: REMIND_SECONDS
+                  value: "21600"
+                # The platform's ops channel hook, the same Secret the homelab-node and
+                # omv-storage alerts ride. Delivery is direct, not via Alertmanager: the
+                # detector must not depend on the alerting hop whose silence it reports.
+                - name: MATTERMOST_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: homelab-node-mattermost-webhook-url
+                      key: url
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: script
+                  mountPath: /guard
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: script
+              configMap:
+                name: loki-rule-guard-script
+            - name: tmp
+              emptyDir: {}

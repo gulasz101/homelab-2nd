@@ -1,0 +1,27 @@
+---
+# loki-rule-guard (GUL-805) -- one package, one render path.
+#
+# Why a CronJob and not a Helm chart: there is no chart for "compare two APIs and post
+# a sentence", and the guard is 250 lines of stdlib Python. Raw manifests delivered by
+# Flux are the sanctioned last resort (guardrail 2); the reasoning is in
+# docs/adr/pending/loki-rule-delivery-guard.md.
+#
+# The script ships as a generated ConfigMap from `loki_rule_guard.py` and NOT as a
+# pasted block of YAML, for the same reason apps/host-watch does it: the code is code,
+# it is unit-tested, a diff to it should read like a diff, and the name hash is left on
+# so that editing the script rolls the next Job -- otherwise Flux updates the ConfigMap
+# and the old logic keeps running until somebody notices.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: loki-rule-guard
+namespace: observability
+resources:
+  - rbac.yaml
+  - cronjob.yaml
+  - prometheus-rules.yaml
+  - alertmanager-config.yaml
+configMapGenerator:
+  - name: loki-rule-guard-script
+    files:
+      - loki_rule_guard.py
