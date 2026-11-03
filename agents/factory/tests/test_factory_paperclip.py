@@ -583,6 +583,40 @@ def case_third_failure_escalates(stub, base_sha, repo):
     check("escalate: the ledger records it", '"outcome": "escalate"' in body or '"escalated"' in body)
 
 
+def case_missing_document_escalates(stub, base_sha, repo):
+    """GUL-868: a stage with no artefact is escalated on the board, not refused silently."""
+    wo = base_work_order(stub, base_sha, repo, identifier="GUL-905")
+    review = stage_issue(stub, wo, "[review] GUL-905 — Add the fixture")
+    # no `findings` document on purpose: that is how the Reviewer's turn-cap stall looks
+
+    code0, out0, raw0 = run(stub, ["decide", review["identifier"]])
+    check("missing document: a dry decide reports escalate and writes nothing",
+          code0 == 1 and (out0 or {}).get("decision") == "escalate"
+          and stub.state.issues[wo["id"]]["status"] == "in_progress", raw0[-400:])
+
+    code, out, raw = run(stub, ["decide", review["identifier"], "--apply"])
+    check("missing document: --apply exits 1 with decision escalate",
+          code == 1 and (out or {}).get("decision") == "escalate"
+          and (out or {}).get("applied") is True, raw[-400:])
+    check("missing document: the work order is blocked with executionPolicy cleared",
+          stub.state.issues[wo["id"]]["status"] == "blocked"
+          and stub.state.issues[wo["id"]]["executionPolicy"] is None,
+          stub.state.issues[wo["id"]])
+    check("missing document: the stage issue is blocked, not left parked",
+          stub.state.issues[review["id"]]["status"] == "blocked"
+          and stub.state.issues[review["id"]]["executionPolicy"] is None,
+          stub.state.issues[review["id"]])
+    check("missing document: both issues say what is missing",
+          any("no `findings` document" in c["body"] for c in stub.state.comments
+              if c["issueId"] == wo["id"])
+          and any("no `findings` document" in c["body"] for c in stub.state.comments
+                  if c["issueId"] == review["id"]),
+          stub.state.comments[-4:])
+    body = stub.state.documents[(wo["id"], "ledger")]["body"]
+    check("missing document: the ledger records the escalation",
+          '"outcome": "escalate"' in body, body[-300:])
+
+
 def case_tick(stub, base_sha, repo):
     wo = base_work_order(stub, base_sha, repo)
     stage = stage_issue(stub, wo, "[red] GUL-900 — Add the fixture")
@@ -1101,6 +1135,7 @@ def main():
             case_decide_red(stub, base_sha, repo)
             case_verify_fix_round(stub, base_sha, repo)
             case_third_failure_escalates(stub, base_sha, repo)
+            case_missing_document_escalates(stub, base_sha, repo)
             case_tick(stub, base_sha, repo)
             case_write_document_carries_revision(stub)
             case_edge_block_falls_back(stub)

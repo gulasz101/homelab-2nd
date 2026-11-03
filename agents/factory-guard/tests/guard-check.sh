@@ -190,9 +190,9 @@ EOF
 EOF
       ;;
     readonly)
-      # allowed: read README.md, and one stage hand-off PATCH to the Paperclip
-      # API (GUL-468). forbidden: any write/edit, git commit, touch, and any
-      # curl that is not that PATCH.
+      # allowed: read README.md, one stage hand-off PATCH, one document PUT and
+      # one document GET to the Paperclip API (GUL-468, GUL-868). forbidden: any
+      # write/edit, git commit, touch, and any curl that is not one of those.
       cat > "$RT/script.json" <<'EOF'
 [
  {"tools":[
@@ -203,6 +203,9 @@ EOF
  ]},
  {"tools":[
    {"name":"bash","arguments":{"command":"curl -s -X PUT http://127.0.0.1:3900/api/issues/abc/documents/findings -H 'Content-Type: application/json' -d '{\"body\":\"# Findings\\n```json\\n[]\\n```\\n\"}'"}}
+ ]},
+ {"tools":[
+   {"name":"bash","arguments":{"command":"curl -s http://127.0.0.1:3900/api/issues/abc/documents/findings"}}
  ]},
  {"tools":[
    {"name":"bash","arguments":{"command":"curl -s -X POST http://127.0.0.1:3900/api/issues/abc -d '{\"status\":\"done\"}'"}}
@@ -276,10 +279,11 @@ EOF
       log_has readonly "$LOG" '"tool":"edit","rule":"role-write-forbidden"'
       log_has readonly "$LOG" '"tool":"bash","rule":"role-no-commit"'
       log_has readonly "$LOG" '"tool":"bash","rule":"readonly-allowlist"'
-      # GUL-468: two curls in the plan — the hand-off PATCH (allowed) and a POST
-      # (refused). Every block is logged, the log carries no command text, so the
-      # allowlist count is the proof: 2 = touch + the POST curl, 3 = the PATCH was
-      # refused as well.
+      # GUL-468/GUL-868: three curls in the plan — the hand-off PATCH, the
+      # document PUT and the document GET (all allowed) plus a POST (refused).
+      # Every block is logged and the log carries no command text, so the
+      # allowlist count is the proof: 2 = touch + the POST curl; 3 or more = an
+      # allowed call was refused as well.
       ALLOW_N="$(grep -c '"rule":"readonly-allowlist"' "$LOG" || true)"
       if [ "$ALLOW_N" = "2" ]; then
         echo "  ok  [readonly] hand-off PATCH allowed, non-PATCH curl refused (2 allowlist blocks)"

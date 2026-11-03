@@ -1395,6 +1395,39 @@ def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: st
     })
 
 
+def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: dict,
+                           stage: str, reason: str, apply: bool) -> int:
+    """GUL-868: a stage that never wrote its artefact is an escalation, not a quiet `ok: false`.
+
+    `decide` used to `return 1` before any board write, so the stage parked with
+    nobody told: no blocked, no comment, no wake, and the work order sat still
+    until a human noticed by hand. A stage with no document is a stage nobody can
+    judge, so apply mode escalates it exactly like a third failure and the reason
+    says which artefact is missing.
+    """
+    result = {
+        "ok": False,
+        "check": "decide",
+        "reasons": [reason],
+        "stage": stage,
+        "decision": "escalate",
+        "applied": bool(apply),
+        "workOrder": work_order.get("identifier"),
+    }
+    if apply:
+        identifier = stage_issue.get("identifier", "?")
+        _escalate(api, work_order["id"], ledger, reason, identifier)
+        api.patch_issue(stage_issue["id"], {
+            "status": "blocked",
+            "executionPolicy": None,
+            "comment": ("escalated: %s — the stage produced no artefact, so there is nothing to "
+                        "decide. Re-arm this stage, or fix why the agent could not write it, "
+                        "before asking for a decision again." % reason),
+        })
+    emit(False, "decide", [reason], result)
+    return 1
+
+
 def cmd_factory_decide(args) -> int:
     _sys_path_for_modules()
     import pc
@@ -1443,8 +1476,10 @@ def cmd_factory_decide(args) -> int:
         review_key = key
         findings = api.document(stage_issue["id"], "findings")
         if not findings or not findings.get("body"):
-            emit(False, "decide", ["review issue has no `findings` document"], {"stage": "review"})
-            return 1
+            return _stage_document_missing(
+                api, work_order, ledger, stage_issue, "review",
+                "review issue %s has no `findings` document" % stage_issue.get("identifier", "?"),
+                args.apply)
         findings_path = os.path.join(tmp, "findings.md")
         with open(findings_path, "w", encoding="utf-8") as fh:
             fh.write(findings["body"])
@@ -1456,9 +1491,16 @@ def cmd_factory_decide(args) -> int:
         review_doc = api.document(review_entry.get("issueId", ""), "findings") if review_entry else None
         verdicts = api.document(stage_issue["id"], "verdicts")
         if not review_doc or not verdicts:
-            emit(False, "decide", ["verify needs both the review `findings` and its own `verdicts`"],
-                 {"stage": "verify"})
-            return 1
+            missing = []
+            if not review_doc:
+                missing.append("review `findings`")
+            if not verdicts:
+                missing.append("own `verdicts`")
+            return _stage_document_missing(
+                api, work_order, ledger, stage_issue, "verify",
+                "verify issue %s is missing its %s document"
+                % (stage_issue.get("identifier", "?"), " and ".join(missing)),
+                args.apply)
         findings_path = os.path.join(tmp, "findings.md")
         verdicts_path = os.path.join(tmp, "verdicts.md")
         with open(findings_path, "w", encoding="utf-8") as fh:
