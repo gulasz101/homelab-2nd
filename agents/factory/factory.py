@@ -1395,6 +1395,34 @@ def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: st
     })
 
 
+# GUL-889: a stage issue that still carries a pending review stage cannot be
+# written `blocked`, and the reason is Paperclip's stage resolution, not the echo
+# check.
+#
+# `PATCH {"status": "blocked", "executionPolicy": null}` is resolved against the
+# stage first: the issue is `in_review` and carries an executionState with a
+# return assignee, so clearing the policy dissolves the review *back to that
+# assignee* — the server sets `in_progress`, reassigns the stage agent, and
+# overwrites the requested `blocked`. The echo check then raises, the stage never
+# settles, its agent re-runs and hands it back, and the next wake escalates
+# again: a loop that burns a run every few minutes on a decision already made.
+# (Kept in `pc.patch_issue`: a status the server silently drops is a failed write,
+# not a style issue.)
+#
+# A policy with no stages leaves the server nothing to dissolve: it clears
+# executionState, keeps `blocked`, and arms nobody.
+ESCALATED_STAGE_POLICY = {"mode": "normal", "commentRequired": True, "stages": []}
+
+
+def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
+    """Park an escalated stage issue: `blocked`, no pending stage, no re-arm."""
+    api.patch_issue(stage_issue["id"], {
+        "status": "blocked",
+        "executionPolicy": dict(ESCALATED_STAGE_POLICY),
+        "comment": comment,
+    })
+
+
 def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: dict,
                            stage: str, reason: str, apply: bool) -> int:
     """GUL-868: a stage that never wrote its artefact is an escalation, not a quiet `ok: false`.
@@ -1417,13 +1445,11 @@ def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: di
     if apply:
         identifier = stage_issue.get("identifier", "?")
         _escalate(api, work_order["id"], ledger, reason, identifier)
-        api.patch_issue(stage_issue["id"], {
-            "status": "blocked",
-            "executionPolicy": None,
-            "comment": ("escalated: %s — the stage produced no artefact, so there is nothing to "
-                        "decide. Re-arm this stage, or fix why the agent could not write it, "
-                        "before asking for a decision again." % reason),
-        })
+        _block_stage_issue(api, stage_issue,
+                           "escalated: %s — the stage produced no artefact, so there is nothing to "
+                           "decide. This stage is parked, not returned to its agent: the work order "
+                           "is blocked on Wojtek's decision. Re-arm it only after that." % reason)
+
     emit(False, "decide", [reason], result)
     return 1
 
@@ -1454,6 +1480,20 @@ def cmd_factory_decide(args) -> int:
     key = stage_key(stage, round_no)
     if stage not in STAGE_ORDER:
         raise SetupError("unknown stage %r on %s" % (stage, args.stage_issue))
+
+    # GUL-889: an escalation that already landed must not be re-run. The loop
+    # that followed the broken escalate write was driven by a wake that repeated
+    # this decision; even with the write fixed, a second `decide --apply` on a
+    # settled stage has nothing to decide and must not touch the board.
+    if ledger.get("outcome") == "escalate" and \
+            stage_issue.get("status") in ("blocked", "done", "cancelled"):
+        reason = "already escalated: %s" % (ledger.get("escalated") or "see the ledger")
+        emit(False, "decide", [reason], {
+            "ok": False, "check": "decide", "reasons": [reason], "stage": stage,
+            "round": round_no, "decision": "escalate", "applied": False,
+            "workOrder": work_order.get("identifier"),
+        })
+        return 1
 
     cwd = ledger["cwd"]
     spec_doc = api.document(work_order["id"], "spec")
@@ -1552,10 +1592,13 @@ def cmd_factory_decide(args) -> int:
 
     if decision == "escalate":
         if args.apply:
-            _escalate(api, work_order["id"], ledger, reasons[0] if reasons else "escalated",
+            reason = reasons[0] if reasons else "escalated"
+            _escalate(api, work_order["id"], ledger, reason,
                       stage_issue.get("identifier", "?"))
-            api.patch_issue(stage_issue["id"], {"status": "blocked", "executionPolicy": None,
-                                                "comment": "escalated: %s" % (reasons[0] if reasons else "")})
+            _block_stage_issue(api, stage_issue,
+                               "escalated: %s — this stage is parked, not returned to its agent, "
+                               "and it will not be decided again. The work order is blocked on "
+                               "Wojtek's decision." % reason)
         emit(False, "decide", reasons, result)
         return 1
 

@@ -79,6 +79,7 @@ class State:
             "assigneeAgentId": None,
             "blockedByIssueIds": [],
             "executionPolicy": None,
+            "executionState": None,
             "currentExecutionWorkspace": None,
             "createdAt": "2026-10-28T08:00:00.000Z",
             "updatedAt": "2026-10-28T08:00:00.000Z",
@@ -210,9 +211,31 @@ def make_handler(state):
                 issue = state.issues.get(parts[2])
                 if not issue:
                     return self._send(404, {"error": "not found"})
+                was_in_review = issue.get("status") == "in_review"
                 for key in ("status", "executionPolicy", "assigneeAgentId"):
                     if key in body:
                         issue[key] = body[key]
+                # Paperclip resolves a PATCH against a pending execution stage before it
+                # applies the requested status (GUL-889). Clearing executionPolicy on an
+                # `in_review` issue that carries a return assignee dissolves the review back
+                # to that assignee and overwrites the requested status with `in_progress`.
+                # The stub copies that one rule so the broken escalate write reproduces the
+                # real loop here instead of passing on a stub that believes every write.
+                return_to = (issue.get("executionState") or {}).get("returnAssignee")
+                if "executionPolicy" in body and body["executionPolicy"] is None and was_in_review \
+                        and return_to:
+                    issue["status"] = "in_progress"
+                    issue["assigneeAgentId"] = return_to.get("agentId")
+                    issue["executionState"] = None
+                # ...and a policy whose stages no longer contain the state's current stage
+                # has nothing left to resolve: the server clears executionState and keeps
+                # whatever status was asked for. That is the shape the escalate write uses
+                # to park a stage issue without arming anybody.
+                if "executionPolicy" in body and isinstance(body["executionPolicy"], dict):
+                    state_stage = (issue.get("executionState") or {}).get("currentStageId")
+                    stage_ids = [s.get("id") for s in body["executionPolicy"].get("stages") or []]
+                    if state_stage and state_stage not in stage_ids:
+                        issue["executionState"] = None
                 if body.get("comment"):
                     state.comments.append({"issueId": issue["id"], "body": body["comment"]})
                 return self._send(200, issue)
@@ -347,6 +370,26 @@ def head_branch(repo):
 def stage_issue(stub, parent, title, status="in_progress"):
     return stub.state.add_issue(parentId=parent["id"], title=title, status=status,
                                 assigneeAgentId=MAJSTER)
+
+
+def pending_review_stage(stub, parent, title, stage_agent="agent-tester-1"):
+    """A stage issue as Paperclip really holds one while the foreman decides it:
+    `in_review` on a pending review stage, carrying the return assignee (the agent
+    that did the work) so the server knows where a bounced decision goes."""
+    stage = stub.state.add_issue(parentId=parent["id"], title=title, status="in_review",
+                                 assigneeAgentId=MAJSTER,
+                                 executionPolicy={"mode": "normal", "commentRequired": True,
+                                                  "stages": [{"id": "stage-review-1", "type": "review",
+                                                              "participants": [
+                                                                  {"id": "p-review", "type": "agent",
+                                                                   "agentId": MAJSTER}],
+                                                              "approvalsNeeded": 1}]})
+    stage["executionState"] = {"status": "pending", "currentStageId": "stage-review-1",
+                               "currentStageType": "review", "completedStageIds": [],
+                               "currentParticipant": {"type": "agent", "agentId": MAJSTER},
+                               "returnAssignee": {"type": "agent", "agentId": stage_agent},
+                               "changesRequestedCount": 0}
+    return stage
 
 
 def check(name, condition, detail=""):
@@ -567,7 +610,7 @@ def case_verify_fix_round(stub, base_sha, repo):
 
 def case_third_failure_escalates(stub, base_sha, repo):
     wo = base_work_order(stub, base_sha, repo)
-    stage = stage_issue(stub, wo, "[red] GUL-900 — Add the fixture")
+    stage = pending_review_stage(stub, wo, "[red] GUL-900 — Add the fixture")
     with open(os.path.join(repo, "README.md"), "w") as fh:
         fh.write("still not a test\n")
     codes = []
@@ -579,14 +622,36 @@ def case_third_failure_escalates(stub, base_sha, repo):
           and stub.state.issues[wo["id"]]["status"] == "blocked", codes)
     check("escalate: the work order PATCH clears executionPolicy",
           stub.state.issues[wo["id"]]["executionPolicy"] is None)
+    parked = stub.state.issues[stage["id"]]
+    check("escalate: the stage issue lands blocked, not bounced back to its agent (GUL-889)",
+          parked["status"] == "blocked" and parked["executionState"] is None
+          and parked["assigneeAgentId"] == MAJSTER,
+          {k: parked.get(k) for k in ("status", "executionState", "assigneeAgentId")})
+    check("escalate: the stage policy carries no stage left to dissolve",
+          (parked.get("executionPolicy") or {}).get("stages") == [],
+          parked.get("executionPolicy"))
     body = stub.state.documents[(wo["id"], "ledger")]["body"]
     check("escalate: the ledger records it", '"outcome": "escalate"' in body or '"escalated"' in body)
+
+    # GUL-889: a second decide on a settled stage must write nothing — that repeat is
+    # what turned one bad write into a run every three minutes.
+    comments_before = len(stub.state.comments)
+    state_before = {k: stub.state.issues[stage["id"]].get(k)
+                    for k in ("status", "executionPolicy", "assigneeAgentId")}
+    code_again, out_again, raw_again = run(stub, ["decide", stage["identifier"], "--apply"])
+    check("escalate: re-running decide on a settled stage is refused, not repeated",
+          code_again == 1 and any("already escalated" in r for r in (out_again or {}).get("reasons", []))
+          and len(stub.state.comments) == comments_before
+          and {k: stub.state.issues[stage["id"]].get(k)
+               for k in ("status", "executionPolicy", "assigneeAgentId")} == state_before,
+          raw_again[-400:])
+
 
 
 def case_missing_document_escalates(stub, base_sha, repo):
     """GUL-868: a stage with no artefact is escalated on the board, not refused silently."""
     wo = base_work_order(stub, base_sha, repo, identifier="GUL-905")
-    review = stage_issue(stub, wo, "[review] GUL-905 — Add the fixture")
+    review = pending_review_stage(stub, wo, "[review] GUL-905 — Add the fixture")
     # no `findings` document on purpose: that is how the Reviewer's turn-cap stall looks
 
     code0, out0, raw0 = run(stub, ["decide", review["identifier"]])
@@ -604,7 +669,8 @@ def case_missing_document_escalates(stub, base_sha, repo):
           stub.state.issues[wo["id"]])
     check("missing document: the stage issue is blocked, not left parked",
           stub.state.issues[review["id"]]["status"] == "blocked"
-          and stub.state.issues[review["id"]]["executionPolicy"] is None,
+          and (stub.state.issues[review["id"]].get("executionPolicy") or {}).get("stages") == []
+          and stub.state.issues[review["id"]]["executionState"] is None,
           stub.state.issues[review["id"]])
     check("missing document: both issues say what is missing",
           any("no `findings` document" in c["body"] for c in stub.state.comments
