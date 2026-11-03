@@ -131,7 +131,7 @@ expect_rc "silent file-exists check -> fail" 1 "$LAST_RC"
 cat > "$TMP/spec-reports-inline.md" <<'EOF'
 ```json
 {"repo": "gulasz101/homelab-2nd", "base": "main", "kind": "code", "allowedPaths": ["apps/**"],
- "acs": [{"id": "AC-1", "text": "a ships", "check": "sh -c 'test -f apps/a.txt && echo \"AC-1: PASS\" || echo \"AC-1: FAIL apps/a.txt missing\"'"}],
+ "acs": [{"id": "AC-1", "text": "a ships", "check": "sh -c 'if test -f apps/a.txt; then echo \"AC-1: PASS\"; else echo \"AC-1: FAIL apps/a.txt missing\"; exit 1; fi'"}],
  "maxDiffLines": 40}
 ```
 EOF

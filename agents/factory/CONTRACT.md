@@ -90,13 +90,17 @@ AC rules:
   stage: `check-red` answers `setup error: no AC line for AC-n`, the Tester
   cannot fix it, and the work order escalates without a single red run that
   could ever pass. So a check must either name every AC id it covers —
-  `sh -c 'test -f apps/a.txt && echo "AC-1: PASS" || echo "AC-1: FAIL missing"'`
+  `sh -c 'if test -f apps/a.txt; then echo "AC-1: PASS"; else echo "AC-1: FAIL missing"; exit 1; fi'`
   — or be a delegation to a script that does:
   `bash apps/api/tests/static-serving-check.sh` (`bash`, `sh`, `dash`, `zsh`,
   `python3`, `node`, `deno`, `bun`, `tsx` + optional flags + a path ending
   `.sh|.bash|.py|.js|.mjs|.cjs|.ts|.mts`). Anything else — a bare `test`/`grep`
   chain, `npx <tool> validate`, `bash -c '<something>'` — is refused with a
   reason naming the fix.
+  **Do not use `test -f x && echo "AC-1: PASS" || echo "AC-1: FAIL x"`**: when
+  the test fails that line prints FAIL and exits **0**, and point 2 makes
+  "exit 0 with a FAIL line" a setup error — a different silence. The `if …
+  then … else … exit 1; fi` shape is the one that satisfies both halves.
   This rule is static and lint-only: bash cannot be proven to print from its
   text, so the lint rejects the shapes that structurally cannot rather than
   claiming to prove the ones that can. `check-red` (which must see `FAIL`) and

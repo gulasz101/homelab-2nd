@@ -238,10 +238,12 @@ def _check_reports(cmd: str, aid: str) -> bool:
 def _silent_check_reason(aid: str, cmd: str) -> str:
     return (
         "%s: check %r can never print an AC line: name the id in the command "
-        "(sh -c '... && echo \"%s: PASS\" || echo \"%s: FAIL <reason>\"') or "
-        "delegate to a script that prints it (bash path/to/check.sh). A check "
-        "that only runs `test`, `grep` or a validator is a setup error in every "
-        "stage and the red stage can never pass it (GUL-853)"
+        "(sh -c 'if <test>; then echo \"%s: PASS\"; else echo \"%s: FAIL <reason>\"; "
+        "exit 1; fi') or delegate to a script that prints it (bash path/to/check.sh). "
+        "Use the if/else form, not `test && echo PASS || echo FAIL`: that one exits 0 "
+        "after printing FAIL, which check-red reads as a setup error. A check that only "
+        "runs `test`, `grep` or a validator is a setup error in every stage and the red "
+        "stage can never pass it (GUL-853)"
         % (aid, cmd, aid, aid)
     )
 
