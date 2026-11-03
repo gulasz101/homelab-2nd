@@ -117,7 +117,10 @@ do_dry_run() {
 }
 
 do_token() {
-  local tmp
+  # Not `local`: the EXIT trap below outlives the function, and a `local` name
+  # that has gone out of scope trips `set -u` ("tmp: unbound variable") at exit,
+  # which reads like a failure after the secret has already been written.
+  tmp=""
   if [ -n "$TOKEN_FILE" ]; then
     [ -r "$TOKEN_FILE" ] || die "cannot read $TOKEN_FILE"
     tmp=$(mktemp "${TMPDIR:-/tmp}/sou-key.XXXXXX")
@@ -165,6 +168,10 @@ PY
   say "stored: the Paperclip agent key is in $SECRET (encrypted)"
   # Prove it landed, without printing it.
   secret_state || die "the key did not survive encryption — check the file"
+  # Clean up here and drop the trap: it must not fire at exit with nothing left
+  # to remove (that is what produced "tmp: unbound variable" after "stored").
+  rm -f "$tmp" "$tmp.json" "$tmp.yaml" "$tmp.enc"
+  trap - EXIT
 }
 
 do_status() {
