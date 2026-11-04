@@ -64,6 +64,9 @@ class State:
         self.put_failures = {}
         # the live API echoes the document bare; the stub can do either
         self.wrapped_documents = True
+        # who GET /agents/me answers: the factory runs on Majster's key, and an
+        # agent may only name itself as an unblock owner (GUL-898)
+        self.me = {"id": MAJSTER, "name": "Majster"}
 
     def add_issue(self, **kw):
         ident = kw.pop("identifier", None)
@@ -80,6 +83,7 @@ class State:
             "blockedByIssueIds": [],
             "executionPolicy": None,
             "executionState": None,
+            "unblockDescriptor": None,
             "currentExecutionWorkspace": None,
             "createdAt": "2026-10-28T08:00:00.000Z",
             "updatedAt": "2026-10-28T08:00:00.000Z",
@@ -134,6 +138,8 @@ def make_handler(state):
                 return self._send(200, mine)
             if parts[:2] == ["api", "issues"] and len(parts) == 4 and parts[3] == "runs":
                 return self._send(200, state.runs.get(parts[2], []))
+            if parts[:2] == ["api", "agents"] and parts[2:] == ["me"]:
+                return self._send(200, state.me)
             if parts[:2] == ["api", "agents"] and len(parts) == 3:
                 agent = state.agents.get(parts[2])
                 return self._send(200, agent) if agent else self._send(404, {"error": "no agent"})
@@ -211,8 +217,29 @@ def make_handler(state):
                 issue = state.issues.get(parts[2])
                 if not issue:
                     return self._send(404, {"error": "not found"})
+                # Paperclip refuses to *enter* blocked without something it can route to
+                # (GUL-898): an unresolved blocker edge, a pending interaction/approval, or
+                # an unblockDescriptor whose owner is the authenticated agent. Copied here
+                # so the pre-fix escalate write reproduces the reported 422 instead of
+                # passing on a stub that believes every write.
+                descriptor = body.get("unblockDescriptor")
+                if isinstance(descriptor, dict):
+                    owner = descriptor.get("owner")
+                    if isinstance(owner, dict) and owner.get("agentId") not in (None, state.me["id"]):
+                        return self._send(403, {"error": "Agents may only name themselves as an unblock owner"})
+                entering_blocked = issue.get("status") != "blocked" and body.get("status") == "blocked"
+                if entering_blocked:
+                    requested = body.get("blockedByIssueIds")
+                    ids = requested if isinstance(requested, list) else (issue.get("blockedByIssueIds") or [])
+                    has_blocker = any((state.issues.get(i) or {}).get("status") not in ("done", "cancelled")
+                                      for i in ids)
+                    pending = any(c.get("issueId") == issue["id"] and c.get("status") == "pending"
+                                  for c in state.interactions)
+                    if not (has_blocker or pending or descriptor):
+                        return self._send(422, {"error": "Entering blocked requires unresolved blockers, "
+                                                        "a pending interaction/approval, or unblockDescriptor"})
                 was_in_review = issue.get("status") == "in_review"
-                for key in ("status", "executionPolicy", "assigneeAgentId"):
+                for key in ("status", "executionPolicy", "assigneeAgentId", "unblockDescriptor"):
                     if key in body:
                         issue[key] = body[key]
                 # Paperclip resolves a PATCH against a pending execution stage before it
@@ -630,6 +657,14 @@ def case_third_failure_escalates(stub, base_sha, repo):
     check("escalate: the stage policy carries no stage left to dissolve",
           (parked.get("executionPolicy") or {}).get("stages") == [],
           parked.get("executionPolicy"))
+    stage_desc = parked.get("unblockDescriptor") or {}
+    check("escalate: the stage park carries a self-owned unblockDescriptor (GUL-898)",
+          (stage_desc.get("owner") or {}).get("agentId") == MAJSTER
+          and bool((stage_desc.get("action") or "").strip()), stage_desc)
+    wo_desc = stub.state.issues[wo["id"]].get("unblockDescriptor") or {}
+    check("escalate: the work order block carries one too, same owner (GUL-898)",
+          (wo_desc.get("owner") or {}).get("agentId") == MAJSTER
+          and bool((wo_desc.get("action") or "").strip()), wo_desc)
     body = stub.state.documents[(wo["id"], "ledger")]["body"]
     check("escalate: the ledger records it", '"outcome": "escalate"' in body or '"escalated"' in body)
 
@@ -678,6 +713,10 @@ def case_missing_document_escalates(stub, base_sha, repo):
           and any("no `findings` document" in c["body"] for c in stub.state.comments
                   if c["issueId"] == review["id"]),
           stub.state.comments[-4:])
+    review_desc = stub.state.issues[review["id"]].get("unblockDescriptor") or {}
+    check("missing document: the park carries a self-owned descriptor and names the stage (GUL-898)",
+          (review_desc.get("owner") or {}).get("agentId") == MAJSTER
+          and review["identifier"] in (review_desc.get("action") or ""), review_desc)
     body = stub.state.documents[(wo["id"], "ledger")]["body"]
     check("missing document: the ledger records the escalation",
           '"outcome": "escalate"' in body, body[-300:])
@@ -1134,6 +1173,10 @@ def case_tick_blocks_a_closed_pr(stub):
 
     check("tick closed: the work order is blocked",
           code == 0 and issue["status"] == "blocked", raw[-500:])
+    check("tick closed: the block carries a self-owned descriptor (GUL-898)",
+          (issue.get("unblockDescriptor") or {}).get("owner", {}).get("agentId") == MAJSTER
+          and bool(((issue.get("unblockDescriptor") or {}).get("action") or "").strip()),
+          raw[-500:])
     check("tick closed: one sentence says nothing shipped", len(said) == 1, said)
     check("tick closed: the ledger records the close",
           (ledger.get("merge") or {}).get("state") == "closed", ledger.get("merge"))
@@ -1186,6 +1229,48 @@ def case_tick_survives_a_stale_stage_row(stub):
         stub.state.issues[issue["id"]]["status"] = "done"
 
 
+def case_blocked_needs_a_descriptor(stub):
+    """GUL-898: the suite is only worth something if the stub refuses a bare `blocked`.
+
+    Paperclip 422s a PATCH that enters `blocked` with nothing to route to, and
+    403s an agent naming anyone but itself as the owner. Both rules are copied
+    into the stub, so the pre-fix escalate write failed here for the same reason
+    it failed on the board — this case is what stops the copy from rotting.
+    """
+    issue = stub.state.add_issue(identifier="GUL-997", title="probe")
+    api = pc.Api(key="test-key-not-a-secret", run_id="test-run-id", base=stub.url)
+    check("me: /agents/me answers the agent whose key is in use", api.self_agent_id() == MAJSTER,
+          api.self_agent_id())
+    try:
+        api.patch_issue(issue["id"], {"status": "blocked"})
+        refused = None
+    except pc.ApiError as exc:
+        refused = exc
+    check("blocked: a bare status write is refused 422, like the live server",
+          refused is not None and refused.status == 422, str(refused))
+    check("blocked: the refusal names the missing descriptor",
+          refused is not None and "unblockDescriptor" in str(refused), str(refused))
+    api.patch_issue(issue["id"], {"status": "blocked",
+                                  "unblockDescriptor": {"owner": {"agentId": api.self_agent_id()},
+                                                        "action": "probe"}})
+    stored = stub.state.issues[issue["id"]]
+    check("blocked: a self-owned descriptor is accepted and stored",
+          stored["status"] == "blocked"
+          and (stored.get("unblockDescriptor") or {}).get("owner", {}).get("agentId") == MAJSTER, stored)
+    other = stub.state.add_issue(identifier="GUL-998", title="probe 2")
+    try:
+        api.patch_issue(other["id"], {"status": "blocked",
+                                      "unblockDescriptor": {"owner": {"agentId": "someone-else"},
+                                                            "action": "x"}})
+        refused2 = None
+    except pc.ApiError as exc:
+        refused2 = exc
+    check("blocked: naming another agent as owner is refused (agents may only name themselves)",
+          refused2 is not None and refused2.status == 403, str(refused2))
+    for probe in (issue, other):
+        stub.state.issues[probe["id"]]["status"] = "done"
+
+
 def main():
     global WORKDIR
     WORKDIR = tempfile.mkdtemp(prefix="factory-pc-tests-")
@@ -1204,6 +1289,7 @@ def main():
             case_missing_document_escalates(stub, base_sha, repo)
             case_tick(stub, base_sha, repo)
             case_write_document_carries_revision(stub)
+            case_blocked_needs_a_descriptor(stub)
             case_edge_block_falls_back(stub)
             case_commit_is_idempotent(stub)
             case_ledger_write_precedes_done(stub)
