@@ -62,7 +62,7 @@ grep -q 'severity: critical' "$RULES" && ok "severity labels present" || fail "a
 for alarm in HostWatchProbeFailing HostWatchHeartbeatMissing HostWatchHeartbeatNotConfigured HostWatchComponentDown HostWatchSessionGone; do
   grep -q "alert: $alarm" "$RULES" && ok "alert $alarm" || fail "missing alert $alarm"
 done
-# GUL-732 / ADR-123: the session alert must be gated on the host's own
+# GUL-732 / ADR-126: the session alert must be gated on the host's own
 # expectation, or it fires forever on a headless appliance and gets ignored.
 grep -q 'hostwatch_gui_session_expected == 1 and hostwatch_gui_session == 0' "$RULES" \
   && ok "session alert keys on gui_expected==1 and gui_session==0" \

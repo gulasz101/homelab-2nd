@@ -42,25 +42,29 @@ this extension). Missing or unknown role fails closed. Profiles live in
 | `executor` | anywhere except the always-denied list | yes / own branch only | 60 |
 | `tester` | `**/tests/**`, `**/test/**`, `**/*.test.*`, `**/*_test.*`, `**/test_*.py` inside the workspace repo | no / no | 25 |
 | `builder` | workspace repo except test paths | no / no | 40 |
-| `readonly` | none; bash limited to a read-only allowlist, plus the one stage hand-off (below) | no / no | 20 |
+| `readonly` | none; bash limited to a read-only allowlist, plus the stage document and hand-off (below) | no / no | 40 |
 
-### The two calls a read-only agent may make (GUL-468)
+### The calls a read-only agent may make (GUL-468, GUL-868)
 
-A `[review]` or `[verify]` stage has exactly two jobs, and both go through the API: deliver its
-`findings`/`verdicts` document (`PUT /issues/<id>/documents/<key>`) and hand the stage back
-(`PATCH /issues/<id>` to `in_review`). The templates name both, and there is no other channel. So
-`curl` is allowed for the `readonly` role **only** when all of these hold:
+A `[review]` or `[verify]` stage has exactly three jobs, and all go through the API: deliver its
+`findings`/`verdicts` document (`PUT /issues/<id>/documents/<key>`), read that same document back
+when it already exists — a second `PUT` needs the revision id for `baseRevisionId`, and there is no
+other way to ask for it — and hand the stage back (`PATCH /issues/<id>` to `in_review`). The
+templates name all three, and there is no other channel. So `curl` is allowed for the `readonly`
+role **only** when all of these hold:
 
-- the request is `PATCH` on `/issues/<id>`, or `PUT` on `/issues/<id>/documents/<key>`;
+- the request is `PATCH` on `/issues/<id>`, `PUT` on `/issues/<id>/documents/<key>`, or a body-less
+  `GET`-implied read of `/issues/<id>/documents/<key>`;
 - exactly one URL, and it is the Paperclip API: `$PAPERCLIP_API_URL…`, `127.0.0.1`, `localhost`
   or `paperclip.voitech.dev`;
-- the body is inline (`-d '{…}'`), never `@file` or `@-`.
+- a write carries its body inline (`-d '{…}'`), never `@file` or `@-`; the read carries no body.
 
 Everything else through `curl` is refused with `readonly-allowlist`: any other verb (including POST,
-even to the documents path), another host, any other path, a body or upload from a local file (`-T`,
-`--data-binary`, `-F`), an output file (`-o`). The role stays read only on the filesystem and cannot
-reach a second API, while still being able to finish its own stage. `tests/policy.test.ts` covers 5
-allow and 16 block cases, and the live matrix runs a real PATCH, a real document PUT and a real POST.
+even to the documents path), another host, any other path — the issue thread, the documents list,
+`/agents/…` — a body or upload from a local file (`-T`, `--data-binary`, `-F`), an output file
+(`-o`). The role stays read only on the filesystem and cannot reach a second API, while still being
+able to finish its own stage. `tests/policy.test.ts` covers the allow and block cases, and the live
+matrix runs a real PATCH, a real document PUT, a real document GET and a real POST.
 
 Every refusal names the token that caused it and keeps the rule id for the block log (GUL-472):
 `factory-guard: curl -o refused: output file (readonly-allowlist)`,
@@ -87,6 +91,13 @@ in the 14 days before 2026-10-27:
 So: **executor 60** for now. Once Pi runs are started with session saving
 (the activation step does), re-count turns per session file over a fortnight
 of real wakes and tighten the number.
+
+**readonly: 20 → 40 (GUL-868).** 20 was never a measurement. A real `[review]` run on a 7-file
+diff spent turns on refusals (`role-write-forbidden`, `readonly-allowlist` ×4, `find: disk-scan`),
+read the diff and ran `scripts/check.sh` green, and then hit the cap before it could `PUT` its
+`findings` document: four runs on GUL-845, no artefact, and `decide` refused for want of it. A
+review reads at least as much as a build writes, so it gets the builder's 40, and the brief now
+carries the verbatim document call so those refusals do not happen at all.
 
 ## Run controls
 

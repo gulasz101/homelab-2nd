@@ -40,7 +40,7 @@ host/paperclip-air/
 │   │   ├── dev.voitech.homelab.syncthing.plist
 │   │   ├── com.gulasz101.hermes-state-backup.plist      # scheduled 03:30 (ADR-107/108)
 │   │   ├── com.gulasz101.hermes-memory-watchdog.plist   # scheduled hourly (ADR-107/108)
-│   │   └── dev.voitech.homelab.heartbeat.plist          # every 60 s, headless (ADR-123)
+│   │   └── dev.voitech.homelab.heartbeat.plist          # every 60 s, headless (ADR-126)
 │   └── agents/                            # empty: nothing on this host may need a login any more
 ├── tests/host-tree-check.sh               # CI gate: plist shape, one owner, no secrets, plan renders
 ├── tests/kubectl-forward-probe-check.sh   # CI gate: port-forwards cannot outlive the script
@@ -107,7 +107,7 @@ processes older than 15 minutes into `leaks.kubectl_port_forward`; `HostWatchOrp
 alerts when the count is above zero. The net only works if the installed sender is the one in this
 repo — check with `diff -q bin/homelab-heartbeat.sh /usr/local/libexec/homelab/homelab-heartbeat.sh`.
 It didn't, once (GUL-728): the sender here gained the leak counter and the Air kept the old copy for a
-day. Since ADR-123 the installed copy is deployed by `homelab-install-scheduled-jobs.sh`, so a repo
+day. Since ADR-126 the installed copy is deployed by `homelab-install-scheduled-jobs.sh`, so a repo
 change plus that one command is the whole upgrade.
 
 ## First install on a fresh Air
@@ -130,7 +130,7 @@ sudo ./bin/homelab-install-daemons.sh --status
 #    ~/.config/homelab/services.env, retires the agent, bootstraps the daemon
 sudo ./bin/homelab-install-daemons.sh
 
-# 4. heartbeat sender — a SYSTEM daemon since GUL-732 (ADR-123): it must beat
+# 4. heartbeat sender — a SYSTEM daemon since GUL-732 (ADR-126): it must beat
 #    with nobody logged in. Installed by step 6 below, not with launchctl by hand.
 #    Seed its token first, as the appliance user:
 mkdir -p ~/.config/homelab && chmod 700 ~/.config/homelab
@@ -189,6 +189,20 @@ sudo ./bin/homelab-install-daemons.sh --rollback
 Boots the daemons out, removes their plists, restores the backed-up LaunchAgents from
 `~/Library/LaunchAgents.h2-336-backup-<timestamp>/`. They load at the next login; until then use
 `homelab-recover-appliance.sh`.
+
+## Host state Git does not own
+
+Two user-scope config files carry behaviour the fleet feels but this tree cannot install, because
+they hold credentials. Both are `600` on the Air and both fail *silently* when they are wrong.
+
+| file | what it decides | one-line check |
+| --- | --- | --- |
+| `~/.hindsight/coding-agent.json` | Hindsight coding-agents plugin: API URL, fleet token, `autoInject` mode for claude-code / pi / opencode | `grep autoInject ~/.hindsight/coding-agent.json` must print `"pages"` (ADR on prompt-time injection) |
+| `~/.hindsight/claude-code-hindsight-settings.json` | the hook block Claude Code merges from user scope | `grep -c dist/claude-hook.js ~/.hindsight/claude-code-hindsight-settings.json` |
+
+A missing `autoInject` key is not an error to the plugin: it means `reflect`, which costs ~20 s per
+prompt and times out (GUL-850). A reinstall of the plugin can drop it. Restore from the
+`coding-agent.json.bak-*` beside it, or add the key back by hand.
 
 ## What this tree deliberately does not do
 

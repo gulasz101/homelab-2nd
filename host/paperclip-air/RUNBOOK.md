@@ -38,7 +38,7 @@ sudo ./bin/homelab-install-daemons.sh --status
 ```
 
 Five system daemons (`hermes-gateway`, `paperclip`, `minio-lan-proxy`, `gemini-tunnel`, `syncthing`),
-**no** matching user agents, and the heartbeat sender as a system daemon too (ADR-123 — it used to be
+**no** matching user agents, and the heartbeat sender as a system daemon too (ADR-126 — it used to be
 a user agent, which on a headless host meant it never ran). If a service shows both `loaded` and
 `YES` (agent present) you have two owners: run the installer, which fixes it.
 
@@ -162,7 +162,7 @@ alert about itself when it is the thing that is dead:
 2. **Heartbeat**, expected every 60 s from `homelab-heartbeat.sh`; `HostWatchHeartbeatMissing` fires
    when the last beat is older than 7 minutes. This is the only check that survives the host being
    logged out, asleep or switched off — which is exactly why the sender is a *system* daemon since
-   ADR-123: it has to keep beating while nobody is logged in.
+   ADR-126: it has to keep beating while nobody is logged in.
 
 The beat also reports the session, and that is a second alert rather than a hidden detail:
 `console_user` (who owns `/dev/console`, `root` = nobody), `gui_session` (does an Aqua session exist

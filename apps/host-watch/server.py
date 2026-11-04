@@ -10,7 +10,7 @@ from outside — two independent signals:
   1. HTTP probe  — every 60 s, three public URLs. Any answer below 500 counts as
      up (401/403 means the app is alive and guarding); 502/503 is THE signature of
      "tunnel up, origin dead". Alert after 3 consecutive failures.
-  2. Heartbeat   — the Air posts every 60 s from a system LaunchDaemon (ADR-123,
+  2. Heartbeat   — the Air posts every 60 s from a system LaunchDaemon (ADR-126,
      superseding ADR-098 decision 6). Silence for 7 minutes means the host is
      logged out, asleep or off: the only check that survives any of those. The
      beat also carries per-component health, which is how the Hermes gateway on
@@ -144,7 +144,7 @@ class HeartbeatStore:
         self.last_seen = 0.0
         self.host = ""
         self.console_user = ""
-        # GUL-732 / ADR-123: the beat reports the GUI session instead of dying
+        # GUL-732 / ADR-126: the beat reports the GUI session instead of dying
         # with it. `gui_session` is host truth (an Aqua session exists or not),
         # `gui_expected` is host configuration (should one exist?). Two alerts
         # come out of one beat: no beat at all = host gone; beat with

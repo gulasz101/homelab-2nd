@@ -14,7 +14,7 @@
 #     has a companion LaunchAgent shipped in this tree (two owners is the
 #     defect ADR-098 forbids);
 #   * the heartbeat is a *system* daemon that reports the session (GUL-732,
-#     ADR-123): it must run with nobody logged in, carry UserName/HOME, and beat
+#     ADR-126): it must run with nobody logged in, carry UserName/HOME, and beat
 #     every 60 s with a payload that says whether a GUI session exists;
 #   * every script parses (bash -n) and the installer's plan can be rendered
 #     without root (--dry-run), which is the only way CI can run it;
@@ -154,8 +154,87 @@ else
   fail "bin/homelab-install-scheduled-jobs.sh missing (ADR-108)"
 fi
 
+# ---- 3c. the Lodge reporter for the Paperclip PM (GUL-831) -------------
+# Not a port service, so section 2's table does not cover it: it is a KeepAlive
+# loop that talks to Paperclip and the dashboard. Assert the shape that would
+# have caught the 2026-11-03 install (system domain, appliance user, HOME set,
+# its own wrapper) plus the two things that make it installable at all: the
+# encrypted host secret and the installer wired into the one-command path.
+REPORTER_LABEL="sou-claude-code-reporter"
+REPORTER_PLIST="$HERE/launchd/daemons/$DOMAIN.$REPORTER_LABEL.plist"
+if [ -f "$REPORTER_PLIST" ]; then
+  python3 - "$REPORTER_PLIST" "$DOMAIN.$REPORTER_LABEL" "$APPLIANCE_USER" "$APPLIANCE_HOME" <<'PY' || RC=1
+import os, plistlib, sys
+path, label, user, home = sys.argv[1:5]
+wrapper = '/usr/local/libexec/homelab/homelab-sou-claude-code-reporter.sh'
+problems = []
+def bad(m): problems.append(m)
+try:
+    with open(path, 'rb') as fh:
+        p = plistlib.load(fh)
+except Exception as exc:
+    print('FAIL: %s is not a valid plist: %s' % (path, exc)); sys.exit(1)
+if p.get('Label') != label:
+    bad('Label is %r, expected %r' % (p.get('Label'), label))
+if os.path.basename(path) != label + '.plist':
+    bad('filename must equal <Label>.plist (launchd bootstrap is label-driven)')
+if p.get('UserName') != user:
+    bad('UserName is %r, expected %r — headless host, system domain (ADR-107)' % (p.get('UserName'), user))
+if p.get('RunAtLoad') is not True:
+    bad('RunAtLoad must be true: the room must be right after a boot, with nobody logged in')
+if p.get('KeepAlive') is not True:
+    bad('KeepAlive must be true: a crashed reporter must be restarted by launchd, not by us')
+if not isinstance(p.get('ThrottleInterval'), int) or p.get('ThrottleInterval') < 10:
+    bad('ThrottleInterval must be an integer >= 10 so a bad secret cannot spin the host')
+args = p.get('ProgramArguments') or []
+if args != ['/bin/sh', wrapper]:
+    bad('ProgramArguments must be ["/bin/sh", %r], got %r' % (wrapper, args))
+env = p.get('EnvironmentVariables') or {}
+if 'PATH' not in env:
+    bad('EnvironmentVariables.PATH missing: launchd daemons get a minimal PATH')
+if env.get('HOME') != home:
+    bad('EnvironmentVariables.HOME must be %r: the wrapper resolves the secret and the age key from it' % home)
+for key in ('StandardOutPath', 'StandardErrorPath'):
+    if not (p.get(key) or '').startswith(home + '/Library/Logs/homelab/'):
+        bad('%s must live under %s/Library/Logs/homelab/' % (key, home))
+for m in problems:
+    print('FAIL: %s: %s' % (os.path.basename(path), m))
+sys.exit(1 if problems else 0)
+PY
+  [ "$RC" -eq 0 ] && ok "reporter daemon plist $REPORTER_LABEL"
+  [ -e "$HERE/launchd/agents/$DOMAIN.$REPORTER_LABEL.plist" ] \
+    && fail "$REPORTER_LABEL would have two supervisors (a daemon and an agent)"
+else
+  fail "missing launchd/daemons/$DOMAIN.$REPORTER_LABEL.plist (the PM's room would freeze)"
+fi
+
+# The host secret is encrypted, and only encrypted: stringData is what the
+# repo's .sops.yaml rule covers, so a plain JSON config would be committed in
+# the clear. Assert the envelope, not the values.
+REPORTER_SECRET="$HERE/secrets/$REPORTER_LABEL.sops.yaml"
+if [ -f "$REPORTER_SECRET" ]; then
+  grep -q 'ENC\[' "$REPORTER_SECRET" \
+    && ok "reporter secret is sops-encrypted" \
+    || fail "secrets/$REPORTER_LABEL.sops.yaml carries no ENC[ block: it is not encrypted"
+  grep -q 'paperclip_token' "$REPORTER_SECRET" \
+    && fail "secrets/$REPORTER_LABEL.sops.yaml names paperclip_token in the clear: stringData is not being encrypted" \
+    || ok "reporter secret leaks no key names"
+  grep -q 'stringData' "$REPORTER_SECRET" \
+    || fail "secrets/$REPORTER_LABEL.sops.yaml must use the stringData envelope the sops rule encrypts"
+else
+  fail "missing secrets/$REPORTER_LABEL.sops.yaml (the reporter has no credentials to read)"
+fi
+
+# One command must install the whole host. A second installer that nobody calls
+# is how the reporter sat uninstalled for a day.
+if grep -q 'homelab-install-sou-reporter.sh' "$HERE/bin/homelab-install-daemons.sh" 2>/dev/null; then
+  ok "install-daemons calls the reporter installer"
+else
+  fail "bin/homelab-install-daemons.sh does not call homelab-install-sou-reporter.sh"
+fi
+
 # ---- 4. the heartbeat is a system daemon that reports the session ---------
-# GUL-732 / ADR-123 superseded ADR-098 decision 6. The sender used to die with
+# GUL-732 / ADR-126 superseded ADR-098 decision 6. The sender used to die with
 # the GUI session on purpose; on a headless appliance that meant it never ran at
 # all, so the alert fired forever and the leak counter never reached k8s. It now
 # runs in system/ and puts console_user, gui_session and gui_expected in the
@@ -196,7 +275,7 @@ for m in problems:
 sys.exit(1 if problems else 0)
 PY
   [ "$RC" -eq 0 ] && ok "heartbeat daemon plist"
-  # two owners is the defect ADR-098 forbids and ADR-123 does not reintroduce
+  # two owners is the defect ADR-098 forbids and ADR-126 does not reintroduce
   if [ -f "$HERE/launchd/agents/$DOMAIN.heartbeat.plist" ]; then
     fail "launchd/agents/$DOMAIN.heartbeat.plist still exists: the sender would run twice"
   fi

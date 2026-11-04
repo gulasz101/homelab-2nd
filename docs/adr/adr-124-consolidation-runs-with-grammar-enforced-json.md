@@ -1,6 +1,6 @@
-# Consolidation runs with grammar-enforced JSON, and its rejection alert needs a floor
+# ADR-124: Consolidation runs with grammar-enforced JSON, and its rejection alert needs a floor
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-02
 - **Issue**: GUL-791
 - **Related**: ADR-085 (FreeLLMAPI `auto` carries retain and consolidation), ADR-099 (a consolidation-failed row is a debt), GUL-428 (retain's own FreeLLMAPI tuning), H2-306 (batch size 16 -> 8 for the same field-dropping)

@@ -319,7 +319,26 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
 - **Escalate** on a third request-changes for one stage, or when a third fix round
   would start: work order `blocked` with `"executionPolicy": null` in the same
   PATCH (otherwise Paperclip reads `blocked` as request-changes), one sentence
-  why, recorded in the ledger, no more retries.
+  why, recorded in the ledger, no more retries. The **stage issue** is parked a
+  different way (GUL-889): it is `blocked` with a policy that has **no stages**
+  (`{"mode": "normal", "commentRequired": true, "stages": []}`), never with
+  `"executionPolicy": null`. A stage issue carries a pending review stage whose
+  state names a return assignee, and Paperclip resolves the PATCH against that
+  stage before it applies the requested status: clearing the policy dissolves the
+  review *back to the return assignee* — `in_progress`, stage agent reassigned,
+  `blocked` overwritten — so the failed write re-arms the agent, the stage is
+  handed back in `in_review`, and the next foreman wake escalates again. With no
+  stages in the policy there is nothing to dissolve: `executionState` is cleared,
+  `blocked` stands, and nobody is armed. A `decide --apply` that finds the ledger
+  already at `outcome: escalate` **and** the stage issue settled (`blocked`,
+  `done`, `cancelled`) writes nothing and exits 1 with `already escalated` — one
+  bad write must never become a wake loop. A **missing stage document**
+  escalates the same way and for the same reason (GUL-868): a review with no
+  `findings`, or a verify missing its `verdicts` or the review's `findings`, is a
+  stage nobody can judge. It used to `return 1` before any board write, so the
+  stage parked with no blocked, no comment and no wake — indistinguishable from a
+  quiet refusal. Now both issues are `blocked`, each comment names the missing
+  document, and the ledger records `outcome: escalate`.
 - Without `--apply` nothing is written: it prints the decision only.
 
 **`tick [--apply]`** — read-only without `--apply`. One line per open work order: stage,

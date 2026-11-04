@@ -165,7 +165,7 @@ class HeartbeatTests(unittest.TestCase):
         self.assertEqual(store.leaks, {"other": 0}, "junk skipped, negatives clamped")
 
     def test_gui_session_is_recorded_and_rendered(self):
-        # GUL-732 / ADR-123: one beat, two alerts. A host that says it expects a
+        # GUL-732 / ADR-126: one beat, two alerts. A host that says it expects a
         # session but reports none is the 2026-10-29 WindowServer logout; a host
         # that expects none is a headless appliance being honest.
         store, _ = self._store("t")

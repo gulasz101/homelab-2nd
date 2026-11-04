@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  heartbeat — SYSTEM LaunchDaemon, UserName=paperclip (GUL-732, ADR-123).
+  heartbeat — SYSTEM LaunchDaemon, UserName=paperclip (GUL-732, ADR-126).
 
   It used to be a user LaunchAgent on purpose (ADR-098 decision 6): the sender
   died with the GUI session, so a logout looked like a dead host to the off-host
@@ -13,7 +13,7 @@
   never ran at all, so `HostWatchHeartbeatMissing` fired permanently and the
   leak detector (hostwatch_host_leak) never reached the cluster — GUL-728.
 
-  ADR-123 supersedes that section: the sender stops dying and STARTS REPORTING.
+  ADR-126 supersedes that section: the sender stops dying and STARTS REPORTING.
   Every beat carries `console_user` and `gui_session` (does an Aqua session
   exist at all) plus `gui_expected` (is this host supposed to have one). The
   receiver then splits one beat into two alerts:

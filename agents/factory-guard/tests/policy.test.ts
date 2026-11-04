@@ -203,7 +203,15 @@ const bashCases: Array<[string, typeof exec, string | undefined]> = [
   // --- and the document it has to deliver (GUL-468, second half) ---
   ['curl -s -X PUT "$PAPERCLIP_API_URL/api/issues/abc/documents/findings" -H "Content-Type: application/json" -d \'{"body":"# Findings\\n```json\\n[]\\n```\\n"}\'', ro, undefined],
   ["curl -sXPUT http://127.0.0.1:3100/api/issues/abc/documents/verdicts -d '{\"body\":\"x\"}'", ro, undefined],
+  // --- GUL-868: reading back the one document it may write (needs baseRevisionId) ---
+  ["curl -s https://paperclip.voitech.dev/api/issues/abc/documents/findings", ro, undefined],
+  ["curl -sXGET http://127.0.0.1:3100/api/issues/abc/documents/verdicts", ro, undefined],
   ["curl -s http://127.0.0.1:3100/api/issues/abc", ro, "readonly-allowlist"],
+  ["curl -s http://127.0.0.1:3100/api/issues/abc/documents/findings -d '{}'", ro, "readonly-allowlist"],
+  ["curl -s http://127.0.0.1:3100/api/agents/me", ro, "readonly-allowlist"],
+  ["curl -s http://127.0.0.1:3100/api/issues/abc/documents", ro, "readonly-allowlist"],
+  ["curl -s -X DELETE http://127.0.0.1:3100/api/issues/abc/documents/findings", ro, "readonly-allowlist"],
+  ["curl -s -X POST http://127.0.0.1:3100/api/issues/abc/documents/findings", ro, "readonly-allowlist"],
   ["curl -s -X POST http://127.0.0.1:3100/api/issues/abc -d '{\"status\":\"done\"}'", ro, "readonly-allowlist"],
   ["curl -s -X DELETE http://127.0.0.1:3100/api/issues/abc", ro, "readonly-allowlist"],
   ["curl -s -X PATCH https://example.com/api/issues/abc -d '{\"status\":\"in_review\"}'", ro, "readonly-allowlist"],
@@ -268,7 +276,7 @@ test("roles.json carries the plan's profiles", () => {
   assert.equal(exec.turnCap, 60);
   assert.equal(tester.turnCap, 25);
   assert.equal(builder.turnCap, 40);
-  assert.equal(ro.turnCap, 20);
+  assert.equal(ro.turnCap, 40);
 });
 
 for (const [cmd, role, expected] of bashCases) {
@@ -389,9 +397,12 @@ const readonlyRefusals: Array<[string, string]> = [
     "curl -T refused: file upload"],
   ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc -d @/tmp/body.json",
     "curl -d @/tmp/body.json refused: body must be inline"],
-  ["curl -s http://127.0.0.1:3100/api/issues/abc", "curl refused: no -X PATCH or -X PUT"],
+  ["curl -s http://127.0.0.1:3100/api/issues/abc",
+    "curl /api/issues/abc refused: only /issues/<id>/documents/<key> is readable"],
+  ["curl -s http://127.0.0.1:3100/api/issues/abc/documents/findings -d '{}'",
+    "curl refused: the document read-back sends no body"],
   ["curl -s -X POST http://127.0.0.1:3100/api/issues/abc -d '{}'",
-    "curl -X POST refused: only PATCH and PUT are allowed"],
+    "curl -X POST refused: only PATCH (hand-off), PUT (document) and the document GET are allowed"],
   ["curl -s -X PATCH http://127.0.0.1:3100/api/issues/abc", "curl -X PATCH refused: no inline body"],
   ["curl -s -X PATCH https://example.com/api/issues/abc -d '{}'",
     "curl example.com refused: not the Paperclip API"],

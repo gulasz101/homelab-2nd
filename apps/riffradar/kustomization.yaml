@@ -13,6 +13,10 @@ resources:
   - riffradar-jwt-secret.sops.yaml
   - riffradar-minio-backup-creds.sops.yaml
   - riffradar-tunnel-token.sops.yaml
+  # The rotated admin credential (GUL-757). Deliberately not mounted by the
+  # Deployment: the live password lives in SQLite `admin_users`, and this file is
+  # its SOPS record so the owner can read it back. `sops -d` it, do not grep it.
+  - riffradar-admin-password.sops.yaml
   # The pull credential is NOT here any more: the platform `ghcr-pull` Secret
   # (apps/ghcr-pull/, ADR-103) already carries this namespace, and the deployment
   # and ImageRepository reference it by name.

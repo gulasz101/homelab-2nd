@@ -76,9 +76,10 @@ print_plan() {
       "$svc" "$(svc_label "$svc")" "$(svc_port "$svc")" "$(svc_rto "$svc")" "$(svc_throttle "$svc")"
   done
   say "daemon  (retired)      dev.voitech.homelab-watchdog  -    -   superseded: launchd is the supervisor now"
+  say "daemon  sou-claude-code-reporter             (no port)  -   installed by bin/homelab-install-sou-reporter.sh, called below (GUL-831)"
   say ""
   say "agent (user session)                         why it stays an agent"
-  say "        (none today: GUL-732 moved the heartbeat sender to system/ as well, ADR-123)"
+  say "        (none today: GUL-732 moved the heartbeat sender to system/ as well, ADR-126)"
   say "heartbeat              $(printf '%s.heartbeat' "$HOMELAB_DOMAIN")   system daemon, installed by homelab-install-scheduled-jobs.sh"
   say ""
   say "steps: back up + boot out each LaunchAgent -> derive its command ->"
@@ -94,7 +95,7 @@ preflight() {
     [ -f "$TREE_DIR/launchd/daemons/$(svc_label "$svc").plist" ] || { warn "missing launchd/daemons/$(svc_label "$svc").plist"; missing=1; }
   done
   [ -f "$SCRIPT_DIR/homelab-service-run.sh" ] || { warn "missing bin/homelab-service-run.sh"; missing=1; }
-  [ -f "$TREE_DIR/launchd/daemons/$HOMELAB_DOMAIN.heartbeat.plist" ] || { warn "missing heartbeat daemon plist (ADR-123: the sender must run headless)"; missing=1; }
+  [ -f "$TREE_DIR/launchd/daemons/$HOMELAB_DOMAIN.heartbeat.plist" ] || { warn "missing heartbeat daemon plist (ADR-126: the sender must run headless)"; missing=1; }
   [ "$missing" -eq 0 ] || die "the repo tree is incomplete; refusing to touch the host"
 }
 
@@ -183,10 +184,10 @@ do_status() {
   done
   say ""
   if find_agent_plists "heartbeat" | grep -q .; then
-    warn "a heartbeat agent is still on disk: $(find_agent_plists heartbeat | tr '\n' ' ') — it must be a system daemon (ADR-123); run homelab-install-scheduled-jobs.sh"
+    warn "a heartbeat agent is still on disk: $(find_agent_plists heartbeat | tr '\n' ' ') — it must be a system daemon (ADR-126); run homelab-install-scheduled-jobs.sh"
   fi
   if daemon_loaded "$HOMELAB_DOMAIN.heartbeat"; then
-    say "heartbeat daemon loaded in system/ (ADR-123)"
+    say "heartbeat daemon loaded in system/ (ADR-126)"
   else
     say "heartbeat daemon NOT loaded: sudo $SCRIPT_DIR/homelab-install-scheduled-jobs.sh"
   fi
@@ -278,9 +279,25 @@ do_apply() {
     fi
   done
 
+  step "the Lodge reporter for the Paperclip PM (GUL-831)"
+  # Not a port service, so it cannot live in HOMELAB_SERVICES: that table is
+  # derived from LaunchAgents and probed on 127.0.0.1:<port>. Its own installer
+  # owns the shape (secret -> 0600 config -> reporter), and this call is what
+  # makes one command install the whole host. A failure here is loud but does
+  # not roll back the services above.
+  if [ -x "$SCRIPT_DIR/homelab-install-sou-reporter.sh" ]; then
+    "$SCRIPT_DIR/homelab-install-sou-reporter.sh" --install || {
+      warn "the sou-reporter daemon did not install; the services above are unaffected"
+      failed=1
+    }
+  else
+    warn "bin/homelab-install-sou-reporter.sh is missing: the PM's Lodge room will not move"
+    failed=1
+  fi
+
   step "next"
   say "1. log out and back in, or just leave it: the daemons do not care about the session."
-  say "2. install the heartbeat sender as a system daemon (ADR-123, it must run headless):"
+  say "2. install the heartbeat sender as a system daemon (ADR-126, it must run headless):"
   say "     sudo $SCRIPT_DIR/homelab-install-scheduled-jobs.sh"
   say "3. run the drills: sudo $SCRIPT_DIR/homelab-drill-session-loss.sh --all --i-am-at-the-mac"
   [ "$failed" -eq 0 ] || die "finished with warnings: run $SCRIPT_DIR/homelab-recover-appliance.sh and read the log above"
