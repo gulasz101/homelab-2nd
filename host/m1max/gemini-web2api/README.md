@@ -58,3 +58,38 @@ silent while healthy and speaks on change:
 - runtime drift — warns if the live container is back on a moving tag or lost its restart policy;
 - cookie pool re-import, paid-tier canary, and a canary attributed by request-log id (the `ts`
   field in that log drifts behind the host clock, so it is useless as a key).
+
+## Reading a failure — three classes, and only one of them is Google's
+
+`/admin/api/requests` (admin token) is the only honest source. Match on `model`, `status`,
+`total_ms` and **`upstream_model`** — nothing else discriminates.
+
+| what you see | what it means |
+| --- | --- |
+| `upstream_model: Nano Banana 2.1`, `200`, 10–44 s | a real image, generated and parsed correctly |
+| `upstream_model: 3.5 Flash-Lite`, `502` | the account was served the **free tier**; no image was ever generated |
+| no `upstream_model`, `502`, `total_ms: 0` | `direct IP slot full: concurrent limit reached` — the proxy refused it locally |
+
+The third class is not Google and not the container. `/admin/api/config` has
+`per_ip_concurrent: 2` (also `per_ip_rpm: 10`, `per_ip_rph: 80`), so two in-flight requests from
+the exit IP block everything else instantly. One image render holds its slot for 20–43 s, which
+means **two concurrent renders starve the whole fleet**, chat included. Clients that submit image
+work concurrently should run that lane at concurrency 1.
+
+### Two traps when reading this log
+
+- **Duration proves nothing.** `total_ms` includes the artifact step's retry loop (~12 s of polling,
+  six tries, 2 s apart) which only runs when the response carried no image. Failures log 3–28 s and
+  real renders log 10–44 s: the bands overlap. A long job is not evidence that a picture was made.
+- **The container clock is wrong, and it moves.** Its `ts` runs 200 s to 6 188 s behind the host and
+  resyncs in steps (4 570 s at the last measurement). Re-measure before correlating a timeline:
+  send one free `gemini-3.5-flash-lite` request, compare its `ts` with the host clock.
+
+### The "two hour refill" is a bench, not a bucket
+
+`proxy_cooldown_min: 120` in `/admin/api/config`. When Google rate-limits the direct IP, this proxy
+parks that IP for 120 minutes and will not retry it until the bench expires. Every recovery that
+looked like "~2 h of quiet refills the quota" is the bench expiring. So quiet time matters because
+the proxy refuses to try — not because a bucket fills. Probing inside the bench both fails and
+delays the answer; the watchdog fires one image probe when the tier returns.
+
