@@ -215,6 +215,39 @@ def read_text_file(path: str) -> str:
 # spec validation (CONTRACT.md point 1)
 # --------------------------------------------------------------------------
 
+# GUL-853: a check that cannot print an `AC-<n>: PASS|FAIL` line is a work order
+# that can never pass the red stage, whatever the Tester writes — `check-red`
+# answers "setup error: no AC line for AC-n" three rounds running and the whole
+# work order escalates. Bash is Turing-complete, so lint cannot prove that a
+# command reports; it can reject the shapes that are *structurally* unable to:
+# a command that never mentions its own AC ids, and one that is not a
+# delegation to a script that might print them. Everything else is decided by
+# running the check (check-red is the proof), as point 2 says.
+_SCRIPT_CHECK = re.compile(
+    r"^(?:bash|sh|dash|zsh|python3?|node|deno|bun|tsx)\s+"
+    r"(?:-[A-Za-z-]+(?:[ =][^\s]+)?\s+)*"          # runner flags, e.g. -I, --yes
+    r"[\w./@%+-]+\.(?:sh|bash|py|js|mjs|cjs|ts|mts)\b"
+)
+
+
+def _check_reports(cmd: str, aid: str) -> bool:
+    """The command mentions the AC id it has to report: `echo "AC-1: FAIL x"`."""
+    return re.search(r"(?<![\w-])%s:(?!\w)" % re.escape(aid), cmd) is not None
+
+
+def _silent_check_reason(aid: str, cmd: str) -> str:
+    return (
+        "%s: check %r can never print an AC line: name the id in the command "
+        "(sh -c 'if <test>; then echo \"%s: PASS\"; else echo \"%s: FAIL <reason>\"; "
+        "exit 1; fi') or delegate to a script that prints it (bash path/to/check.sh). "
+        "Use the if/else form, not `test && echo PASS || echo FAIL`: that one exits 0 "
+        "after printing FAIL, which check-red reads as a setup error. A check that only "
+        "runs `test`, `grep` or a validator is a setup error in every stage and the red "
+        "stage can never pass it (GUL-853)"
+        % (aid, cmd, aid, aid)
+    )
+
+
 def validate_spec(value, is_lint: bool) -> list:
     reasons: list = []
     if not isinstance(value, dict):
@@ -263,6 +296,9 @@ def validate_spec(value, is_lint: bool) -> list:
         chk = ac["check"]
         if not (isinstance(chk, str) and chk.strip() and "\n" not in chk):
             reasons.append("spec: %s: check must be one single-line command" % aid)
+        elif (is_lint and isinstance(aid, str) and re.match(r"^AC-[1-9][0-9]*$", aid)
+              and not (_check_reports(chk, aid) or _SCRIPT_CHECK.match(chk.strip()))):
+            reasons.append(_silent_check_reason(aid, chk))
     return reasons
 
 
@@ -1442,9 +1478,49 @@ def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: st
 # (Kept in `pc.patch_issue`: a status the server silently drops is a failed write,
 # not a style issue.)
 #
-# A policy with no stages leaves the server nothing to dissolve: it clears
-# executionState, keeps `blocked`, and arms nobody.
-ESCALATED_STAGE_POLICY = {"mode": "normal", "commentRequired": True, "stages": []}
+# A policy whose executionState stage no longer exists leaves the server nothing
+# to dissolve: it clears executionState, keeps the requested `blocked`, and arms
+# nobody.
+#
+# GUL-969: empty stages alone are *not* enough any more. The server normalises a
+# policy with no stages and no monitor/reviewPreset/authorizationPolicy/maxReviewRounds
+# to null, and a null policy on an `in_review` issue takes the *other* branch: it
+# dissolves the review back to `returnAssignee` and overwrites the requested status
+# with `in_progress` — which is what made the park 422 on `unblockDescriptor requires
+# blocked status`. `maxReviewRounds` is not the answer either: paperclipai 2026.1012.0
+# reads that field only in its zod schema, never in the normaliser, so a stage-less
+# policy still collapses to null on the running server.
+#
+# So the park sends the stage's *own* stages with their ids stripped: the policy
+# stays non-null, the live `executionState.currentStageId` no longer resolves, and
+# the server takes the clear-the-state branch above — `executionState` cleared,
+# requested `blocked` kept, nobody armed. The stage definition survives, so a
+# re-arm starts from the same review rather than a redefined one.
+
+
+def _park_policy(stage_issue: dict) -> dict:
+    """The park's policy: this stage issue's own stages, re-identified (GUL-969).
+
+    Stage ids are dropped on purpose — a fresh id is what makes the live
+    `executionState` point at a stage that no longer exists, which is the branch
+    that clears the state and keeps `blocked`. Participants and `approvalsNeeded`
+    are kept so the stage still describes the review it came from.
+    """
+    policy = stage_issue.get("executionPolicy") or {}
+    stages = []
+    for stage in policy.get("stages") or []:
+        participants = [p for p in (stage.get("participants") or []) if p]
+        if not participants:
+            continue
+        kept = {"type": stage.get("type") or "review",
+                "participants": participants,
+                "approvalsNeeded": stage.get("approvalsNeeded", 1)}
+        if stage.get("name"):
+            kept["name"] = stage["name"]
+        stages.append(kept)
+    return {"mode": policy.get("mode") or "normal",
+            "commentRequired": bool(policy.get("commentRequired", True)),
+            "stages": stages}
 
 
 def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
@@ -1461,7 +1537,7 @@ def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
     identifier = stage_issue.get("identifier", "?")
     api.patch_issue(stage_issue["id"], {
         "status": "blocked",
-        "executionPolicy": dict(ESCALATED_STAGE_POLICY),
+        "executionPolicy": _park_policy(stage_issue),
         "unblockDescriptor": _unblock_descriptor(
             api, "Re-run `factory decide %s --apply` once the factory tooling can park this "
                  "stage; that agent owns clearing this block." % identifier),
@@ -1490,7 +1566,13 @@ def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: di
     }
     if apply:
         identifier = stage_issue.get("identifier", "?")
-        _escalate(api, work_order["id"], ledger, reason, identifier)
+        # GUL-969: the escalation is two writes — the work order and the ledger,
+        # then the park. When the park died on the 422 the engine was left
+        # half-applied: escalate recorded, stage still `in_review`. Re-running it
+        # must finish the missing write only; re-escalating would post a second
+        # "Wojtek decides" comment and clear the work order's executionState.
+        if ledger.get("outcome") != "escalate":
+            _escalate(api, work_order["id"], ledger, reason, identifier)
         _block_stage_issue(api, stage_issue,
                            "escalated: %s — the stage produced no artefact, so there is nothing to "
                            "decide. This stage is parked, not returned to its agent: the work order "
@@ -1542,6 +1624,54 @@ def cmd_factory_decide(args) -> int:
         return 1
 
     cwd = ledger["cwd"]
+    # GUL-949: `tick` reads the PR before settling a work order; `decide` never
+    # did, so a verify stage opened a fix round (then escalated four times) on
+    # a branch that had already merged — riff_radar #18, 3 Nov. The PR is read
+    # before any stage is opened or any escalation is posted, with the same
+    # call `settle_merge()` uses, and a merged or closed PR goes straight to
+    # that settlement path instead of being decided again.
+    pr = ledger.get("pr") or {}
+    if pr.get("number"):
+        settled = ledger.get("merge") or {}
+        if settled.get("state"):
+            reason = "already settled: PR #%s %s" % (pr["number"], settled["state"])
+            emit(False, "decide", [reason], {
+                "ok": False, "check": "decide", "reasons": [reason], "stage": stage,
+                "round": round_no, "decision": settled["state"], "applied": False,
+                "workOrder": work_order.get("identifier"),
+            })
+            return 1
+        try:
+            view = pr_merge_view(ledger.get("repo") or "", pr["number"])
+        except SetupError as exc:
+            # refusing beats deciding blind: a fix round on a merged PR costs a
+            # day of confusion, and exit 2 leaves the stage untouched and re-runnable.
+            raise SetupError("cannot read PR #%s state, refusing to decide: %s"
+                             % (pr["number"], str(exc)[:200]))
+        if str(view.get("state") or "").upper() in ("MERGED", "CLOSED"):
+            merge_state = settle_merge(api, work_order, ledger, pr, view, bool(args.apply))
+            reason = "PR #%s is %s: settled, no stage opened" % (pr["number"], merge_state)
+            if args.apply:
+                api.patch_issue(stage_issue["id"], {
+                    "status": "cancelled",
+                    "comment": ("cancelled: PR #%s is %s, so the work order moved on "
+                                "without a decision on this stage (GUL-949)."
+                                % (pr["number"], merge_state)),
+                })
+            result = {
+                "ok": merge_state == "merged",
+                "check": "decide",
+                "reasons": [reason],
+                "stage": stage,
+                "round": round_no,
+                "decision": merge_state,
+                "applied": bool(args.apply),
+                "merge": merge_state,
+                "workOrder": work_order.get("identifier"),
+            }
+            emit(merge_state == "merged", "decide", [reason], result)
+            return 0 if merge_state == "merged" else 1
+
     spec_doc = api.document(work_order["id"], "spec")
     if not spec_doc or not spec_doc.get("body"):
         raise SetupError("%s has no `spec` document" % work_order.get("identifier"))
