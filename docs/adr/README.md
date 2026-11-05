@@ -123,6 +123,8 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-121 | the fleet's primary route carries a fallback chain, and its last hop is the paid one | Accepted | 2026-11-02 |
 | ADR-122 | Loki rule delivery is monitored as a pipeline, not as a pod | Accepted | 2026-11-02 |
 | ADR-123 | Image Studio gets a third engine: nano banana through the Gemini web proxy | Accepted | 2026-11-04 |
+| ADR-124 | Consolidation runs with grammar-enforced JSON, and its rejection alert needs a floor | Accepted | 2026-11-02 |
+| ADR-125 | Prompt-time memory is knowledge-page search, not reflect | Accepted | 2026-11-03 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,

@@ -1,6 +1,6 @@
-# ADR: Prompt-time memory is knowledge-page search, not reflect
+# ADR-125: Prompt-time memory is knowledge-page search, not reflect
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-03
 - **Issue**: GUL-850
 - **Related**: ADR-075 (the coding-agents plugin), ADR-106 (fleet billing), GUL-143 / GUL-791 (Hindsight health — untouched here)

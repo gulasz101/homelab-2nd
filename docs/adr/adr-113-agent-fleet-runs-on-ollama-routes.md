@@ -1,6 +1,6 @@
 # ADR-113: The agent fleet runs on Ollama Cloud routes, not on the OpenCode Go allowance
 
-- **Status**: Accepted
+- **Status**: Accepted (amended 2026-11-05 by GUL-971 / GUL-972)
 - **Date**: 2026-10-29
 - **Issue**: GUL-581
 - **Related**: ADR-085 (LiteLLM carries paid subscriptions only), ADR-094 (Hindsight reflect on a paid Ollama route), ADR-075 (Paperclip org and agent runtimes), GUL-122 / GUL-480 (Pi sends `reasoning_effort`)
@@ -45,6 +45,36 @@ routes that do not exist, so the fleet's model *families* had to change, not jus
    entry says `reasoning: true`), the catalog says `reasoning: false` until the route declaration
    is deployed.
 
+## Amendment 2026-11-05 — runners on the paid route, chat profiles on the free pool (GUL-971 → GUL-972)
+
+The Ollama Pro weekly allowance ran dry again (`HTTP 429 ... reached your weekly usage limit`,
+09:10Z and 10:40Z), so the owner split the fleet by what the workload actually needs. Decisions 1,
+2 and 3 above are superseded by this split; decision 5 (Go routes as headroom) and decision 6
+(`allowed_openai_params`) still stand.
+
+| surface | route | why |
+|---|---|---|
+| Paperclip runners: Tester, Builder, Reviewer, Verifier, Majster, Pi (`pi_local`) | `llmhub/deepseek-v4.1-flash-1017-ds` | 30–90 minute tool-calling runs |
+| Paperclip OpenCode runner + `~/.config/opencode/opencode.json` (`model`, `small_model`) | `llmhub/deepseek-v4.1-flash-1017-ds` | same work, local CLI |
+| Hermes `andrzej` | `deepseek-v4.1-flash-1017-ds` | ops executor, tool-heavy |
+| Hermes root (Bill Cipher), `florian`, `matejko`, `szarik`, `zdzislaw` | `beam-free-go` | chat-shaped work, does not hold the paid allowance |
+| `claude_local` (Claude Code) | unchanged | bills Anthropic |
+
+Why the free pool is acceptable here and was not in 2026-10-29: the profiles that move are the ones
+that answer a question and stop. Nothing on them opens a PR. `beam-free-go` was checked with a
+**forced** `tool_choice` before the move (HTTP 200, `tool_calls[0].function.name` =
+`get_homelab_node_status`), so a tool-using turn is not the thing that breaks first.
+
+Two traps recorded on the way, both of which cost a run:
+
+- `longcat-2.5-preview-free-go` and `space-bunny-free-go` are published in `GET /v1/models` but the
+  upstream answers `Model is unavailable` — a model group in the list is not a served model. The
+  fallback order in this ADR is therefore `beam-free-go` only; check with a real request, not the
+  catalogue.
+- `deepseek-v4.1-flash-1017-ds` rejects a *forced* `tool_choice` (`Thinking mode does not support
+  this tool_choice`). `tool_choice: "auto"` works and returns `tool_calls`. A probe that forces the
+  tool call will report the paid route as broken when it is fine.
+
 ## Consequences
 
 - The whole fleet draws on one weekly allowance (Ollama Pro) instead of two. That is the point —
@@ -58,6 +88,9 @@ routes that do not exist, so the fleet's model *families* had to change, not jus
   `config.yaml` (`model.default`, `custom_providers[].model`, `fallback_providers[]`).
 - Reviewers and executors are different families now, which raises the cost of a same-model
   blind spot and slightly raises the chance of style disagreement between them.
+  **After the 2026-11-05 amendment** all seven runners share one route, so that separation is gone
+  and a same-model blind spot is back. If a review starts missing what a build missed, the fix is a
+  different family for Reviewer/Verifier, not a different quota.
 - `pi_local` agents whose instructions bundle is `external` cannot have `adapterConfig` changed by
   an agent key at all (`Board access required`), so their model is a manual board step.
 
