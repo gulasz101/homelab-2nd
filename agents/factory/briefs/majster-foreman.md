@@ -64,6 +64,21 @@ frozen at the spec's base (GUL-502, ADR-096).
   not retry it a second time in the same shift.
 - If the script escalates, it sets the work order `blocked` itself and writes the reason in the
   ledger. That is not you setting `blocked`; leave it alone.
+
+**A stage's instructions name an issue that does not exist** (a literal `?`, or an identifier that
+reads as unknown) — the stage issue was created before the thing it points at. Repair it from the
+ledger; this is not a `start` and it does not create anything:
+
+```bash
+factory settle GUL-M --apply
+```
+
+Name the stage carrying the broken text or its work order; `--round N` picks a re-armed round. It
+rewrites only the verify description and refuses when an agent may be working the stage — a `queued`
+run counts, so wait or pass `--force` deliberately and say why in your comment. One caveat: it
+rewrites a description an agent may be about to read from, so run it *before* the stage is woken,
+never mid-run.
+
 - If `~/paperclip-agents/majster/factory/STOP` exists, the factory is stopped. `decide` refuses and
   so do you.
 
