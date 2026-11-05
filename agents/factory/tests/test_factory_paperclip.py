@@ -64,6 +64,9 @@ class State:
         self.put_failures = {}
         # the live API echoes the document bare; the stub can do either
         self.wrapped_documents = True
+        # who GET /agents/me answers: the factory runs on Majster's key, and an
+        # agent may only name itself as an unblock owner (GUL-898)
+        self.me = {"id": MAJSTER, "name": "Majster"}
 
     def add_issue(self, **kw):
         ident = kw.pop("identifier", None)
@@ -79,6 +82,8 @@ class State:
             "assigneeAgentId": None,
             "blockedByIssueIds": [],
             "executionPolicy": None,
+            "executionState": None,
+            "unblockDescriptor": None,
             "currentExecutionWorkspace": None,
             "createdAt": "2026-10-28T08:00:00.000Z",
             "updatedAt": "2026-10-28T08:00:00.000Z",
@@ -133,6 +138,8 @@ def make_handler(state):
                 return self._send(200, mine)
             if parts[:2] == ["api", "issues"] and len(parts) == 4 and parts[3] == "runs":
                 return self._send(200, state.runs.get(parts[2], []))
+            if parts[:2] == ["api", "agents"] and parts[2:] == ["me"]:
+                return self._send(200, state.me)
             if parts[:2] == ["api", "agents"] and len(parts) == 3:
                 agent = state.agents.get(parts[2])
                 return self._send(200, agent) if agent else self._send(404, {"error": "no agent"})
@@ -206,13 +213,78 @@ def make_handler(state):
         def do_PATCH(self):
             parts = self._parts()
             body = self._body()
+            # Paperclip normalises a policy with nothing to run — no stages, no monitor,
+            # no reviewPreset/authorizationPolicy, no maxReviewRounds — to null *before*
+            # it applies the write (GUL-969). So a caller that thinks it is sending "an
+            # empty policy" is really sending a policy removal, and takes the dissolve
+            # branch below instead of the clear-the-stage branch.
+            policy = body.get("executionPolicy")
+            if isinstance(policy, dict) and not (policy.get("stages") or []) \
+                    and not policy.get("monitor") and not policy.get("reviewPreset") \
+                    and not policy.get("authorizationPolicy") \
+                    and policy.get("maxReviewRounds") is None:
+                body["executionPolicy"] = None
+
             if parts[:2] == ["api", "issues"] and len(parts) == 3:
                 issue = state.issues.get(parts[2])
                 if not issue:
                     return self._send(404, {"error": "not found"})
-                for key in ("status", "executionPolicy", "assigneeAgentId"):
+                # Paperclip refuses to *enter* blocked without something it can route to
+                # (GUL-898): an unresolved blocker edge, a pending interaction/approval, or
+                # an unblockDescriptor whose owner is the authenticated agent. Copied here
+                # so the pre-fix escalate write reproduces the reported 422 instead of
+                # passing on a stub that believes every write.
+                descriptor = body.get("unblockDescriptor")
+                if isinstance(descriptor, dict):
+                    owner = descriptor.get("owner")
+                    if isinstance(owner, dict) and owner.get("agentId") not in (None, state.me["id"]):
+                        return self._send(403, {"error": "Agents may only name themselves as an unblock owner"})
+                entering_blocked = issue.get("status") != "blocked" and body.get("status") == "blocked"
+                if entering_blocked:
+                    requested = body.get("blockedByIssueIds")
+                    ids = requested if isinstance(requested, list) else (issue.get("blockedByIssueIds") or [])
+                    has_blocker = any((state.issues.get(i) or {}).get("status") not in ("done", "cancelled")
+                                      for i in ids)
+                    pending = any(c.get("issueId") == issue["id"] and c.get("status") == "pending"
+                                  for c in state.interactions)
+                    if not (has_blocker or pending or descriptor):
+                        return self._send(422, {"error": "Entering blocked requires unresolved blockers, "
+                                                        "a pending interaction/approval, or unblockDescriptor"})
+                was_in_review = issue.get("status") == "in_review"
+                return_to = (issue.get("executionState") or {}).get("returnAssignee")
+                # Resolve the requested write against the pending stage *before* applying it,
+                # the way the route does: a null policy on an `in_review` issue carrying a
+                # return assignee dissolves the review back to that assignee and overwrites
+                # the requested status with `in_progress`; a policy whose stages no longer
+                # contain the state's current stage has nothing left to resolve, so the
+                # server clears executionState and keeps whatever status was asked for.
+                policy_in_body = "executionPolicy" in body
+                policy = body.get("executionPolicy")
+                projected = body.get("status", issue.get("status"))
+                dissolve = policy_in_body and policy is None and was_in_review and return_to
+                if dissolve:
+                    projected = "in_progress"
+                clear_state = False
+                if policy_in_body and isinstance(policy, dict):
+                    state_stage = (issue.get("executionState") or {}).get("currentStageId")
+                    stage_ids = [s.get("id") for s in policy.get("stages") or []]
+                    clear_state = bool(state_stage and state_stage not in stage_ids)
+                # Paperclip checks the descriptor against the *resulting* status, after the
+                # stage transition it just computed (routes/issues.ts). That is the check the
+                # reported crash died on: a park that dissolves the review no longer ends
+                # `blocked`, so the descriptor is refused whole and nothing is written.
+                refused_descriptor = isinstance(descriptor, dict) and projected != "blocked"
+                if refused_descriptor:
+                    return self._send(422, {"error": "unblockDescriptor requires blocked status"})
+                for key in ("status", "executionPolicy", "assigneeAgentId", "unblockDescriptor"):
                     if key in body:
                         issue[key] = body[key]
+                if dissolve:
+                    issue["status"] = "in_progress"
+                    issue["assigneeAgentId"] = (return_to or {}).get("agentId")
+                    issue["executionState"] = None
+                if clear_state:
+                    issue["executionState"] = None
                 if body.get("comment"):
                     state.comments.append({"issueId": issue["id"], "body": body["comment"]})
                 return self._send(200, issue)
@@ -347,6 +419,26 @@ def head_branch(repo):
 def stage_issue(stub, parent, title, status="in_progress"):
     return stub.state.add_issue(parentId=parent["id"], title=title, status=status,
                                 assigneeAgentId=MAJSTER)
+
+
+def pending_review_stage(stub, parent, title, stage_agent="agent-tester-1"):
+    """A stage issue as Paperclip really holds one while the foreman decides it:
+    `in_review` on a pending review stage, carrying the return assignee (the agent
+    that did the work) so the server knows where a bounced decision goes."""
+    stage = stub.state.add_issue(parentId=parent["id"], title=title, status="in_review",
+                                 assigneeAgentId=MAJSTER,
+                                 executionPolicy={"mode": "normal", "commentRequired": True,
+                                                  "stages": [{"id": "stage-review-1", "type": "review",
+                                                              "participants": [
+                                                                  {"id": "p-review", "type": "agent",
+                                                                   "agentId": MAJSTER}],
+                                                              "approvalsNeeded": 1}]})
+    stage["executionState"] = {"status": "pending", "currentStageId": "stage-review-1",
+                               "currentStageType": "review", "completedStageIds": [],
+                               "currentParticipant": {"type": "agent", "agentId": MAJSTER},
+                               "returnAssignee": {"type": "agent", "agentId": stage_agent},
+                               "changesRequestedCount": 0}
+    return stage
 
 
 def check(name, condition, detail=""):
@@ -565,9 +657,75 @@ def case_verify_fix_round(stub, base_sha, repo):
           "F-1" in round2[0]["description"], round2[0]["description"][:200])
 
 
+def case_decide_settles_a_merged_pr(stub, base_sha, repo):
+    """GUL-949: a verify stage on a merged PR is settled, never decided again.
+
+    The ledger holds a confirmed blocking finding, so without the PR-state read
+    this decide opens a fix round on a branch that already landed — the
+    riff_radar #18 incident.
+    """
+    wo = base_work_order(stub, base_sha, repo, identifier="GUL-920")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 118,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/118"}
+    review = stub.state.add_issue(identifier="GUL-921", title="[review] GUL-920",
+                                  parentId=wo["id"])
+    verify = stage_issue(stub, wo, "[verify] GUL-920 — Add the fixture")
+    ledger["stages"] = {
+        "review": {"issueId": review["id"], "identifier": review["identifier"],
+                   "round": 1, "attempts": 0, "sha": None},
+        "verify": {"issueId": verify["id"], "identifier": verify["identifier"],
+                   "round": 1, "attempts": 0, "sha": None},
+    }
+    write_ledger(stub, wo, ledger)
+    stub.state.doc(review["id"], "findings",
+                   '# Findings\n\n```json\n[{"id": "F-1", "file": "tests/ac.sh", "line": 1, '
+                   '"severity": "blocking", "claim": "the AC check never runs"}]\n```\n')
+    stub.state.doc(verify["id"], "verdicts",
+                   '# Verdicts\n\n```json\n[{"id": "F-1", "verdict": "confirmed", '
+                   '"evidence": "bash tests/ac.sh -> AC-1: FAIL"}]\n```\n')
+
+    env = merge_env("decide-merged", {"state": "MERGED", "mergedAt": "2026-11-03T17:37:00Z",
+                                      "mergeCommit": {"oid": "d44464f"}})
+    before = len([i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]])
+    code, out, raw = run(stub, ["decide", verify["identifier"], "--apply"], extra_env=env)
+    children = [i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]
+    ledger = ledger_of(stub, wo)
+    said = comments_on(stub, wo["id"])
+
+    check("decide merged: a merged PR settles the stage instead of deciding it",
+          code == 0 and (out or {}).get("decision") == "merged", raw[-600:])
+    check("decide merged: a confirmed blocking finding opens no fix round",
+          len(children) == before and not [c for c in children if " r2]" in c["title"]],
+          [c["title"] for c in children])
+    check("decide merged: no escalation card is raised",
+          [c for c in stub.state.interactions if c.get("issueId") == wo["id"]] == [])
+    check("decide merged: the ledger records the merge and the outcome",
+          (ledger.get("merge") or {}).get("state") == "merged"
+          and ledger.get("outcome") == "merged", ledger.get("merge"))
+    check("decide merged: the work order is done and its monitor cleared",
+          stub.state.issues[wo["id"]]["status"] == "done"
+          and stub.state.issues[wo["id"]].get("executionPolicy") is None,
+          {k: stub.state.issues[wo["id"]].get(k) for k in ("status", "executionPolicy")})
+    check("decide merged: the merge commit is on the work order, on the same path tick uses",
+          any("d44464f" in body for body in said), said[-1:])
+    check("decide merged: the stale stage is cancelled, not left in_progress",
+          stub.state.issues[verify["id"]]["status"] == "cancelled",
+          stub.state.issues[verify["id"]]["status"])
+
+    comments_before = len(stub.state.comments)
+    code_again, out_again, raw_again = run(stub,
+                                           ["decide", verify["identifier"], "--apply"],
+                                           extra_env=env)
+    check("decide merged: a second decide on the settled stage writes nothing",
+          code_again == 1
+          and any("already settled" in r for r in (out_again or {}).get("reasons", []))
+          and len(stub.state.comments) == comments_before, raw_again[-300:])
+
+
 def case_third_failure_escalates(stub, base_sha, repo):
     wo = base_work_order(stub, base_sha, repo)
-    stage = stage_issue(stub, wo, "[red] GUL-900 — Add the fixture")
+    stage = pending_review_stage(stub, wo, "[red] GUL-900 — Add the fixture")
     with open(os.path.join(repo, "README.md"), "w") as fh:
         fh.write("still not a test\n")
     codes = []
@@ -579,8 +737,128 @@ def case_third_failure_escalates(stub, base_sha, repo):
           and stub.state.issues[wo["id"]]["status"] == "blocked", codes)
     check("escalate: the work order PATCH clears executionPolicy",
           stub.state.issues[wo["id"]]["executionPolicy"] is None)
+    parked = stub.state.issues[stage["id"]]
+    check("escalate: the stage issue lands blocked, not bounced back to its agent (GUL-889)",
+          parked["status"] == "blocked" and parked["executionState"] is None
+          and parked["assigneeAgentId"] == MAJSTER,
+          {k: parked.get(k) for k in ("status", "executionState", "assigneeAgentId")})
+    check("escalate: the stage policy keeps its stage but drops the stage id (GUL-969)",
+          [s.get("id") for s in (parked.get("executionPolicy") or {}).get("stages") or []]
+          == [None]
+          and bool(((parked.get("executionPolicy") or {}).get("stages") or [{}])[0]
+                   .get("participants")),
+          parked.get("executionPolicy"))
+    stage_desc = parked.get("unblockDescriptor") or {}
+    check("escalate: the stage park carries a self-owned unblockDescriptor (GUL-898)",
+          (stage_desc.get("owner") or {}).get("agentId") == MAJSTER
+          and bool((stage_desc.get("action") or "").strip()), stage_desc)
+    wo_desc = stub.state.issues[wo["id"]].get("unblockDescriptor") or {}
+    check("escalate: the work order block carries one too, same owner (GUL-898)",
+          (wo_desc.get("owner") or {}).get("agentId") == MAJSTER
+          and bool((wo_desc.get("action") or "").strip()), wo_desc)
     body = stub.state.documents[(wo["id"], "ledger")]["body"]
     check("escalate: the ledger records it", '"outcome": "escalate"' in body or '"escalated"' in body)
+
+    # GUL-889: a second decide on a settled stage must write nothing — that repeat is
+    # what turned one bad write into a run every three minutes.
+    comments_before = len(stub.state.comments)
+    state_before = {k: stub.state.issues[stage["id"]].get(k)
+                    for k in ("status", "executionPolicy", "assigneeAgentId")}
+    code_again, out_again, raw_again = run(stub, ["decide", stage["identifier"], "--apply"])
+    check("escalate: re-running decide on a settled stage is refused, not repeated",
+          code_again == 1 and any("already escalated" in r for r in (out_again or {}).get("reasons", []))
+          and len(stub.state.comments) == comments_before
+          and {k: stub.state.issues[stage["id"]].get(k)
+               for k in ("status", "executionPolicy", "assigneeAgentId")} == state_before,
+          raw_again[-400:])
+
+
+
+def case_missing_document_escalates(stub, base_sha, repo):
+    """GUL-868: a stage with no artefact is escalated on the board, not refused silently."""
+    wo = base_work_order(stub, base_sha, repo, identifier="GUL-905")
+    review = pending_review_stage(stub, wo, "[review] GUL-905 — Add the fixture")
+    # no `findings` document on purpose: that is how the Reviewer's turn-cap stall looks
+    review_assignee = stub.state.issues[review["id"]]["assigneeAgentId"]
+
+    code0, out0, raw0 = run(stub, ["decide", review["identifier"]])
+    check("missing document: a dry decide reports escalate and writes nothing",
+          code0 == 1 and (out0 or {}).get("decision") == "escalate"
+          and stub.state.issues[wo["id"]]["status"] == "in_progress", raw0[-400:])
+
+    code, out, raw = run(stub, ["decide", review["identifier"], "--apply"])
+    check("missing document: --apply exits 1 with decision escalate",
+          code == 1 and (out or {}).get("decision") == "escalate"
+          and (out or {}).get("applied") is True, raw[-400:])
+    check("missing document: the work order is blocked with executionPolicy cleared",
+          stub.state.issues[wo["id"]]["status"] == "blocked"
+          and stub.state.issues[wo["id"]]["executionPolicy"] is None,
+          stub.state.issues[wo["id"]])
+    check("missing document: the stage issue is blocked, not left parked",
+          stub.state.issues[review["id"]]["status"] == "blocked"
+          and stub.state.issues[review["id"]]["executionState"] is None
+          and stub.state.issues[review["id"]]["assigneeAgentId"] == review_assignee,
+          stub.state.issues[review["id"]])
+    # GUL-969: the park must keep a non-empty policy. An empty one normalises to null on
+    # the deployed server, and a null policy on an `in_review` issue with a return assignee
+    # dissolves the review (`in_progress`, assignee moved back) — which is why the descriptor
+    # then failed `unblockDescriptor requires blocked status` and the whole write was refused.
+    parked = stub.state.issues[review["id"]].get("executionPolicy") or {}
+    parked_stages = parked.get("stages") or []
+    check("missing document: the park keeps the stage definition but drops its identity",
+          len(parked_stages) == 1 and parked_stages[0].get("type") == "review"
+          and "id" not in parked_stages[0]
+          and bool(parked_stages[0].get("participants")),
+          json.dumps(parked))
+    check("missing document: both issues say what is missing",
+          any("no `findings` document" in c["body"] for c in stub.state.comments
+              if c["issueId"] == wo["id"])
+          and any("no `findings` document" in c["body"] for c in stub.state.comments
+                  if c["issueId"] == review["id"]),
+          stub.state.comments[-4:])
+    review_desc = stub.state.issues[review["id"]].get("unblockDescriptor") or {}
+    check("missing document: the park carries a self-owned descriptor and names the stage (GUL-898)",
+          (review_desc.get("owner") or {}).get("agentId") == MAJSTER
+          and review["identifier"] in (review_desc.get("action") or ""), review_desc)
+    body = stub.state.documents[(wo["id"], "ledger")]["body"]
+    check("missing document: the ledger records the escalation",
+          '"outcome": "escalate"' in body, body[-300:])
+
+
+def case_half_applied_escalation_reparks(stub, base_sha, repo):
+    """GUL-969: the park is a second write, so an escalation can land half-applied.
+
+    Paperclip refused the park with 422 `unblockDescriptor requires blocked status`,
+    leaving the ledger saying escalate and the stage still `in_review`. A re-run must
+    finish the missing write only — one escalation comment, one park.
+    """
+    wo = base_work_order(stub, base_sha, repo, identifier="GUL-916")
+    review = pending_review_stage(stub, wo, "[review] GUL-916 — Add the fixture")
+    stuck_policy = json.loads(json.dumps(stub.state.issues[review["id"]]["executionPolicy"]))
+    stuck_state = json.loads(json.dumps(stub.state.issues[review["id"]]["executionState"]))
+
+    run(stub, ["decide", review["identifier"], "--apply"])
+    check("half-applied escalate: the first run parks the stage",
+          stub.state.issues[review["id"]]["status"] == "blocked",
+          stub.state.issues[review["id"]])
+    escalate_comments = [c for c in stub.state.comments if c["issueId"] == wo["id"]]
+
+    # rewind the board to exactly what the 422 left behind
+    stub.state.issues[review["id"]].update({
+        "status": "in_review", "executionPolicy": stuck_policy,
+        "executionState": stuck_state, "unblockDescriptor": None})
+
+    code, out, raw = run(stub, ["decide", review["identifier"], "--apply"])
+    check("half-applied escalate: the re-run parks the stage and does not raise",
+          code == 1 and (out or {}).get("decision") == "escalate"
+          and (out or {}).get("applied") is True, raw[-400:])
+    check("half-applied escalate: the re-run does not escalate the work order twice",
+          [c for c in stub.state.comments if c["issueId"] == wo["id"]] == escalate_comments,
+          stub.state.comments[-4:])
+    check("half-applied escalate: the stage ends blocked with no pending stage",
+          stub.state.issues[review["id"]]["status"] == "blocked"
+          and stub.state.issues[review["id"]]["executionState"] is None,
+          stub.state.issues[review["id"]])
 
 
 def case_tick(stub, base_sha, repo):
@@ -790,7 +1068,8 @@ def case_green_approve_opens_one_pr(stub):
     calls2 = [l for l in open(gh_log).read().splitlines() if l.strip()]
     products2 = [p for p in stub.state.work_products if p.get("issueId") == wo["id"]]
     check("decide green: a re-run reuses the recorded PR instead of opening a second",
-          code2 == 0 and len(calls2) == 1 and len(products2) == 1, calls2)
+          code2 == 0 and [c for c in calls2 if c.startswith("pr|create")] == ["pr|create"]
+          and len(products2) == 1, calls2)
     check("decide green: the re-run leaves the stage done and the ledger intact",
           stub.state.issues[stage["id"]]["status"] == "done"
           and '"number": 80' in stub.state.documents[(wo["id"], "ledger")]["body"], raw2[-400:])
@@ -809,12 +1088,16 @@ GREEN_SPEC_BODY = """# Spec
 
 
 def write_gh_stub(path):
-    """A gh that answers `pr create` and logs every call. Enough for open-pr."""
+    """A gh that answers `pr create` and `pr view`, and logs every call."""
     with open(path, "w") as fh:
         fh.write("#!/usr/bin/env bash\n"
                  'printf "%s|%s\\n" "$1" "$2" >> "$GH_CALL_LOG"\n'
                  'case "$1" in\n'
                  '  pr)\n'
+                 '    if [ "$2" = "view" ]; then\n'
+                 '      echo "{\\"number\\": 80, \\"state\\": \\"OPEN\\", \\"mergedAt\\": null, \\"mergeCommit\\": null}"\n'
+                 '      exit 0\n'
+                 '    fi\n'
                  '    [ "$2" = "create" ] || { echo "stub gh: pr $2 not stubbed" >&2; exit 1; }\n'
                  '    echo "https://github.com/gulasz101/homelab-2nd/pull/80"\n'
                  '    ;;\n'
@@ -1034,6 +1317,10 @@ def case_tick_blocks_a_closed_pr(stub):
 
     check("tick closed: the work order is blocked",
           code == 0 and issue["status"] == "blocked", raw[-500:])
+    check("tick closed: the block carries a self-owned descriptor (GUL-898)",
+          (issue.get("unblockDescriptor") or {}).get("owner", {}).get("agentId") == MAJSTER
+          and bool(((issue.get("unblockDescriptor") or {}).get("action") or "").strip()),
+          raw[-500:])
     check("tick closed: one sentence says nothing shipped", len(said) == 1, said)
     check("tick closed: the ledger records the close",
           (ledger.get("merge") or {}).get("state") == "closed", ledger.get("merge"))
@@ -1086,6 +1373,90 @@ def case_tick_survives_a_stale_stage_row(stub):
         stub.state.issues[issue["id"]]["status"] = "done"
 
 
+def case_blocked_needs_a_descriptor(stub):
+    """GUL-898: the suite is only worth something if the stub refuses a bare `blocked`.
+
+    Paperclip 422s a PATCH that enters `blocked` with nothing to route to, and
+    403s an agent naming anyone but itself as the owner. Both rules are copied
+    into the stub, so the pre-fix escalate write failed here for the same reason
+    it failed on the board — this case is what stops the copy from rotting.
+    """
+    issue = stub.state.add_issue(identifier="GUL-997", title="probe")
+    api = pc.Api(key="test-key-not-a-secret", run_id="test-run-id", base=stub.url)
+    check("me: /agents/me answers the agent whose key is in use", api.self_agent_id() == MAJSTER,
+          api.self_agent_id())
+    try:
+        api.patch_issue(issue["id"], {"status": "blocked"})
+        refused = None
+    except pc.ApiError as exc:
+        refused = exc
+    check("blocked: a bare status write is refused 422, like the live server",
+          refused is not None and refused.status == 422, str(refused))
+    check("blocked: the refusal names the missing descriptor",
+          refused is not None and "unblockDescriptor" in str(refused), str(refused))
+    api.patch_issue(issue["id"], {"status": "blocked",
+                                  "unblockDescriptor": {"owner": {"agentId": api.self_agent_id()},
+                                                        "action": "probe"}})
+    stored = stub.state.issues[issue["id"]]
+    check("blocked: a self-owned descriptor is accepted and stored",
+          stored["status"] == "blocked"
+          and (stored.get("unblockDescriptor") or {}).get("owner", {}).get("agentId") == MAJSTER, stored)
+    other = stub.state.add_issue(identifier="GUL-998", title="probe 2")
+    try:
+        api.patch_issue(other["id"], {"status": "blocked",
+                                      "unblockDescriptor": {"owner": {"agentId": "someone-else"},
+                                                            "action": "x"}})
+        refused2 = None
+    except pc.ApiError as exc:
+        refused2 = exc
+    check("blocked: naming another agent as owner is refused (agents may only name themselves)",
+          refused2 is not None and refused2.status == 403, str(refused2))
+    for probe in (issue, other):
+        stub.state.issues[probe["id"]]["status"] = "done"
+
+
+def case_start_ignores_a_parked_blocker(stub):
+    """GUL-951: a work order parked as `blocked` before it ever started holds no
+    branch and no checkout — `start` is what takes both — so it must not keep the
+    project it waits on from starting. GUL-948 waited for GUL-875 and GUL-875
+    refused to start because GUL-948 was "open": a deadlock no retry could clear."""
+    repo, base_sha = make_repo("repo-parked")
+    project = PROJECT + "-parked"
+    env = {"FACTORY_REPO": repo}
+
+    waiting = base_work_order(stub, base_sha, repo, identifier="GUL-911", project_id=project)
+    parked = stub.state.add_issue(identifier="GUL-912", title="Runs after GUL-911",
+                                  assigneeAgentId=MAJSTER, projectId=project,
+                                  status="blocked", blockedByIssueIds=[waiting["id"]])
+    stub.state.doc(parked["id"], "spec", SPEC_BODY)
+
+    code, out, raw = run(stub, ["start", "GUL-911"], extra_env=env)
+    reasons = [r for r in (out or {}).get("reasons", []) if "another factory work order" in r]
+    check("start: a work order that never started does not hold the project busy",
+          code == 0 and not reasons, raw[-400:])
+    check("start: the work order it waited on cuts its branch at baseSha",
+          branch_sha(repo, "gul-911-add-the-fixture") == base_sha,
+          branch_sha(repo, "gul-911-add-the-fixture"))
+    check("start: the parked work order keeps its status and its blocker",
+          stub.state.issues[parked["id"]]["status"] == "blocked"
+          and stub.state.issues[parked["id"]]["blockedByIssueIds"] == [waiting["id"]],
+          str(stub.state.issues[parked["id"]]))
+
+    # ...but one that started and was then parked may still be the diff in the
+    # checkout, so it must still refuse the project
+    started = base_work_order(stub, base_sha, repo, identifier="GUL-913", project_id=project)
+    stub.state.issues[started["id"]]["status"] = "blocked"
+    nextup = base_work_order(stub, base_sha, repo, identifier="GUL-914", project_id=project)
+    code2, out2, raw2 = run(stub, ["start", "GUL-914"], extra_env=env)
+    check("start: a blocked work order that has already started still blocks the project",
+          code2 == 1 and any("GUL-913" in r for r in (out2 or {}).get("reasons", [])), raw2[-400:])
+    check("start: the refused work order cuts no branch",
+          branch_sha(repo, "gul-914-add-the-fixture") == "", raw2[-200:])
+
+    for issue in (waiting, parked, started, nextup):
+        stub.state.issues[issue["id"]]["status"] = "done"
+
+
 def main():
     global WORKDIR
     WORKDIR = tempfile.mkdtemp(prefix="factory-pc-tests-")
@@ -1095,14 +1466,19 @@ def main():
         try:
             case_start_cuts_branch(stub)
             case_start_refuses_tooling_checkout(stub)
+            case_start_ignores_a_parked_blocker(stub)
             case_start_creates_chain(stub, base_sha, repo)
             case_stop_blocks(stub, base_sha, repo)
             case_missing_key(stub)
             case_decide_red(stub, base_sha, repo)
             case_verify_fix_round(stub, base_sha, repo)
+            case_decide_settles_a_merged_pr(stub, base_sha, repo)
             case_third_failure_escalates(stub, base_sha, repo)
+            case_missing_document_escalates(stub, base_sha, repo)
+            case_half_applied_escalation_reparks(stub, base_sha, repo)
             case_tick(stub, base_sha, repo)
             case_write_document_carries_revision(stub)
+            case_blocked_needs_a_descriptor(stub)
             case_edge_block_falls_back(stub)
             case_commit_is_idempotent(stub)
             case_ledger_write_precedes_done(stub)
