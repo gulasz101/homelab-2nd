@@ -1,4 +1,16 @@
+# Creation rules for every sops file in this repo (GUL-784).
+#
+# Both age recipients are required in every repo:
+#   age195fed... paperclip Air identity, also what flux-system/sops-age holds
+#   age1mt6y8... the homelab key from before the 16 Oct 2026 rotation
+# A rule that names only one of them creates secrets the other host cannot read,
+# and `sops updatekeys` removes recipients that the matching rule omits.
+#
+# This file lives at the repo root on purpose. sops locates its config by
+# walking UP from the working directory, not from the file it is operating on,
+# and the nearest file wins — a nested .sops.yaml therefore shadows this one.
+# scripts/tests/sops-config-check.sh fails the build on either mistake.
 creation_rules:
   - path_regex: .*
     encrypted_regex: ^(data|stringData)$
-    age: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+    age: "age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s,age1mt6y86q9lhrmky0c0j7xwvacfzpep3w6e7z8zsrr22jj2u49gs6s59h7w2"
