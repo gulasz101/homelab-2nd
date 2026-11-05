@@ -343,6 +343,17 @@ Things worth knowing before you run it:
   once and is the owner's call (house rule), never this script's.
 - **`-ollama` has a 128k context window, `-ds` has 1M.** Nothing in the fleet prompts anywhere near
   128k today, but a long Pi session is where that would first bite.
+- **The script follows `$HERMES_HOME`.** Run it from inside a Hermes profile shell and
+  `$HERMES_HOME` is that profile's directory, so "hermes root" becomes *this profile* and the other
+  profiles are never looked at — it exits `0` having moved only the runners. Run it as
+  `HERMES_HOME=/Users/paperclip/.hermes bin/repin-fleet-model.sh --to-ds` (GUL-972).
+- **A model group in `GET /v1/models` is not a served model.** `longcat-2.5-preview-free-go` and
+  `space-bunny-free-go` are listed and answer `Model is unavailable`. Probe the route with a real
+  chat request before you point anything at it.
+- **Forced `tool_choice` is refused by `-ds`** (`Thinking mode does not support this tool_choice`).
+  Probe with `tool_choice: "auto"`; a forced-tool test will call a healthy route broken. The
+  `-ollama` route also answers as upstream model `deepseek-flash` — that is ADR-121's fallback
+  chain, not a misrouted request.
 - **Claude Code is deliberately not touched** — it spends the Anthropic subscription, a different
   pocket (ADR-106).
 - Exit codes: `0` repinned · `2` route walled, fleet left where it was · `1` **partial — the fleet is
