@@ -79,7 +79,8 @@ print_plan() {
   say "daemon  sou-claude-code-reporter             (no port)  -   installed by bin/homelab-install-sou-reporter.sh, called below (GUL-831)"
   say ""
   say "agent (user session)                         why it stays an agent"
-  say "agent   heartbeat      $(printf '%s.heartbeat' "$HOMELAB_DOMAIN")   must die with the GUI session, or a logout looks healthy to the off-host receiver"
+  say "        (none today: GUL-732 moved the heartbeat sender to system/ as well, ADR-126)"
+  say "heartbeat              $(printf '%s.heartbeat' "$HOMELAB_DOMAIN")   system daemon, installed by homelab-install-scheduled-jobs.sh"
   say ""
   say "steps: back up + boot out each LaunchAgent -> derive its command ->"
   say "       write services.env -> install launcher -> bootstrap the daemon ->"
@@ -94,7 +95,7 @@ preflight() {
     [ -f "$TREE_DIR/launchd/daemons/$(svc_label "$svc").plist" ] || { warn "missing launchd/daemons/$(svc_label "$svc").plist"; missing=1; }
   done
   [ -f "$SCRIPT_DIR/homelab-service-run.sh" ] || { warn "missing bin/homelab-service-run.sh"; missing=1; }
-  [ -f "$TREE_DIR/launchd/agents/$HOMELAB_DOMAIN.heartbeat.plist" ] || { warn "missing heartbeat agent plist"; missing=1; }
+  [ -f "$TREE_DIR/launchd/daemons/$HOMELAB_DOMAIN.heartbeat.plist" ] || { warn "missing heartbeat daemon plist (ADR-126: the sender must run headless)"; missing=1; }
   [ "$missing" -eq 0 ] || die "the repo tree is incomplete; refusing to touch the host"
 }
 
@@ -181,13 +182,14 @@ do_status() {
     if daemon_loaded "$label"; then owner="loaded"; else owner="absent"; fi
     printf '%-22s %-38s %-6s %-9s %s\n' "$svc" "$label" "$port" "$owner" "$agent"
   done
-  if find_agent_plists "heartbeat" | grep -q .; then
-    say ""
-    say "heartbeat agent present: $(find_agent_plists heartbeat | tr '\n' ' ')"
-  fi
   say ""
+  if find_agent_plists "heartbeat" | grep -q .; then
+    warn "a heartbeat agent is still on disk: $(find_agent_plists heartbeat | tr '\n' ' ') — it must be a system daemon (ADR-126); run homelab-install-scheduled-jobs.sh"
+  fi
   if daemon_loaded "$HOMELAB_DOMAIN.heartbeat"; then
-    warn "a heartbeat daemon exists in the system domain — it must stay a user agent (ADR-098)"
+    say "heartbeat daemon loaded in system/ (ADR-126)"
+  else
+    say "heartbeat daemon NOT loaded: sudo $SCRIPT_DIR/homelab-install-scheduled-jobs.sh"
   fi
 }
 
@@ -295,9 +297,8 @@ do_apply() {
 
   step "next"
   say "1. log out and back in, or just leave it: the daemons do not care about the session."
-  say "2. install the heartbeat agent as the appliance user:"
-  say "     cp $TREE_DIR/launchd/agents/$HOMELAB_DOMAIN.heartbeat.plist $HOMELAB_AGENT_DIR/"
-  say "     launchctl bootstrap gui/$(appliance_uid) $HOMELAB_AGENT_DIR/$HOMELAB_DOMAIN.heartbeat.plist"
+  say "2. install the heartbeat sender as a system daemon (ADR-126, it must run headless):"
+  say "     sudo $SCRIPT_DIR/homelab-install-scheduled-jobs.sh"
   say "3. run the drills: sudo $SCRIPT_DIR/homelab-drill-session-loss.sh --all --i-am-at-the-mac"
   [ "$failed" -eq 0 ] || die "finished with warnings: run $SCRIPT_DIR/homelab-recover-appliance.sh and read the log above"
   say "done: five services supervised by launchd in the system domain."
