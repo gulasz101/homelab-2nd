@@ -258,7 +258,11 @@ review stage to hand off to.
 1. Refuses (exit 1) when `~/paperclip-agents/majster/factory/STOP` exists
    (`FACTORY_STOP` overrides). Runs `lint-spec` on the spec; a bad spec is exit 1.
 2. Refuses while another work order is open in the same project — the shared
-   checkout cannot hold two diffs (ADR-095). `--dry-run` plans and creates nothing.
+   checkout cannot hold two diffs (ADR-095). A work order parked as `blocked`
+   before it ever started holds no branch and no checkout, so it does not count;
+   one that already carries a `ledger` does, because its diff may be the one in
+   the checkout (GUL-951). Without that split, a work order waiting on another
+   deadlocks the project for good. `--dry-run` plans and creates nothing.
 3. Cuts the work order's own branch, which is what `open-pr` needs: runs
    `git fetch origin`, refuses (exit 1) when `git status --porcelain` is not empty,
    resolves `baseSha` = `origin/<spec.base>` and runs
