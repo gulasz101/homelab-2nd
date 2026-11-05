@@ -133,6 +133,28 @@ class Api:
         return self._call("PUT", path, body)
 
     # -- endpoints the factory uses --------------------------------------
+    def me(self):
+        """The agent whose key this run carries (GUL-898).
+
+        A `blocked` write from a non-blocked status needs an
+        `unblockDescriptor`, and the server only accepts one whose owner is
+        the *authenticated* agent. So the factory asks who it is instead of
+        assuming a constant or reusing the issue's assignee. Asked at most
+        once per process.
+        """
+        cached = getattr(self, "_me", None)
+        if cached is None:
+            payload = self.get("/agents/me")
+            agent = payload.get("agent") if isinstance(payload, dict) else None
+            cached = agent if isinstance(agent, dict) else payload
+            if not isinstance(cached, dict) or not cached.get("id"):
+                raise ApiError(200, "GET /agents/me returned no agent id")
+            self._me = cached
+        return cached
+
+    def self_agent_id(self):
+        return self.me()["id"]
+
     def issues(self, company_id):
         return self.get(f"/companies/{company_id}/issues")
 
