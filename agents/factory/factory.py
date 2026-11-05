@@ -1217,6 +1217,56 @@ def create_stages(api, work_order_id: str, plan: list, cfg: dict) -> list:
     return created
 
 
+def settle_stage_descriptions(api, cfg: dict, spec: dict, ledger: dict, work_order: dict,
+                              round_no: int, findings_block: str, plan: list,
+                              created: list) -> list:
+    """Render the stage descriptions a second time, now that every id exists (GUL-989).
+
+    `plan_stages` runs before the stage issues are created, so a description that
+    names *another* stage can only carry a placeholder: at `start` time the ledger
+    has no `review` entry yet, so the verify description shipped
+    "The review stage is issue `?`" into the issue forever and the Verifier spent
+    its turns hunting for it (40-turn cap, no `verdicts`, GUL-965).
+
+    Everything the templates need is known the moment `create_stages` returns, so
+    render again and patch what changed, before any agent is woken. Returns the
+    stage keys whose description was rewritten.
+
+    Only untouched stages are patched: a stage an agent is already working must
+    never have its instructions changed under it.
+    """
+    settled = plan_stages(cfg, spec, ledger, work_order, round_no, findings_block)
+    before = {item["key"]: item["description"] for item in plan}
+    by_key = {item["key"]: item for item in created}
+    patched = []
+    for item in settled:
+        target = by_key.get(item["key"])
+        if target is None or item["description"] == before.get(item["key"]):
+            continue
+        issue = target["issue"]
+        if issue.get("status") not in ("todo", "blocked"):
+            continue
+        api.patch_issue(issue["id"], {"description": item["description"]})
+        patched.append(item["key"])
+        if item["key"] == stage_key("review", round_no):
+            target["issue"]["identifier"] = issue.get("identifier")
+
+    # The one link the whole verify round rests on: if the review identifier did
+    # not make it in, fail loudly here rather than hand a Verifier a description
+    # that names an issue it cannot read.
+    verify_key = stage_key("verify", round_no)
+    verify_item = next((i for i in settled if i["key"] == verify_key), None)
+    review_item = next((i for i in created if i["key"] == stage_key("review", round_no)), None)
+    if verify_item is not None and review_item is not None:
+        identifier = (review_item["issue"].get("identifier") or "")
+        if identifier and identifier not in verify_item["description"]:
+            raise SetupError(
+                "the verify description does not name the review issue %s; refusing to "
+                "start a verify round that cannot find its findings document"
+                % identifier)
+    return patched
+
+
 def _resolve_base(repo: str, base: str) -> str:
     base_sha = git(repo, "rev-parse", "origin/" + base, allow_fail=True).strip()
     if not base_sha:
@@ -1241,6 +1291,101 @@ def _switch_to_work_order_branch(repo: str, branch: str, base_sha: str) -> str:
     else:
         git(repo, "switch", "-c", branch, base_sha)
     return ""
+
+
+def _review_line(text: str) -> str:
+    for line in (text or "").splitlines():
+        if "review stage is issue" in line:
+            return line.strip()
+    return ""
+
+
+def _current_round(ledger: dict) -> int:
+    rounds = [int(key.split(":r")[1]) for key in (ledger.get("stages") or {})
+              if ":r" in key and key.split(":r")[1].isdigit()]
+    return max(rounds) if rounds else 1
+
+
+def cmd_factory_settle(args) -> int:
+    """Rewrite the verify description of a started work order from its ledger (GUL-989).
+
+    `start` settles the descriptions the moment the stage identifiers exist, so a
+    fresh work order is fine. A work order started before that fix still carries a
+    literal `?` where the review issue id belongs, and a Verifier woken on it burns
+    its turns hunting for a stage it cannot identify. The ledger is the only place
+    the review identifier is stored, so re-render from it here.
+
+    Only the verify stage is rewritten: the others were complete at create time,
+    and a round-2 fix description embeds findings this command cannot rebuild.
+    """
+    _sys_path_for_modules()
+    import pc
+
+    try:
+        api = pc.Api()
+    except LookupError as exc:
+        sys.stderr.write("factory settle: %s\n" % exc)
+        return 2
+    company = os.environ.get("PAPERCLIP_COMPANY_ID") or args.company
+    cfg = load_agent_config()
+
+    work_order = resolve_issue(api, company, args.work_order)
+    spec_doc = api.document(work_order["id"], "spec")
+    if not spec_doc or not spec_doc.get("body"):
+        raise SetupError("%s has no `spec` document" % args.work_order)
+    spec, spec_reasons = extract_json_block(spec_doc["body"], "spec")
+    if spec is None:
+        raise SetupError("spec document does not parse: %s" % "; ".join(spec_reasons))
+    ledger = load_json_document(api, work_order["id"], "ledger")
+    if not ledger or not ledger.get("stages"):
+        raise SetupError("%s has no factory ledger: nothing was started" % args.work_order)
+
+    round_no = args.round or _current_round(ledger)
+    key = stage_key("verify", round_no)
+    verify = ledger["stages"].get(key)
+    review = ledger["stages"].get(stage_key("review", round_no))
+    if not verify:
+        raise SetupError("round %d has no verify stage in the ledger" % round_no)
+    if not review:
+        raise SetupError("round %d has no review stage in the ledger" % round_no)
+
+    plan = plan_stages(cfg, spec, ledger, work_order, round_no, "")
+    item = next((i for i in plan if i["key"] == key), None)
+    if item is None:
+        raise SetupError("the plan has no verify stage for round %d" % round_no)
+
+    identifier = review.get("identifier") or ""
+    if identifier and identifier not in item["description"]:
+        raise SetupError(
+            "the rendered verify description does not name %s: refusing to write a "
+            "description a Verifier cannot follow" % identifier)
+
+    issue = api.issue(verify["issueId"])
+    if issue.get("status") not in ("todo", "blocked"):
+        raise SetupError(
+            "%s is %r: an agent may already be working it, so its instructions are no "
+            "longer ours to rewrite" % (verify.get("identifier"), issue.get("status")))
+
+    before = issue.get("description") or ""
+    changed = before != item["description"]
+    applied = False
+    if changed and args.apply:
+        api.patch_issue(verify["issueId"], {"description": item["description"]})
+        api.comment(work_order["id"],
+                    "factory settle: %s now names the review issue `%s` (GUL-989)."
+                    % (verify.get("identifier"), identifier))
+        issue = api.issue(verify["issueId"])
+        applied = identifier in (issue.get("description") or "")
+        if not applied:
+            raise SetupError("%s still does not name %s after the PATCH"
+                             % (verify.get("identifier"), identifier))
+    emit(True, "settle",
+         [] if changed else ["%s already names %s" % (verify.get("identifier"), identifier)],
+         {"workOrder": args.work_order, "round": round_no,
+          "verifyIssue": verify.get("identifier"), "reviewIssue": identifier,
+          "applied": applied,
+          "before": _review_line(before), "after": _review_line(item["description"])})
+    return 0
 
 
 def cmd_factory_start(args) -> int:
@@ -1373,9 +1518,15 @@ def cmd_factory_start(args) -> int:
             "sha": None,
         }
     save_ledger(api, work_order["id"], ledger, "start %s" % args.work_order)
+    # GUL-989: the ledger now holds every stage identifier, so render the
+    # descriptions that name another stage a second time (verify → review).
+    patched = settle_stage_descriptions(api, cfg, spec, ledger, work_order, 1, "",
+                                        plan, created)
+    review_ref = (ledger["stages"].get(stage_key("review", 1)) or {}).get("identifier")
     api.comment(work_order["id"],
                 "factory start: 5 stage issues created, chained %s. Checkout `%s`, branch `%s`."
-                % (" → ".join(i["issue"].get("identifier", "?") for i in created), cwd, ledger["branch"]))
+                % (" → ".join(i["issue"].get("identifier", "?") for i in created), cwd, ledger["branch"])
+                + (" Verify names the review issue `%s`." % review_ref if review_ref else ""))
     emit(True, "start", ["5 stage issues created"], {
         "workOrder": args.work_order,
         "created": len(created),
@@ -1780,6 +1931,10 @@ def cmd_factory_decide(args) -> int:
                     "issueId": item["issue"]["id"], "identifier": item["issue"].get("identifier"),
                     "round": item["round"], "attempts": 0, "sha": None,
                 }
+            # GUL-989: the round's stage ids exist now, so the verify description
+            # can name its own review stage instead of a `?`.
+            settle_stage_descriptions(api, cfg, spec, ledger, work_order, round_no + 1,
+                                      findings_block, plan, created)
             api.comment(work_order["id"], "fix round %d opened: %s"
                         % (round_no + 1, ", ".join(i["issue"].get("identifier", "?") for i in created)))
     else:  # gate
@@ -2074,6 +2229,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--repo", help="override the checkout directory")
     s.set_defaults(fn=cmd_factory_start)
+
+    s = sub.add_parser("settle", parents=[common])
+    s.add_argument("work_order", help="work order identifier, e.g. GUL-439")
+    s.add_argument("--round", type=int, default=0, help="fix round (default: the latest)")
+    s.add_argument("--apply", action="store_true", help="rewrite the verify description")
+    s.set_defaults(fn=cmd_factory_settle)
 
     s = sub.add_parser("decide", parents=[common])
     s.add_argument("stage_issue", help="stage issue identifier, e.g. GUL-441")
