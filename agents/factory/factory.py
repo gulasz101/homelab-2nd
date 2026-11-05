@@ -1542,6 +1542,54 @@ def cmd_factory_decide(args) -> int:
         return 1
 
     cwd = ledger["cwd"]
+    # GUL-949: `tick` reads the PR before settling a work order; `decide` never
+    # did, so a verify stage opened a fix round (then escalated four times) on
+    # a branch that had already merged — riff_radar #18, 3 Nov. The PR is read
+    # before any stage is opened or any escalation is posted, with the same
+    # call `settle_merge()` uses, and a merged or closed PR goes straight to
+    # that settlement path instead of being decided again.
+    pr = ledger.get("pr") or {}
+    if pr.get("number"):
+        settled = ledger.get("merge") or {}
+        if settled.get("state"):
+            reason = "already settled: PR #%s %s" % (pr["number"], settled["state"])
+            emit(False, "decide", [reason], {
+                "ok": False, "check": "decide", "reasons": [reason], "stage": stage,
+                "round": round_no, "decision": settled["state"], "applied": False,
+                "workOrder": work_order.get("identifier"),
+            })
+            return 1
+        try:
+            view = pr_merge_view(ledger.get("repo") or "", pr["number"])
+        except SetupError as exc:
+            # refusing beats deciding blind: a fix round on a merged PR costs a
+            # day of confusion, and exit 2 leaves the stage untouched and re-runnable.
+            raise SetupError("cannot read PR #%s state, refusing to decide: %s"
+                             % (pr["number"], str(exc)[:200]))
+        if str(view.get("state") or "").upper() in ("MERGED", "CLOSED"):
+            merge_state = settle_merge(api, work_order, ledger, pr, view, bool(args.apply))
+            reason = "PR #%s is %s: settled, no stage opened" % (pr["number"], merge_state)
+            if args.apply:
+                api.patch_issue(stage_issue["id"], {
+                    "status": "cancelled",
+                    "comment": ("cancelled: PR #%s is %s, so the work order moved on "
+                                "without a decision on this stage (GUL-949)."
+                                % (pr["number"], merge_state)),
+                })
+            result = {
+                "ok": merge_state == "merged",
+                "check": "decide",
+                "reasons": [reason],
+                "stage": stage,
+                "round": round_no,
+                "decision": merge_state,
+                "applied": bool(args.apply),
+                "merge": merge_state,
+                "workOrder": work_order.get("identifier"),
+            }
+            emit(merge_state == "merged", "decide", [reason], result)
+            return 0 if merge_state == "merged" else 1
+
     spec_doc = api.document(work_order["id"], "spec")
     if not spec_doc or not spec_doc.get("body"):
         raise SetupError("%s has no `spec` document" % work_order.get("identifier"))

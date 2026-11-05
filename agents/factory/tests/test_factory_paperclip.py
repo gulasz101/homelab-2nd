@@ -635,6 +635,72 @@ def case_verify_fix_round(stub, base_sha, repo):
           "F-1" in round2[0]["description"], round2[0]["description"][:200])
 
 
+def case_decide_settles_a_merged_pr(stub, base_sha, repo):
+    """GUL-949: a verify stage on a merged PR is settled, never decided again.
+
+    The ledger holds a confirmed blocking finding, so without the PR-state read
+    this decide opens a fix round on a branch that already landed — the
+    riff_radar #18 incident.
+    """
+    wo = base_work_order(stub, base_sha, repo, identifier="GUL-920")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 118,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/118"}
+    review = stub.state.add_issue(identifier="GUL-921", title="[review] GUL-920",
+                                  parentId=wo["id"])
+    verify = stage_issue(stub, wo, "[verify] GUL-920 — Add the fixture")
+    ledger["stages"] = {
+        "review": {"issueId": review["id"], "identifier": review["identifier"],
+                   "round": 1, "attempts": 0, "sha": None},
+        "verify": {"issueId": verify["id"], "identifier": verify["identifier"],
+                   "round": 1, "attempts": 0, "sha": None},
+    }
+    write_ledger(stub, wo, ledger)
+    stub.state.doc(review["id"], "findings",
+                   '# Findings\n\n```json\n[{"id": "F-1", "file": "tests/ac.sh", "line": 1, '
+                   '"severity": "blocking", "claim": "the AC check never runs"}]\n```\n')
+    stub.state.doc(verify["id"], "verdicts",
+                   '# Verdicts\n\n```json\n[{"id": "F-1", "verdict": "confirmed", '
+                   '"evidence": "bash tests/ac.sh -> AC-1: FAIL"}]\n```\n')
+
+    env = merge_env("decide-merged", {"state": "MERGED", "mergedAt": "2026-11-03T17:37:00Z",
+                                      "mergeCommit": {"oid": "d44464f"}})
+    before = len([i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]])
+    code, out, raw = run(stub, ["decide", verify["identifier"], "--apply"], extra_env=env)
+    children = [i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]
+    ledger = ledger_of(stub, wo)
+    said = comments_on(stub, wo["id"])
+
+    check("decide merged: a merged PR settles the stage instead of deciding it",
+          code == 0 and (out or {}).get("decision") == "merged", raw[-600:])
+    check("decide merged: a confirmed blocking finding opens no fix round",
+          len(children) == before and not [c for c in children if " r2]" in c["title"]],
+          [c["title"] for c in children])
+    check("decide merged: no escalation card is raised",
+          [c for c in stub.state.interactions if c.get("issueId") == wo["id"]] == [])
+    check("decide merged: the ledger records the merge and the outcome",
+          (ledger.get("merge") or {}).get("state") == "merged"
+          and ledger.get("outcome") == "merged", ledger.get("merge"))
+    check("decide merged: the work order is done and its monitor cleared",
+          stub.state.issues[wo["id"]]["status"] == "done"
+          and stub.state.issues[wo["id"]].get("executionPolicy") is None,
+          {k: stub.state.issues[wo["id"]].get(k) for k in ("status", "executionPolicy")})
+    check("decide merged: the merge commit is on the work order, on the same path tick uses",
+          any("d44464f" in body for body in said), said[-1:])
+    check("decide merged: the stale stage is cancelled, not left in_progress",
+          stub.state.issues[verify["id"]]["status"] == "cancelled",
+          stub.state.issues[verify["id"]]["status"])
+
+    comments_before = len(stub.state.comments)
+    code_again, out_again, raw_again = run(stub,
+                                           ["decide", verify["identifier"], "--apply"],
+                                           extra_env=env)
+    check("decide merged: a second decide on the settled stage writes nothing",
+          code_again == 1
+          and any("already settled" in r for r in (out_again or {}).get("reasons", []))
+          and len(stub.state.comments) == comments_before, raw_again[-300:])
+
+
 def case_third_failure_escalates(stub, base_sha, repo):
     wo = base_work_order(stub, base_sha, repo)
     stage = pending_review_stage(stub, wo, "[red] GUL-900 — Add the fixture")
@@ -929,7 +995,8 @@ def case_green_approve_opens_one_pr(stub):
     calls2 = [l for l in open(gh_log).read().splitlines() if l.strip()]
     products2 = [p for p in stub.state.work_products if p.get("issueId") == wo["id"]]
     check("decide green: a re-run reuses the recorded PR instead of opening a second",
-          code2 == 0 and len(calls2) == 1 and len(products2) == 1, calls2)
+          code2 == 0 and [c for c in calls2 if c.startswith("pr|create")] == ["pr|create"]
+          and len(products2) == 1, calls2)
     check("decide green: the re-run leaves the stage done and the ledger intact",
           stub.state.issues[stage["id"]]["status"] == "done"
           and '"number": 80' in stub.state.documents[(wo["id"], "ledger")]["body"], raw2[-400:])
@@ -948,12 +1015,16 @@ GREEN_SPEC_BODY = """# Spec
 
 
 def write_gh_stub(path):
-    """A gh that answers `pr create` and logs every call. Enough for open-pr."""
+    """A gh that answers `pr create` and `pr view`, and logs every call."""
     with open(path, "w") as fh:
         fh.write("#!/usr/bin/env bash\n"
                  'printf "%s|%s\\n" "$1" "$2" >> "$GH_CALL_LOG"\n'
                  'case "$1" in\n'
                  '  pr)\n'
+                 '    if [ "$2" = "view" ]; then\n'
+                 '      echo "{\\"number\\": 80, \\"state\\": \\"OPEN\\", \\"mergedAt\\": null, \\"mergeCommit\\": null}"\n'
+                 '      exit 0\n'
+                 '    fi\n'
                  '    [ "$2" = "create" ] || { echo "stub gh: pr $2 not stubbed" >&2; exit 1; }\n'
                  '    echo "https://github.com/gulasz101/homelab-2nd/pull/80"\n'
                  '    ;;\n'
@@ -1328,6 +1399,7 @@ def main():
             case_missing_key(stub)
             case_decide_red(stub, base_sha, repo)
             case_verify_fix_round(stub, base_sha, repo)
+            case_decide_settles_a_merged_pr(stub, base_sha, repo)
             case_third_failure_escalates(stub, base_sha, repo)
             case_missing_document_escalates(stub, base_sha, repo)
             case_tick(stub, base_sha, repo)
