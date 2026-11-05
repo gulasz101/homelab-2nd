@@ -213,6 +213,18 @@ def make_handler(state):
         def do_PATCH(self):
             parts = self._parts()
             body = self._body()
+            # Paperclip normalises a policy with nothing to run — no stages, no monitor,
+            # no reviewPreset/authorizationPolicy, no maxReviewRounds — to null *before*
+            # it applies the write (GUL-969). So a caller that thinks it is sending "an
+            # empty policy" is really sending a policy removal, and takes the dissolve
+            # branch below instead of the clear-the-stage branch.
+            policy = body.get("executionPolicy")
+            if isinstance(policy, dict) and not (policy.get("stages") or []) \
+                    and not policy.get("monitor") and not policy.get("reviewPreset") \
+                    and not policy.get("authorizationPolicy") \
+                    and policy.get("maxReviewRounds") is None:
+                body["executionPolicy"] = None
+
             if parts[:2] == ["api", "issues"] and len(parts) == 3:
                 issue = state.issues.get(parts[2])
                 if not issue:
@@ -720,6 +732,42 @@ def case_missing_document_escalates(stub, base_sha, repo):
     body = stub.state.documents[(wo["id"], "ledger")]["body"]
     check("missing document: the ledger records the escalation",
           '"outcome": "escalate"' in body, body[-300:])
+
+
+def case_half_applied_escalation_reparks(stub, base_sha, repo):
+    """GUL-969: the park is a second write, so an escalation can land half-applied.
+
+    Paperclip refused the park with 422 `unblockDescriptor requires blocked status`,
+    leaving the ledger saying escalate and the stage still `in_review`. A re-run must
+    finish the missing write only — one escalation comment, one park.
+    """
+    wo = base_work_order(stub, base_sha, repo, identifier="GUL-916")
+    review = pending_review_stage(stub, wo, "[review] GUL-916 — Add the fixture")
+    stuck_policy = json.loads(json.dumps(stub.state.issues[review["id"]]["executionPolicy"]))
+    stuck_state = json.loads(json.dumps(stub.state.issues[review["id"]]["executionState"]))
+
+    run(stub, ["decide", review["identifier"], "--apply"])
+    check("half-applied escalate: the first run parks the stage",
+          stub.state.issues[review["id"]]["status"] == "blocked",
+          stub.state.issues[review["id"]])
+    escalate_comments = [c for c in stub.state.comments if c["issueId"] == wo["id"]]
+
+    # rewind the board to exactly what the 422 left behind
+    stub.state.issues[review["id"]].update({
+        "status": "in_review", "executionPolicy": stuck_policy,
+        "executionState": stuck_state, "unblockDescriptor": None})
+
+    code, out, raw = run(stub, ["decide", review["identifier"], "--apply"])
+    check("half-applied escalate: the re-run parks the stage and does not raise",
+          code == 1 and (out or {}).get("decision") == "escalate"
+          and (out or {}).get("applied") is True, raw[-400:])
+    check("half-applied escalate: the re-run does not escalate the work order twice",
+          [c for c in stub.state.comments if c["issueId"] == wo["id"]] == escalate_comments,
+          stub.state.comments[-4:])
+    check("half-applied escalate: the stage ends blocked with no pending stage",
+          stub.state.issues[review["id"]]["status"] == "blocked"
+          and stub.state.issues[review["id"]]["executionState"] is None,
+          stub.state.issues[review["id"]])
 
 
 def case_tick(stub, base_sha, repo):
@@ -1330,6 +1378,7 @@ def main():
             case_verify_fix_round(stub, base_sha, repo)
             case_third_failure_escalates(stub, base_sha, repo)
             case_missing_document_escalates(stub, base_sha, repo)
+            case_half_applied_escalation_reparks(stub, base_sha, repo)
             case_tick(stub, base_sha, repo)
             case_write_document_carries_revision(stub)
             case_blocked_needs_a_descriptor(stub)

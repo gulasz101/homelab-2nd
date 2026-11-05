@@ -1442,9 +1442,20 @@ def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: st
 # (Kept in `pc.patch_issue`: a status the server silently drops is a failed write,
 # not a style issue.)
 #
-# A policy with no stages leaves the server nothing to dissolve: it clears
-# executionState, keeps `blocked`, and arms nobody.
-ESCALATED_STAGE_POLICY = {"mode": "normal", "commentRequired": True, "stages": []}
+# A policy whose executionState stage no longer exists leaves the server nothing
+# to dissolve: it clears executionState, keeps the requested `blocked`, and arms
+# nobody.
+#
+# GUL-969: empty stages alone are *not* enough any more. The server normalises a
+# policy with no stages and no monitor/reviewPreset/authorizationPolicy/maxReviewRounds
+# to null, and a null policy on an `in_review` issue takes the *other* branch: it
+# dissolves the review back to `returnAssignee` and overwrites the requested status
+# with `in_progress` — which is what made the park 422 on `unblockDescriptor requires
+# blocked status`. One inert field keeps the policy non-null, so the stage lookup
+# misses and the requested status survives. `maxReviewRounds` arms nothing on a
+# policy with no stages.
+ESCALATED_STAGE_POLICY = {"mode": "normal", "commentRequired": True, "stages": [],
+                          "maxReviewRounds": 1}
 
 
 def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
@@ -1490,7 +1501,13 @@ def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: di
     }
     if apply:
         identifier = stage_issue.get("identifier", "?")
-        _escalate(api, work_order["id"], ledger, reason, identifier)
+        # GUL-969: the escalation is two writes — the work order and the ledger,
+        # then the park. When the park died on the 422 the engine was left
+        # half-applied: escalate recorded, stage still `in_review`. Re-running it
+        # must finish the missing write only; re-escalating would post a second
+        # "Wojtek decides" comment and clear the work order's executionState.
+        if ledger.get("outcome") != "escalate":
+            _escalate(api, work_order["id"], ledger, reason, identifier)
         _block_stage_issue(api, stage_issue,
                            "escalated: %s — the stage produced no artefact, so there is nothing to "
                            "decide. This stage is parked, not returned to its agent: the work order "
