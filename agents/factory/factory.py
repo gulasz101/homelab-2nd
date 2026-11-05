@@ -1106,7 +1106,15 @@ def work_order_cwd(api, issue: dict) -> str:
 def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_id) -> list:
     """Every other open issue in the same project that is assigned to Majster and
     carries a `spec` document. Document check is per issue: the company list does
-    not include document summaries."""
+    not include document summaries.
+
+    A work order parked as `blocked` before it ever started holds no branch and no
+    checkout: the shared checkout is only taken by `start`, and `start` is what
+    writes the ledger (GUL-951). Counting such a work order as "open" deadlocks the
+    project it waits on — 948 waits for 875, so 875 cannot start because 948 is
+    "open", and 948 cannot start because 875 is not done. A blocked work order that
+    has already started still counts: its diff may be the one in the checkout.
+    """
     found = []
     for item in api.issues(company_id):
         if item.get("id") == exclude_id:
@@ -1116,6 +1124,8 @@ def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_i
         if item.get("assigneeAgentId") != cfg["majster"]:
             continue
         if project_id and item.get("projectId") != project_id:
+            continue
+        if item.get("status") == "blocked" and not api.document(item["id"], "ledger"):
             continue
         if api.document(item["id"], "spec"):
             found.append(item)
