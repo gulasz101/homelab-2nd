@@ -1271,6 +1271,48 @@ def case_blocked_needs_a_descriptor(stub):
         stub.state.issues[probe["id"]]["status"] = "done"
 
 
+def case_start_ignores_a_parked_blocker(stub):
+    """GUL-951: a work order parked as `blocked` before it ever started holds no
+    branch and no checkout — `start` is what takes both — so it must not keep the
+    project it waits on from starting. GUL-948 waited for GUL-875 and GUL-875
+    refused to start because GUL-948 was "open": a deadlock no retry could clear."""
+    repo, base_sha = make_repo("repo-parked")
+    project = PROJECT + "-parked"
+    env = {"FACTORY_REPO": repo}
+
+    waiting = base_work_order(stub, base_sha, repo, identifier="GUL-911", project_id=project)
+    parked = stub.state.add_issue(identifier="GUL-912", title="Runs after GUL-911",
+                                  assigneeAgentId=MAJSTER, projectId=project,
+                                  status="blocked", blockedByIssueIds=[waiting["id"]])
+    stub.state.doc(parked["id"], "spec", SPEC_BODY)
+
+    code, out, raw = run(stub, ["start", "GUL-911"], extra_env=env)
+    reasons = [r for r in (out or {}).get("reasons", []) if "another factory work order" in r]
+    check("start: a work order that never started does not hold the project busy",
+          code == 0 and not reasons, raw[-400:])
+    check("start: the work order it waited on cuts its branch at baseSha",
+          branch_sha(repo, "gul-911-add-the-fixture") == base_sha,
+          branch_sha(repo, "gul-911-add-the-fixture"))
+    check("start: the parked work order keeps its status and its blocker",
+          stub.state.issues[parked["id"]]["status"] == "blocked"
+          and stub.state.issues[parked["id"]]["blockedByIssueIds"] == [waiting["id"]],
+          str(stub.state.issues[parked["id"]]))
+
+    # ...but one that started and was then parked may still be the diff in the
+    # checkout, so it must still refuse the project
+    started = base_work_order(stub, base_sha, repo, identifier="GUL-913", project_id=project)
+    stub.state.issues[started["id"]]["status"] = "blocked"
+    nextup = base_work_order(stub, base_sha, repo, identifier="GUL-914", project_id=project)
+    code2, out2, raw2 = run(stub, ["start", "GUL-914"], extra_env=env)
+    check("start: a blocked work order that has already started still blocks the project",
+          code2 == 1 and any("GUL-913" in r for r in (out2 or {}).get("reasons", [])), raw2[-400:])
+    check("start: the refused work order cuts no branch",
+          branch_sha(repo, "gul-914-add-the-fixture") == "", raw2[-200:])
+
+    for issue in (waiting, parked, started, nextup):
+        stub.state.issues[issue["id"]]["status"] = "done"
+
+
 def main():
     global WORKDIR
     WORKDIR = tempfile.mkdtemp(prefix="factory-pc-tests-")
@@ -1280,6 +1322,7 @@ def main():
         try:
             case_start_cuts_branch(stub)
             case_start_refuses_tooling_checkout(stub)
+            case_start_ignores_a_parked_blocker(stub)
             case_start_creates_chain(stub, base_sha, repo)
             case_stop_blocks(stub, base_sha, repo)
             case_missing_key(stub)
