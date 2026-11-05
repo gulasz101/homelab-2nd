@@ -280,7 +280,11 @@ review stage to hand off to.
 1. Refuses (exit 1) when `~/paperclip-agents/majster/factory/STOP` exists
    (`FACTORY_STOP` overrides). Runs `lint-spec` on the spec; a bad spec is exit 1.
 2. Refuses while another work order is open in the same project — the shared
-   checkout cannot hold two diffs (ADR-095). `--dry-run` plans and creates nothing.
+   checkout cannot hold two diffs (ADR-095). A work order parked as `blocked`
+   before it ever started holds no branch and no checkout, so it does not count;
+   one that already carries a `ledger` does, because its diff may be the one in
+   the checkout (GUL-951). Without that split, a work order waiting on another
+   deadlocks the project for good. `--dry-run` plans and creates nothing.
 3. Cuts the work order's own branch, which is what `open-pr` needs: runs
    `git fetch origin`, refuses (exit 1) when `git status --porcelain` is not empty,
    resolves `baseSha` = `origin/<spec.base>` and runs
@@ -341,7 +345,26 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
 - **Escalate** on a third request-changes for one stage, or when a third fix round
   would start: work order `blocked` with `"executionPolicy": null` in the same
   PATCH (otherwise Paperclip reads `blocked` as request-changes), one sentence
-  why, recorded in the ledger, no more retries.
+  why, recorded in the ledger, no more retries. The **stage issue** is parked a
+  different way (GUL-889): it is `blocked` with a policy that has **no stages**
+  (`{"mode": "normal", "commentRequired": true, "stages": []}`), never with
+  `"executionPolicy": null`. A stage issue carries a pending review stage whose
+  state names a return assignee, and Paperclip resolves the PATCH against that
+  stage before it applies the requested status: clearing the policy dissolves the
+  review *back to the return assignee* — `in_progress`, stage agent reassigned,
+  `blocked` overwritten — so the failed write re-arms the agent, the stage is
+  handed back in `in_review`, and the next foreman wake escalates again. With no
+  stages in the policy there is nothing to dissolve: `executionState` is cleared,
+  `blocked` stands, and nobody is armed. A `decide --apply` that finds the ledger
+  already at `outcome: escalate` **and** the stage issue settled (`blocked`,
+  `done`, `cancelled`) writes nothing and exits 1 with `already escalated` — one
+  bad write must never become a wake loop. A **missing stage document**
+  escalates the same way and for the same reason (GUL-868): a review with no
+  `findings`, or a verify missing its `verdicts` or the review's `findings`, is a
+  stage nobody can judge. It used to `return 1` before any board write, so the
+  stage parked with no blocked, no comment and no wake — indistinguishable from a
+  quiet refusal. Now both issues are `blocked`, each comment names the missing
+  document, and the ledger records `outcome: escalate`.
 - Without `--apply` nothing is written: it prints the decision only.
 
 **`tick [--apply]`** — read-only without `--apply`. One line per open work order: stage,
