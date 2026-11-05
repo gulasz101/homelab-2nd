@@ -213,6 +213,18 @@ def make_handler(state):
         def do_PATCH(self):
             parts = self._parts()
             body = self._body()
+            # Paperclip normalises a policy with nothing to run — no stages, no monitor,
+            # no reviewPreset/authorizationPolicy, no maxReviewRounds — to null *before*
+            # it applies the write (GUL-969). So a caller that thinks it is sending "an
+            # empty policy" is really sending a policy removal, and takes the dissolve
+            # branch below instead of the clear-the-stage branch.
+            policy = body.get("executionPolicy")
+            if isinstance(policy, dict) and not (policy.get("stages") or []) \
+                    and not policy.get("monitor") and not policy.get("reviewPreset") \
+                    and not policy.get("authorizationPolicy") \
+                    and policy.get("maxReviewRounds") is None:
+                body["executionPolicy"] = None
+
             if parts[:2] == ["api", "issues"] and len(parts) == 3:
                 issue = state.issues.get(parts[2])
                 if not issue:
@@ -239,30 +251,40 @@ def make_handler(state):
                         return self._send(422, {"error": "Entering blocked requires unresolved blockers, "
                                                         "a pending interaction/approval, or unblockDescriptor"})
                 was_in_review = issue.get("status") == "in_review"
+                return_to = (issue.get("executionState") or {}).get("returnAssignee")
+                # Resolve the requested write against the pending stage *before* applying it,
+                # the way the route does: a null policy on an `in_review` issue carrying a
+                # return assignee dissolves the review back to that assignee and overwrites
+                # the requested status with `in_progress`; a policy whose stages no longer
+                # contain the state's current stage has nothing left to resolve, so the
+                # server clears executionState and keeps whatever status was asked for.
+                policy_in_body = "executionPolicy" in body
+                policy = body.get("executionPolicy")
+                projected = body.get("status", issue.get("status"))
+                dissolve = policy_in_body and policy is None and was_in_review and return_to
+                if dissolve:
+                    projected = "in_progress"
+                clear_state = False
+                if policy_in_body and isinstance(policy, dict):
+                    state_stage = (issue.get("executionState") or {}).get("currentStageId")
+                    stage_ids = [s.get("id") for s in policy.get("stages") or []]
+                    clear_state = bool(state_stage and state_stage not in stage_ids)
+                # Paperclip checks the descriptor against the *resulting* status, after the
+                # stage transition it just computed (routes/issues.ts). That is the check the
+                # reported crash died on: a park that dissolves the review no longer ends
+                # `blocked`, so the descriptor is refused whole and nothing is written.
+                refused_descriptor = isinstance(descriptor, dict) and projected != "blocked"
+                if refused_descriptor:
+                    return self._send(422, {"error": "unblockDescriptor requires blocked status"})
                 for key in ("status", "executionPolicy", "assigneeAgentId", "unblockDescriptor"):
                     if key in body:
                         issue[key] = body[key]
-                # Paperclip resolves a PATCH against a pending execution stage before it
-                # applies the requested status (GUL-889). Clearing executionPolicy on an
-                # `in_review` issue that carries a return assignee dissolves the review back
-                # to that assignee and overwrites the requested status with `in_progress`.
-                # The stub copies that one rule so the broken escalate write reproduces the
-                # real loop here instead of passing on a stub that believes every write.
-                return_to = (issue.get("executionState") or {}).get("returnAssignee")
-                if "executionPolicy" in body and body["executionPolicy"] is None and was_in_review \
-                        and return_to:
+                if dissolve:
                     issue["status"] = "in_progress"
-                    issue["assigneeAgentId"] = return_to.get("agentId")
+                    issue["assigneeAgentId"] = (return_to or {}).get("agentId")
                     issue["executionState"] = None
-                # ...and a policy whose stages no longer contain the state's current stage
-                # has nothing left to resolve: the server clears executionState and keeps
-                # whatever status was asked for. That is the shape the escalate write uses
-                # to park a stage issue without arming anybody.
-                if "executionPolicy" in body and isinstance(body["executionPolicy"], dict):
-                    state_stage = (issue.get("executionState") or {}).get("currentStageId")
-                    stage_ids = [s.get("id") for s in body["executionPolicy"].get("stages") or []]
-                    if state_stage and state_stage not in stage_ids:
-                        issue["executionState"] = None
+                if clear_state:
+                    issue["executionState"] = None
                 if body.get("comment"):
                     state.comments.append({"issueId": issue["id"], "body": body["comment"]})
                 return self._send(200, issue)
@@ -720,8 +742,11 @@ def case_third_failure_escalates(stub, base_sha, repo):
           parked["status"] == "blocked" and parked["executionState"] is None
           and parked["assigneeAgentId"] == MAJSTER,
           {k: parked.get(k) for k in ("status", "executionState", "assigneeAgentId")})
-    check("escalate: the stage policy carries no stage left to dissolve",
-          (parked.get("executionPolicy") or {}).get("stages") == [],
+    check("escalate: the stage policy keeps its stage but drops the stage id (GUL-969)",
+          [s.get("id") for s in (parked.get("executionPolicy") or {}).get("stages") or []]
+          == [None]
+          and bool(((parked.get("executionPolicy") or {}).get("stages") or [{}])[0]
+                   .get("participants")),
           parked.get("executionPolicy"))
     stage_desc = parked.get("unblockDescriptor") or {}
     check("escalate: the stage park carries a self-owned unblockDescriptor (GUL-898)",
@@ -754,6 +779,7 @@ def case_missing_document_escalates(stub, base_sha, repo):
     wo = base_work_order(stub, base_sha, repo, identifier="GUL-905")
     review = pending_review_stage(stub, wo, "[review] GUL-905 — Add the fixture")
     # no `findings` document on purpose: that is how the Reviewer's turn-cap stall looks
+    review_assignee = stub.state.issues[review["id"]]["assigneeAgentId"]
 
     code0, out0, raw0 = run(stub, ["decide", review["identifier"]])
     check("missing document: a dry decide reports escalate and writes nothing",
@@ -770,9 +796,20 @@ def case_missing_document_escalates(stub, base_sha, repo):
           stub.state.issues[wo["id"]])
     check("missing document: the stage issue is blocked, not left parked",
           stub.state.issues[review["id"]]["status"] == "blocked"
-          and (stub.state.issues[review["id"]].get("executionPolicy") or {}).get("stages") == []
-          and stub.state.issues[review["id"]]["executionState"] is None,
+          and stub.state.issues[review["id"]]["executionState"] is None
+          and stub.state.issues[review["id"]]["assigneeAgentId"] == review_assignee,
           stub.state.issues[review["id"]])
+    # GUL-969: the park must keep a non-empty policy. An empty one normalises to null on
+    # the deployed server, and a null policy on an `in_review` issue with a return assignee
+    # dissolves the review (`in_progress`, assignee moved back) — which is why the descriptor
+    # then failed `unblockDescriptor requires blocked status` and the whole write was refused.
+    parked = stub.state.issues[review["id"]].get("executionPolicy") or {}
+    parked_stages = parked.get("stages") or []
+    check("missing document: the park keeps the stage definition but drops its identity",
+          len(parked_stages) == 1 and parked_stages[0].get("type") == "review"
+          and "id" not in parked_stages[0]
+          and bool(parked_stages[0].get("participants")),
+          json.dumps(parked))
     check("missing document: both issues say what is missing",
           any("no `findings` document" in c["body"] for c in stub.state.comments
               if c["issueId"] == wo["id"])
@@ -786,6 +823,42 @@ def case_missing_document_escalates(stub, base_sha, repo):
     body = stub.state.documents[(wo["id"], "ledger")]["body"]
     check("missing document: the ledger records the escalation",
           '"outcome": "escalate"' in body, body[-300:])
+
+
+def case_half_applied_escalation_reparks(stub, base_sha, repo):
+    """GUL-969: the park is a second write, so an escalation can land half-applied.
+
+    Paperclip refused the park with 422 `unblockDescriptor requires blocked status`,
+    leaving the ledger saying escalate and the stage still `in_review`. A re-run must
+    finish the missing write only — one escalation comment, one park.
+    """
+    wo = base_work_order(stub, base_sha, repo, identifier="GUL-916")
+    review = pending_review_stage(stub, wo, "[review] GUL-916 — Add the fixture")
+    stuck_policy = json.loads(json.dumps(stub.state.issues[review["id"]]["executionPolicy"]))
+    stuck_state = json.loads(json.dumps(stub.state.issues[review["id"]]["executionState"]))
+
+    run(stub, ["decide", review["identifier"], "--apply"])
+    check("half-applied escalate: the first run parks the stage",
+          stub.state.issues[review["id"]]["status"] == "blocked",
+          stub.state.issues[review["id"]])
+    escalate_comments = [c for c in stub.state.comments if c["issueId"] == wo["id"]]
+
+    # rewind the board to exactly what the 422 left behind
+    stub.state.issues[review["id"]].update({
+        "status": "in_review", "executionPolicy": stuck_policy,
+        "executionState": stuck_state, "unblockDescriptor": None})
+
+    code, out, raw = run(stub, ["decide", review["identifier"], "--apply"])
+    check("half-applied escalate: the re-run parks the stage and does not raise",
+          code == 1 and (out or {}).get("decision") == "escalate"
+          and (out or {}).get("applied") is True, raw[-400:])
+    check("half-applied escalate: the re-run does not escalate the work order twice",
+          [c for c in stub.state.comments if c["issueId"] == wo["id"]] == escalate_comments,
+          stub.state.comments[-4:])
+    check("half-applied escalate: the stage ends blocked with no pending stage",
+          stub.state.issues[review["id"]]["status"] == "blocked"
+          and stub.state.issues[review["id"]]["executionState"] is None,
+          stub.state.issues[review["id"]])
 
 
 def case_tick(stub, base_sha, repo):
@@ -1402,6 +1475,7 @@ def main():
             case_decide_settles_a_merged_pr(stub, base_sha, repo)
             case_third_failure_escalates(stub, base_sha, repo)
             case_missing_document_escalates(stub, base_sha, repo)
+            case_half_applied_escalation_reparks(stub, base_sha, repo)
             case_tick(stub, base_sha, repo)
             case_write_document_carries_revision(stub)
             case_blocked_needs_a_descriptor(stub)
