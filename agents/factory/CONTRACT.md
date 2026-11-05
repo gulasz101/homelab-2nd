@@ -85,6 +85,28 @@ AC rules:
   It runs with `bash -c` from the repo root. Several ACs may share one check
   by repeating the identical `check` string — the script then runs that
   command once for all of them.
+- `check` must be able to **report**, or `lint-spec` refuses the spec (GUL-853).
+  A command that prints no `AC-<n>: PASS|FAIL` line is a setup error in every
+  stage: `check-red` answers `setup error: no AC line for AC-n`, the Tester
+  cannot fix it, and the work order escalates without a single red run that
+  could ever pass. So a check must either name every AC id it covers —
+  `sh -c 'if test -f apps/a.txt; then echo "AC-1: PASS"; else echo "AC-1: FAIL missing"; exit 1; fi'`
+  — or be a delegation to a script that does:
+  `bash apps/api/tests/static-serving-check.sh` (`bash`, `sh`, `dash`, `zsh`,
+  `python3`, `node`, `deno`, `bun`, `tsx` + optional flags + a path ending
+  `.sh|.bash|.py|.js|.mjs|.cjs|.ts|.mts`). Anything else — a bare `test`/`grep`
+  chain, `npx <tool> validate`, `bash -c '<something>'` — is refused with a
+  reason naming the fix.
+  **Do not use `test -f x && echo "AC-1: PASS" || echo "AC-1: FAIL x"`**: when
+  the test fails that line prints FAIL and exits **0**, and point 2 makes
+  "exit 0 with a FAIL line" a setup error — a different silence. The `if …
+  then … else … exit 1; fi` shape is the one that satisfies both halves.
+  This rule is static and lint-only: bash cannot be proven to print from its
+  text, so the lint rejects the shapes that structurally cannot rather than
+  claiming to prove the ones that can. `check-red` (which must see `FAIL`) and
+  `check-green` (which must see `PASS`) are still the proof. `load_spec`, and
+  therefore `check-red|green|gate|findings|verdicts|commit|open-pr`, do not
+  apply this rule — a spec that slips past lint is still judged by its checks.
 
 ### Glob rules (`allowedPaths`, never-path globs)
 
@@ -178,7 +200,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 
 | Subcommand | Passes (exit 0) when |
 |---|---|
-| `lint-spec --spec FILE` | the spec follows point 1 (block found & parseable; a broken/unparseable JSON block is a lint **failure**, exit 1; an unreadable FILE is exit 2) |
+| `lint-spec --spec FILE` | the spec follows point 1 (block found & parseable; a broken/unparseable JSON block is a lint **failure**, exit 1; an unreadable FILE is exit 2), including the reporting rule for every `check` |
 | `check-red --repo DIR --base SHA --spec FILE` | the diff SHA→worktree touches only test paths, all inside `allowedPaths`; every AC's check runs and reports `AC-n: FAIL`; no setup errors |
 | `check-green --repo DIR --red SHA --spec FILE` | every test path is byte-identical to the red commit (worktree contents; a new untracked test path is a violation); every changed path is inside `allowedPaths`; every AC reports `PASS`; if the repo has `scripts/check.sh`, it runs (`bash scripts/check.sh`, repo root) and must exit 0 |
 | `check-findings --repo DIR --base SHA --findings FILE` | findings follow point 3; every `file` is in the diff SHA→worktree; every `line` exists in the new version (file readable, ≥ `line` lines) |
