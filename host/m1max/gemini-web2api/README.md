@@ -1,0 +1,95 @@
+# gemini-web2api on the Max — pinned, restartable, watched
+
+The Gemini proxy (`ghcr.io/zexadev/gemini-web2api-go`) is the provider behind the `gemini4`
+model alias. Every agent that needs Gemini goes through it, so it is not a toy container.
+It runs under OrbStack on `m1max`, bound to `127.0.0.1:8083`; the Air reaches it through an
+SSH local forward on the same port.
+
+## Why this file exists
+
+On 2026-11-03 the proxy was hung for ~34 hours and nothing noticed (GUL-896). Three causes:
+
+1. the container had `restart=no`, so it did not come back like `zeroclaw` does;
+2. it ran `:latest`, a moving target on a service the whole fleet depends on;
+3. `zeroclaw_cookie_guard.py` decided health through `docker`, so a wedged daemon looked
+   exactly like "nothing to do".
+
+`docker-compose.yml` here is the source of truth for the container's runtime shape. Apply it
+on the Max with:
+
+```bash
+cd ~/gemini2api && docker compose up -d
+```
+
+The live copy sits in `~/gemini2api/` (0700) with `container.env` (0600, `ADMIN_TOKEN` only,
+copied from the 0600 credential file — never in this file, never in argv).
+
+## Upgrading the pin
+
+```bash
+docker pull ghcr.io/zexadev/gemini-web2api-go:<new tag>
+docker inspect --format '{{json .RepoDigests}}' ghcr.io/zexadev/gemini-web2api-go:<new tag>
+# paste the sha256 into image: below, then
+cd ~/gemini2api && docker compose up -d
+```
+
+Pin the **newest published release**, by digest. Before jumping several minors, read the
+release notes; the proxy's own SQLite schema lives in the `gemini2api-data` volume, so take a
+copy first (`docker cp gemini-web2api:/data ~/gemini2api-backup-$(date +%Y%m%d-%H%M%S)/data`).
+
+## What "restart: unless-stopped" does and does not do
+
+It brings the container back when the Docker/OrbStack engine restarts, and when the process
+itself exits. It does **not** restart a container that was *manually* stopped — that is the
+documented behaviour of every restart policy
+(https://docs.docker.com/engine/containers/start-containers-automatically/), and it is why
+`docker kill` looks like a policy failure. The watchdog covers that case explicitly: if the
+container is `exited`, it runs `docker start` and says so.
+
+## The watchdog
+
+`~/.hermes/profiles/andrzej/scripts/zeroclaw_cookie_guard.py` (source on the Air, copied to the
+Max; run from the Max over SSH by the `zeroclaw-gemini-cookie-guard` cron every 30 min). It is
+silent while healthy and speaks on change:
+
+- `docker info` with a 15 s ceiling — "cannot ask the engine" is reported as its own fault, and
+  an unresolved fault is repeated every 6 h instead of going quiet after one message;
+- one plain `GET /` with a 10 s ceiling, plus a restart attempt and a re-probe;
+- runtime drift — warns if the live container is back on a moving tag or lost its restart policy;
+- cookie pool re-import, paid-tier canary, and a canary attributed by request-log id (the `ts`
+  field in that log drifts behind the host clock, so it is useless as a key).
+
+## Reading a failure — three classes, and only one of them is Google's
+
+`/admin/api/requests` (admin token) is the only honest source. Match on `model`, `status`,
+`total_ms` and **`upstream_model`** — nothing else discriminates.
+
+| what you see | what it means |
+| --- | --- |
+| `upstream_model: Nano Banana 2.1`, `200`, 10–44 s | a real image, generated and parsed correctly |
+| `upstream_model: 3.5 Flash-Lite`, `502` | the account was served the **free tier**; no image was ever generated |
+| no `upstream_model`, `502`, `total_ms: 0` | `direct IP slot full: concurrent limit reached` — the proxy refused it locally |
+
+The third class is not Google and not the container. `/admin/api/config` has
+`per_ip_concurrent: 2` (also `per_ip_rpm: 10`, `per_ip_rph: 80`), so two in-flight requests from
+the exit IP block everything else instantly. One image render holds its slot for 20–43 s, which
+means **two concurrent renders starve the whole fleet**, chat included. Clients that submit image
+work concurrently should run that lane at concurrency 1.
+
+### Two traps when reading this log
+
+- **Duration proves nothing.** `total_ms` includes the artifact step's retry loop (~12 s of polling,
+  six tries, 2 s apart) which only runs when the response carried no image. Failures log 3–28 s and
+  real renders log 10–44 s: the bands overlap. A long job is not evidence that a picture was made.
+- **The container clock is wrong, and it moves.** Its `ts` runs 200 s to 6 188 s behind the host and
+  resyncs in steps (4 570 s at the last measurement). Re-measure before correlating a timeline:
+  send one free `gemini-3.5-flash-lite` request, compare its `ts` with the host clock.
+
+### The "two hour refill" is a bench, not a bucket
+
+`proxy_cooldown_min: 120` in `/admin/api/config`. When Google rate-limits the direct IP, this proxy
+parks that IP for 120 minutes and will not retry it until the bench expires. Every recovery that
+looked like "~2 h of quiet refills the quota" is the bench expiring. So quiet time matters because
+the proxy refuses to try — not because a bucket fills. Probing inside the bench both fails and
+delays the answer; the watchdog fires one image probe when the tier returns.
+
