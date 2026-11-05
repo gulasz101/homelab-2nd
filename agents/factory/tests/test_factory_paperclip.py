@@ -276,7 +276,8 @@ def make_handler(state):
                 refused_descriptor = isinstance(descriptor, dict) and projected != "blocked"
                 if refused_descriptor:
                     return self._send(422, {"error": "unblockDescriptor requires blocked status"})
-                for key in ("status", "executionPolicy", "assigneeAgentId", "unblockDescriptor"):
+                for key in ("status", "executionPolicy", "assigneeAgentId", "unblockDescriptor",
+                            "description"):
                     if key in body:
                         issue[key] = body[key]
                 if dissolve:
@@ -560,6 +561,12 @@ def case_start_creates_chain(stub, base_sha, repo):
           '"status": "in_review", "executionPolicy"' in children[0]["description"]
           and '"comment": "<the short report' in children[0]["description"]
           and "before** the hand-off" in children[0]["description"])
+    # GUL-989: the verify description names the review stage, and the id was not
+    # frozen in as a placeholder at create time (the review issue did not exist yet).
+    review_ident, verify_desc = children[2]["identifier"], children[3]["description"]
+    check("start: the verify description names the real review issue, not '?'",
+          bool(review_ident) and review_ident in verify_desc
+          and "`?`" not in verify_desc, verify_desc.split("\n")[0][:160])
     check("start: ledger records base, branch and cwd",
           all(k in stub.state.documents[(wo["id"], "ledger")]["body"]
               for k in (base_sha, "gul-900-add-the-fixture", repo)))
@@ -568,6 +575,48 @@ def case_start_creates_chain(stub, base_sha, repo):
     after = [i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]
     check("start twice: creates no duplicates", code2 == 0 and len(after) == 5
           and (out2 or {}).get("created") == 0, raw2[-300:])
+
+
+def case_settle_repairs(stub, base_sha, repo):
+    """GUL-989: a work order started before the fix keeps `?`; settle repairs it."""
+    prior = next((i for i in stub.state.issues.values() if i.get("identifier") == "GUL-900"), None)
+    if prior is not None:
+        prior["status"] = "done"  # the factory allows one open work order at a time
+    base_work_order(stub, base_sha, repo, identifier="GUL-908")
+    code0, out0, raw0 = run(stub, ["start", "GUL-908"])
+    check("settle: fixture start works", code0 == 0, raw0[-500:])
+    parent = next(i for i in stub.state.issues.values() if i.get("identifier") == "GUL-908"
+                  and any(c.get("parentId") == i["id"] for c in stub.state.issues.values()))
+    by_stage = {c["title"].split("]")[0] + "]": c for c in stub.state.issues.values()
+                if c.get("parentId") == parent["id"]}
+    review, verify = by_stage["[review]"], by_stage["[verify]"]
+    broken = verify["description"].replace(review["identifier"], "?")
+    verify["description"] = broken
+    code, out, raw = run(stub, ["settle", "GUL-908", "--apply"])
+    check("settle: rewrites the verify description from the ledger",
+          code == 0 and review["identifier"] in verify["description"]
+          and "`?`" not in verify["description"], raw[-400:])
+    check("settle: reports the before/after review line",
+          (out or {}).get("applied") is True
+          and (out or {}).get("reviewIssue") == review["identifier"]
+          and "review stage is issue" in ((out or {}).get("after") or ""), str(out))
+    code2, out2, raw2 = run(stub, ["settle", "GUL-908", "--apply"])
+    check("settle: is idempotent", code2 == 0 and (out2 or {}).get("applied") is False, raw2[-300:])
+
+    verify["description"] = broken
+    verify["status"] = "in_progress"
+    code3, out3, raw3 = run(stub, ["settle", "GUL-908", "--apply"])
+    check("settle: refuses to rewrite a stage an agent is working",
+          code3 == 2 and verify["description"] == broken, raw3[-300:])
+
+    code4, out4, raw4 = run(stub, ["settle", "GUL-908", "--apply", "--force"])
+    check("settle: --force repairs a stage stuck in_progress with no live run",
+          code4 == 0 and review["identifier"] in verify["description"]
+          and (out4 or {}).get("applied") is True, raw4[-400:])
+
+    code5, out5, raw5 = run(stub, ["settle", verify["identifier"], "--apply", "--force"])
+    check("settle: a stage identifier resolves to its work order",
+          code5 == 0 and (out5 or {}).get("verifyIssue") == verify["identifier"], raw5[-400:])
 
 
 def case_stop_blocks(stub, base_sha, repo):
@@ -655,6 +704,13 @@ def case_verify_fix_round(stub, base_sha, repo):
           and round2[1]["blockedByIssueIds"] == [round2[0]["id"]], [c["title"] for c in round2])
     check("decide verify: the confirmed finding is pasted into the fix issue",
           "F-1" in round2[0]["description"], round2[0]["description"][:200])
+    # GUL-989: round 2 re-renders too — verify r2 must name review r2, never the
+    # round-1 review (the ledger fallback) and never a `?`.
+    check("decide verify: round 2's verify description names round 2's review issue",
+          round2[1]["identifier"] in round2[2]["description"]
+          and "`?`" not in round2[2]["description"]
+          and "GUL-950" not in round2[2]["description"],
+          round2[2]["description"].split("\n")[0][:160])
 
 
 def case_decide_settles_a_merged_pr(stub, base_sha, repo):
@@ -1468,6 +1524,7 @@ def main():
             case_start_refuses_tooling_checkout(stub)
             case_start_ignores_a_parked_blocker(stub)
             case_start_creates_chain(stub, base_sha, repo)
+            case_settle_repairs(stub, base_sha, repo)
             case_stop_blocks(stub, base_sha, repo)
             case_missing_key(stub)
             case_decide_red(stub, base_sha, repo)
