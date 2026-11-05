@@ -1,6 +1,6 @@
 # ADR-123: Image Studio gets a third engine — nano banana through the Gemini web proxy
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-11-04
 - **Issue**: GUL-893
 - **Related**: GUL-28 (FLUX.2-klein as the second engine), the `gemini-web2api-proxy` skill, GUL-896 (the proxy's restart policy)
