@@ -58,6 +58,13 @@ resources:
   - observability/cnpg-backup-alertmanager-config.yaml
   - observability/grafana-helm-release.yaml
   - observability/opentelemetry-collector-helm-release.yaml
+  # Loki rule delivery guard (GUL-805): the Loki rule sidecar can stop writing rule
+  # files with no restart and no error, leaving merged rules dead on arrival. The guard
+  # compares labelled ConfigMaps against the ruler's own API every 5 minutes and posts
+  # to Mattermost; the PrometheusRule is the backstop. Nested kustomization: file list
+  # and reasoning live in loki-rule-guard/kustomization.yaml, ADR in
+  # docs/adr/pending/loki-rule-delivery-guard.md.
+  - observability/loki-rule-guard
   - observability/cloudflared-grafana-deployment.yaml
   - observability/grafana-tunnel-ingress-configmap.yaml
   # NVIDIA GPU metrics exporter (for older/consumer GPUs)

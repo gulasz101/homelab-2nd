@@ -1,6 +1,6 @@
 # ADR-110: Claude Code runs on a setup token, because an Anthropic subscription connection cannot refresh
 
-- **Status**: Proposed (owner sign-off outstanding)
+- **Status**: Accepted (2026-11-02, proven by two consecutive 04:30Z daily runs)
 - **Date**: 2026-10-31
 - **Issue**: GUL-642 (follow-up to GUL-640, GUL-656, GUL-686); amended by GUL-691 (one-command
   rotation, drift detection)
@@ -59,12 +59,16 @@ unless a human logged in within the previous eight hours.
 3. **Nothing about the runtime changes.** `connection_grants.credential_secret_refs` selects
    `versionSelector: "latest"`, so the rotated value is picked up by the next run automatically.
 4. **The secret stays in the two vaults that already exist.** Paperclip's own encrypted secret store
-   (`local_encrypted`, user-scoped to the owner) is the operational copy; the SOPS file under
-   `host/paperclip-air/secrets/` is the copy that survives a Paperclip rebuild. Equality is proven by
-   comparing SHA-256 digests (`company_secret_versions.value_sha256` is `sha256(utf8 value)`), never by
-   printing either side.
-5. **The acceptance test is two consecutive 05:30Z runs succeeded** with no re-login. `claude auth
+   (`local_encrypted`, user-scoped to the owner) is the operational copy; the SOPS file at
+   `~/claude-code-oauth.sops.yaml` on the Air is the copy that survives a Paperclip rebuild. Equality
+   is proven by comparing SHA-256 digests (`company_secret_versions.value_sha256` is
+   `sha256(utf8 value)`), never by printing either side.
+5. **The acceptance test is two consecutive 04:30Z runs succeeded** with no re-login. `claude auth
    status` is *not* the test: it reads `~/.claude`, which no managed run touches (GUL-661).
+
+**Proven:** the rotation landed 2026-10-31 10:12Z (vault version 3). The daily 04:30Z round then ran
+clean on 2026-11-01 (`297840fb`, 11 min) and again on 2026-11-02 (`e4ebfb4d`, 17 min), both
+`succeeded`, with the connection still `active`/`ok` and no re-login in between.
 
 ## One command from the Air (GUL-691)
 

@@ -134,6 +134,13 @@ mkdir -p ~/.config/homelab && chmod 700 ~/.config/homelab
 printf '%s' "<the token from the host-watch SOPS secret>" > ~/.config/homelab/heartbeat-token
 chmod 600 ~/.config/homelab/heartbeat-token
 mkdir -p ~/bin && install -m 0755 bin/homelab-heartbeat.sh ~/bin/homelab-heartbeat.sh
+# the sender sources homelab-lib.sh from its own directory — install both or it
+# runs with no functions and silently sends nothing
+install -m 0755 bin/homelab-lib.sh ~/bin/homelab-lib.sh
+# gui/<uid> only exists while somebody is logged in at the console. If this says
+# "Domain does not support specified action" the Mac is sitting at the login
+# window: the agent is installed and will load at the next login, and until then
+# the heartbeat is (correctly) silent.
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.voitech.homelab.heartbeat.plist
 tail -5 ~/Library/Logs/homelab/heartbeat.err.log      # expect silence or "components down: ..."
 
@@ -186,6 +193,20 @@ sudo ./bin/homelab-install-daemons.sh --rollback
 Boots the daemons out, removes their plists, restores the backed-up LaunchAgents from
 `~/Library/LaunchAgents.h2-336-backup-<timestamp>/`. They load at the next login; until then use
 `homelab-recover-appliance.sh`.
+
+## Host state Git does not own
+
+Two user-scope config files carry behaviour the fleet feels but this tree cannot install, because
+they hold credentials. Both are `600` on the Air and both fail *silently* when they are wrong.
+
+| file | what it decides | one-line check |
+| --- | --- | --- |
+| `~/.hindsight/coding-agent.json` | Hindsight coding-agents plugin: API URL, fleet token, `autoInject` mode for claude-code / pi / opencode | `grep autoInject ~/.hindsight/coding-agent.json` must print `"pages"` (ADR on prompt-time injection) |
+| `~/.hindsight/claude-code-hindsight-settings.json` | the hook block Claude Code merges from user scope | `grep -c dist/claude-hook.js ~/.hindsight/claude-code-hindsight-settings.json` |
+
+A missing `autoInject` key is not an error to the plugin: it means `reflect`, which costs ~20 s per
+prompt and times out (GUL-850). A reinstall of the plugin can drop it. Restore from the
+`coding-agent.json.bak-*` beside it, or add the key back by hand.
 
 ## What this tree deliberately does not do
 

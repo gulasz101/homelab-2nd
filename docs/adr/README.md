@@ -109,14 +109,34 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-107 | Every scheduled job on the Air is a system LaunchDaemon, never a LaunchAgent | Accepted | 2026-10-30 |
 | ADR-108 | The Air's scheduled jobs run from the repo, not from `~/.hermes/scripts` | Accepted | 2026-10-30 |
 | ADR-109 | The Cloudflare token carries Access write, so ingress is API-only | Accepted | 2026-10-29 |
-| ADR-110 | Claude Code runs on a setup token, because an Anthropic subscription connection cannot refresh | Proposed | 2026-10-31 |
+| ADR-110 | Claude Code runs on a setup token, because an Anthropic subscription connection cannot refresh | Accepted | 2026-11-02 |
 | ADR-111 | The ADR number and its index row are allocated at adoption, never by the branch that writes the ADR | Accepted | 2026-10-29 |
 | ADR-112 | The memory watchdog guards the prepaid balance of the provider the fleet actually uses | Accepted | 2026-10-30 |
+| ADR-113 | The agent fleet runs on Ollama Cloud routes, not on the OpenCode Go allowance | Accepted | 2026-10-29 |
+| ADR-114 | A headless Mac appliance runs FileVault off, or it does not come back on its own | Accepted | 2026-11-01 |
+| ADR-115 | In-house app images are built and smoked in GitHub Actions, published to private GHCR on a version tag | Accepted | 2026-10-29 |
+| ADR-116 | LiteLLM is pinned at 1.106.6 so DeepSeek routes can turn thinking off | Accepted | 2026-10-31 |
+| ADR-117 | The Pi-hole client roster is declarative in Git, and a weekly audit names the devices nobody registered | Accepted | 2026-10-31 |
+| ADR-118 | RiffRadar's game is public on purpose, its admin panel is not | Accepted | 2026-11-01 |
+| ADR-119 | The weekly model sync stops at a pull request, never at a pushed main | Accepted | 2026-11-01 |
+| ADR-120 | Hindsight reflect rides the fleet's route, with thinking off, not the metered DeepSeek key | Accepted | 2026-11-02 |
+| ADR-121 | the fleet's primary route carries a fallback chain, and its last hop is the paid one | Accepted | 2026-11-02 |
+| ADR-122 | Loki rule delivery is monitored as a pipeline, not as a pod | Accepted | 2026-11-02 |
+| ADR-123 | Image Studio gets a third engine: nano banana through the Gemini web proxy | Proposed | 2026-11-04 |
+| ADR-124 | Consolidation runs with grammar-enforced JSON, and its rejection alert needs a floor | Accepted | 2026-11-02 |
+| ADR-125 | Prompt-time memory is knowledge-page search, not reflect | Accepted | 2026-11-03 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,
 > ADR-044, ADR-047, ADR-049 and ADR-062). ADR-055 and ADR-056 have no file: the numbers are
 > unassigned, not missing.
+
+> Note: **ADR-104 has no file and never had one.** It was the number claimed by the draft of
+> what became ADR-111 (the number and its index row are allocated at adoption). While that
+> draft waited, ADR-105…109 landed on `main`; the draft moved to `docs/adr/pending/` and
+> adoption gave it 111. Nothing was written at 104, so nothing was lost in a rebase — and
+> because a printed number keeps its meaning forever, 104 stays burnt. The gap is deliberate.
+> ADR-006…009 were never used either: the vault-era ADRs are 001…005 and 010.
 
 > Note: ADR-052 was booked as ADR-050 while epic H2-232 was being planned (the directory then
 > ended at ADR-046 with 045 reserved); 047–051 landed from unrelated work before stage 1 was

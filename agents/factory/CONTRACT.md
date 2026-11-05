@@ -85,6 +85,28 @@ AC rules:
   It runs with `bash -c` from the repo root. Several ACs may share one check
   by repeating the identical `check` string — the script then runs that
   command once for all of them.
+- `check` must be able to **report**, or `lint-spec` refuses the spec (GUL-853).
+  A command that prints no `AC-<n>: PASS|FAIL` line is a setup error in every
+  stage: `check-red` answers `setup error: no AC line for AC-n`, the Tester
+  cannot fix it, and the work order escalates without a single red run that
+  could ever pass. So a check must either name every AC id it covers —
+  `sh -c 'if test -f apps/a.txt; then echo "AC-1: PASS"; else echo "AC-1: FAIL missing"; exit 1; fi'`
+  — or be a delegation to a script that does:
+  `bash apps/api/tests/static-serving-check.sh` (`bash`, `sh`, `dash`, `zsh`,
+  `python3`, `node`, `deno`, `bun`, `tsx` + optional flags + a path ending
+  `.sh|.bash|.py|.js|.mjs|.cjs|.ts|.mts`). Anything else — a bare `test`/`grep`
+  chain, `npx <tool> validate`, `bash -c '<something>'` — is refused with a
+  reason naming the fix.
+  **Do not use `test -f x && echo "AC-1: PASS" || echo "AC-1: FAIL x"`**: when
+  the test fails that line prints FAIL and exits **0**, and point 2 makes
+  "exit 0 with a FAIL line" a setup error — a different silence. The `if …
+  then … else … exit 1; fi` shape is the one that satisfies both halves.
+  This rule is static and lint-only: bash cannot be proven to print from its
+  text, so the lint rejects the shapes that structurally cannot rather than
+  claiming to prove the ones that can. `check-red` (which must see `FAIL`) and
+  `check-green` (which must see `PASS`) are still the proof. `load_spec`, and
+  therefore `check-red|green|gate|findings|verdicts|commit|open-pr`, do not
+  apply this rule — a spec that slips past lint is still judged by its checks.
 
 ### Glob rules (`allowedPaths`, never-path globs)
 
@@ -178,7 +200,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 
 | Subcommand | Passes (exit 0) when |
 |---|---|
-| `lint-spec --spec FILE` | the spec follows point 1 (block found & parseable; a broken/unparseable JSON block is a lint **failure**, exit 1; an unreadable FILE is exit 2) |
+| `lint-spec --spec FILE` | the spec follows point 1 (block found & parseable; a broken/unparseable JSON block is a lint **failure**, exit 1; an unreadable FILE is exit 2), including the reporting rule for every `check` |
 | `check-red --repo DIR --base SHA --spec FILE` | the diff SHA→worktree touches only test paths, all inside `allowedPaths`; every AC's check runs and reports `AC-n: FAIL`; no setup errors |
 | `check-green --repo DIR --red SHA --spec FILE` | every test path is byte-identical to the red commit (worktree contents; a new untracked test path is a violation); every changed path is inside `allowedPaths`; every AC reports `PASS`; if the repo has `scripts/check.sh`, it runs (`bash scripts/check.sh`, repo root) and must exit 0 |
 | `check-findings --repo DIR --base SHA --findings FILE` | findings follow point 3; every `file` is in the diff SHA→worktree; every `line` exists in the new version (file readable, ≥ `line` lines) |
@@ -258,7 +280,11 @@ review stage to hand off to.
 1. Refuses (exit 1) when `~/paperclip-agents/majster/factory/STOP` exists
    (`FACTORY_STOP` overrides). Runs `lint-spec` on the spec; a bad spec is exit 1.
 2. Refuses while another work order is open in the same project — the shared
-   checkout cannot hold two diffs (ADR-095). `--dry-run` plans and creates nothing.
+   checkout cannot hold two diffs (ADR-095). A work order parked as `blocked`
+   before it ever started holds no branch and no checkout, so it does not count;
+   one that already carries a `ledger` does, because its diff may be the one in
+   the checkout (GUL-951). Without that split, a work order waiting on another
+   deadlocks the project for good. `--dry-run` plans and creates nothing.
 3. Cuts the work order's own branch, which is what `open-pr` needs: runs
    `git fetch origin`, refuses (exit 1) when `git status --porcelain` is not empty,
    resolves `baseSha` = `origin/<spec.base>` and runs
@@ -319,7 +345,26 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
 - **Escalate** on a third request-changes for one stage, or when a third fix round
   would start: work order `blocked` with `"executionPolicy": null` in the same
   PATCH (otherwise Paperclip reads `blocked` as request-changes), one sentence
-  why, recorded in the ledger, no more retries.
+  why, recorded in the ledger, no more retries. The **stage issue** is parked a
+  different way (GUL-889): it is `blocked` with a policy that has **no stages**
+  (`{"mode": "normal", "commentRequired": true, "stages": []}`), never with
+  `"executionPolicy": null`. A stage issue carries a pending review stage whose
+  state names a return assignee, and Paperclip resolves the PATCH against that
+  stage before it applies the requested status: clearing the policy dissolves the
+  review *back to the return assignee* — `in_progress`, stage agent reassigned,
+  `blocked` overwritten — so the failed write re-arms the agent, the stage is
+  handed back in `in_review`, and the next foreman wake escalates again. With no
+  stages in the policy there is nothing to dissolve: `executionState` is cleared,
+  `blocked` stands, and nobody is armed. A `decide --apply` that finds the ledger
+  already at `outcome: escalate` **and** the stage issue settled (`blocked`,
+  `done`, `cancelled`) writes nothing and exits 1 with `already escalated` — one
+  bad write must never become a wake loop. A **missing stage document**
+  escalates the same way and for the same reason (GUL-868): a review with no
+  `findings`, or a verify missing its `verdicts` or the review's `findings`, is a
+  stage nobody can judge. It used to `return 1` before any board write, so the
+  stage parked with no blocked, no comment and no wake — indistinguishable from a
+  quiet refusal. Now both issues are `blocked`, each comment names the missing
+  document, and the ledger records `outcome: escalate`.
 - Without `--apply` nothing is written: it prints the decision only.
 
 **`tick [--apply]`** — read-only without `--apply`. One line per open work order: stage,
