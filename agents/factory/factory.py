@@ -1306,6 +1306,25 @@ def _current_round(ledger: dict) -> int:
     return max(rounds) if rounds else 1
 
 
+def _live_run(api, issue_id):
+    """True when the issue has a run that is still going (or queued to start).
+
+    A factory stage can sit `in_progress` with nothing actually running: the last
+    run ended without a verdict, so the status is stale. The run rows are the
+    honest test of "is an agent working this right now" (GUL-989).
+    """
+    try:
+        payload = api.runs(issue_id)
+    except Exception:  # noqa: BLE001 - an unreadable run list must not block a repair
+        return False
+    items = payload if isinstance(payload, list) else (
+        payload.get("runs") or payload.get("data") or []) if isinstance(payload, dict) else []
+    for run in items:
+        if str(run.get("status") or "") in ("running", "queued", "pending", "starting"):
+            return True
+    return False
+
+
 def cmd_factory_settle(args) -> int:
     """Rewrite the verify description of a started work order from its ledger (GUL-989).
 
@@ -1329,8 +1348,14 @@ def cmd_factory_settle(args) -> int:
     company = os.environ.get("PAPERCLIP_COMPANY_ID") or args.company
     cfg = load_agent_config()
 
-    work_order = resolve_issue(api, company, args.work_order)
+    issue_arg = resolve_issue(api, company, args.work_order)
+    work_order = issue_arg
     spec_doc = api.document(work_order["id"], "spec")
+    if (not spec_doc or not spec_doc.get("body")) and issue_arg.get("parentId"):
+        # An operator naturally names the stage that carries the broken text
+        # (GUL-965), not the work order. Walk up once rather than refusing.
+        work_order = api.issue(issue_arg["parentId"])
+        spec_doc = api.document(work_order["id"], "spec")
     if not spec_doc or not spec_doc.get("body"):
         raise SetupError("%s has no `spec` document" % args.work_order)
     spec, spec_reasons = extract_json_block(spec_doc["body"], "spec")
@@ -1361,10 +1386,13 @@ def cmd_factory_settle(args) -> int:
             "description a Verifier cannot follow" % identifier)
 
     issue = api.issue(verify["issueId"])
-    if issue.get("status") not in ("todo", "blocked"):
+    live = _live_run(api, verify["issueId"])
+    if (issue.get("status") not in ("todo", "blocked") or live) and not args.force:
         raise SetupError(
-            "%s is %r: an agent may already be working it, so its instructions are no "
-            "longer ours to rewrite" % (verify.get("identifier"), issue.get("status")))
+            "%s is %r%s: an agent may already be working it, so its instructions are "
+            "no longer ours to rewrite (pass --force if the stage is stuck)"
+            % (verify.get("identifier"), issue.get("status"),
+               " with a live run" if live else ""))
 
     before = issue.get("description") or ""
     changed = before != item["description"]
@@ -1381,7 +1409,9 @@ def cmd_factory_settle(args) -> int:
                              % (verify.get("identifier"), identifier))
     emit(True, "settle",
          [] if changed else ["%s already names %s" % (verify.get("identifier"), identifier)],
-         {"workOrder": args.work_order, "round": round_no,
+         {"workOrder": (work_order or {}).get("identifier", args.work_order)
+          if isinstance(work_order, dict) else args.work_order,
+          "requested": args.work_order, "round": round_no,
           "verifyIssue": verify.get("identifier"), "reviewIssue": identifier,
           "applied": applied,
           "before": _review_line(before), "after": _review_line(item["description"])})
@@ -2234,6 +2264,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("work_order", help="work order identifier, e.g. GUL-439")
     s.add_argument("--round", type=int, default=0, help="fix round (default: the latest)")
     s.add_argument("--apply", action="store_true", help="rewrite the verify description")
+    s.add_argument("--force", action="store_true",
+                   help="rewrite even a stage that is not todo/blocked (stuck stage)")
     s.set_defaults(fn=cmd_factory_settle)
 
     s = sub.add_parser("decide", parents=[common])

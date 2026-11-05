@@ -609,6 +609,15 @@ def case_settle_repairs(stub, base_sha, repo):
     check("settle: refuses to rewrite a stage an agent is working",
           code3 == 2 and verify["description"] == broken, raw3[-300:])
 
+    code4, out4, raw4 = run(stub, ["settle", "GUL-908", "--apply", "--force"])
+    check("settle: --force repairs a stage stuck in_progress with no live run",
+          code4 == 0 and review["identifier"] in verify["description"]
+          and (out4 or {}).get("applied") is True, raw4[-400:])
+
+    code5, out5, raw5 = run(stub, ["settle", verify["identifier"], "--apply", "--force"])
+    check("settle: a stage identifier resolves to its work order",
+          code5 == 0 and (out5 or {}).get("verifyIssue") == verify["identifier"], raw5[-400:])
+
 
 def case_stop_blocks(stub, base_sha, repo):
     wo = base_work_order(stub, base_sha, repo)
