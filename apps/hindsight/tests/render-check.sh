@@ -529,36 +529,84 @@ fi
 # FreeLLMAPI pool and ride a LiteLLM route through llm-hub. Since ADR-127
 # (GUL-806) reflect is `deepseek-v4.1-flash-1017-ds` - the metered DeepSeek
 # API, which the owner approved on card `63c227c4` after the free routes were
-# measured and both failed - and the refresh is still `gpt-oss-120b-ollama`.
-# The pool could not carry them: a real reflect prompt averages
+# measured and both failed. Since GUL-1045 the refresh rides the same paid
+# family for the opposite reason: it has no HTTP caller to time out, and the
+# `-ollama` route it used to sit on answers 429 "weekly usage limit".
+# The pool could not carry either: a real reflect prompt averages
 # 12,001 input tokens (max 55,692), groq - the one healthy member - allows
 # 8,000 TPM, and the Cloudflare key added on 2026-10-26 answered
 # `context_too_large` 153 times before exhausting its daily quota. Retain and
 # consolidation stay on FreeLLMAPI `auto` and are asserted above.
 #
+# The two lanes no longer share a route family, on purpose. Reflect needs a
+# caller that answers inside its patience (the -1017-ollama read in ADR-120:
+# 26 % endpoint success, every loss a 499) and lives on the subscription; the
+# refresh has no HTTP caller, only a worker slot and a 300 s LLM budget, so it
+# can take the slower, paid route - which is the only one that cannot answer
+# 429 with "weekly usage limit" (GUL-1045).
+#
 # The split needs no chart change: the base URL, model and key are per-operation
 # settings in config.py. What this block protects is the failure mode a future
-# edit would reintroduce - a reflect call that silently falls back to the
-# FreeLLMAPI base URL (and its small model) because a per-operation knob was
-# dropped, or a credential pasted into this public repo.
+# edit would reintroduce - a reflect or refresh call that silently falls back
+# to the FreeLLMAPI base URL (and its small model) because a per-operation knob
+# was dropped, or a credential pasted into this public repo.
 for kv in \
   'HINDSIGHT_API_REFLECT_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
   'HINDSIGHT_API_REFLECT_LLM_MODEL: deepseek-v4.1-flash-1017-ds' \
   'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
-  'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-ollama'
+  'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: deepseek-v4.1-flash-1017-ds'
 do
   key=${kv%%: *}; want=${kv#*: }
   got=$(env_value "$API" "$key")
   if [ "$got" = "$want" ]; then
     ok "$key = $got"
   else
-    bad "$key is '${got:-unset}', expected $want - reflect would fall back to the FreeLLMAPI pool the model cannot work on (GUL-263), or lose the -ds route the owner approved (ADR-127)"
+    bad "$key is '${got:-unset}', expected $want - a lane would fall back to the FreeLLMAPI pool the model cannot work on (GUL-263), reflect would lose the -ds route the owner approved (ADR-127), or the refresh would move off the route that cannot 429 (GUL-1045)"
   fi
 done
 
 # ADR-127: the reasoning knob belongs to the -ollama routes and left with
 # them. On `-ds` thinking is controlled by the extra body below, which is a
 # different parameter; setting both is how a route gets an unmeasured knob.
+
+# GUL-1045: the refresh must ride a route with NO allowance to exhaust, and
+# this is the assertion that makes going back a deliberate act. On 2026-11-06
+# the Ollama account answered "weekly usage limit" for gpt-oss-120b AND
+# glm-5.3-flash at the same moment; the deepseek family still answered 200 but
+# that is headroom in the same allowance, not a route without a wall. So any
+# `-ollama` or `-go` suffix is a FAIL here, and so is any other `-ds` model:
+# the cost below was measured on `deepseek-v4.1-flash-1017-ds`, and swapping
+# models without re-measuring re-opens exactly what GUL-1045 closed.
+REFRESH_MODEL_NOW=$(env_value "$API" HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL)
+case "$REFRESH_MODEL_NOW" in
+  *-ollama|*-go)
+    bad "refresh model '$REFRESH_MODEL_NOW' rides a metered subscription route - it 429s with 'weekly usage limit' and the retry ladder turns that into a storm (GUL-1045)" ;;
+  *-ds)
+    if [ "$REFRESH_MODEL_NOW" = "deepseek-v4.1-flash-1017-ds" ]; then
+      ok "refresh model '$REFRESH_MODEL_NOW' is the measured paid route, no allowance to exhaust"
+    else
+      bad "refresh model '$REFRESH_MODEL_NOW' is a paid route nobody measured - re-run the refresh-sized probe and record the cost before changing this line (GUL-1045)"
+    fi ;;
+  *)
+    bad "refresh model '${REFRESH_MODEL_NOW:-unset}' is neither a known subscription route nor the measured -ds route - check what it bills (GUL-1045)" ;;
+esac
+
+# GUL-1045: the retry cap is part of the fix, not a detail. The 2026-11-06
+# storm was 7,350 calls in 25 h from ~96 real refresh calls, because the app
+# default retries an LLM call 4x into a wall that was already up. A wall on
+# this route costs money, so one retry, not three.
+REFRESH_RETRIES_NOW=$(env_value "$API" HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES)
+if [ "$REFRESH_RETRIES_NOW" = "1" ]; then
+  ok "refresh LLM retries capped at 1 - a walled route cannot eat the allowance in retries (GUL-1045)"
+else
+  bad "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES is '${REFRESH_RETRIES_NOW:-unset}', expected 1 - the default 3 made a 429 wall into 4x the requests (GUL-1045)"
+fi
+
+# GUL-806: the revert drops the per-operation reasoning knob as well. A
+# half-revert (model back to gpt-oss, `REASONING_EFFORT: none` left behind)
+# would send a parameter to gpt-oss that was never measured there, and the
+# -ollama 400-trap in the comment above shows what an unmeasured parameter
+# does to every reflect call.
 if [ -z "$(env_value "$API" HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT)" ]; then
   ok "no HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT - thinking on -ds is the extra body, not this knob (ADR-127)"
 else

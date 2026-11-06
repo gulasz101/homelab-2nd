@@ -201,10 +201,38 @@ spec:
         HINDSIGHT_API_REFLECT_LLM_MODEL: deepseek-v4.1-flash-1017-ds
         HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY: '{"thinking":{"type":"disabled"}}'
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
-        # Unchanged on purpose (GUL-787): the refresh stayed on
-        # `gpt-oss-120b-ollama`, 0 failed of 139 measured on 2026-10-29. Only
-        # reflect was failing.
-        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-ollama
+        # CHANGED BY GUL-1045 (2026-11-06): the refresh leaves the Ollama
+        # subscription and rides the metered DeepSeek API - the one route with
+        # no allowance to exhaust. Measured first, at refresh size (a 5,292
+        # in-token prompt, the real 6-tool `answer_as_document` schema, the
+        # reflect key, one call each, from the running api pod):
+        #
+        #   gpt-oss-120b-ollama            429 "you (gulasz101) have reached your
+        #                                  weekly usage limit" - the route that was
+        #                                  configured here, dead since ~12:15Z
+        #   glm-5.3-flash-ollama           429, same weekly limit, same account
+        #   deepseek-v4.1-flash-1017-ollama 200 in 14.4s, correct first tool calls
+        #                                  (search_mental_models + search_observations)
+        #                                  - but it is the same weekly allowance with
+        #                                  headroom left, not a route without a wall
+        #   deepseek-v4.1-flash-1017-ds    200 in 3.1s, correct first tool call
+        #
+        # What it cost to find out: the retry ladder turned the wall into a storm.
+        # 7,350 failed refresh calls in 25 h, ~380/h, every one a 429 on
+        # gpt-oss - because Hindsight retries an LLM call 4x and 48 models were
+        # queued. That is why MAX_RETRIES is 1 here and not the app default 3.
+        #
+        # The price is real and recorded in the ADR (docs/adr/pending/
+        # mental-model-refresh-rides-the-paid-api.md), measured on the live
+        # catch-up rather than modelled: 7 refresh ops over a 25 h delta billed
+        # 98 calls / 2.64M input / 226k output = $0.266, so ~$0.038 for a big
+        # delta and ~$0.003 for the small hourly one. The
+        # scheduler only queues a model whose scope moved
+        # ("scheduled 7 model(s), 36 up-to-date" in the live log), so the daily
+        # bill follows bank activity, not the 48 hourly crons. If it is too
+        # much, the lever is refresh volume, not this route.
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: deepseek-v4.1-flash-1017-ds
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES: "1"
         # Ollama answers a reflect call in ~2 s. The budgets stay generous on
         # purpose: a cold start or an upstream queue is cheaper to wait out
         # than to cancel and retry, because a cancelled reflect call becomes a
