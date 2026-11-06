@@ -1,13 +1,30 @@
 # GUL-302: a custom gitleaks config REPLACES the default ruleset in v8 - with
-# only [allowlist] in this file, every scan had zero rules and always reported
+# only an allowlist in this file, every scan had zero rules and always reported
 # "no leaks found" (a false green; proven against a test leak with 8.30.1).
-# useDefault re-enables the built-in rules; the allowlist keeps the single
+# useDefault re-enables the built-in rules; the allowlists below keep the single
 # historical commit (993240d, later SOPS-fixed by 1f8ea78) triaged away.
 # NB: `extend = true` is dead syntax in 8.30 - use the [extend] map.
+# NB2: the array form `[[allowlists]]` is what 8.30 honours here; the older
+# singular `[allowlist]` table with a `regexes` key silently matched nothing.
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
+description = "historical commit 993240d, later SOPS-fixed by 1f8ea78"
 commits = [
   "993240d266a1c478035032f9cc930bf49fd562a9",
+]
+
+# GUL-806: `generic-api-key` fires on a model-name assignment because the
+# identifier contains `API` and the value is a long hyphenated slug -
+# `HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b-ollama` is a model alias, not
+# a credential (the rule's character class excludes the dots in the previous
+# value, which is why the revert tripped it and the old line did not). Model
+# aliases are never secrets: the route keys live in the SOPS secret, not in the
+# manifest. The regex is limited to `*_MODEL:` assignments.
+[[allowlists]]
+description = "Hindsight model aliases are not credentials (GUL-806)"
+regexTarget = "match"
+regexes = [
+  '''HINDSIGHT_API_[A-Z0-9_]*MODEL:[\s'"]{0,3}[a-z0-9][a-z0-9.-]*''',
 ]
