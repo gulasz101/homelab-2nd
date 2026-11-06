@@ -113,3 +113,20 @@ gptoss120b"*.
   own revisit trigger).
 - The route starts appearing in a paid chain in review: rule 4 is the thing to
   point at, and it is a deliberate re-decision, not a typo.
+
+## Update 2026-11-06: a single free account is a single quota failure
+
+Between October and this date both reflect and the background mental-model refresh
+were moved off the pool and onto `gpt-oss-120b-ollama`, i.e. straight at one Ollama
+Cloud account (GUL-787, then GUL-806's revert). That account hit its **weekly** limit
+for the gpt-oss family on 2026-11-05 10:36 UTC: every `gpt-oss:120b` and `gpt-oss:20b`
+call answered 429 while deepseek routes on the same account answered 200. The refresh
+lane logged 6,037 failed calls in 24 h and `HindsightOperationFailures` fired for 15 h.
+
+So the argument in point 2 was never "the pool is cheaper". It is that point 2 is the
+only arrangement where one exhausted key is a nuisance instead of an outage: eight
+members, one model, FreeLLMAPI does the failover. Both lanes moved back onto the
+`gpt-oss-120b-freellmapi` route through llm-hub (points 2 and 3) with the model name
+unchanged. Reflect's consumer-side timeout still sits at 120 s, so a slow failover
+inside the pool will show up as a cancelled call - watch for that, and only then
+decide whether the reflect budget moves.

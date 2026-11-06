@@ -225,12 +225,25 @@ spec:
         # and have been aborted every time since, so the callers' patience did
         # not change - the route did. `gpt-oss-120b-ollama` is where reflect
         # lived before, with no extra body and no per-operation knob.
-        HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b-ollama
+        # PROVIDER MOVED, MODEL UNCHANGED (2026-11-06, GUL-806). Still
+        # gpt-oss-120b, now from the FreeLLMAPI pool (ADR-091 pt 2/3) instead
+        # of the single Ollama Cloud account. On 2026-11-05 10:36 UTC that
+        # account hit its *weekly* limit for the gpt-oss family: every call
+        # returns 429 "you (gulasz101) have reached your weekly usage limit",
+        # both gpt-oss:120b and gpt-oss:20b, while deepseek routes on the same
+        # account answer 200. The refresh lane alone logged 6,037 failed calls
+        # in 24 h. The pool fails over between eight providers for the same
+        # model, so one account's quota cannot take reflect down again.
+        # Verified before the change: 200 + a valid `search_observations` tool
+        # call in 0.86 s through llm-hub.
+        HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b-freellmapi
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
-        # Unchanged on purpose (GUL-787): the refresh stayed on
-        # `gpt-oss-120b-ollama`, 0 failed of 139 measured on 2026-10-29. Only
-        # reflect was failing.
-        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-ollama
+        # Same move for the refresh lane (GUL-787 had it on
+        # `gpt-oss-120b-ollama`, 0 failed of 139 on 2026-10-29 - before the
+        # weekly wall existed). It is the lane that was actually 100 % down:
+        # HindsightOperationFailures has been firing for refresh_mental_model
+        # since 2026-11-05 19:27.
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-freellmapi
         # Ollama answers a reflect call in ~2 s. The budgets stay generous on
         # purpose: a cold start or an upstream queue is cheaper to wait out
         # than to cancel and retry, because a cancelled reflect call becomes a
