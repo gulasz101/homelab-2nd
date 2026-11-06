@@ -1,7 +1,9 @@
 # ADR-120: Hindsight reflect rides the fleet's route, with thinking off, not the metered DeepSeek key
 
-- **Status**: Superseded 2026-11-03 by the 24 h read below — reflect is back on `gpt-oss-120b-ollama`
-  (GUL-806). The measurement that killed it is kept in "24 h read" for the next person who proposes it.
+- **Status**: Superseded 2026-11-06 by **ADR-127** — reflect is on `deepseek-v4.1-flash-1017-ds`
+  with thinking disabled, because both free routes hit a metered wall (GUL-806). It was already
+  Superseded 2026-11-03 by the 24 h read below; both measurements are kept for the next person who
+  proposes a free route.
 - **Date**: 2026-11-02
 - **Issue**: GUL-787 (unblocks GUL-476, GUL-143)
 - **Approved**: the owner accepted the merge card `3ff1b734` on 2026-11-02 ("Merge it")
