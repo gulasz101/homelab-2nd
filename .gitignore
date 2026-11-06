@@ -12,6 +12,11 @@
 # Local agent tooling (opencode skills/config) — never committed
 /.opencode/
 
+# Factory scratch space (skills, briefs copies, probe scripts written at runtime by
+# the factory agents). Created on every work order, so leaving it untracked makes
+# the main checkout dirty and the next work order refuses to start. Never committed.
+/agents/factory/cache/
+
 # Python bytecode from the repo's scripts (the archive manifest tool excludes it too)
 __pycache__/
 *.pyc
