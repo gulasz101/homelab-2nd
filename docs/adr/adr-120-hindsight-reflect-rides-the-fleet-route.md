@@ -1,6 +1,7 @@
 # ADR-120: Hindsight reflect rides the fleet's route, with thinking off, not the metered DeepSeek key
 
-- **Status**: Accepted
+- **Status**: Superseded 2026-11-03 by the 24 h read below — reflect is back on `gpt-oss-120b-ollama`
+  (GUL-806). The measurement that killed it is kept in "24 h read" for the next person who proposes it.
 - **Date**: 2026-11-02
 - **Issue**: GUL-787 (unblocks GUL-476, GUL-143)
 - **Approved**: the owner accepted the merge card `3ff1b734` on 2026-11-02 ("Merge it")
@@ -94,3 +95,34 @@ So the free route works, and two things are different from the `-ds` route:
 - If Ollama ships `tool_choice` support, the forcing assumption can be restored and this trade disappears
   — re-probe with the controls in `apps/hindsight/tests/render-check.sh`'s comment block rather than trusting
   the release note.
+
+## 24 h read (2026-11-03, GUL-806) — the decision is reverted
+
+The revisit trigger above ("success over 24 h is not clearly better") fired. Measured three ways, because
+the obvious one is wrong:
+
+| | `gpt-oss-120b-ollama` (24 h before, to 11:20Z 11-02) | `-1017-ollama` (live since 11:20:43Z) |
+|---|---|---|
+| per-reflect LLM time, `llm_requests` grouped by `trace_id` | 44 traces, p50 **22 s**, p95 42 s | 43 traces, p50 **16 s**, p95 45 s |
+| LLM calls per reflect | 3.6 | 3.3 |
+| input tokens per reflect | 38.0 k | 54.8 k |
+| `/reflect` HTTP outcomes | **44 × 200**, 6 × 499, 1 × 500 (**86 % success**) | **9 × 200, 26 × 499** since the pod restart (**26 %**) |
+
+- The latency improved. That is the number everybody asked for and it is the one that does not decide this.
+- **A 499 is the caller giving up while the server keeps working.** Every abort landed inside 30 s
+  (`hindsight_http_duration_seconds_bucket`), and the server finished the reflect anyway — which is why
+  `llm_requests` looks healthy (43 traces, all `success`) while three quarters of the callers got nothing.
+- The flip is not a caller change: the hourly caller returned 200 every hour before the cutover and has
+  been aborted **18 hours in a row** since, and the nightly 04:00 batch went 13 × 200 (11-02) → 12 × 499
+  (11-03). Same clients, same queries, one variable.
+- `hindsight_operation_operations_total` under-counts these (9 successes in 24 h against 43 server-side
+  traces) because an aborted request never completes an operation — the alert added in GUL-866 watches
+  that counter and is therefore blind to an abort storm. A 499-rate alert on the `exported_endpoint`
+  label is the follow-up.
+- A manual probe with a patient client (240 s) returned 200 in 31.9 s with a real answer: the route works,
+  it is simply slower end to end than the callers' patience.
+
+Decision: revert. Tuning (`reflect_search_observations_max_tokens`, `MAX_CONTEXT`) changes prompt size,
+and the excess is not prompt-size-driven — it is end-to-end time past a ~30 s cap that the old route met.
+A revert is one manifest line, no credential change, and keeps the route the fleet shares free of a
+background job that spends 4-5 calls and 55 k tokens to hand the caller nothing.

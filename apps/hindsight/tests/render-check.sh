@@ -542,8 +542,7 @@ fi
 # dropped, or a credential pasted into this public repo.
 for kv in \
   'HINDSIGHT_API_REFLECT_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
-  'HINDSIGHT_API_REFLECT_LLM_MODEL: deepseek-v4.1-flash-1017-ollama' \
-  'HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT: none' \
+  'HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b-ollama' \
   'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
   'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-ollama'
 do
@@ -555,6 +554,17 @@ do
     bad "$key is '${got:-unset}', expected $want - reflect would fall back to the FreeLLMAPI pool the model cannot work on (GUL-263), or run the paid -ds route nobody approved (GUL-787)"
   fi
 done
+
+# GUL-806: the revert drops the per-operation reasoning knob as well. A
+# half-revert (model back to gpt-oss, `REASONING_EFFORT: none` left behind)
+# would send a parameter to gpt-oss that was never measured there, and the
+# -ollama 400-trap in the comment above shows what an unmeasured parameter
+# does to every reflect call.
+if [ -z "$(env_value "$API" HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT)" ]; then
+  ok "no HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT - the GUL-787 knob left with the revert (GUL-806)"
+else
+  bad "HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT is set: the -1017-ollama route was reverted on 2026-11-03 (GUL-806), gpt-oss never ran with this knob"
+fi
 
 # GUL-787: the reflect route is Ollama Cloud, not the metered DeepSeek API.
 # `gpt-oss-120b-ollama` produced 8 failures in 16 h at reflect size (GUL-476),
