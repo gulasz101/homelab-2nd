@@ -526,10 +526,11 @@ else
 fi
 
 # 5h-ter. GUL-263 / ADR-094: reflect and the mental-model refresh leave the
-# FreeLLMAPI pool and ride a LiteLLM route through llm-hub. Since GUL-787
-# reflect is `deepseek-v4.1-flash-1017-ollama` and the refresh is still
-# `gpt-oss-120b-ollama`; neither is the metered `-ds` API. The pool could not
-# carry them: a real reflect prompt averages
+# FreeLLMAPI pool and ride a LiteLLM route through llm-hub. Since ADR-127
+# (GUL-806) reflect is `deepseek-v4.1-flash-1017-ds` - the metered DeepSeek
+# API, which the owner approved on card `63c227c4` after the free routes were
+# measured and both failed - and the refresh is still `gpt-oss-120b-ollama`.
+# The pool could not carry them: a real reflect prompt averages
 # 12,001 input tokens (max 55,692), groq - the one healthy member - allows
 # 8,000 TPM, and the Cloudflare key added on 2026-10-26 answered
 # `context_too_large` 153 times before exhausting its daily quota. Retain and
@@ -542,7 +543,7 @@ fi
 # dropped, or a credential pasted into this public repo.
 for kv in \
   'HINDSIGHT_API_REFLECT_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
-  'HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b-ollama' \
+  'HINDSIGHT_API_REFLECT_LLM_MODEL: deepseek-v4.1-flash-1017-ds' \
   'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
   'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-ollama'
 do
@@ -551,46 +552,47 @@ do
   if [ "$got" = "$want" ]; then
     ok "$key = $got"
   else
-    bad "$key is '${got:-unset}', expected $want - reflect would fall back to the FreeLLMAPI pool the model cannot work on (GUL-263), or run the paid -ds route nobody approved (GUL-787)"
+    bad "$key is '${got:-unset}', expected $want - reflect would fall back to the FreeLLMAPI pool the model cannot work on (GUL-263), or lose the -ds route the owner approved (ADR-127)"
   fi
 done
 
-# GUL-806: the revert drops the per-operation reasoning knob as well. A
-# half-revert (model back to gpt-oss, `REASONING_EFFORT: none` left behind)
-# would send a parameter to gpt-oss that was never measured there, and the
-# -ollama 400-trap in the comment above shows what an unmeasured parameter
-# does to every reflect call.
+# ADR-127: the reasoning knob belongs to the -ollama routes and left with
+# them. On `-ds` thinking is controlled by the extra body below, which is a
+# different parameter; setting both is how a route gets an unmeasured knob.
 if [ -z "$(env_value "$API" HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT)" ]; then
-  ok "no HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT - the GUL-787 knob left with the revert (GUL-806)"
+  ok "no HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT - thinking on -ds is the extra body, not this knob (ADR-127)"
 else
-  bad "HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT is set: the -1017-ollama route was reverted on 2026-11-03 (GUL-806), gpt-oss never ran with this knob"
+  bad "HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT is set: that knob was for the -ollama routes (GUL-787, reverted GUL-806); on -ds thinking is the REASONING extra body"
 fi
 
-# GUL-787: the reflect route is Ollama Cloud, not the metered DeepSeek API.
-# `gpt-oss-120b-ollama` produced 8 failures in 16 h at reflect size (GUL-476),
-# `deepseek-v4.1-flash-1017-ollama` answered 10/10 forced tool calls at 20,622
-# input tokens. Pin the *route family*, so a later edit that swaps in the
-# `-ds` suffix has to say so here first: `-ds` is api.deepseek.com and bills
-# $0.31-0.62/day, which is the spend GUL-769 removed.
+# ADR-127: reflect must not go back to a free ollama.com route. `gpt-oss-120b-ollama`
+# measured 86 % caller success until the weekly allowance ran out, then answered
+# 429 to every call; `-1017-ollama` measured 26 %. Those allowances are metered,
+# so a green test on them is a bet on the meter. `-ds` is paid and wall-free.
 REFLECT_MODEL_NOW=$(env_value "$API" HINDSIGHT_API_REFLECT_LLM_MODEL)
 case "$REFLECT_MODEL_NOW" in
-  *-ollama|*-go)
-    ok "reflect model '$REFLECT_MODEL_NOW' rides a subscription route, not the metered -ds API" ;;
   *-ds)
-    bad "reflect model '$REFLECT_MODEL_NOW' is the metered DeepSeek API - the owner approves that spend, not a default (GUL-787)" ;;
+    ok "reflect model '$REFLECT_MODEL_NOW' is the paid DeepSeek route the owner approved (ADR-127)" ;;
+  *-ollama|*-go)
+    bad "reflect model '$REFLECT_MODEL_NOW' is a metered free route: gpt-oss hit a hard weekly 429 and -1017 answered 26 % of callers. Free allowances expire; ADR-127 moved reflect to -ds for that reason"
+    ;;
   *)
-    note "reflect model '$REFLECT_MODEL_NOW' is neither a known subscription route nor -ds; check what it bills" ;;
+    bad "reflect model '$REFLECT_MODEL_NOW' is neither the approved -ds route nor a known free one; ADR-127 pins deepseek-v4.1-flash-1017-ds"
+    ;;
 esac
 
-# GUL-787: `{"thinking":{"type":"disabled"}}` is the -ds knob and it is NOT
-# valid here. The -ollama route runs through LiteLLM's `openai/` provider,
-# which answers 400 UnsupportedParamsError for an unknown request parameter,
-# so an extra body copied from the -ds probe would fail every reflect call.
-if [ -z "$(env_value "$API" HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY)" ]; then
-  ok "no HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY - thinking is controlled by REASONING_EFFORT on this route"
-else
-  bad "HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY is set - the -ollama route rejects 'thinking' with 400 and every reflect call fails (GUL-787)"
-fi
+# ADR-127: `{"thinking":{"type":"disabled"}}` is required on -ds. deepseek-flash
+# thinks by default at reflect size, and the thinking tokens push the loop past
+# the caller's ~30 s cap - the exact failure ADR-120 measured at 26 % success.
+REFLECT_EXTRA=$(env_value "$API" HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY)
+case "$REFLECT_EXTRA" in
+  *thinking*disabled*|*disabled*thinking*)
+    ok "reflect extra body disables thinking on the -ds route (ADR-127)" ;;
+  '')
+    bad "HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY is unset: on -ds the model thinks by default and reflect runs past the caller's cap (ADR-127)" ;;
+  *)
+    bad "reflect extra body is '$REFLECT_EXTRA' - expected {\"thinking\":{\"type\":\"disabled\"}} (ADR-127)" ;;
+esac
 
 # The Service the reflect base URL names must exist in the repo: the chart's
 # release is litellm in namespace llm-hub, so its Service is litellm:4000 there.
