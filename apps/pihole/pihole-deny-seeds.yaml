@@ -18,6 +18,10 @@
 #   - never deletes anything;
 #   - gravity + restartdns when it changed something, then read-back verification.
 #
+# MARKERS: comment 'W/S block' = curfew-managed family set (groups [9] by day,
+#   [9,10] 21:00-07:00); 'S-IG' = the IG experiment jobs; 'H2 hard block' = a
+#   plain whole-home deny nobody moves (groups [0,9,10,11], INFRA exempt).
+#
 # EDITING: change entries here, commit, and Flux applies it. The next 05:00 run (or a
 # manual `kubectl -n pihole create job --from=cronjob/pihole-deny-seed seed-now`)
 # converges the live API to this file. Groups in this file are the daytime baseline.
@@ -48,6 +52,54 @@ data:
           9
         ],
         "comment": "S-IG",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "joemonster.org",
+        "groups": [
+          0,
+          9,
+          10,
+          11
+        ],
+        "comment": "H2 hard block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "pudelek.pl",
+        "groups": [
+          0,
+          9,
+          10,
+          11
+        ],
+        "comment": "H2 hard block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "pudelekpinkparty.wpcdn.pl",
+        "groups": [
+          0,
+          9,
+          10,
+          11
+        ],
+        "comment": "H2 hard block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "pudelekpinkparty.wphcdn.cloud",
+        "groups": [
+          0,
+          9,
+          10,
+          11
+        ],
+        "comment": "H2 hard block",
         "enabled": true
       },
       {
@@ -111,6 +163,30 @@ data:
           9
         ],
         "comment": "S-IG",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "www.joemonster.org",
+        "groups": [
+          0,
+          9,
+          10,
+          11
+        ],
+        "comment": "H2 hard block",
+        "enabled": true
+      },
+      {
+        "kind": "exact",
+        "domain": "www.pudelek.pl",
+        "groups": [
+          0,
+          9,
+          10,
+          11
+        ],
+        "comment": "H2 hard block",
         "enabled": true
       },
       {
@@ -228,6 +304,42 @@ data:
           9
         ],
         "comment": "S-IG",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)joemonster\\.org$",
+        "groups": [
+          0,
+          9,
+          10,
+          11
+        ],
+        "comment": "H2 hard block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)pudelek\\.pl$",
+        "groups": [
+          0,
+          9,
+          10,
+          11
+        ],
+        "comment": "H2 hard block",
+        "enabled": true
+      },
+      {
+        "kind": "regex",
+        "domain": "(^|\\.)pudelekpinkparty\\.wp\\.pl$",
+        "groups": [
+          0,
+          9,
+          10,
+          11
+        ],
+        "comment": "H2 hard block",
         "enabled": true
       },
       {
