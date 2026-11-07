@@ -20,7 +20,9 @@
 #
 # MARKERS: comment 'W/S block' = curfew-managed family set (groups [9] by day,
 #   [9,10] 21:00-07:00); 'S-IG' = the IG experiment jobs; 'H2 hard block' = a
-#   plain whole-home deny nobody moves (groups [0,9,10,11], INFRA exempt).
+#   plain whole-home deny nobody moves (groups [0,9,10,11]; 12 INFRA is not
+#   listed, though FTL cannot MAC-match some hosts — it logs homelab-2nd as
+#   ip-192.168.1.179 — so those fall to Default and are covered anyway).
 #
 # EDITING: change entries here, commit, and Flux applies it. The next 05:00 run (or a
 # manual `kubectl -n pihole create job --from=cronjob/pihole-deny-seed seed-now`)
