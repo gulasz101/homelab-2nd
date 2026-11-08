@@ -39,9 +39,11 @@ spec:
 
   # No CPU limit: with 500m the pod was CFS-throttled in 47% of periods and Paperclip
   # page loads stalled on bursty queries (2026-10-25). Memory stays capped.
+  # 1Gi -> 2Gi (2026-11-08): working set sat at 1005-1019 MiB and the postgres container was
+  # OOMKilled six times in three days; each kill crashed Paperclip on the Air (502 via Cloudflare).
   resources:
     requests:
-      memory: "512Mi"
+      memory: "1Gi"
       cpu: "250m"
     limits:
-      memory: "1Gi"
+      memory: "2Gi"
