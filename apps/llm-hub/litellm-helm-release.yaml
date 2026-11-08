@@ -210,6 +210,11 @@ spec:
           model: openai/mimo-v2.6-pro
           api_base: https://ollama.com/v1
           api_key: os.environ/OLLAMA_API_KEY
+      - model_name: iceman-contributor-free-go
+        litellm_params:
+          model: openai/iceman-contributor-free
+          api_base: https://opencode.ai/zen/go/v1
+          api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
       - model_name: deepseek-v4.1-flash-1017-ds
         litellm_params:
           model: deepseek/deepseek-flash
