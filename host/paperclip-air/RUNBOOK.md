@@ -387,7 +387,7 @@ entries deliberately carry **no** `httpHostHeader` rewrite, because the dashboar
 against `dashboard.public_url` in `~/.hermes/config.yaml`.
 
 ```bash
-# what the world sees, no credentials: must be a 302 to cloudflareaccess.com, never 200
+# what the world sees, no credentials: must be 403 (Service-Auth-only app), never 200
 curl -s -o /dev/null -w '%{http_code}\n' https://hermes.voitech.dev/api/health
 # with CF-Access-Client-Id/-Secret: 200 for /api/health, and 401 for /api/config until Hermes login
 # the route is right but the host is closed? compare the app's aud with the kid in the login redirect
@@ -397,4 +397,16 @@ Access is deny-by-default: the app is closed unless a policy **matches** you. Wh
 `hermes-control-phone` did not exist the app carried a single `Everyone-Block` deny policy, so the
 host was gated the whole time it was reachable. When the service token is added it becomes one
 `non_identity` (Service Auth) policy including that token id — the block policy goes, and the closed
-state is re-proven by a header-less 302 and a wrong-token 403, not by assumption.
+state is re-proven by a header-less 403 and a wrong-token 403, not by assumption.
+
+State since 2026-11-08: exactly one policy, `hermes-control-phone` (`non_identity`, service token id
+`f9d86690-914e-4cac-9e24-6380b5aac9c3`). The policy must pick the token by its **UUID**, not by the
+`<hex>.access` Client ID; our API token cannot list service tokens, so the policy is added by name in
+the Zero Trust dashboard. A deny policy left at a lower precedence number wins over the allow policy,
+so remove `Everyone-Block`-style policies once the real one exists.
+
+Phone (Hermes Control): use **Sign in** (not the manual Token fields), URL
+`https://hermes.voitech.dev`, *Custom headers → Add Cloudflare headers* with the service token, then
+`admin` + the dashboard password (only its scrypt hash is on disk; the setup wizard writes
+`password: ''`). To reset it, write a new `basic_auth.password_hash` via
+`plugins.dashboard_auth.basic.hash_password`, rotate `basic_auth.secret`, and kickstart the daemon.
