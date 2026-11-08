@@ -6,7 +6,7 @@
 # for bash 3.2 (the Air's /bin/bash) and for Linux, because CI reads these
 # files too: no associative arrays, no mapfile, no ${var,,}.
 #
-# ADR-098 is the contract this file encodes: the five headless services live in
+# ADR-098 is the contract this file encodes: the six headless services live in
 # the system launchd domain under dev.voitech.homelab.<service>, and the
 # heartbeat sender is the only user agent we own on purpose.
 # ---------------------------------------------------------------------------
@@ -28,9 +28,9 @@ HOMELAB_AGENT_DIR="$HOMELAB_HOME/Library/LaunchAgents"
 # it has no business being on the public internet.
 HOMELAB_HEARTBEAT_URL_DEFAULT="http://192.168.1.179:30270/heartbeat"
 
-# The five headless services, in start order. Keep this list and the plists in
+# The six headless services, in start order. Keep this list and the plists in
 # launchd/daemons/ in step: tests/host-tree-check.sh fails otherwise.
-HOMELAB_SERVICES="hermes-gateway paperclip minio-lan-proxy gemini-tunnel syncthing"
+HOMELAB_SERVICES="hermes-gateway paperclip minio-lan-proxy gemini-tunnel syncthing hermes-dashboard"
 
 svc_label() { printf '%s.%s' "$HOMELAB_DOMAIN" "$1"; }
 
@@ -44,6 +44,7 @@ svc_port() {
     minio-lan-proxy) echo 9000 ;;
     gemini-tunnel)   echo 8083 ;;
     syncthing)       echo 8384 ;;
+    hermes-dashboard) echo 9119 ;;
     *) return 1 ;;
   esac
 }
@@ -57,6 +58,10 @@ svc_health_path() {
     minio-lan-proxy) echo "/minio/health/live" ;;
     gemini-tunnel)   echo "" ;;
     syncthing)       echo "/rest/noauth/health" ;;
+    # The dashboard runs with its auth gate on (dashboard.public_url is non-loopback),
+    # so almost every route answers 401. /api/health is on the dashboard's own
+    # public allowlist (hermes_cli/dashboard_auth/public_paths.py) and needs no cookie.
+    hermes-dashboard) echo "/api/health" ;;
   esac
 }
 
@@ -78,6 +83,21 @@ svc_rto() {
     minio-lan-proxy) echo 30 ;;
     gemini-tunnel)   echo 30 ;;
     syncthing)       echo 30 ;;
+    hermes-dashboard) echo 30 ;;
+  esac
+}
+
+# A command the installer may use when a service has no old LaunchAgent to derive
+# it from and services.env has none either. Only for services that were never an
+# agent. No secrets, ever: HERMES_HOME points at the profile, which holds the .env.
+# PATH is deliberately the short, version-free list: the pinned tool dirs under
+# ~/.hermes/tools change on every Hermes update, and a dashboard needs none of them.
+svc_default_cmd() {
+  case "$1" in
+    hermes-dashboard)
+      printf '%s' "/usr/bin/env HERMES_HOME=$HOMELAB_HOME/.hermes PATH=$HOMELAB_HOME/.hermes/node/bin:$HOMELAB_HOME/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin $HOMELAB_HOME/.hermes/hermes-agent/.hermes/bin/hermes dashboard --host 127.0.0.1 --port 9119 --no-open"
+      ;;
+    *) return 1 ;;
   esac
 }
 

@@ -38,6 +38,7 @@ host/paperclip-air/
 │   │   ├── dev.voitech.homelab.minio-lan-proxy.plist
 │   │   ├── dev.voitech.homelab.gemini-tunnel.plist
 │   │   ├── dev.voitech.homelab.syncthing.plist
+│   │   ├── dev.voitech.homelab.hermes-dashboard.plist   # loopback only; phone reaches it via Cloudflare (GUL-1111)
 │   │   ├── com.gulasz101.hermes-state-backup.plist      # scheduled 03:30 (ADR-107/108)
 │   │   ├── com.gulasz101.hermes-memory-watchdog.plist   # scheduled hourly (ADR-107/108)
 │   │   └── dev.voitech.homelab.heartbeat.plist          # every 60 s, headless (ADR-126)
@@ -176,6 +177,35 @@ Why: the repo is public and the command line carries installed paths, ports and 
 environment (nothing secret, but host-specific). The installer **derives it from the LaunchAgent it
 replaces**, so the conversion preserves whatever actually worked instead of guessing. Edit a value
 and `sudo launchctl kickstart -k system/dev.voitech.homelab.<service>`.
+
+`hermes-dashboard` is the one service that was never a LaunchAgent, so there is nothing to derive.
+For it the installer falls back to a documented default (`svc_default_cmd` in
+`bin/homelab-lib.sh`) when `services.env` has no entry. It contains no secrets:
+
+```bash
+SVC_HERMES_DASHBOARD_CMD='/usr/bin/env HERMES_HOME=/Users/paperclip/.hermes PATH=/Users/paperclip/.hermes/node/bin:/Users/paperclip/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /Users/paperclip/.hermes/hermes-agent/.hermes/bin/hermes dashboard --host 127.0.0.1 --port 9119 --no-open'
+```
+
+To change it, edit that line in `services.env` (an existing entry always wins; `--force` replaces it
+with the default) and kickstart the daemon.
+
+## `hermes-dashboard` (GUL-1111)
+
+Port 9119, `127.0.0.1` only, label `dev.voitech.homelab.hermes-dashboard`, logs
+`~/Library/Logs/homelab/hermes-dashboard{,.err}.log`. The phone reaches it through the Cloudflare
+tunnel at `https://hermes.voitech.dev`; nothing listens on the LAN.
+
+**Security: `config.yaml` must contain `dashboard.public_url: https://hermes.voitech.dev`.** On a
+loopback bind, Hermes v0.22.7 turns its auth gate on only when `public_url` is a non-loopback host
+(`hermes_cli/web_server_boundary.py`, `public_hosts_engage_gate`). The tunnel's traffic arrives from
+loopback, so without that key it gets in with **no password**. Check it before you open the tunnel
+route, and again after a Hermes update.
+
+Health probe: `/api/health`. It is on the dashboard's own no-auth allowlist, so the probe works with
+the gate on. The heartbeat reports it as component `hermes-dashboard`, and the existing
+`HostWatchComponentDown` alert (5 minutes down, critical) covers it. That is intended: a dead
+dashboard is a real outage for the phone. Install the daemon before you deploy the updated
+`homelab-lib.sh` that the heartbeat uses, or the alert fires on a service that does not exist yet.
 
 If a service has no derivable command the installer refuses to install its daemon (a `KeepAlive`
 daemon with an unknown command is a crash loop) and tells you which variable to fill in.
