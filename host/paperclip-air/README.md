@@ -183,7 +183,7 @@ For it the installer falls back to a documented default (`svc_default_cmd` in
 `bin/homelab-lib.sh`) when `services.env` has no entry. It contains no secrets:
 
 ```bash
-SVC_HERMES_DASHBOARD_CMD='/usr/bin/env HERMES_HOME=/Users/paperclip/.hermes PATH=/Users/paperclip/.hermes/node/bin:/Users/paperclip/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /Users/paperclip/.hermes/hermes-agent/.hermes/bin/hermes dashboard --host 127.0.0.1 --port 9119 --no-open'
+SVC_HERMES_DASHBOARD_CMD='/usr/bin/env HERMES_HOME=/Users/paperclip/.hermes PATH=/Users/paperclip/.hermes/node/bin:/Users/paperclip/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /Users/paperclip/.hermes/hermes-agent/.hermes/bin/hermes dashboard --host 127.0.0.1 --port 9119 --no-open --skip-build'
 ```
 
 To change it, edit that line in `services.env` (an existing entry always wins; `--force` replaces it
@@ -200,6 +200,21 @@ loopback bind, Hermes v0.22.7 turns its auth gate on only when `public_url` is a
 (`hermes_cli/web_server_boundary.py`, `public_hosts_engage_gate`). The tunnel's traffic arrives from
 loopback, so without that key it gets in with **no password**. Check it before you open the tunnel
 route, and again after a Hermes update.
+
+**Web UI build: by hand, after every Hermes update.** The daemon runs with `--skip-build`, so it
+serves whatever is in `~/.hermes/hermes-agent/hermes_cli/web_dist`. Without the flag, every start
+runs `npm ci` in the live checkout plus an Electron download. On 2026-11-08 a GitHub 503 for
+Electron turned that into a crash loop that rewrote `node_modules` under the running gateway.
+After `hermes update` (or a tag checkout), rebuild and restart:
+
+```bash
+T=~/.hermes/tools; PATH=$(ls -d $T/node-*/bin | tail -1):$(ls -d $T/npm-*/bin | tail -1):$PATH \
+  bash -c 'cd ~/.hermes/hermes-agent && npm run build -w web'
+sudo launchctl kickstart -k system/dev.voitech.homelab.hermes-dashboard
+```
+
+Use the npm under `~/.hermes/tools`: the one in `~/.hermes/node` has been broken since 2026-09-02
+(`make-fetch-happen/lib/cache/` is missing).
 
 Health probe: `/api/health`. It is on the dashboard's own no-auth allowlist, so the probe works with
 the gate on. The heartbeat reports it as component `hermes-dashboard`, and the existing

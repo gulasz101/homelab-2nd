@@ -92,10 +92,15 @@ svc_rto() {
 # agent. No secrets, ever: HERMES_HOME points at the profile, which holds the .env.
 # PATH is deliberately the short, version-free list: the pinned tool dirs under
 # ~/.hermes/tools change on every Hermes update, and a dashboard needs none of them.
+# --skip-build is not optional. Without it every start re-runs `npm ci` in the
+# live Hermes checkout (all workspaces, plus an Electron download), and a crash
+# loop rewrites node_modules under the running gateway. Seen on 2026-11-08: a
+# GitHub 503 for Electron turned each start into a failed npm ci (GUL-1111).
+# The web UI is built once by hand after a Hermes update (README).
 svc_default_cmd() {
   case "$1" in
     hermes-dashboard)
-      printf '%s' "/usr/bin/env HERMES_HOME=$HOMELAB_HOME/.hermes PATH=$HOMELAB_HOME/.hermes/node/bin:$HOMELAB_HOME/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin $HOMELAB_HOME/.hermes/hermes-agent/.hermes/bin/hermes dashboard --host 127.0.0.1 --port 9119 --no-open"
+      printf '%s' "/usr/bin/env HERMES_HOME=$HOMELAB_HOME/.hermes PATH=$HOMELAB_HOME/.hermes/node/bin:$HOMELAB_HOME/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin $HOMELAB_HOME/.hermes/hermes-agent/.hermes/bin/hermes dashboard --host 127.0.0.1 --port 9119 --no-open --skip-build"
       ;;
     *) return 1 ;;
   esac
