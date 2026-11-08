@@ -1714,16 +1714,32 @@ def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
     blocker edge on a stage issue and raises no card here, so the park carries
     a self-owned descriptor: the agent running `factory decide` owns reopening
     it once the work order is decided.
+
+    GUL-1128: `executionPolicy` goes on the wire only when the policy actually
+    carries a participant-bearing stage. A stage whose policy has none — the
+    common case for a stage that never named a reviewer — leaves `_park_policy`
+    with `stages: []`, and paperclip 2026.1012.0 normalises that to null before
+    it applies the write. A null policy on an `in_review` issue takes the
+    dissolve branch: the server reads the PATCH as "moving to in_progress",
+    reassigns the stage agent, and then refuses the whole write with
+    `422 unblockDescriptor requires blocked status` — nothing recorded, stage
+    still `in_review`. Omitting the key is not the same as sending null: with
+    the policy untouched the server has no stage transition to resolve and
+    stores the requested `blocked` as asked. `_park_policy` keeps returning the
+    empty list; it just must never reach the wire.
     """
     identifier = stage_issue.get("identifier", "?")
-    api.patch_issue(stage_issue["id"], {
+    body = {
         "status": "blocked",
-        "executionPolicy": _park_policy(stage_issue),
         "unblockDescriptor": _unblock_descriptor(
             api, "Re-run `factory decide %s --apply` once the factory tooling can park this "
                  "stage; that agent owns clearing this block." % identifier),
         "comment": comment,
-    })
+    }
+    policy = _park_policy(stage_issue)
+    if policy["stages"]:
+        body["executionPolicy"] = policy
+    api.patch_issue(stage_issue["id"], body)
 
 
 def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: dict,
