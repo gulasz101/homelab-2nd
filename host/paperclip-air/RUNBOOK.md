@@ -367,3 +367,34 @@ Things worth knowing before you run it:
   pocket (ADR-106).
 - Exit codes: `0` repinned · `2` route walled, fleet left where it was · `1` **partial — the fleet is
   split, fix it by hand.**
+
+## 8. Public hostnames on this host (`hermes.voitech.dev`, GUL-1118)
+
+Two hostnames reach this Mac through the **same** remotely-managed tunnel
+(`2f0a0fe5-aef9-4765-828a-0197bd53aafa`, `cfd_tunnel`, config source `cloudflare`), so the ingress
+list is one object: editing it means resending **both** entries plus the `http_status:404`
+catch-all, or the other hostname disappears.
+
+| Hostname | Ingress service | DNS | Access app |
+|---|---|---|---|
+| `paperclip.voitech.dev` | `http://192.168.1.191:3100` | CNAME → `<tunnel>.cfargotunnel.com`, proxied | none (the board has its own login) |
+| `hermes.voitech.dev` | `http://127.0.0.1:9119` (Hermes dashboard, ADR-098 daemon) | same, record `468c72d48a6e49314811c549b6cf7a77` | `hermes` (`2ab595f9-d262-4828-8fd8-0e2bf65d554d`), Service Auth, 24 h |
+
+The tunnel runs on this host, so `127.0.0.1:9119` in the ingress is the dashboard's loopback bind —
+the daemon never listens on the LAN (`curl` to `192.168.1.191:9119` must fail), and the tunnel is the
+only way in. Cloudflare terminates TLS at the edge and WebSockets pass through by default; both
+entries deliberately carry **no** `httpHostHeader` rewrite, because the dashboard checks `Host`
+against `dashboard.public_url` in `~/.hermes/config.yaml`.
+
+```bash
+# what the world sees, no credentials: must be a 302 to cloudflareaccess.com, never 200
+curl -s -o /dev/null -w '%{http_code}\n' https://hermes.voitech.dev/api/health
+# with CF-Access-Client-Id/-Secret: 200 for /api/health, and 401 for /api/config until Hermes login
+# the route is right but the host is closed? compare the app's aud with the kid in the login redirect
+```
+
+Access is deny-by-default: the app is closed unless a policy **matches** you. While
+`hermes-control-phone` did not exist the app carried a single `Everyone-Block` deny policy, so the
+host was gated the whole time it was reachable. When the service token is added it becomes one
+`non_identity` (Service Auth) policy including that token id — the block policy goes, and the closed
+state is re-proven by a header-less 302 and a wrong-token 403, not by assumption.
