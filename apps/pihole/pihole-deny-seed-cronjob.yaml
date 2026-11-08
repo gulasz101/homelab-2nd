@@ -6,7 +6,7 @@
 # themselves existing only in the live FTL database — imperative state outside Git,
 # lost on any rebuild. This job makes them declarative:
 #
-#   apps/pihole/pihole-deny-seeds.yaml  = the source of truth (37 entries)
+#   apps/pihole/pihole-deny-seeds.yaml  = the source of truth (46 entries)
 #   pihole-deny-seed (this job, 05:00)  = creates missing entries, repairs a mangled
 #                                         marker comment or enabled flag, never
 #                                         touches groups of an existing entry, never
