@@ -1,6 +1,6 @@
-# The mental-model refresh rides the paid DeepSeek API, with one retry
+# ADR-128: The mental-model refresh rides the paid DeepSeek API, with one retry
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-06
 - **Issue**: GUL-1045
 - **Related**: ADR-094 (reflect and the refresh leave the FreeLLMAPI pool), ADR-120 (reflect rides the
