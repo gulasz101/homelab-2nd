@@ -12,6 +12,8 @@
 # It does not invent the commands it supervises — it reads them out of the
 # LaunchAgent it replaces and stores them in
 # /Users/paperclip/.config/homelab/services.env (0600, host-only, not in git).
+# A service that was never an agent (hermes-dashboard) uses the documented default
+# in homelab-lib.sh (svc_default_cmd) when services.env has no entry.
 # A service whose command cannot be derived is skipped, loudly: installing a
 # KeepAlive daemon with an unknown command is a crash loop, not a fix.
 #
@@ -36,7 +38,7 @@ usage() {
   cat <<'USAGE'
 homelab-install-daemons.sh [--dry-run|--status|--rollback] [--force]
 
-  (no flag)   install or repair the five root LaunchDaemons, retire their
+  (no flag)   install or repair the six root LaunchDaemons, retire their
               LaunchAgents, write services.env from the agent commands
   --dry-run   print the plan; needs neither root nor macOS (CI runs this)
   --status    print who supervises each service and whether its port answers
@@ -215,6 +217,9 @@ do_apply() {
       cmd=$(extract_cmd "$p")
       [ -n "$cmd" ] && { say "cmd  $svc: derived from $(basename "$p")"; break; }
     done
+    if [ -z "$cmd" ] && cmd=$(svc_default_cmd "$svc"); then
+      say "cmd  $svc: no LaunchAgent to derive from, using the documented default (homelab-lib.sh svc_default_cmd)"
+    fi
     if [ -z "$cmd" ]; then
       warn "no command for $svc: no LaunchAgent found and services.env has none."
       warn "  Add '$(svc_var "$svc")=\"<command>\"' to $HOMELAB_SERVICES_ENV and re-run."
@@ -301,7 +306,7 @@ do_apply() {
   say "     sudo $SCRIPT_DIR/homelab-install-scheduled-jobs.sh"
   say "3. run the drills: sudo $SCRIPT_DIR/homelab-drill-session-loss.sh --all --i-am-at-the-mac"
   [ "$failed" -eq 0 ] || die "finished with warnings: run $SCRIPT_DIR/homelab-recover-appliance.sh and read the log above"
-  say "done: five services supervised by launchd in the system domain."
+  say "done: six services supervised by launchd in the system domain."
 }
 
 do_rollback() {

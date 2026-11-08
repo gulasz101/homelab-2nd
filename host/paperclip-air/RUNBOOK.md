@@ -37,7 +37,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://paperclip.voitech.dev  # what t
 sudo ./bin/homelab-install-daemons.sh --status
 ```
 
-Five system daemons (`hermes-gateway`, `paperclip`, `minio-lan-proxy`, `gemini-tunnel`, `syncthing`),
+Six system daemons (`hermes-gateway`, `paperclip`, `minio-lan-proxy`, `gemini-tunnel`, `syncthing`, `hermes-dashboard`),
 **no** matching user agents, and the heartbeat sender as a system daemon too (ADR-126 — it used to be
 a user agent, which on a headless host meant it never ran). If a service shows both `loaded` and
 `YES` (agent present) you have two owners: run the installer, which fixes it.
@@ -92,6 +92,22 @@ Killing `hermes-gateway` ends any Hermes agent run in flight, including the one 
 Do it from a detached script (`python3 -c 'os.setsid()'`-style double fork) or with a person at the
 Mac; a run is not a supervisor and its unposted work dies with it.
 
+### 2b. `hermes-dashboard` (GUL-1111)
+
+Not part of the 2026-10-30 cutover: it was never an agent, so the installer uses its documented
+default command (README, section `hermes-dashboard`) when `services.env` has no
+`SVC_HERMES_DASHBOARD_CMD`. No secrets in that line.
+
+- Install: `sudo ./bin/homelab-install-daemons.sh` (re-run is safe). Check with `--status`, then
+  `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9119/api/health` (expect 200).
+- Restart: `sudo launchctl kickstart -k system/dev.voitech.homelab.hermes-dashboard`.
+- **Before exposing it:** `dashboard.public_url: https://hermes.voitech.dev` must be set in
+  `config.yaml`. On a loopback bind Hermes v0.22.7 enables its auth gate only for a non-loopback
+  `public_url` (`hermes_cli/web_server_boundary.py`, `public_hosts_engage_gate`). Without it, tunnel
+  traffic arrives from loopback and gets in with no password.
+- `HostWatchComponentDown` for `hermes-dashboard` means the heartbeat could not get an answer from
+  `/api/health` for 5 minutes. Look at `~/Library/Logs/homelab/hermes-dashboard.err.log` first.
+
 ## 3. Boot resilience (attended only)
 
 A MacBook Air has **no IPMI and no PDU**. There is no out-of-band power control: every recovery
@@ -137,6 +153,7 @@ the truth.
 | `minio-lan-proxy` | 9000 | 30 s | **1 s** (2026-10-30) | *pending drill* | none needed (stateless relay) |
 | `gemini-tunnel` | 8083 | 30 s | **1 s** (2026-10-30) | *pending drill* | none needed (stateless ssh forward) |
 | `syncthing` | 8384 | 30 s | **1 s** (2026-10-30) | *pending drill* | ≤ minutes (peer-to-peer; the vault lives on the other side too) |
+| `hermes-dashboard` | 9119 | 30 s | *not measured* | *pending drill* | none needed (stateless UI over `~/.hermes`, which has its own backup) |
 | whole platform after a logout | — | 300 s | — | *pending drill* | — |
 
 Measurements are the crash drill (`--kill <service>`): the service is SIGKILLed and the clock starts
@@ -172,7 +189,7 @@ and `gui_session` is 0 — the 2026-10-29 WindowServer logout — while silence 
 On the Air `gui_expected` stays 0 on purpose: nobody is supposed to be logged in.
 
 The heartbeat also carries per-component health (`hermes-gateway`, `paperclip`, `minio-lan-proxy`,
-`gemini-tunnel`, `syncthing`), which is how the Hermes API gets watched at all: it binds
+`gemini-tunnel`, `syncthing`, `hermes-dashboard`), which is how the Hermes API gets watched at all: it binds
 `127.0.0.1:8642` on the Air and only a process on the Air can see it.
 
 ### 5a. Claude Code auth is dead (GUL-641, signal corrected in GUL-661)
