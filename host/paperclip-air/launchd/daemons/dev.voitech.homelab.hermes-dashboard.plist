@@ -37,6 +37,11 @@
 	<key>ExitTimeOut</key>
 	<integer>15</integer>
 
+	<!-- 63 decimal is 077 octal: Hermes writes API keys under ~/.hermes, and
+	     launchd's default 022 would leave them group/world readable. -->
+	<key>Umask</key>
+	<integer>63</integer>
+
 	<key>WorkingDirectory</key>
 	<string>/Users/paperclip</string>
 	<key>EnvironmentVariables</key>
