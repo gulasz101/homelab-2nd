@@ -56,6 +56,20 @@ Requirements: the account must exist (`dscl . -list /Users`), have a Secure Toke
   it (measured on the Air, macOS 26), so a power cut still needs a human at the power button. The
   script reports this instead of pretending.
 
+## Two things `sysadminctl` does that will bite you
+
+Measured on this host, 2026-11-09:
+
+- **It needs a GUI session.** `sysadminctl -autologin set` does not write `/etc/kcpassword` itself
+  — it hands the password to the loginwindow SessionAgent. From a plain SSH session there is no
+  endpoint, and it fails with `LFSMCopySessionAgentEndpoint: exit: result = 2` then
+  `SACSetAutoLoginPassword error:22`, *even with the correct password*. The script now re-execs
+  the call inside the console user's GUI domain (`launchctl asuser <uid>`), which fixes it.
+- **It never verifies the password.** A deliberately wrong one exits 0 and is written straight
+  into `/etc/kcpassword`, so a typo is only discovered at the next reboot — at the login window.
+  A failed call therefore always clears the half-written state (or restores the backup) instead of
+  leaving `autoLoginUser` set with no usable keyfile.
+
 ## Rollback
 
 ```bash
