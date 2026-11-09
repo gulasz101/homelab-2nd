@@ -48,15 +48,37 @@ spec:
       securityContext:
         fsGroup: 1000
       initContainers:
+        # Runs as uid 1000, never root (GUL-400). Everything it touches is
+        # already uid-1000 owned: the OMV NFS export root and the local-path PV
+        # are provisioned with 1000:1000, and every directory this container
+        # creates inherits that. A wrong owner is a store-provisioning bug, so
+        # the script fails loudly instead of using root to paper over it.
         - name: prepare
           image: alpine/git:2.45.2
           securityContext:
-            runAsUser: 0
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command:
             - sh
             - -c
             - |
               set -eu
+              # Pre-existing dirs handed to us by the PVs. mkdir/chown as root
+              # is what used to mask a bad export; check instead of fixing.
+              for d in /storage /storage/vault /local; do
+                [ -d "$d" ] || continue
+                owner="$(stat -c '%u:%g' "$d")"
+                if [ "$owner" != "1000:1000" ]; then
+                  echo "[prepare] ERROR: $d is owned by ${owner}, expected 1000:1000" >&2
+                  echo "[prepare] Fix the store, not the pod: on OMV run" >&2
+                  echo "[prepare]   chown -R 1000:1000 <export dir>" >&2
+                  exit 1
+                fi
+              done
               # Durable share (OMV NFS).
               mkdir -p /storage/openchamber /storage/opencode-config /storage/workspaces
               # Re-seed the OpenCode config only when the ConfigMap's seed-version
@@ -77,10 +99,8 @@ spec:
               # .stfolder marker is REQUIRED: syncthing refuses an empty folder
               # with "folder marker missing (potential data loss)".
               mkdir -p /storage/vault/.stfolder
-              chown -R 1000:1000 /storage/vault
               # Local NVMe (SQLite session DB + state).
               mkdir -p /local/opencode-data /local/opencode-state
-              chown -R 1000:1000 /storage /local
           volumeMounts:
             - name: data
               mountPath: /storage
@@ -100,7 +120,15 @@ spec:
         - name: syncthing-identity-init
           image: alpine/git:2.45.2
           securityContext:
-            runAsUser: 0
+            # uid 1000 (GUL-400): both sources are world-readable (Secret and
+            # ConfigMap volumes), /staging is the fsGroup-1000 emptyDir, so no
+            # ownership fixing is needed. Files it copies are already 1000:1000.
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command:
             - sh
             - -c
@@ -110,7 +138,6 @@ spec:
               cp /identity-src/cert.pem /identity-src/key.pem /staging/
               cp /config-src/config.xml /staging/
               chmod 400 /staging/cert.pem /staging/key.pem
-              chown -R 1000:1000 /staging
               echo "[syncthing-init] staged identity + config"
           volumeMounts:
             - name: syncthing-identity
