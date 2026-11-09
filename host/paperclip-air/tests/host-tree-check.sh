@@ -26,7 +26,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DOMAIN="dev.voitech.homelab"
 APPLIANCE_USER="paperclip"
 APPLIANCE_HOME="/Users/paperclip"
-SERVICES="hermes-gateway paperclip minio-lan-proxy gemini-tunnel syncthing"
+SERVICES="hermes-gateway paperclip minio-lan-proxy gemini-tunnel syncthing hermes-dashboard"
 LAUNCHER="/usr/local/libexec/homelab/homelab-service-run.sh"
 
 RC=0
@@ -342,6 +342,19 @@ if [ -x "$HERE/bin/homelab-install-daemons.sh" ] || [ -f "$HERE/bin/homelab-inst
     fail "--dry-run must not depend on macOS: CI is Linux"
   fi
 fi
+
+# ---- 7b. hermes-dashboard (GUL-1111): listed, loopback-only, probe needs no auth --
+printf '%s\n' "$plan" | grep -q "$DOMAIN.hermes-dashboard" \
+  && ok "--dry-run plans the hermes-dashboard daemon" || fail "--dry-run does not list $DOMAIN.hermes-dashboard"
+dash_cmd=$(. "$HERE/bin/homelab-lib.sh"; svc_default_cmd hermes-dashboard; printf '\n%s %s' "$(svc_port hermes-dashboard)" "$(svc_health_path hermes-dashboard)")
+case "$dash_cmd" in
+  *"--host 127.0.0.1 --port 9119 --no-open --skip-build"*) ok "dashboard default command binds loopback only and never runs npm on start" ;;
+  *) fail "dashboard default command must be --host 127.0.0.1 --port 9119 --no-open --skip-build (no npm ci on every start)" ;;
+esac
+case "$dash_cmd" in
+  *"9119 /api/health") ok "dashboard probe is /api/health on 9119 (no-auth route)" ;;
+  *) fail "dashboard probe must be /api/health on 9119" ;;
+esac
 
 # ---- 8. the drill harness can list what it will do ---------------------
 if [ -f "$HERE/bin/homelab-drill-session-loss.sh" ]; then

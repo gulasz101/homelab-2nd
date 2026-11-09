@@ -346,16 +346,25 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   would start: work order `blocked` with `"executionPolicy": null` in the same
   PATCH (otherwise Paperclip reads `blocked` as request-changes), one sentence
   why, recorded in the ledger, no more retries. The **stage issue** is parked a
-  different way (GUL-889): it is `blocked` with a policy that has **no stages**
-  (`{"mode": "normal", "commentRequired": true, "stages": []}`), never with
-  `"executionPolicy": null`. A stage issue carries a pending review stage whose
-  state names a return assignee, and Paperclip resolves the PATCH against that
-  stage before it applies the requested status: clearing the policy dissolves the
-  review *back to the return assignee* — `in_progress`, stage agent reassigned,
-  `blocked` overwritten — so the failed write re-arms the agent, the stage is
-  handed back in `in_review`, and the next foreman wake escalates again. With no
-  stages in the policy there is nothing to dissolve: `executionState` is cleared,
-  `blocked` stands, and nobody is armed. A `decide --apply` that finds the ledger
+  different way (GUL-889, GUL-1128): `blocked`, a self-owned `unblockDescriptor`,
+  the comment, and `executionPolicy` **left off the PATCH entirely** unless one of
+  the stages it would carry has participants. Never `"executionPolicy": null`, and
+  never a policy whose `stages` list is empty. A stage issue carries a pending
+  review stage whose state names a return assignee, and Paperclip resolves the
+  PATCH against that stage before it applies the requested status: clearing the
+  policy dissolves the review *back to the return assignee* — `in_progress`, stage
+  agent reassigned, `blocked` overwritten — so the failed write re-arms the agent,
+  the stage is handed back in `in_review`, and the next foreman wake escalates
+  again. An empty stage list is that same write: paperclip `2026.1012.0`
+  normalises a policy with nothing to run to `null` before the transition is
+  computed, the descriptor is then checked against the resulting `in_progress`, and
+  the whole PATCH dies `422 unblockDescriptor requires blocked status` — stage
+  still `in_review`, nothing recorded. Leave the key out and there is no transition
+  to compute: the server stores `blocked`, keeps the descriptor, and leaves
+  `executionState` as it found it. The policy goes on the wire only when a stage
+  carries participants (GUL-969): the factory drops the stage ids there, so the
+  state's current stage is no longer in the list and the server clears the state
+  itself. A `decide --apply` that finds the ledger
   already at `outcome: escalate` **and** the stage issue settled (`blocked`,
   `done`, `cancelled`) writes nothing and exits 1 with `already escalated` — one
   bad write must never become a wake loop. A **missing stage document**
