@@ -375,6 +375,12 @@ spec:
           model: openai/gpt-oss:120b
           api_base: "https://ollama.com/v1"
           api_key: "os.environ/OLLAMA_API_KEY"
+          # GUL-1045 (2026-11-09): this route is the one ollama.com walls with
+          # "weekly usage limit", and it now has a fallback chain below. A
+          # retry here would spend the walled allowance again before the hop,
+          # which is exactly how 7,350 doomed calls happened in 25 h. One
+          # attempt, then the router moves on.
+          num_retries: 0
 
         # ── Local LM Studio model on the Hermes M1 Max (same LAN as the cluster) ──
       - model_name: gemma-4-12b-uncensored
@@ -780,8 +786,15 @@ spec:
         # LiteLLM never silently routes paid-tier traffic into free providers;
         # when Go AND Ollama are both walled, the caller gets the error. This
         # supersedes the cross-account OpenRouter tail of ADR-068/ADR-069.
-        # GUL-184 / ADR-091 (2026-10-26): the only free route,
-        # gpt-oss-120b-freellmapi, is in no chain below.
+        # GUL-184 / ADR-091 (2026-10-26): the free route
+        # gpt-oss-120b-freellmapi is in no PAID chain below.
+        # GUL-1045 (2026-11-09, owner ruling "no paid lane") narrows that rule
+        # instead of breaking it: the bar is that a route the owner BUYS by the
+        # token must not be silently downgraded to a free pool. A route already
+        # living on the Ollama subscription allowance may fall back into the
+        # free pool - that is the free lane rescuing the free lane, which is the
+        # whole point of the chain added below. `gpt-oss-120b-ollama` is the only
+        # source that gets this hop, and both sides carry num_retries 0.
         fallbacks:
         - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama"]}
         - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama"]}
@@ -819,9 +832,31 @@ spec:
         # back onto the allowance it was moved onto (GUL-769) instead of going
         # dark. The terminal hop is the unversioned Ollama tag for the case where
         # the `:1017` tag itself is what broke.
-        # gpt-oss-120b-freellmapi stays out of every chain (ADR-091).
+        # gpt-oss-120b-freellmapi stays out of every PAID chain (ADR-091). Its
+        # one entry is the GUL-1045 hop below, sourced from a route that is
+        # already free to us.
         - {"deepseek-v4.1-flash-1017-ollama": ["deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-1017-ds"]}
         - {"deepseek-v4.1-flash-1017-ds": ["deepseek-v4.1-flash-1017-ollama", "deepseek-v4.1-flash-ollama"]}
+        # GUL-1045 (2026-11-09): `gpt-oss-120b-ollama` is the reflect and
+        # mental-model-refresh route (apps/hindsight/hindsight-helm-release.yaml)
+        # and it had no chain at all, so ollama.com's weekly wall turned every
+        # reflect into a 500 - the failure this whole ticket is about. One hop,
+        # to the free pool:
+        #
+        #   - gpt-oss-120b-freellmapi, the same model on FreeLLMAPI. ADR-094 /
+        #     GUL-787 excluded it because at 9,328 tokens it answered WITHOUT a
+        #     tool call. Re-measured 2026-11-09 from the hindsight-api pod at
+        #     refresh size (18,225-char prompt, 5,579 in-tokens, the real
+        #     answer_as_document 6-tool schema): 200 in 0.9 s WITH the
+        #     `search_observations` tool call, same as the Ollama route. The two
+        #     probes differ in size and date, so treat the pool as proven at
+        #     ~5.6k tokens and unproven above ~9k - a failed fallback leaves the
+        #     caller exactly where the 429 would have, and the pool gets no
+        #     retry from us (both entries num_retries 0).
+        #   - No paid hop, deliberately: the owner ruled out a metered lane for
+        #     these calls on 2026-11-09 (ADR-127 reversed). Adding `-ds` here
+        #     would silently reintroduce the bill.
+        - {"gpt-oss-120b-ollama": ["gpt-oss-120b-freellmapi"]}
         content_policy_fallbacks:
         - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama"]}
         - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama"]}
