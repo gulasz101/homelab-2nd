@@ -10,7 +10,9 @@ spec:
   chart:
     spec:
       chart: karakeep
-      version: "0.32.0"
+      # Chart 0.34.1 ships Meilisearch v1.55.0 (subchart 0.41.0); 0.32.0
+      # shipped v1.13.0. The version is a decision, not a Flux side effect.
+      version: "0.34.1"
       sourceRef:
         kind: HelmRepository
         name: karakeep-app
@@ -175,8 +177,13 @@ spec:
     meilisearch:
       enabled: true
       auth:
+        # Subchart 0.41.0 reads the key as MEILI_MASTER_KEY from this Secret;
+        # `existingMasterKeySecretKey` no longer exists and would be ignored.
         existingMasterKeySecret: karakeep-app-secrets
-        existingMasterKeySecretKey: meili-master-key
+      environment:
+        # The on-disk database was written by v1.13.0. Without this the
+        # v1.55.0 engine refuses to open it and crash-loops.
+        MEILI_UPGRADE_DB: true
       persistence:
         enabled: true
         size: 1Gi
