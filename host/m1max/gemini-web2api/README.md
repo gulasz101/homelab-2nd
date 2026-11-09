@@ -93,3 +93,50 @@ looked like "~2 h of quiet refills the quota" is the bench expiring. So quiet ti
 the proxy refuses to try — not because a bucket fills. Probing inside the bench both fails and
 delays the answer; the watchdog fires one image probe when the tier returns.
 
+## Avoiding `/sorry` — what the log showed on 2026-11-10
+
+Measured over 7 days (`2026-11-03 23:52 → 2026-11-10 00:12`, 6 110 requests in `/admin/api/requests`):
+
+| class | count | share |
+| --- | --- | --- |
+| `302 → google.com/sorry/index` | 3 257 | 53 % |
+| `per_ip_rph` (our own 80/h cap) | 2 109 | 35 % |
+| HTTP 200 | 605 | 10 % |
+| `concurrent limit` (local slot) | 83 | 1 % |
+| image artifact retrieval | 51 | 1 % |
+
+Of the 605 `200`s, **395 (65 %) were canned error sentences** of 31, 54, 58 or 103 characters
+("Sorry, something went wrong…", "I seem to be encountering an error…") — i.e. real answers were
+about 3 % of all traffic. 4.27.1 detects those and retries instead of returning them; that alone
+changes the numbers a lot more than any tuning does.
+
+Two distinct causes produced the 3 257 blocks:
+
+1. **A 1/minute health probe, not a client.** 5 585 requests with a ≤6-character prompt on
+   `gemini-4-argon`, exactly one per minute, `2026-11-03 23:52 → 2026-11-09 10:09`. It accounts for
+   **3 196 of the 3 257** `/sorry` hits (98 %) and 2 084 of the 2 109 `per_ip_rph` rejects. Because
+   it never backed off, it re-blocked the IP every time the 120-minute bench expired: on 11-06 and
+   11-07 the log shows an identical **40 hits / 48 minutes** cycle for 20 hours straight, ending in
+   one 52.8-hour block. It stopped on 11-09 10:09 and the IP has been clean since.
+2. **One genuine burst.** 19 `gemini-4-argon` requests in 6 minutes on 11-05 06:45–06:51
+   (prompts 226–773 chars, the morning pipeline) with the IP fresh — first `/sorry` at 06:51:28.
+   That is the one place upstream's "burst" rule fits.
+
+Rules that follow, in order of value:
+
+- **Never health-check by calling a real model.** `GET /` is free and does not touch the IP's
+  request budget. A chat probe at 1/min is 1 440 requests/day of pure risk.
+- **Treat a `302` as IP-level and stop.** It clears in ~106–121 min; anything sent inside it is
+  wasted and re-arms the block. Back off for `proxy_cooldown_min` and do not retry earlier.
+- **Count the canned `200`s, not just the non-`200`s.** A reply of 31/54/58/103 characters is a
+  failure with a smiling face.
+
+Image generation did **not** work at all in that window: 164 `gemini-image` attempts, 85 of them
+logged `200`, but 83 of those were the 103-character canned sentence and 51 more died in artifact
+retrieval — zero real renders. On 4.28.0 the same attempt now returns
+`502 upstream returned a failure reply (inner[31] set)` after 3 retries, which is the honest
+version of the same upstream failure: the image lane is broken account-side, not in this container.
+It fails with `firefox_fingerprint` on and off, and with `web_channel` on and off, so neither the
+fingerprint nor the protocol is the cause.
+
+
