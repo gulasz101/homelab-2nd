@@ -178,60 +178,47 @@ spec:
         # `openai` and LiteLLM speaks the OpenAI API
         # (memory_engine.py: reflect provider falls back to the memory provider).
         HINDSIGHT_API_REFLECT_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
-        # ADR-127 (2026-11-06): reflect rides the PAID fleet route,
-        # `deepseek-v4.1-flash-1017-ds`, with thinking disabled. Three routes
-        # in five days, so the whole ladder is written down once:
+        # ADR-127 (2026-11-06) put reflect on the PAID DeepSeek API. That is
+        # REVERSED here (owner ruling 2026-11-09): no paid lane. Reflect and
+        # the refresh both ride `gpt-oss-120b-ollama` again, and the answer to
+        # ollama.com's weekly wall is a free fallback inside the router, not a
+        # wallet. The whole ladder, so nobody rediscovers it the hard way:
         #   - `gpt-oss-120b-ollama` (ADR-094, until 11-02): 44 x 200 / 6 x 499
         #     / 1 x 500 in 24 h = 86 % caller success - until ollama.com's
         #     weekly allowance ran out. Then it is a hard 429 and every reflect
         #     is a 500. Free is a metered allowance, not a guarantee.
         #   - `-1017-ollama` (ADR-120, 11-02): p50 16 s, but 9 x 200 / 26 x 499
         #     = 26 %. Every abort landed inside the caller's ~30 s cap.
-        #   - `-ds` (this): ADR-120 already measured it at 10/10 forced tool
-        #     calls and a finished reflect loop, and it has no quota wall.
-        # Cost, honestly: $0.31-0.62/day at the 2.17M input tokens a day
-        # GUL-476 measured, less at today's ~8 reflect calls. That is a
-        # standing draw on the DeepSeek balance, which the ADR-109 watchdog
-        # watches; the owner accepted that trade on card `63c227c4`.
+        #   - `-ds` (ADR-127, 11-06 to 11-09): 10/10 forced tool calls and no
+        #     quota wall, but it bills per token - $0.266 measured for 7
+        #     refreshes, $0.31-0.62/day for reflect against the ADR-109
+        #     balance. Owner ruled the metered lane out. Do not put a
+        #     per-token route back in this block.
         #
-        # `thinking` IS accepted here (on both -ollama routes it is a 400
-        # UnsupportedParamsError) and it must be disabled: at reflect size the
-        # model thinks by default and the thinking tokens push the loop past
-        # the caller's cap. Do not "simplify" this line away.
-        HINDSIGHT_API_REFLECT_LLM_MODEL: deepseek-v4.1-flash-1017-ds
-        HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY: '{"thinking":{"type":"disabled"}}'
+        # What replaces the wallet: `gpt-oss-120b-ollama` has a fallback chain
+        # to the FreeLLMAPI pool in apps/llm-hub/litellm-helm-release.yaml
+        # (`gpt-oss-120b-freellmapi`), so a 429 hops instead of killing the
+        # operation. Measured 2026-11-09 from this pod at refresh size (18,225
+        # char prompt, 5,579 in-tokens, the real 6-tool `answer_as_document`
+        # schema): both routes 200 in 0.9 s with the right
+        # `search_observations` tool call. Both sides of the hop now carry
+        # `num_retries: 0`, so one walled call is one hop, never a ladder.
+        # Honest limit: the pool is small-prompt territory (groq allows 8,000
+        # TPM) - it rescues the refresh at ~5.6k tokens, while a 12,001-token
+        # reflect call may still fail there. A failed fallback is no worse
+        # than the 429 it replaces, and the pool gets no retry from us.
+        #
+        # `thinking` is deliberately GONE with the paid route: it is a 400
+        # UnsupportedParamsError on every `-ollama` route, so no extra body
+        # belongs in this block while these lanes are on gpt-oss.
+        HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b-ollama
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
-        # CHANGED BY GUL-1045 (2026-11-06): the refresh leaves the Ollama
-        # subscription and rides the metered DeepSeek API - the one route with
-        # no allowance to exhaust. Measured first, at refresh size (a 5,292
-        # in-token prompt, the real 6-tool `answer_as_document` schema, the
-        # reflect key, one call each, from the running api pod):
-        #
-        #   gpt-oss-120b-ollama            429 "you (gulasz101) have reached your
-        #                                  weekly usage limit" - the route that was
-        #                                  configured here, dead since ~12:15Z
-        #   glm-5.3-flash-ollama           429, same weekly limit, same account
-        #   deepseek-v4.1-flash-1017-ollama 200 in 14.4s, correct first tool calls
-        #                                  (search_mental_models + search_observations)
-        #                                  - but it is the same weekly allowance with
-        #                                  headroom left, not a route without a wall
-        #   deepseek-v4.1-flash-1017-ds    200 in 3.1s, correct first tool call
-        #
-        # What it cost to find out: the retry ladder turned the wall into a storm.
-        # 7,350 failed refresh calls in 25 h, ~380/h, every one a 429 on
-        # gpt-oss - because Hindsight retries an LLM call 4x and 48 models were
-        # queued. That is why MAX_RETRIES is 1 here and not the app default 3.
-        #
-        # The price is real and recorded in the ADR (docs/adr/pending/
-        # mental-model-refresh-rides-the-paid-api.md), measured on the live
-        # catch-up rather than modelled: 7 refresh ops over a 25 h delta billed
-        # 98 calls / 2.64M input / 226k output = $0.266, so ~$0.038 for a big
-        # delta and ~$0.003 for the small hourly one. The
-        # scheduler only queues a model whose scope moved
-        # ("scheduled 7 model(s), 36 up-to-date" in the live log), so the daily
-        # bill follows bank activity, not the 48 hourly crons. If it is too
-        # much, the lever is refresh volume, not this route.
-        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: deepseek-v4.1-flash-1017-ds
+        # MAX_RETRIES stays 1 whatever the route (GUL-1045, 2026-11-06).
+        # Measured on the wall: 7,350 failed refresh calls in 25 h, ~380/h =
+        # 48 hourly models x ~2 calls x 4 attempts. The retry ladder is what
+        # spent the allowance, so the app gets one attempt and the router owns
+        # the hop.
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-ollama
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES: "1"
         # Ollama answers a reflect call in ~2 s. The budgets stay generous on
         # purpose: a cold start or an upstream queue is cheaper to wait out
