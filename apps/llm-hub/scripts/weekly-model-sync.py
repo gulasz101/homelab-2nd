@@ -407,6 +407,36 @@ def current_provisioner_models(path: Path) -> set[str]:
     return {e["model"] for e in entries if e["kind"] == "model"}
 
 
+def _bare_model_id(model_name: str) -> str:
+    """Strip the `openai/` alias prefix; the provisioner expands both forms itself."""
+    return model_name[len("openai/") :] if model_name.startswith("openai/") else model_name
+
+
+def compute_provisioner_desired(
+    provisioner_current: set[str],
+    routed_models: set[str],
+    verified_additions: set[str],
+    failed_additions: set[str],
+    safe_removals: set[str],
+) -> set[str]:
+    """The key allowlist: only ids the proxy actually routes after this run.
+
+    Granting a service key permission for a model the proxy cannot serve is a
+    silent trap for every consumer - the request fails at LiteLLM, not at the
+    key check. The old allowlist was built from every catalogue id, probed or
+    not, so unresolved ids piled up and thirteen of them had no route at all
+    (GUL-1096). So keep an existing id only when something routes it (the
+    `openai/` alias resolves to the same route), then drop the ids this run
+    retires or failed to verify, and add back only the verified additions.
+    """
+    routed = {_bare_model_id(m) for m in routed_models}
+    kept = {m for m in provisioner_current if _bare_model_id(m) in routed}
+    kept -= failed_additions
+    kept -= safe_removals
+    kept |= verified_additions
+    return kept
+
+
 def update_key_provisioner(text: str, desired: set[str]) -> str:
     """Rewrite the DESIRED_MODELS block while keeping all existing comments and ordering."""
     m = _BLOCK_RE.search(text)
@@ -870,10 +900,14 @@ def main() -> int:
     # Preserve non-Ollama/non-Go routes in the LiteLLM model list (z.ai, OpenRouter, Gemini, etc.)
     litellm_desired = upstream_desired | {m for m in current if not (is_ollama_model(m) or is_go_model(m))}
 
-    # Preserve manual routes in the key-provisioner whitelist (openai/ variants, etc.)
+    # The key-provisioner whitelist is route-backed: an id upstream offers but
+    # the proxy does not route earns no permission (GUL-1096). Verified
+    # additions, failed probes and this run's removals are folded in at mutation
+    # time, once the probes have answered.
     provisioner_current = current_provisioner_models(PROVISIONER_CM)
-    manual_provisioner = provisioner_current - upstream_desired
-    provisioner_desired = upstream_desired | manual_provisioner
+    provisioner_desired = compute_provisioner_desired(
+        provisioner_current, current, set(), set(), set()
+    )
 
     litellm_additions = litellm_desired - current
     litellm_removals = current - litellm_desired
@@ -981,7 +1015,13 @@ def main() -> int:
 
     # Key provisioner is edited as text so the embedded Python comments survive.
     provisioner_text = PROVISIONER_CM.read_text(encoding="utf-8")
-    new_provisioner_desired = (provisioner_desired - safe_removals) | verified_additions
+    new_provisioner_desired = compute_provisioner_desired(
+        provisioner_current,
+        current,
+        verified_additions,
+        set(failed_additions),
+        safe_removals,
+    )
     new_provisioner_text = update_key_provisioner(provisioner_text, new_provisioner_desired)
 
     save_yaml(litellm_data, LITELLM_RELEASE)
