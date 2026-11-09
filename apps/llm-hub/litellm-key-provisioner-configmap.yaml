@@ -69,10 +69,8 @@ data:
         "minimax-m3.1-flash-ollama",
         "mistral-large-4-ollama",
         "muse-spark-open-ollama",
-        "clef-27b-ollama",
         "mimo-v2.6-flash-ollama",
         "mimo-v2.6-pro-ollama",
-        "kimi-k3.1-pro-ollama",
         # OpenCode Go subscription models (2026-10-02: 29 verified live
         # + deepseek-v4.1-flash OpenChamber native route; 7 endpoint ids
         # excluded - chat-completions 400s, see litellm-helm-release.yaml)
@@ -110,21 +108,20 @@ data:
         "deepseek-v4.1-flash",
         "beam-free-go",
         "step-5-preview-go",
-        "claude-haiku-5-5-go",
-        "gemini-4-argon-contributor-go",
-        "gpt-5.6-luna-go",
-        "gpt-6-luna-go",
-        "grok-4.6-go",
-        "grok-4.7-go",
-        "minimax-m2.7-go",
         "minimax-m3.1-flash-go",
-        "muse-spark-1.2-contributor-go",
-        "muse-spark-1.3-contributor-go",
-        "gemini-4-argon-go",
+        # GUL-1096: every id here grants all service keys permission to one model,
+        # so the list is route-backed only - an id earns a place when
+        # litellm-helm-release.yaml routes it, not merely because upstream lists
+        # it. weekly-model-sync.py:compute_provisioner_desired keeps it that way.
+        # Dropped the strays that had no model_name route: failed/400ing probes
+        # (gpt-6-luna-go, gpt-5.6-luna-go, grok-4.6-go, grok-4.7-go,
+        # minimax-m2.7-go), ids not enabled or not on the endpoint
+        # (muse-spark-1.2-contributor-go, muse-spark-1.3-contributor-go,
+        # claude-haiku-5-5-go, gemini-4-argon-go,
+        # gemini-4-argon-contributor-go, kimi-k3.1-pro-go, kimi-k3.1-pro-ollama,
+        # crouton-alpha-free-go, hy4-go) and clef-27b-ollama above.
+        # iceman-contributor-free-go stays: main added its route (PR #172).
         "iceman-contributor-free-go",
-        "kimi-k3.1-pro-go",
-        "crouton-alpha-free-go",
-        "hy4-go",
     ]
 
     def expand_models(models):
