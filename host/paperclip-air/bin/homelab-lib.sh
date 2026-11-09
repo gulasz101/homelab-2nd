@@ -51,9 +51,12 @@ svc_port() {
 
 # Path probed for a liveness answer. gemini-tunnel is an ssh port-forward, so a
 # TCP connect is the only honest check (http there would reach the far end).
+# The gateway's model route needs an API key: probing that every 60 s only wrote
+# `API server rejected invalid API key` into the gateway log. /health on 8642
+# answers 200 with no key.
 svc_health_path() {
   case "$1" in
-    hermes-gateway)  echo "/v1/models" ;;
+    hermes-gateway)  echo "/health" ;;
     paperclip)       echo "/" ;;
     minio-lan-proxy) echo "/minio/health/live" ;;
     gemini-tunnel)   echo "" ;;
