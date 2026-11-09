@@ -1247,6 +1247,22 @@ def merge_env(tag, view):
             "GH_CALL_LOG": os.path.join(WORKDIR, "gh-merge-calls.log")}
 
 
+def failing_checks_env(tag, view, stderr_text):
+    """Env for a decide run whose `gh pr checks` exits 1 with `stderr_text`."""
+    env = merge_env(tag, view)
+    body = ('#!/usr/bin/env bash\n'
+            'printf "%s|%s\\n" "$1" "$2" >> "$GH_CALL_LOG"\n'
+            'case "$1 $2" in\n'
+            '  "pr view")   cat "$GH_VIEW_FILE" ;;\n'
+            '  "pr checks") printf "%s\\n" ' + json.dumps(stderr_text) + ' >&2; exit 1 ;;\n'
+            '  *) echo "stub gh: not stubbed: $*" >&2; exit 1 ;;\n'
+            'esac\n')
+    with open(env["FACTORY_GH"], "w") as fh:
+        fh.write(body)
+    os.chmod(env["FACTORY_GH"], 0o755)
+    return env
+
+
 def ledger_of(stub, wo):
     return json.loads(stub.state.documents[(wo["id"], "ledger")]["body"]
                       .split("```json")[1].split("```")[0])
@@ -1308,6 +1324,58 @@ def case_gate_leaves_no_card(stub):
           "PR #91" in str(monitor.get("notes") or ""), monitor.get("notes"))
     check("gate decide: the comment says merge on GitHub and that there is no card",
           any("Merge PR #91 on GitHub" in c and "no card to accept" in c for c in said), said[-1:])
+
+
+def case_gate_conflicting_pr_is_judged(stub):
+    """GUL-1155: no CI because the PR conflicts is a gate answer, not a setup error."""
+    repo, base = make_repo("gate-conflict")
+    wo = base_work_order(stub, base, repo, identifier="GUL-912")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 93, "url": "https://github.com/gulasz101/homelab-2nd/pull/93"}
+    write_ledger(stub, wo, ledger)
+    gate = stage_issue(stub, wo, "[gate] GUL-912 - Merge")
+
+    code, out, raw = run(stub, ["decide", gate["identifier"], "--apply"],
+                         extra_env=failing_checks_env(
+                             "conflict", dict(GATE_VIEW, mergeable="CONFLICTING"),
+                             "no checks reported on the 'gul-912' branch"))
+    reasons = (out or {}).get("reasons") or []
+    row = ((ledger_of(stub, wo).get("stages") or {}).get("gate") or {})
+    check("gate decide: a PR GitHub cannot build is judged, not a setup error",
+          code == 1 and (out or {}).get("decision") == "request_changes", raw[-500:])
+    check("gate decide: the reason names the missing check and the conflict",
+          any("no check run named 'check'" in r for r in reasons)
+          and any("CONFLICTING" in r and "rebase" in r for r in reasons), reasons)
+    check("gate decide: the judgeable failure does spend a round",
+          int(row.get("attempts", 0)) == 1, row)
+
+
+def case_setup_error_spends_no_round(stub):
+    """GUL-1155: exit 2 means the check could not judge — no round, no writes."""
+    repo, base = make_repo("gate-setup-error")
+    wo = base_work_order(stub, base, repo, identifier="GUL-913")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 94, "url": "https://github.com/gulasz101/homelab-2nd/pull/94"}
+    write_ledger(stub, wo, ledger)
+    gate = stage_issue(stub, wo, "[gate] GUL-913 - Merge")
+    before = len(stub.state.comments)
+
+    code, out, raw = run(stub, ["decide", gate["identifier"], "--apply"],
+                         extra_env=failing_checks_env(
+                             "authfail", GATE_VIEW,
+                             "gh: To use GitHub CLI in a GitHub Actions workflow, set GH_TOKEN"))
+    row = ((ledger_of(stub, wo).get("stages") or {}).get("gate") or {})
+    check("setup error: decide exits 2 and reports setup_error, not a verdict",
+          code == 2 and (out or {}).get("decision") == "setup_error"
+          and (out or {}).get("applied") is False, raw[-500:])
+    check("setup error: it names the broken tool, not a failed check",
+          "GH_TOKEN" in " ".join((out or {}).get("reasons") or []), (out or {}).get("reasons"))
+    check("setup error: the stage spends no round and stays in_progress",
+          int(row.get("attempts", 0)) == 0
+          and stub.state.issues[gate["id"]]["status"] == "in_progress", row)
+    check("setup error: no comment is written",
+          len(stub.state.comments) == before,
+          [c["body"][:80] for c in stub.state.comments[before:]])
 
 
 def case_tick_notices_the_merge(stub):
@@ -1633,6 +1701,8 @@ def main():
             case_ledger_write_precedes_done(stub)
             case_green_approve_opens_one_pr(stub)
             case_gate_leaves_no_card(stub)
+            case_gate_conflicting_pr_is_judged(stub)
+            case_setup_error_spends_no_round(stub)
             case_tick_notices_the_merge(stub)
             case_tick_waits_on_an_open_pr(stub)
             case_tick_blocks_a_closed_pr(stub)
