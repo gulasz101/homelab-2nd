@@ -27,6 +27,11 @@
 # A reboot is the only proof. Do it with the owner present, then check
 # `stat -f%Su /dev/console` prints the account, not root.
 #
+# Step 3 needs a logged-in GUI session on the console, not just SSH: sysadminctl
+# hands the password to the loginwindow SessionAgent, which does not exist in a
+# plain SSH session. The script enters the console user's GUI domain itself
+# (launchctl asuser) and fails loudly if nobody is logged in.
+#
 # macOS ships bash 3.2: no associative arrays, no ${var,,}.
 # ---------------------------------------------------------------------------
 set -uo pipefail
@@ -227,6 +232,21 @@ fi
 say ""
 
 say "== 3/3 auto-login =="
+# sysadminctl does not write /etc/kcpassword itself: it hands the password to the
+# loginwindow SessionAgent, which only exists inside a GUI session. Run it over
+# SSH and there is no endpoint to hand it to:
+#   LFSMCopySessionAgentEndpoint: exit: result = 2  (endpoint is nil)
+#   SACSetAutoLoginPassword error:22
+# even when the password is perfectly correct. Entering the console user's GUI
+# domain is what makes the plumbing exist. (Hit for real on m1max, 2026-11-09.)
+CONSOLE_UID=$(stat -f%u /dev/console 2>/dev/null || echo 0)
+ASUSER=""
+if [ "$CONSOLE_UID" -ge 500 ]; then
+  ASUSER="launchctl asuser $CONSOLE_UID"
+else
+  bad "no GUI session to write auto-login through (console uid: $CONSOLE_UID)"
+  say "     log in on the Mac and run this, or over SSH while that user is logged in"
+fi
 SAVED=0
 if [ -f /etc/kcpassword ]; then
   SAVED=1
@@ -234,10 +254,21 @@ if [ -f /etc/kcpassword ]; then
 fi
 say "sysadminctl will ask for the password of '$ACCOUNT' (typing is hidden, nothing"
 say "is logged, nothing is passed on a command line)."
-if ! sysadminctl -autologin set -userName "$ACCOUNT" -password -; then
+say "It does NOT verify the password: a typo is written straight into /etc/kcpassword"
+say "and the Mac then fails auto-login at the login window. Type carefully."
+if ! $ASUSER sysadminctl -autologin set -userName "$ACCOUNT" -password -; then
   say ""
-  say "sysadminctl failed. Nothing was changed; the previous auto-login state is intact."
-  [ "$SAVED" -eq 1 ] && say "(a backup of the old /etc/kcpassword is in /etc/, timestamped)"
+  say "sysadminctl failed; putting auto-login back to a known state."
+  # A failed run can leave autoLoginUser set with no (or a stale) kcpassword,
+  # which parks a reboot at a login window that also had one wrong attempt.
+  if [ "$SAVED" -eq 1 ]; then
+    LAST=$(ls -t /etc/kcpassword.bak-* 2>/dev/null | head -1)
+    if [ -n "$LAST" ]; then cp -p "$LAST" /etc/kcpassword; say "(restored $LAST)"; fi
+  else
+    rm -f /etc/kcpassword
+  fi
+  defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null
+  say "auto-login is now OFF. Nothing else was touched."
   exit 1
 fi
 AL=$(autologin_user)

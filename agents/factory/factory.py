@@ -850,7 +850,7 @@ def cmd_check_gate(args) -> int:
     spec = load_spec(args.spec)
     repo, num = parse_pr_ref(args.pr)
     view = gh_json(["pr", "view", num, "--repo", repo, "--json",
-                    "headRefOid,baseRefOid,additions,deletions,files"])
+                    "headRefOid,baseRefOid,additions,deletions,files,mergeable"])
     reasons: list = []
     try:
         head_oid = view["headRefOid"]
@@ -860,10 +860,23 @@ def cmd_check_gate(args) -> int:
         files = view["files"]
     except (KeyError, TypeError, ValueError) as e:
         raise SetupError("gh pr view json missing field: %r" % e)
-    checks = gh_json(["pr", "checks", num, "--repo", repo, "--json", "name,state"])
+    try:
+        checks = gh_json(["pr", "checks", num, "--repo", repo, "--json", "name,state"])
+    except SetupError as e:
+        # `gh pr checks` exits 1 with "no checks reported" when the branch has no
+        # run yet (a fresh PR, or a CONFLICTING one GitHub never built a merge ref
+        # for). That is a state of the PR the gate judges, not a broken tool
+        # (GUL-1155): judge it as "no green check" so the stage gets a real answer
+        # instead of a protocol error.
+        if "no checks reported" not in str(e):
+            raise
+        checks = []
     named = [c for c in checks if isinstance(c, dict) and c.get("name") == "check"]
     if not named:
         reasons.append("no check run named 'check' on this PR")
+        if isinstance(view, dict) and str(view.get("mergeable") or "").upper() == "CONFLICTING":
+            reasons.append("PR is CONFLICTING with its base, so GitHub never builds the "
+                           "merge ref and the check workflow cannot start: rebase the branch")
     elif not any(str(c.get("state", "")).upper() == "SUCCESS" for c in named):
         states = sorted({str(c.get("state")) for c in named})
         reasons.append("check run is not SUCCESS (states: %s)" % ",".join(states))
@@ -1929,6 +1942,26 @@ def cmd_factory_decide(args) -> int:
                       "--spec", spec_path]
 
     code, parsed, combined = _run_self(check_args)
+    if code not in (0, 1):
+        # Exit 2 is this CLI's own protocol for "the check could not judge"
+        # (SetupError). It is not a failed check: booking it as one spends a
+        # round the stage never got, and three of them escalate the work order
+        # with the wrong reason on a diff nobody has read (GUL-1155). Leave the
+        # ledger and the stage exactly as they are and let the caller retry.
+        reason = ((parsed or {}).get("reasons")
+                  or ["%s exited %d without a decision" % (check_args[0], code)])[0]
+        result = {
+            "ok": False,
+            "check": "decide",
+            "reasons": [reason],
+            "stage": stage,
+            "round": round_no,
+            "decision": "setup_error",
+            "applied": False,
+            "workOrder": work_order.get("identifier"),
+        }
+        emit(False, "decide", [reason], result)
+        return 2
     comment = check_comment(parsed, combined)
     passed = code == 0
     blocking = (parsed or {}).get("blockingConfirmed") or []
