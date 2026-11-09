@@ -1,6 +1,6 @@
-# The refresh and reflect ride the free lane, with a free fallback behind the router
+# ADR-128: The refresh and reflect ride the free lane, with a free fallback behind the router
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-09
 - **Issue**: GUL-1045 (with GUL-806 / ADR-127 reversed)
 - **Related**: ADR-094 (both lanes leave the FreeLLMAPI pool), ADR-120 (reflect on the fleet route),
