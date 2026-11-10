@@ -64,7 +64,58 @@ grep -q 'upstream_model' "$TARGET" \
   && pass "canary judged on upstream_model" \
   || fail "canary no longer reads upstream_model - cannot tell paid from free tier"
 
-# 6. the hand-import helper ships next to it and reuses the same harvest
+# 6. GUL-1280: the import decision must fingerprint SESSION cookies only.
+#    __Secure-1PSIDTS and __Secure-1PSIDCC are refreshed by Firefox on every google.com
+#    visit, so hashing the whole harvested string turned "the browser was used" into
+#    "the user logged in again": one wasted Google /check round-trip and one pool churn
+#    per tick, measured as three imports in 35 min on 2026-11-10.
+#    Check the FINGERPRINT's own allowed list (STABLE), never a file-wide grep — the
+#    harvest list has to keep all nine names, so a whole-file grep can never catch this.
+FP_OUT=$(PYTHONDONTWRITEBYTECODE=1 python3 - "$TARGET" <<'PY'
+import sys
+path = sys.argv[1]
+ns = {"__name__": "guard_under_test"}
+exec(compile(open(path).read(), path, "exec"), ns)   # exec, not import: no __pycache__
+SESSION = ["SID", "HSID", "SSID", "APISID", "SAPISID", "__Secure-1PSID", "__Secure-1PAPISID"]
+ROTATING = ["__Secure-1PSIDTS", "__Secure-1PSIDCC"]
+stable, fp, errs = ns.get("STABLE"), ns.get("fingerprint"), []
+if not isinstance(stable, list):
+    errs.append("no STABLE list in guard.py")
+if not callable(fp):
+    errs.append("no fingerprint() helper in guard.py")
+if stable is not None and fp is not None:
+    if sorted(stable) != sorted(SESSION):
+        errs.append("STABLE is %r, expected the session cookies %r" % (stable, SESSION))
+    grew = [c for c in ROTATING if c in stable]
+    if grew:
+        errs.append("fingerprint hashes rotating cookie(s): %s" % ", ".join(grew))
+
+    def cookie(psidts, psidcc, sid="s"):
+        vals = dict(zip(SESSION, ["v%s" % c for c in SESSION]))
+        vals.update({"SID": sid, "__Secure-1PSIDTS": psidts, "__Secure-1PSIDCC": psidcc})
+        return "; ".join("%s=%s" % (k, vals[k])
+                         for k in SESSION + ROTATING)
+    rotated = cookie("newer-ts", "newer-cc")
+    same = cookie("older-ts", "older-cc")
+    relogin = cookie("older-ts", "older-cc", sid="other-session")
+    if fp(rotated) != fp(same):
+        errs.append("a rotated __Secure-1PSIDTS/1PSIDCC still changes the fingerprint")
+    if fp(rotated) == fp(relogin):
+        errs.append("a changed SID does not change the fingerprint - a real re-login is missed")
+print("; ".join(errs) if errs else "fingerprint = session cookies only")
+PY
+)
+if [ "$FP_OUT" = "fingerprint = session cookies only" ]; then
+  pass "$FP_OUT (rotating cookies ignored, re-login detected)"
+else
+  fail "cookie fingerprint: ${FP_OUT:-python check produced no verdict}"
+fi
+# the hash that decides an import must be the fingerprint, not the whole harvested string
+grep -q 'hashlib.sha256(fingerprint(ck)' "$TARGET" \
+  && pass "import decision hashes fingerprint(ck)" \
+  || fail "import decision no longer hashes fingerprint(ck) - rotating cookies re-import every tick"
+
+# 7. the hand-import helper ships next to it and reuses the same harvest
 HELPER="$HERE/gemini-web2api/manual-import.py"
 if [ -f "$HELPER" ] && python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$HELPER" 2>/dev/null; then
   pass "manual-import.py present and parses"
