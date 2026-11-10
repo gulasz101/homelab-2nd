@@ -17,7 +17,7 @@ name: gemini-web2api
 
 services:
   gemini-web2api:
-    image: ghcr.io/zexadev/gemini-web2api-go@sha256:dac7b994e48735a9d03c3cc590c58644792513e948ac62126d2d5dc0d8a705ca  # v4.27.0
+    image: ghcr.io/zexadev/gemini-web2api-go@sha256:9aaab38e7adbeb0f204fff785bd052f539dca31d34f2b0db10d52c05d6d9c2da  # v4.28.0
     container_name: gemini-web2api
     restart: unless-stopped
     ports:

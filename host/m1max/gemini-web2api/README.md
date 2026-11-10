@@ -48,9 +48,12 @@ container is `exited`, it runs `docker start` and says so.
 
 ## The watchdog
 
-`~/.hermes/profiles/andrzej/scripts/zeroclaw_cookie_guard.py` (source on the Air, copied to the
-Max; run from the Max over SSH by the `zeroclaw-gemini-cookie-guard` cron every 30 min). It is
-silent while healthy and speaks on change:
+`host/m1max/gemini-web2api/guard.py` in this repo — the tracked copy; the copy that actually runs
+is `~/homelab/gemini-web2api-guard/guard.py` on the Max, together with its state
+(`cookie_guard_state.json`) and its admin-token file (`gemini2api.env`, mode 0600, holding
+`ADMIN_TOKEN` and `GEMINI_WEB_API_KEY`; neither value is ever in this repo). The
+`zeroclaw-gemini-cookie-guard` cron on the Air runs `zeroclaw_cookie_guard_remote.sh`, which SSHes
+to the Max and executes that file. It is silent while healthy and speaks on change:
 
 - `docker info` with a 15 s ceiling — "cannot ask the engine" is reported as its own fault, and
   an unresolved fault is repeated every 6 h instead of going quiet after one message;
@@ -58,6 +61,46 @@ silent while healthy and speaks on change:
 - runtime drift — warns if the live container is back on a moving tag or lost its restart policy;
 - cookie pool re-import, paid-tier canary, and a canary attributed by request-log id (the `ts`
   field in that log drifts behind the host clock, so it is useless as a key).
+
+**Do not move it back under `~/.hermes`.** ADR-128 retired Hermes on the Max, and `~/.hermes`
+there is a read-only tombstone *file*: the guard ran from that path for 30 ticks and failed with
+`[Errno 20] Not a directory` (GUL-1279). `host/m1max/tests/gemini-guard-check.sh` now fails CI if
+any non-comment line reaches under `~/.hermes`, so a silent 30-tick outage cannot happen that way
+again. `GUARD_DIR` still overrides the directory for tests, as do `GUARD_STATE`, `GUARD_DOCKER`,
+`GUARD_PROXY` and `GUARD_SKIP_COOKIES`.
+
+Run it by hand (from the Air, or on the Max directly):
+
+```
+ssh m1max 'python3 ~/homelab/gemini-web2api-guard/guard.py'    # empty output = healthy
+GUARD_SKIP_COOKIES=1 ssh m1max 'python3 ~/homelab/gemini-web2api-guard/guard.py'   # availability only
+```
+
+The guard deliberately **pauses cookie re-import while the account is `degraded`**: a throttled
+account answers `429`, the candidate gets deleted again, and that churn feeds the throttle. When a
+human has just logged in again in Firefox and does not want to wait for the cooldown, use the
+hand-import helper, which is the same add -> `/check` -> keep-or-drop flow without the pause:
+
+```
+scp host/m1max/gemini-web2api/manual-import.py m1max:~/homelab/gemini-web2api-guard/   # after editing
+ssh m1max 'python3 ~/homelab/gemini-web2api-guard/manual-import.py --list'   # pool only
+ssh m1max 'python3 ~/homelab/gemini-web2api-guard/manual-import.py'          # import + retire older
+```
+
+It prints cookie counts, entry ids and the `/check` verdict — never a cookie or a token. Exit `0`
+imported and validated, `2` candidate failed `/check` (dropped, old pool untouched), `1` nothing to
+import.
+
+## Health checks must use `GET /`
+
+`GET /` is answered by the container itself: it proves the process is alive and asks Google
+nothing. **Never put a chat completion on a timer.** A `POST /v1/chat/completions` probe costs a
+real Google request and a cookie slot, and while the exit IP is blocked it *is* the thing that
+re-blocks it — every probe resets the 120-min cooldown. Anything that ticks on a schedule (host
+heartbeat, Uptime Kuma/Gatus, cron, a monitor in `homelab-2nd`) probes `GET /` and stops there.
+This is not theory: a single 60 s chat probe, running from 2026-10-15 to 2026-11-09, produced
+3 196 of the 3 257 `/sorry` blocks measured in GUL-1244. The one exception is the guard's canary
+above — it runs on change, not on a clock.
 
 ## Reading a failure — three classes, and only one of them is Google's
 
@@ -92,4 +135,51 @@ parks that IP for 120 minutes and will not retry it until the bench expires. Eve
 looked like "~2 h of quiet refills the quota" is the bench expiring. So quiet time matters because
 the proxy refuses to try — not because a bucket fills. Probing inside the bench both fails and
 delays the answer; the watchdog fires one image probe when the tier returns.
+
+## Avoiding `/sorry` — what the log showed on 2026-11-10
+
+Measured over 7 days (`2026-11-03 23:52 → 2026-11-10 00:12`, 6 110 requests in `/admin/api/requests`):
+
+| class | count | share |
+| --- | --- | --- |
+| `302 → google.com/sorry/index` | 3 257 | 53 % |
+| `per_ip_rph` (our own 80/h cap) | 2 109 | 35 % |
+| HTTP 200 | 605 | 10 % |
+| `concurrent limit` (local slot) | 83 | 1 % |
+| image artifact retrieval | 51 | 1 % |
+
+Of the 605 `200`s, **395 (65 %) were canned error sentences** of 31, 54, 58 or 103 characters
+("Sorry, something went wrong…", "I seem to be encountering an error…") — i.e. real answers were
+about 3 % of all traffic. 4.27.1 detects those and retries instead of returning them; that alone
+changes the numbers a lot more than any tuning does.
+
+Two distinct causes produced the 3 257 blocks:
+
+1. **A 1/minute health probe, not a client.** 5 585 requests with a ≤6-character prompt on
+   `gemini-4-argon`, exactly one per minute, `2026-11-03 23:52 → 2026-11-09 10:09`. It accounts for
+   **3 196 of the 3 257** `/sorry` hits (98 %) and 2 084 of the 2 109 `per_ip_rph` rejects. Because
+   it never backed off, it re-blocked the IP every time the 120-minute bench expired: on 11-06 and
+   11-07 the log shows an identical **40 hits / 48 minutes** cycle for 20 hours straight, ending in
+   one 52.8-hour block. It stopped on 11-09 10:09 and the IP has been clean since.
+2. **One genuine burst.** 19 `gemini-4-argon` requests in 6 minutes on 11-05 06:45–06:51
+   (prompts 226–773 chars, the morning pipeline) with the IP fresh — first `/sorry` at 06:51:28.
+   That is the one place upstream's "burst" rule fits.
+
+Rules that follow, in order of value:
+
+- **Never health-check by calling a real model.** `GET /` is free and does not touch the IP's
+  request budget. A chat probe at 1/min is 1 440 requests/day of pure risk.
+- **Treat a `302` as IP-level and stop.** It clears in ~106–121 min; anything sent inside it is
+  wasted and re-arms the block. Back off for `proxy_cooldown_min` and do not retry earlier.
+- **Count the canned `200`s, not just the non-`200`s.** A reply of 31/54/58/103 characters is a
+  failure with a smiling face.
+
+Image generation did **not** work at all in that window: 164 `gemini-image` attempts, 85 of them
+logged `200`, but 83 of those were the 103-character canned sentence and 51 more died in artifact
+retrieval — zero real renders. On 4.28.0 the same attempt now returns
+`502 upstream returned a failure reply (inner[31] set)` after 3 retries, which is the honest
+version of the same upstream failure: the image lane is broken account-side, not in this container.
+It fails with `firefox_fingerprint` on and off, and with `web_channel` on and off, so neither the
+fingerprint nor the protocol is the cause.
+
 
