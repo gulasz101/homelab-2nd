@@ -16,15 +16,6 @@ Examples:
         --services ollama-embeddings \
         --pvcs "ollama-embeddings:ollama-models" \
         > apps/gpu-embedding/gpu-embedding-dashboard-configmap.yaml
-
-    # honcho (multi-service, no GPU)
-    python3 scripts/render_namespace_dashboard.py \
-        --namespace honcho \
-        --title "honcho — Memory & Dialectic" \
-        --uid honcho-overview \
-        --services honcho-api,honcho-deriver,honcho-db,honcho-redis \
-        --pvcs "honcho-db:honcho-db-1,honcho-redis:redis-data" \
-        > apps/honcho/honcho-dashboard-configmap.yaml
 """
 
 import argparse
@@ -188,7 +179,7 @@ def friendly_name(pod_prefix: str, aliases: Optional[Dict[str, str]] = None) -> 
     leading namespace segment if present, else fall back to the last segment.
 
     Examples:
-        'honcho-api' -> 'api'
+        'hindsight-api' -> 'api'
         'mattermost-mattermost-team-edition' -> 'mattermost' (last segment is confusing)
         'cloudflared-chat' with alias -> 'tunnel'
     """
@@ -794,13 +785,13 @@ def main() -> int:
         "--services",
         type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
         default=None,
-        help="Comma-separated pod prefixes to render per-service stat panels (e.g. honcho-api,honcho-deriver,honcho-db,honcho-redis)",
+        help="Comma-separated pod prefixes to render per-service stat panels (e.g. hindsight-api,hindsight-control-plane)",
     )
     parser.add_argument(
         "--pvcs",
         type=parse_pvc_map,
         default={},
-        help='Service:pvc mappings for per-service PVC stat panels, e.g. "honcho-db:honcho-db-1,honcho-redis:redis-data"',
+        help='Service:pvc mappings for per-service PVC stat panels, e.g. "hindsight-db:hindsight-db-1"',
     )
     parser.add_argument(
         "--aliases",
