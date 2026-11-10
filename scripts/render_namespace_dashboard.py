@@ -16,15 +16,6 @@ Examples:
         --services ollama-embeddings \
         --pvcs "ollama-embeddings:ollama-models" \
         > apps/gpu-embedding/gpu-embedding-dashboard-configmap.yaml
-
-    # honcho (multi-service, no GPU)
-    python3 scripts/render_namespace_dashboard.py \
-        --namespace honcho \
-        --title "honcho — Memory & Dialectic" \
-        --uid honcho-overview \
-        --services honcho-api,honcho-deriver,honcho-db,honcho-redis \
-        --pvcs "honcho-db:honcho-db-1,honcho-redis:redis-data" \
-        > apps/honcho/honcho-dashboard-configmap.yaml
 """
 
 import argparse

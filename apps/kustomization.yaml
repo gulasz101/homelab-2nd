@@ -206,8 +206,10 @@ resources:
   # Cloudflare Tunnel for photos.voitech.dev -> Nextcloud
   - nextcloud/cloudflared-deployment.yaml
   # Honcho decommissioned 2026-10-15 (H2-296): apps/honcho removed, namespace torn
-  # down by Flux prune. CNPG backup data remains in MinIO cnpg-backups/honcho until
-  # the drip-deletion gate (H2-295, due 2026-11-14).
+  # down by Flux prune. OpenViking and Honcho are both retired by the GUL-355
+  # decision (self-hosted Hindsight is the one agent-memory platform), so the
+  # remaining CNPG backup data in MinIO cnpg-backups/honcho is deleted under that
+  # answer too, not by the older drip-deletion gate.
   # OpenGist namespace
   - opengist/namespace.yaml
   # Helm repository
@@ -302,24 +304,14 @@ resources:
   - shlink/shlink-alertmanager-config.yaml
   - shlink/shlink-loki-rule.yaml
   - shlink/shlink-dashboard-configmap.yaml
-  # OpenViking namespace (local-only memory backend)
-  - openviking/namespace.yaml
-  # SOPS-encrypted secrets
-  - openviking/openviking-root-api-key.sops.yaml
-  - openviking/openviking-vlm-api-key.sops.yaml
-  - openviking/openviking-mattermost-webhook-url.sops.yaml
-  - openviking/openviking-minio-backup-creds.sops.yaml
-  # PVC + config + deployment + service
-  - openviking/openviking-config-configmap.yaml
-  - openviking/openviking-deployment.yaml
-  - openviking/openviking-service.yaml
-  # Backup
-  - openviking/openviking-backup-cronjob.yaml
-  # Observability
-  - openviking/openviking-prometheus-rules.yaml
-  - openviking/openviking-alertmanager-config.yaml
-  - openviking/openviking-loki-rule.yaml
-  - openviking/openviking-dashboard-configmap.yaml
+  # GUL-355: OpenViking is retired as the agent-memory backend - self-hosted
+  # Hindsight (apps/hindsight/) is the one platform, so every OpenViking
+  # workload left this list (deployment, service, backup CronJob, observability)
+  # and Flux prunes the namespace contents. Only apps/openviking/namespace.yaml
+  # and its four SOPS secrets stay on disk: the namespace is torn down by hand
+  # once the OpenViking data is settled, and deleting an encrypted secret before
+  # then would lose the only copy of the key that talks to it. Nothing in the
+  # tree references openviking/ any more, so this block is deliberately empty.
 
   # arr-stack namespace
   - arr-stack/
