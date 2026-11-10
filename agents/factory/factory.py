@@ -971,6 +971,26 @@ def cmd_commit(args) -> int:
     return 0
 
 
+def cmd_push(args) -> int:
+    """Push the checkout's branch to origin (GUL-1267 F-1).
+
+    A fix round commits on the same branch the first green stage opened its PR
+    from, so the PR head is only the round's work once that commit is pushed.
+    Round 1 opened the PR *and* pushed; a later round reuses the PR and must
+    still push, or the gate reads the round-1 head and offers to merge it.
+    """
+    if not re.match(r"^GUL-[0-9]+$", args.issue):
+        raise SetupError("--issue must be GUL-<n>, got %r" % args.issue)
+    branch = git(args.repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    if branch in ("main", "master"):
+        emit(False, "push", ["refusing to push %s" % branch])
+        return 1
+    git(args.repo, "push", "-u", "origin", branch)
+    emit(True, "push", [], {"branch": branch,
+                            "sha": git(args.repo, "rev-parse", "HEAD").strip()})
+    return 0
+
+
 def cmd_open_pr(args) -> int:
     if not re.match(r"^GUL-[0-9]+$", args.issue):
         raise SetupError("--issue must be GUL-<n>, got %r" % args.issue)
@@ -2072,8 +2092,17 @@ def cmd_factory_decide(args) -> int:
         ledger["stages"][key]["sha"] = (cparsed or {}).get("sha")
         existing_pr = ledger.get("pr") or {}
         if existing_pr.get("number"):
-            # a decide re-run must not open a second PR for the same branch
-            pass
+            # a decide re-run must not open a second PR for the same branch, but
+            # the commit still has to reach that PR's head (GUL-1267 F-1): a
+            # green r2 that never pushed left the round-1 head on the PR, so
+            # the gate passed round-1 code and re-armed its merge monitor.
+            hcode, hparsed, hout = _run_self(["push", "--repo", cwd,
+                                              "--issue", work_order["identifier"]])
+            if hcode != 0:
+                raise SetupError("push refused: %s" % ((hparsed or {}).get("reasons")))
+            # `pr.head` is the sha the PR head carries; a reader (the gate) can
+            # compare it with the latest green row instead of trusting the round.
+            ledger["pr"]["head"] = (hparsed or {}).get("sha") or ledger["stages"][key].get("sha")
         else:
             pcode, pparsed, pout = _run_self(["open-pr", "--repo", cwd,
                                               "--issue", work_order["identifier"],
@@ -2086,7 +2115,8 @@ def cmd_factory_decide(args) -> int:
             match = re.search(r"/pull/([0-9]+)", url or "")
             if match:
                 number = int(match.group(1))
-            ledger["pr"] = {"number": number, "url": url}
+            ledger["pr"] = {"number": number, "url": url,
+                            "head": ledger["stages"][key].get("sha")}
             # the work product links the PR to the board; it is not the record
             # the next stage reads, so it lands after the ledger is durable. A
             # re-run reuses ledger["pr"] and leaves the link to be re-added by
@@ -2489,6 +2519,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--stage", required=True, choices=["red", "green"])
     s.add_argument("--issue", required=True)
     s.set_defaults(fn=cmd_commit)
+
+    s = sub.add_parser("push")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--issue", required=True)
+    s.set_defaults(fn=cmd_push)
 
     s = sub.add_parser("open-pr")
     s.add_argument("--repo", required=True)
