@@ -1,10 +1,11 @@
-# ADR-128: Hermes runs only on the M1 Air; the Max's copy is retired, not a standby
+# Hermes runs only on the M1 Air; the Max's copy is retired, not a standby
 
-**Date:** 2026-11-09
-**Status:** Accepted
-**Deciders:** Wojtek Gula (owner rule); implemented by Claude Code
-**Project:** agent platform
-**Supersedes:** decision 4 of [ADR-073](adr-073-hermes-runs-on-the-m1-air.md) ("the Max's `~/.hermes` is a cold standby")
+- **Status**: Pending
+- **Date**: 2026-11-09
+- **Deciders**: Wojtek Gula (owner rule); implemented by Claude Code
+- **Project**: agent platform
+- **Supersedes**: decision 4 of [ADR-073](../adr-073-hermes-runs-on-the-m1-air.md) ("the Max's `~/.hermes` is a cold standby")
+- **Related**: `pending/hermes-browser-camofox-web-firecrawl-lan.md` (Camofox's runtime moved out of Hermes's directory)
 
 ## Context
 
@@ -44,8 +45,8 @@ On the Max:
 6. **`~/.hermes` on the Max is now a read-only *file*** holding this notice, so no installer,
    restore or `hermes` run can recreate the directory. `hermes`, `hermes-acp` and `hermes-agent` in
    `~/.local/bin` are refusal stubs. Camofox's Node runtime moved to `~/.local/share/camofox/`
-   (ADR-129), and the dead `zeroclaw-cookie-guard` LaunchAgent, which ran a script from the old
-   profile, was retired too.
+   (`pending/hermes-browser-camofox-web-firecrawl-lan.md`), and the dead `zeroclaw-cookie-guard`
+   LaunchAgent, which ran a script from the old profile, was retired too.
 
 ## Consequences
 

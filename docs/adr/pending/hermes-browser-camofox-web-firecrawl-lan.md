@@ -1,10 +1,10 @@
-# ADR-129: Hermes agents browse with Camofox and search/extract with Firecrawl over its LAN NodePort
+# Hermes agents browse with Camofox and search/extract with Firecrawl over its LAN NodePort
 
-**Date:** 2026-11-09
-**Status:** Accepted
-**Deciders:** Wojtek Gula (asked for browser access back, "make your best pick"); implemented by Claude Code
-**Project:** agent platform
-**Related:** ADR-062 (Firecrawl `firecrawl-api-lan` NodePort 30250), ADR-073/ADR-128 (Hermes on the M1 Air only), ADR-079 (LaunchAgents and the LAN)
+- **Status**: Pending
+- **Date**: 2026-11-09
+- **Deciders**: Wojtek Gula (asked for browser access back, "make your best pick"); implemented by Claude Code
+- **Project**: agent platform
+- **Related**: [ADR-062](../adr-062-zeroclaw-firecrawl-lan-nodeport.md) (Firecrawl `firecrawl-api-lan` NodePort 30250), [ADR-073](../adr-073-hermes-runs-on-the-m1-air.md) and `pending/hermes-air-only-max-copy-retired.md` (Hermes on the M1 Air only), [ADR-079](../adr-079-launchagents-reach-lan-through-loopback-relays.md) (LaunchAgents and the LAN)
 
 ## Context
 
@@ -34,7 +34,7 @@ The two tools do different jobs, so the agents get both:
    existing key is harmless.
 3. **Camofox no longer runs from Hermes's directory.** Its Node runtime was copied to
    `~/.local/share/camofox/node-26.7.0-darwin-arm64` on the Max, so the retired `~/.hermes` there
-   could be removed (ADR-128).
+   could be removed (`pending/hermes-air-only-max-copy-retired.md`).
 
 ## Consequences
 
