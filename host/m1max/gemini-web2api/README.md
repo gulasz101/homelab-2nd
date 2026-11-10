@@ -48,9 +48,12 @@ container is `exited`, it runs `docker start` and says so.
 
 ## The watchdog
 
-`~/.hermes/profiles/andrzej/scripts/zeroclaw_cookie_guard.py` (source on the Air, copied to the
-Max; run from the Max over SSH by the `zeroclaw-gemini-cookie-guard` cron every 30 min). It is
-silent while healthy and speaks on change:
+`host/m1max/gemini-web2api/guard.py` in this repo — the tracked copy; the copy that actually runs
+is `~/homelab/gemini-web2api-guard/guard.py` on the Max, together with its state
+(`cookie_guard_state.json`) and its admin-token file (`gemini2api.env`, mode 0600, holding
+`ADMIN_TOKEN` and `GEMINI_WEB_API_KEY`; neither value is ever in this repo). The
+`zeroclaw-gemini-cookie-guard` cron on the Air runs `zeroclaw_cookie_guard_remote.sh`, which SSHes
+to the Max and executes that file. It is silent while healthy and speaks on change:
 
 - `docker info` with a 15 s ceiling — "cannot ask the engine" is reported as its own fault, and
   an unresolved fault is repeated every 6 h instead of going quiet after one message;
@@ -58,6 +61,35 @@ silent while healthy and speaks on change:
 - runtime drift — warns if the live container is back on a moving tag or lost its restart policy;
 - cookie pool re-import, paid-tier canary, and a canary attributed by request-log id (the `ts`
   field in that log drifts behind the host clock, so it is useless as a key).
+
+**Do not move it back under `~/.hermes`.** ADR-128 retired Hermes on the Max, and `~/.hermes`
+there is a read-only tombstone *file*: the guard ran from that path for 30 ticks and failed with
+`[Errno 20] Not a directory` (GUL-1279). `host/m1max/tests/gemini-guard-check.sh` now fails CI if
+any non-comment line reaches under `~/.hermes`, so a silent 30-tick outage cannot happen that way
+again. `GUARD_DIR` still overrides the directory for tests, as do `GUARD_STATE`, `GUARD_DOCKER`,
+`GUARD_PROXY` and `GUARD_SKIP_COOKIES`.
+
+Run it by hand (from the Air, or on the Max directly):
+
+```
+ssh m1max 'python3 ~/homelab/gemini-web2api-guard/guard.py'    # empty output = healthy
+GUARD_SKIP_COOKIES=1 ssh m1max 'python3 ~/homelab/gemini-web2api-guard/guard.py'   # availability only
+```
+
+The guard deliberately **pauses cookie re-import while the account is `degraded`**: a throttled
+account answers `429`, the candidate gets deleted again, and that churn feeds the throttle. When a
+human has just logged in again in Firefox and does not want to wait for the cooldown, use the
+hand-import helper, which is the same add -> `/check` -> keep-or-drop flow without the pause:
+
+```
+scp host/m1max/gemini-web2api/manual-import.py m1max:~/homelab/gemini-web2api-guard/   # after editing
+ssh m1max 'python3 ~/homelab/gemini-web2api-guard/manual-import.py --list'   # pool only
+ssh m1max 'python3 ~/homelab/gemini-web2api-guard/manual-import.py'          # import + retire older
+```
+
+It prints cookie counts, entry ids and the `/check` verdict — never a cookie or a token. Exit `0`
+imported and validated, `2` candidate failed `/check` (dropped, old pool untouched), `1` nothing to
+import.
 
 ## Health checks must use `GET /`
 
