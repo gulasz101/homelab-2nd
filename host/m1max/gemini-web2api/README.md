@@ -59,6 +59,17 @@ silent while healthy and speaks on change:
 - cookie pool re-import, paid-tier canary, and a canary attributed by request-log id (the `ts`
   field in that log drifts behind the host clock, so it is useless as a key).
 
+## Health checks must use `GET /`
+
+`GET /` is answered by the container itself: it proves the process is alive and asks Google
+nothing. **Never put a chat completion on a timer.** A `POST /v1/chat/completions` probe costs a
+real Google request and a cookie slot, and while the exit IP is blocked it *is* the thing that
+re-blocks it — every probe resets the 120-min cooldown. Anything that ticks on a schedule (host
+heartbeat, Uptime Kuma/Gatus, cron, a monitor in `homelab-2nd`) probes `GET /` and stops there.
+This is not theory: a single 60 s chat probe, running from 2026-10-15 to 2026-11-09, produced
+3 196 of the 3 257 `/sorry` blocks measured in GUL-1244. The one exception is the guard's canary
+above — it runs on change, not on a clock.
+
 ## Reading a failure — three classes, and only one of them is Google's
 
 `/admin/api/requests` (admin token) is the only honest source. Match on `model`, `status`,
