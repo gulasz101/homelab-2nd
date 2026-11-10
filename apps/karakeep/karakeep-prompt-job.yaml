@@ -1,0 +1,133 @@
+---
+# GUL-1242 / GUL-1183 option (a): converge Karakeep's custom summary prompt onto
+# the text in karakeep-prompt-configmap.yaml.
+#
+# Raw manifest is deliberate: chart `karakeep` 0.34.1 has no values for custom
+# prompts - `packages/shared/prompts.ts` renders the summary template from code
+# and the custom text is read straight out of the `customPrompts` table. There is
+# also no REST route for prompts; the only write path is tRPC, verified live
+# against 0.34.1 on 2026-11-09 (GUL-1183):
+#   GET  /api/trpc/prompts.list?batch=1&input=%7B%7D   -> [0].result.data.json
+#   POST /api/trpc/prompts.create  {"json":{"text":..,"appliesTo":"summary"}}
+#   POST /api/trpc/prompts.delete  {"json":{"promptId":..}}
+# Mutations must NOT carry `?batch=1`: the batched form answers
+# "Invalid input: expected object, received undefined". Only the query batches.
+#
+# Idempotent: converges to exactly one `appliesTo: summary` prompt with the
+# ConfigMap's text. Re-running it by hand changes nothing.
+#
+# Jobs are immutable. Changing the prompt text means recomputing the sha256 into
+# `checksum/prompt` AND renaming the Job (v2) - Flux prunes v1.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: karakeep-prompt-v1
+  namespace: karakeep
+  labels:
+    app.kubernetes.io/name: karakeep-prompt
+    app.kubernetes.io/part-of: karakeep
+  annotations:
+    # sha256 of karakeep-prompt/prompt.txt. Recomputed by
+    # apps/karakeep/tests/prompt-job-check.sh; a stale value fails the check.
+    checksum/prompt: 15d5c297e90c10ed62a8a7eb9a6fd2cfd3d7df9b64e83053d249d60689c70ca2
+    kustomize.toolkit.fluxcd.io/prune: enabled
+spec:
+  # A cold cluster start (Karakeep still initialising its DB) must retry rather
+  # than fail the Flux reconcile.
+  backoffLimit: 4
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-karakeep
+          image: docker.io/library/busybox:1.37
+          command:
+            - sh
+            - -c
+            - |
+              # /api/health answers 200 once the app can serve requests.
+              until wget -q -O /dev/null http://karakeep.karakeep.svc.cluster.local:3000/api/health; do
+                echo "waiting for the karakeep Service..."
+                sleep 10
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+      containers:
+        - name: converge-prompt
+          image: docker.io/library/python:3.13-alpine
+          command:
+            - python3
+            - -c
+            - |
+              import json
+              import os
+              import sys
+              import urllib.request
+
+              BASE = os.environ.get("KARAKEEP_URL", "http://karakeep.karakeep.svc.cluster.local:3000")
+              TOKEN = os.environ["KARAKEEP_API_KEY"]
+              # One trailing newline from the `|` block scalar is not part of the prompt.
+              with open("/prompt/prompt.txt", encoding="utf-8") as fh:
+                  WANT = fh.read().rstrip("\n")
+
+              def call(method, path, payload=None):
+                  data = None if payload is None else json.dumps(payload).encode()
+                  req = urllib.request.Request(BASE + path, data=data, method=method)
+                  req.add_header("Authorization", "Bearer " + TOKEN)
+                  req.add_header("Content-Type", "application/json")
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      body = resp.read().decode()
+                  return json.loads(body) if body.strip() else None
+
+              def summary_prompts():
+                  # The query procedure is the one that takes the batched form.
+                  listed = call("GET", "/api/trpc/prompts.list?batch=1&input=%7B%7D")
+                  prompts = (listed[0]["result"]["data"].get("json") or [])
+                  return prompts, [p for p in prompts if p.get("appliesTo") == "summary"]
+
+              prompts, current = summary_prompts()
+              print("prompts.list: {} prompt(s), {} with appliesTo=summary".format(
+                  len(prompts), len(current)), flush=True)
+
+              if len(current) == 1 and current[0].get("text") == WANT:
+                  print("already converged, nothing to do", flush=True)
+              else:
+                  for prompt in current:
+                      call("POST", "/api/trpc/prompts.delete", {"json": {"promptId": prompt["id"]}})
+                      print("prompts.delete: removed {}".format(prompt["id"]), flush=True)
+                  call("POST", "/api/trpc/prompts.create",
+                       {"json": {"text": WANT, "appliesTo": "summary"}})
+                  print("prompts.create: installed the prompt from the ConfigMap", flush=True)
+
+              prompts, current = summary_prompts()
+              if len(current) != 1 or current[0].get("text") != WANT:
+                  print("FAILED: expected exactly one summary prompt matching the ConfigMap, "
+                        "found {}".format(len(current)), file=sys.stderr)
+                  sys.exit(1)
+              print("verified: one summary prompt, {} chars".format(len(WANT)), flush=True)
+          env:
+            - name: KARAKEEP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: karakeep-app-secrets
+                  key: KARAKEEP_API_KEY
+            - name: KARAKEEP_URL
+              value: http://karakeep.karakeep.svc.cluster.local:3000
+          volumeMounts:
+            - name: prompt
+              mountPath: /prompt
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: prompt
+          configMap:
+            name: karakeep-prompt
