@@ -330,8 +330,21 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   Paperclip routes it back to the stage agent). The comment is the check's JSON
   line plus the last 60 lines of its output.
 - verify with a non-empty `blockingConfirmed` → approve it and open a fix round
-  (`[green r2]` → `[review r2]` → `[verify r2]`, chained the same way), confirmed
-  findings pasted into the fix issue. At most 2 fix rounds.
+  (`[green r2]` → `[review r2]` → `[verify r2]` → `[gate r2]`, chained the same
+  way), confirmed findings pasted into the fix issue, and the gate recorded in
+  the ledger as `gate:r2`. At most 2 fix rounds. Opening the round **supersedes
+  the previous round's gate**: that gate issue is cancelled with a comment naming
+  the new round, and the work order's merge monitor is cleared in a policy-only
+  PATCH (`{"executionPolicy": null}`, no `status`), so no live offer to merge a
+  head the fix round is rewriting is left behind (GUL-1267 G3). A gate that runs
+  while a later round is still open is a **setup error** (exit 2) naming the open
+  stage and the round it is superseded by, and it writes nothing: no ledger, no
+  stage PATCH, no comment (GUL-1267 G1). The same ledger still decides once every
+  later-round stage is `done` or `cancelled`.
+- **latest gate round**: because a fix round carries a gate of its own, "the gate
+  stage" is whichever `gate` / `gate:rN` row has the highest round, and every
+  reader uses that one. The round-1 `gate` row is the latest gate round only
+  while no fix round has opened.
 - gate pass → **no card** (GUL-553). The work order goes `in_review` with a
   comment that names the PR and says merge it on GitHub, plus an issue monitor
   (`executionPolicy.monitor`: `kind: external_service` — the only accepted value —
@@ -391,8 +404,9 @@ skips the drift check there and prints `guard: not required` instead of reportin
 Majster as drift on every sweep.
 
 **`tick --apply` — the merge watch (GUL-553).** For every open work order whose
-ledger has a `pr.number`, whose `gate` stage issue is `done`, and whose ledger has
-no `merge` record, `tick` reads
+ledger has a `pr.number`, whose **latest gate round** (`gate`, `gate:r2`, … — the
+highest `round` in the ledger, GUL-1267 G4) stage issue is `done`, and whose
+ledger has no `merge` record, `tick` reads
 `gh pr view <n> --repo OWNER/REPO --json state,mergedAt,mergeCommit` and settles it:
 
 - `MERGED` → withdraw any leftover "Merge PR #N?" card, write `merge: {state,
