@@ -206,8 +206,12 @@ resources:
   # Cloudflare Tunnel for photos.voitech.dev -> Nextcloud
   - nextcloud/cloudflared-deployment.yaml
   # Honcho decommissioned 2026-10-15 (H2-296): apps/honcho removed, namespace torn
-  # down by Flux prune. CNPG backup data remains in MinIO cnpg-backups/honcho until
-  # the drip-deletion gate (H2-295, due 2026-11-14).
+  # down by Flux prune. OpenViking and Honcho are both retired by the GUL-355
+  # decision (self-hosted Hindsight is the one agent-memory platform). Wojtek
+  # waived the dated 2026-11-14 drip-deletion gate on GUL-355 (2026-11-09), so
+  # the rest of the Honcho data goes too: the MinIO prefix cnpg-backups/honcho
+  # and the MinIO user behind it are deleted by hand in GUL-402, which is where
+  # that decision is recorded - nothing in this file deletes them.
   # OpenGist namespace
   - opengist/namespace.yaml
   # Helm repository
@@ -302,24 +306,21 @@ resources:
   - shlink/shlink-alertmanager-config.yaml
   - shlink/shlink-loki-rule.yaml
   - shlink/shlink-dashboard-configmap.yaml
-  # OpenViking namespace (local-only memory backend)
-  - openviking/namespace.yaml
-  # SOPS-encrypted secrets
-  - openviking/openviking-root-api-key.sops.yaml
-  - openviking/openviking-vlm-api-key.sops.yaml
-  - openviking/openviking-mattermost-webhook-url.sops.yaml
-  - openviking/openviking-minio-backup-creds.sops.yaml
-  # PVC + config + deployment + service
-  - openviking/openviking-config-configmap.yaml
-  - openviking/openviking-deployment.yaml
-  - openviking/openviking-service.yaml
-  # Backup
-  - openviking/openviking-backup-cronjob.yaml
-  # Observability
-  - openviking/openviking-prometheus-rules.yaml
-  - openviking/openviking-alertmanager-config.yaml
-  - openviking/openviking-loki-rule.yaml
-  - openviking/openviking-dashboard-configmap.yaml
+  # GUL-355: OpenViking is retired as the agent-memory backend - self-hosted
+  # Hindsight (apps/hindsight/) is the one platform, so every OpenViking
+  # workload left this list (namespace, deployment, service, backup CronJob,
+  # observability) and this block is deliberately empty.
+  #
+  # Read that as a deletion, because that is what it is: clusters/production/
+  # apps.yaml reconciles this Kustomization with prune: true, so the first
+  # reconcile after this merge garbage-collects the openviking Namespace and the
+  # 20Gi openviking-workspace PVC inside it (local-path, reclaim Delete) - the
+  # same mechanism the Honcho note above records. Wojtek approved losing exactly
+  # that namespace and its PVC on GUL-355 (2026-11-09), after the memory content
+  # moved to Hindsight; the hourly backup CronJob to OMV MinIO went with it.
+  # Only apps/openviking/namespace.yaml and its four SOPS secrets stay on disk,
+  # unreferenced, because they hold the only copies of those keys: Ops removes
+  # them by hand in GUL-402 once the live check is done.
 
   # arr-stack namespace
   - arr-stack/
