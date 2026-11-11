@@ -239,6 +239,12 @@ def log_first_cause(tok, st):
         ts = int(row.get("ts") or 0)
     except Exception:
         ts = 0
+    if ts:
+        # The log's `ts` is stamped by the proxy container, 2.5 h behind the host clock
+        # (LOG_TS_SKEW), while last_sample_at/checked_at are written here with time.time().
+        # Compare on one clock or every real row looks older than our last sample and the
+        # log-first path never fires (GUL-1339 F-1).
+        ts += LOG_TS_SKEW
     prev = int(st.get("last_sample_at") or st.get("checked_at") or 0)
     if ts and prev and ts < prev:
         return None, ""          # older than the last sample we took: not this run's answer
