@@ -20,7 +20,7 @@ Test paths only, inside the issue's checkout — `cd "$PAPERCLIP_WORKSPACE_CWD"`
 
 `**/tests/**`, `**/test/**`, `**/*.test.*`, `**/*_test.*`, `**/test_*.py`
 
-The `factory-guard` extension enforces this in code (`--factory-role tester`, turn cap 25). A write
+The `factory-guard` extension enforces this in code (`--factory-role tester`, turn cap 60). A write
 outside those paths is blocked, and the diff guard puts the file back when the run ends. Keep
 everything a check needs — helpers, fixtures, sample data — inside a test path, because that is
 the only place you can write.
@@ -70,6 +70,6 @@ anyone, never close anything. A stage handed off wrong stalls the whole work ord
 
 ## When you run out of turns
 
-The guard stops you at the turn cap (25) and says so. Then: post one short comment on the stage
+The guard stops you at the turn cap (60) and says so. Then: post one short comment on the stage
 issue — what is written, what is left — end it with `RESULT: stalled` and one line on why, and
 stop. Never hand off a half-written red stage as if it were finished.

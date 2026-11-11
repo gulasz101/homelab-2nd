@@ -29,7 +29,7 @@ const HOME = os.homedir();
 const EMBEDDED_ROLES: RolesConfig = {
   roles: {
     executor: { turnCap: 60, writesOutsideWorkspace: true, writeScope: "all", allowCommit: true, allowPush: true },
-    tester: { turnCap: 25, writesOutsideWorkspace: false, writeScope: "test-only", allowCommit: false, allowPush: false },
+    tester: { turnCap: 60, writesOutsideWorkspace: false, writeScope: "test-only", allowCommit: false, allowPush: false },
     builder: { turnCap: 40, writesOutsideWorkspace: false, writeScope: "no-tests", allowCommit: false, allowPush: false },
     readonly: { turnCap: 40, writesOutsideWorkspace: false, writeScope: "none", allowCommit: false, allowPush: false },
   },

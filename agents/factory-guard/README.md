@@ -40,7 +40,7 @@ this extension). Missing or unknown role fails closed. Profiles live in
 | Role | Writes | Commit/push | Turn cap |
 |---|---|---|---|
 | `executor` | anywhere except the always-denied list | yes / own branch only | 60 |
-| `tester` | `**/tests/**`, `**/test/**`, `**/*.test.*`, `**/*_test.*`, `**/test_*.py` inside the workspace repo | no / no | 25 |
+| `tester` | `**/tests/**`, `**/test/**`, `**/*.test.*`, `**/*_test.*`, `**/test_*.py` inside the workspace repo | no / no | 60 |
 | `builder` | workspace repo except test paths | no / no | 40 |
 | `readonly` | none; bash limited to a read-only allowlist, plus the stage document and hand-off (below) | no / no | 40 |
 
@@ -98,6 +98,15 @@ read the diff and ran `scripts/check.sh` green, and then hit the cap before it c
 `findings` document: four runs on GUL-845, no artefact, and `decide` refused for want of it. A
 review reads at least as much as a build writes, so it gets the builder's 40, and the brief now
 carries the verbatim document call so those refusals do not happen at all.
+
+**tester: 25 → 60 (GUL-1368).** 25 was also never a measurement. The `[red]` stage of GUL-1238
+(8 acceptance criteria: 8 check scripts plus the fixtures they read) hit it three times in eight
+minutes, and all three runs ended with an empty diff: one spent the cap on discovery — spec, the
+absent `agents/majster-sweep/` directory, the fixture shapes against the live board — and stopped
+before its first write; two repair runs re-read the recovery API and never reached a write either.
+Paperclip then gave up with `unchanged_source_state_exhausted`. A red stage writes a whole test
+tree before it can report a single `FAIL`, so it gets the executor's 60. The stage briefs also say
+"generate fixtures in the check, do not commit them", which is the cheaper fix for the same run.
 
 ## Run controls
 
