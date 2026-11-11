@@ -5,27 +5,39 @@ Paperclip spawns PAPERCLIP_PG_DUMP_PATH with:
     <bin> --dbname=<connstr> --format=plain --clean --if-exists --no-owner --no-privileges
 and pipes stdout into gzip. There is no pg_dump on this Mac, so without this shim the server
 silently falls back to its JavaScript dump engine, which reads every table with
-`SELECT * FROM <table>` and writes one INSERT per row (2.4 GB, ~5 min, every hour).
+`SELECT * FROM <table>` and writes one INSERT per row (2.6 GB, ~5 min, every hour).
 
 The shim ignores the connection string's host/port, keeps user + database name, and runs the
 pg_dump that ships inside the Postgres pod itself (same major as the server, no version skew).
 
-Two hard lessons are baked in here:
+Three hard lessons are baked in here:
 
-1. Do not stream 2.6 GB of plain SQL over `kubectl exec`. A long exec stream gets reset by the
-   API server ("Copying stdout failed ... connection reset by peer"), pg_dump dies mid-copy, and
-   kubectl still exits 0 — so the server happily stores a truncated dump and calls it a success.
-   The pod therefore gzips the dump (`pg_dump | gzip -1`): ~226 MB crosses the wire instead of
-   2.6 GB, and the local gunzip feeds plain SQL to the server, which keeps the restore path and
-   the stored file format unchanged.
-2. Never let a short dump pass as a good one. The shim checks that the stream ends with pg_dump's
-   "PostgreSQL database dump complete" marker and exits non-zero if it does not. Paperclip then
-   deletes the partial file and falls back to its own JavaScript engine, which is slow but
-   complete — the safe failure.
+1. Do not stream a multi-gigabyte dump out of the cluster over `kubectl exec`. The API server
+   resets a long exec stream ("Copying stdout failed ... connection reset by peer"), the remote
+   pg_dump dies mid-COPY, and kubectl still exits 0 — so the caller stores a truncated dump and
+   calls it a success.
+2. Do not couple the exec stream to a slow consumer. Even the pod-side gzip (226 MB instead of
+   2.6 GB) gets cut when the Mac's own gzip back-pressures the stream: measured 2026-11-11, the
+   dump died 9 MB short at 53 s and the 13:05 scheduled backup fell back to the slow engine. The
+   transfer must be decoupled from anything that can stall it, so the pod writes a file, the shim
+   copies that file out, and only then does anything stream to stdout.
+3. Trust only the producer's own end marker. `gzip -t` inside the pod proves the archive is
+   internally complete, a size match plus a local CRC pass proves the copy is whole, and
+   `PostgreSQL database dump complete` proves pg_dump reached the end. Any of them missing ->
+   exit non-zero, so Paperclip discards the file and takes its complete (slow) JavaScript path
+   instead of storing a short backup.
+
+Phases:
+  A. pod: `pg_dump | gzip -> file`, then `gzip -t` and print the size. Ticks on stdout keep the
+     exec stream warm while the dump runs.
+  B. `kubectl exec -- cat file` into a local temp file, retried up to 4 times, verified by size
+     and by reading the whole archive through zlib.
+  C. decompress the local archive to stdout for Paperclip, requiring the completion marker.
 
 Env knobs: PAPERCLIP_PG_DUMP_NAMESPACE (default paperclip), PAPERCLIP_PG_DUMP_POD
-(default paperclip-db-1), PAPERCLIP_PG_DUMP_USER (default postgres), KUBECTL_BIN, KUBECONFIG,
-PAPERCLIP_PG_DUMP_GZIP (pod-side gzip level, default -1).
+(default paperclip-db-1), PAPERCLIP_PG_DUMP_CONTAINER (default postgres),
+PAPERCLIP_PG_DUMP_USER (default postgres), PAPERCLIP_PG_DUMP_FILE (pod-side temp file),
+KUBECTL_BIN, KUBECONFIG, PAPERCLIP_PG_DUMP_GZIP (pod-side gzip level, default -1).
 Read-only on the database: pg_dump only SELECTs.
 """
 
@@ -33,6 +45,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 import zlib
 
@@ -40,9 +53,18 @@ KUBECTL = os.environ.get("KUBECTL_BIN", "/Users/paperclip/.local/bin/kubectl")
 KUBECONFIG = os.environ.get("KUBECONFIG", "/Users/paperclip/.kube/config")
 NAMESPACE = os.environ.get("PAPERCLIP_PG_DUMP_NAMESPACE", "paperclip")
 POD = os.environ.get("PAPERCLIP_PG_DUMP_POD", "paperclip-db-1")
+CONTAINER = os.environ.get("PAPERCLIP_PG_DUMP_CONTAINER", "postgres")
+POD_FILE = os.environ.get("PAPERCLIP_PG_DUMP_FILE",
+                          "/var/lib/postgresql/data/.paperclip-auto-backup.sql.gz")
 GZIP_LEVEL = os.environ.get("PAPERCLIP_PG_DUMP_GZIP", "-1")
 COMPLETE_MARKER = b"PostgreSQL database dump complete"
 TAIL_KEEP = 512
+FETCH_ATTEMPTS = 4
+
+
+def log(msg):
+    sys.stderr.write("paperclip-pg-dump: %s\n" % msg)
+    sys.stderr.flush()
 
 
 def parse_args(argv):
@@ -66,10 +88,141 @@ def parse_args(argv):
     return dbname, passthrough
 
 
+def pod_sh(script):
+    return [
+        KUBECTL, "--kubeconfig", KUBECONFIG, "-n", NAMESPACE, "exec", POD, "-c", CONTAINER,
+        "--", "/bin/sh", "-c", script,
+    ]
+
+
+def phase_a(database, user, passthrough):
+    """Dump inside the pod to a file, prove it with gzip -t, report its size."""
+    dump_cmd = " ".join(
+        ["pg_dump", "-U", shlex.quote(user), "-d", shlex.quote(database)]
+        + [shlex.quote(flag) for flag in passthrough]
+    )
+    script = (
+        "set -e; rm -f {f}; "
+        "( {dump} | gzip {lvl} -c > {f} ) & pid=$!; "
+        "while kill -0 $pid 2>/dev/null; do printf 'k'; sleep 5; done; "
+        "wait $pid; gzip -t {f}; "
+        "printf '\\nSIZE %s\\n' \"$(stat -c %s {f})\""
+    ).format(f=POD_FILE, dump=dump_cmd, lvl=GZIP_LEVEL)
+
+    log("phase A: pg_dump %s in pod %s/%s -> %s" % (database, NAMESPACE, POD, POD_FILE))
+    proc = subprocess.run(pod_sh(script), stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800)
+    out = proc.stdout.decode("utf-8", "replace")
+    err = proc.stderr.decode("utf-8", "replace").strip()
+    if proc.returncode != 0:
+        log("phase A failed rc=%s: %s" % (proc.returncode, err))
+        return None
+    size = None
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("SIZE "):
+            try:
+                size = int(line.split()[1])
+            except (IndexError, ValueError):
+                size = None
+    if not size:
+        log("phase A produced no SIZE line (stdout=%r stderr=%r)" % (out[:200], err[:200]))
+        return None
+    log("phase A ok: gzip -t passed inside the pod, %d bytes" % size)
+    return size
+
+
+def crc_ok(path):
+    """Read the whole archive through zlib to prove the local copy is complete and uncorrupted."""
+    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    try:
+        with open(path, "rb") as fh:
+            while True:
+                chunk = fh.read(1 << 22)
+                if not chunk:
+                    break
+                d.decompress(chunk)
+        d.flush()
+    except zlib.error as exc:
+        log("local gzip error: %s" % exc)
+        return False
+    return True
+
+
+def phase_b(size):
+    """Copy the finished archive out, retried, verified by size and CRC."""
+    fd, path = tempfile.mkstemp(prefix="paperclip-dump-", suffix=".sql.gz")
+    os.close(fd)
+    fetch = [KUBECTL, "--kubeconfig", KUBECONFIG, "-n", NAMESPACE, "exec", POD,
+             "-c", CONTAINER, "--", "cat", POD_FILE]
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        with open(path, "wb") as sink:
+            proc = subprocess.run(fetch, stdin=subprocess.DEVNULL, stdout=sink,
+                                  stderr=subprocess.PIPE, timeout=1800)
+        got = os.path.getsize(path)
+        if proc.returncode != 0:
+            log("phase B attempt %d/%d: kubectl rc=%s (%s)"
+                % (attempt, FETCH_ATTEMPTS, proc.returncode,
+                   proc.stderr.decode("utf-8", "replace").strip()[:200]))
+            continue
+        if got != size:
+            log("phase B attempt %d/%d: short copy, %d of %d bytes"
+                % (attempt, FETCH_ATTEMPTS, got, size))
+            continue
+        if not crc_ok(path):
+            log("phase B attempt %d/%d: local CRC failed" % (attempt, FETCH_ATTEMPTS))
+            continue
+        log("phase B ok: %d bytes copied, CRC verified locally" % got)
+        return path
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+    return None
+
+
+def phase_c(path):
+    """Decompress for Paperclip and require pg_dump's own end marker."""
+    out = sys.stdout.buffer
+    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    tail = b""
+    written = 0
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(1 << 22)
+            if not chunk:
+                break
+            plain = d.decompress(chunk)
+            if plain:
+                out.write(plain)
+                written += len(plain)
+                tail = (tail + plain)[-TAIL_KEEP:]
+    plain = d.flush()
+    if plain:
+        out.write(plain)
+        written += len(plain)
+        tail = (tail + plain)[-TAIL_KEEP:]
+    out.flush()
+    if COMPLETE_MARKER not in tail:
+        log("decompressed %d bytes but the completion marker is missing; refusing a truncated backup"
+            % written)
+        return 6
+    log("complete, %d bytes of SQL handed to the server" % written)
+    return 0
+
+
+def cleanup_pod_file():
+    try:
+        subprocess.run(pod_sh("rm -f %s" % POD_FILE), stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+    except Exception:
+        pass
+
+
 def main(argv):
     dbname, passthrough = parse_args(argv)
     if not dbname:
-        sys.stderr.write("paperclip-pg-dump: no --dbname given\n")
+        log("no --dbname given")
         return 2
 
     parsed = urllib.parse.urlsplit(dbname) if "://" in dbname else None
@@ -80,73 +233,23 @@ def main(argv):
         database, user = "postgres", "postgres"
     user = os.environ.get("PAPERCLIP_PG_DUMP_USER", "postgres") or user
 
-    inner = " ".join(
-        ["pg_dump", "-U", shlex.quote(user), "-d", shlex.quote(database)]
-        + [shlex.quote(flag) for flag in passthrough]
-        + ["|", "gzip", GZIP_LEVEL, "-c"]
-    )
-    cmd = [
-        KUBECTL, "--kubeconfig", KUBECONFIG, "-n", NAMESPACE, "exec", POD, "-c", "postgres",
-        "--", "/bin/sh", "-c", inner,
-    ]
-    sys.stderr.write(
-        "paperclip-pg-dump: pg_dump %s in pod %s/%s, gzip %s in the pod (%d flags)\n"
-        % (database, NAMESPACE, POD, GZIP_LEVEL, len(passthrough))
-    )
-    sys.stderr.flush()
-
-    child = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE)
-    decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)  # gzip stream
-    tail = b""
-    written = 0
-    out = sys.stdout.buffer
-    try:
-        while True:
-            chunk = child.stdout.read(1 << 20)
-            if not chunk:
-                break
-            try:
-                plain = decompressor.decompress(chunk)
-            except zlib.error as exc:
-                sys.stderr.write("paperclip-pg-dump: gzip stream corrupt: %s\n" % exc)
-                child.kill()
-                return 3
-            if plain:
-                out.write(plain)
-                written += len(plain)
-                tail = (tail + plain)[-TAIL_KEEP:]
-        try:
-            plain = decompressor.flush()
-        except zlib.error as exc:
-            sys.stderr.write("paperclip-pg-dump: gzip stream truncated: %s\n" % exc)
-            child.kill()
-            return 3
-        if plain:
-            out.write(plain)
-            written += len(plain)
-            tail = (tail + plain)[-TAIL_KEEP:]
-        out.flush()
-    except BrokenPipeError:
-        child.kill()
-        return 4
-
-    rc = child.wait()
-    err = child.stderr.read(8192).decode("utf-8", "replace").strip()
-    if rc != 0:
-        sys.stderr.write("paperclip-pg-dump: kubectl/pg_dump failed (rc=%s): %s\n" % (rc, err))
+    size = phase_a(database, user, passthrough)
+    if size is None:
         return 5
-    if COMPLETE_MARKER not in tail:
-        sys.stderr.write(
-            "paperclip-pg-dump: dump ended without the completion marker after %d bytes "
-            "(stream cut mid-copy); refusing to hand a truncated backup to the server\n"
-            % written
-        )
-        if err:
-            sys.stderr.write("paperclip-pg-dump: kubectl said: %s\n" % err)
-        return 6
-    sys.stderr.write("paperclip-pg-dump: complete, %d bytes of SQL\n" % written)
-    return 0
+    path = phase_b(size)
+    if path is None:
+        log("could not copy a verified archive out of the pod")
+        return 5
+    try:
+        return phase_c(path)
+    except BrokenPipeError:
+        return 4
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        cleanup_pod_file()
 
 
 if __name__ == "__main__":
