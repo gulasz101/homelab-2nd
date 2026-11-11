@@ -344,25 +344,45 @@ that reads every table with `SELECT * FROM <table>` and writes one `INSERT` per 
 `pg_dump` on this Mac, so every hour spent ~5 minutes escaping 2.4 GB (2.1 GB of it `heartbeat_runs`
 JSONB) and held the board's pool connection while it did it.
 
-The fix on this host (takes effect the next time the server starts):
-`PAPERCLIP_PG_DUMP_PATH=/usr/local/bin/paperclip-pg-dump`
-(in `~/.paperclip/.env` and `~/.paperclip/instances/default/.env`), a shim that ignores the host in
-the connection string and runs the `pg_dump` that ships **inside** `paperclip-db-1` — same build as
-the server, no Homebrew, nothing new on the host. Source of truth for the shim: `bin/paperclip-pg-dump`.
+The fix on this host: a shim that ignores the host in the connection string and runs the `pg_dump`
+that ships **inside** `paperclip-db-1` — same 17.11 build as the server, no Homebrew, nothing new on
+the host. Source of truth: `bin/paperclip-pg-dump`, installed to `/usr/local/bin/paperclip-pg-dump`
+(root:wheel 0755). It emits **plain SQL on stdout**; the server does the gzip itself.
+
+Two delivery levers, deliberately redundant:
+
+1. `~/.local/bin/pg_dump` → symlink to the shim. The LaunchDaemon `PATH` starts with
+   `/Users/paperclip/.local/bin`, and `spawn(process.env.PAPERCLIP_PG_DUMP_PATH || "pg_dump")`
+   resolves the bare name through `PATH` **on every run**, not at process start — so this lever needs
+   **no restart**.
+2. `PAPERCLIP_PG_DUMP_PATH=/usr/local/bin/paperclip-pg-dump` on the `SVC_PAPERCLIP_CMD` line in
+   `/Users/paperclip/.config/homelab/services.env` (0600, host state, not in git). That file is
+   `eval`ed by `/usr/local/libexec/homelab/homelab-service-run.sh`, so it is read at daemon start —
+   this is the one that survives a restart or reboot. **Do not** use `~/.paperclip/.env` for this:
+   the server's dotenv loader there is wired to the agent JWT only, not to general settings.
+
+Caveat: `runDatabaseBackup` picks the native path only when
+`backupEngine === "pg_dump" || (backupEngine === "auto" && !hasBackupTransforms(opts))`. If Instance
+Settings ever get `excludeTables` / `nullifyColumns` transforms, the JavaScript engine is chosen on
+purpose and this shim is bypassed, whatever the env says.
 
 ```sh
-# how long the last three took and where they landed (JS engine ~290 s, pg_dump ~60 s)
+# how long the last three took and where they landed (JS engine ~290 s, pg_dump <90 s)
 grep -a "Automatic database backup complete" ~/Library/Logs/homelab/paperclip.log | tail -3
 # a pg_dump dump is all COPY; a JavaScript dump has zero COPY lines and thousands of INSERTs
-/usr/bin/gzip -dc ~/.paperclip/instances/default/data/backups/<newest>.sql.gz | grep -c '^COPY public\.'
+/usr/bin/gzip -dc ~/.paperclip/instances/default/data/backups/<newest>.sql.gz \
+  | grep -c '^COPY public\.'                                  # expect ~201
+/usr/bin/gzip -dc ~/.paperclip/instances/default/data/backups/<newest>.sql.gz \
+  | grep -c '^INSERT INTO'                                   # expect 0
 
-# rollback: unset the override, restart, and you are back on the (slow, working) JS engine
-#   remove the PAPERCLIP_PG_DUMP_PATH line from both .env files, then
+# rollback (either lever alone does nothing; remove both and you are back on the slow JS engine)
+rm -f /Users/paperclip/.local/bin/pg_dump
+#   and strip PAPERCLIP_PG_DUMP_PATH from SVC_PAPERCLIP_CMD in ~/.config/homelab/services.env, then
 sudo /bin/launchctl kickstart -k system/dev.voitech.homelab.paperclip
 ```
 
-Restart only when the board is idle: `launchctl kickstart` kills in-flight runs. The env is read at
-process start, so an edit alone does nothing.
+Restart only when the board is idle: `launchctl kickstart` kills in-flight runs and `Heartbeat` rows
+left in `running` block agents. Removing the symlink alone is enough to fall back at the next hour.
 
 ## 7. Moving the whole fleet between models (GUL-769)
 
