@@ -19,7 +19,7 @@ stopping a live engine):
   GUARD_STATE=/path/state.json     state file (default the normal scratch path)
   GUARD_SKIP_COOKIES=1             only run the availability checks, skip cookie/canary work
 """
-import glob, hashlib, json, os, shutil, sqlite3, subprocess, sys, time, urllib.error, urllib.request
+import glob, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, time, urllib.error, urllib.request
 
 DOCKER = os.environ.get("GUARD_DOCKER", "/usr/local/bin/docker")
 PROXY = os.environ.get("GUARD_PROXY", "http://127.0.0.1:8083")
@@ -144,6 +144,12 @@ def degraded_escalation(msgs, st):
 ARTIFACT_ROWS = None    # test hook: feed rows instead of reading the live request log
 LOG_TS_SKEW = 9000      # the proxy's request log stamps rows 2.5 h behind real UTC (measured 2026-11-05)
 
+# GUL-1339: a canary sample that reaches no verdict is a fault, never a green. These two patterns
+# are what the request log can already say about the cause BEFORE another chat request is spent.
+DEAD_COOKIE = re.compile(r"SNlM0e", re.I)
+SLOW_MODEL = re.compile(r"Client\.Timeout|context deadline exceeded", re.I)
+INCONCLUSIVE_REASON_MAX = 120
+
 
 def artifact_check(msgs, st, tok):
     """GUL-950: three 'artifact retrieval failed' image jobs in a row raise ONE alert, so nobody
@@ -198,6 +204,88 @@ def read_state():
         return json.load(open(STATE))
     except Exception:
         return {}
+
+
+def newest_canary_row(tok):
+    """Newest request-log row for the canary model, or None. Ordered on the monotonic id: the
+    `ts` field drifts behind the host clock (see LOG_TS_SKEW), so it cannot order rows."""
+    code, body = api("/admin/api/requests?limit=10&model=%s" % CANARY_MODEL, tok)
+    if code != 200:
+        return None
+    try:
+        rows = json.loads(body).get("items") or []
+    except Exception:
+        return None
+    if not rows:
+        return None
+    try:
+        return max(rows, key=lambda r: int(r.get("id") or 0))
+    except Exception:
+        return None
+
+
+def log_first_cause(tok, st):
+    """Read the request log BEFORE spending a chat request on the canary.
+
+    The log is the only honest source and reading it is free. When its newest canary row already
+    names the cause and is newer than our previous sample, report that cause instead of asking
+    Google again: a dead cookie needs a browser login and a slow model needs patience, so neither
+    is helped by another request. Returns (cause, deciding log text) or (None, "").
+    """
+    row = newest_canary_row(tok)
+    if not row:
+        return None, ""
+    try:
+        ts = int(row.get("ts") or 0)
+    except Exception:
+        ts = 0
+    prev = int(st.get("last_sample_at") or st.get("checked_at") or 0)
+    if ts and prev and ts < prev:
+        return None, ""          # older than the last sample we took: not this run's answer
+    err = str(row.get("error") or "")
+    if DEAD_COOKIE.search(err):
+        return "dead-cookie", err
+    if SLOW_MODEL.search(err):
+        return "slow-model", err
+    return None, ""
+
+
+def clear_inconclusive(st):
+    """A real verdict ends the no-verdict streak; the next inconclusive sample must speak again."""
+    for k in ("inconclusive_samples", "inconclusive_since",
+              "canary_inconclusive", "canary_inconclusive_at",
+              "canary_inconclusive_escalation", "canary_inconclusive_escalation_at"):
+        st.pop(k, None)
+
+
+def note_inconclusive(msgs, st, now, reason, fault):
+    """Record a canary sample that reached NO verdict — a fault, never a green.
+
+    Timestamps are refreshed because a sample WAS taken, entitlement goes unknown because the
+    paid tier cannot be claimed, and healthy_since is dropped because the health clock is broken.
+    degraded_accum_s is deliberately left alone: an inconclusive sample is evidence of neither
+    degradation nor recovery, and note_entitlement() would credit (or clear) time it has no right
+    to. The second consecutive sample is the one that escalates.
+    """
+    n = int(st.get("inconclusive_samples") or 0) + 1
+    st["inconclusive_samples"] = n
+    st.setdefault("inconclusive_since", now)
+    st["entitlement"] = "unknown"
+    st["checked_at"] = now
+    st["last_sample_at"] = now
+    st["last_canary_reason"] = str(reason)[:INCONCLUSIVE_REASON_MAX]
+    st.pop("healthy_since", None)
+    st.pop("canary", None)
+
+    speak(msgs, st, "canary_inconclusive", "inconclusive",
+          "⚠️ gemini-web2api canary: inconclusive — %s The paid tier stays UNKNOWN until a "
+          "real sample answers." % fault)
+    if n >= 2:
+        speak(msgs, st, "canary_inconclusive_escalation", "escalated",
+              "🛑 gemini-web2api: %d consecutive canary samples reached no verdict. The paid "
+              "tier is UNKNOWN and the last real verdict is stale — this is not a quiet "
+              "account, it is a blind check. Last cause: %s"
+              % (n, st["last_canary_reason"]))
 
 
 def write_state(d):
@@ -627,6 +715,20 @@ def main():
         return
     st["last_canary"] = now
 
+    # GUL-1339: the log can name the cause for free. Read it first; a chat request spent on a
+    # known-dead cookie or a known-slow model changes nothing but the request budget.
+    cause, evidence = log_first_cause(tok, st)
+    if cause:
+        fault = ("the request log says the cookie is dead — SNlM0e is missing (the browser "
+                 "session expired or is not signed in), so no canary was sent."
+                 if cause == "dead-cookie" else
+                 "the request log says the model is slow — Client.Timeout / context deadline "
+                 "exceeded, so no canary was sent.")
+        note_inconclusive(msgs, st, int(time.time()), evidence, fault)
+        write_state(st)
+        print("\n".join(m for m in msgs if m))
+        return
+
     # Attribute the canary to ITS OWN log row, not to "whatever is newest". Two traps here:
     #  - image/video jobs land in the same log, so a blind limit=1 once reported an image job
     #    ('Nano Banana') as a paid-tier downgrade;
@@ -647,7 +749,9 @@ def main():
     try:
         urllib.request.urlopen(req, timeout=120).read()
     except Exception as e:
-        msgs.append("⚠️ gemini-web2api canary request failed: %r" % e)
+        note_inconclusive(msgs, st, int(time.time()),
+                          "canary request failed: %r" % e,
+                          "the canary request failed (%r)." % e)
         write_state(st)
         print("\n".join(m for m in msgs if m))
         return
@@ -665,15 +769,17 @@ def main():
         time.sleep(1)
 
     if not up:
-        speak(msgs, st, "canary", "unattributed",
-              "⚠️ gemini-web2api canary went out but no log row matched it within 8 s — "
-              "cannot verify which model was served. Paid-tier state left unchanged.")
+        note_inconclusive(msgs, st, int(time.time()),
+                          "canary went out but no log row matched it within 8 s",
+                          "the canary went out but no log row matched it within 8 s, so the "
+                          "served model cannot be verified.")
         write_state(st)
         print("\n".join(m for m in msgs if m))
         return
     st.pop("canary", None)
 
     paid_now = any(p in up for p in PAID)
+    clear_inconclusive(st)
     was_degraded = st.get("entitlement") == "degraded"
 
     # Flapping is its own fault. Brief recoveries followed by fresh downgrades mean the account's

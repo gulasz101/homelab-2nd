@@ -102,6 +102,44 @@ This is not theory: a single 60 s chat probe, running from 2026-10-15 to 2026-11
 3 196 of the 3 257 `/sorry` blocks measured in GUL-1244. The one exception is the guard's canary
 above — it runs on change, not on a clock.
 
+## Verdicts — ok, degraded, unknown, and why inconclusive is a fault
+
+The canary has exactly three verdicts, and `entitlement` must be one of them:
+
+- **ok** — the newest canary request was served by a paid model (`4 Argon`, `3.1 Pro`,
+  `3.8 Flash`). This is the only state that may stand as green.
+- **degraded** — the request was served, but by a cheaper model (usually `3.5 Flash-Lite`). The
+  account is being rate-limited; the guard starts the cumulative degraded clock and escalates on
+  capacity, not on the cookie.
+- **unknown** — the sample produced **no verdict**: the chat request failed or timed out, the log
+  row never arrived, or the log named a cause that makes a live probe pointless. `unknown` is a
+  fault, not a neutral placeholder. It refreshes `checked_at` and `last_sample_at`, drops
+  `healthy_since`, and never leaves a previous `ok` standing. It deliberately does **not** credit
+  or clear `degraded_accum_s`, because an inconclusive sample is evidence of neither degradation
+  nor recovery.
+
+A single inconclusive sample speaks one fault message. **Two consecutive** inconclusive samples
+escalate once, naming the count — waiting for a verdict that never comes is how the guard stayed
+silent through a full outage.
+
+Classification is **log-first**: the guard reads `/admin/api/requests` before it sends anything.
+If the newest canary row already names the cause, no chat request goes out:
+
+| newest canary row says | verdict |
+| --- | --- |
+| `no SNlM0e in page (cookie expired or not signed in)` | cookie is dead — re-export it in Firefox; `unknown` |
+| `Client.Timeout`, `context deadline exceeded`, `request canceled` | model is slow — patience, not a re-login; `unknown` |
+| `direct IP slot full` / a local refusal | the lane is saturated, not Google; retry later |
+| anything ambiguous or absent | fall back to one live chat probe |
+
+**Timeouts: the wrapper and the canary.** The canary's own `POST /v1/chat/completions` has a
+**120 s** ceiling. The Hermes cron wrapper that SSHes to the Max kills the whole guard run, so its
+outer ceiling must be **longer** than the guard's 120 s canary timeout plus the rest of the
+checks. If the wrapper kills at the same 120 s, a slow but working model looks inconclusive and a
+healthy session produces a false alarm. Keep the two in agreement: either raise the wrapper above
+the guard's own ceiling, or have the guard report its partial result before it is killed — never
+both.
+
 ## Reading a failure — three classes, and only one of them is Google's
 
 `/admin/api/requests` (admin token) is the only honest source. Match on `model`, `status`,
