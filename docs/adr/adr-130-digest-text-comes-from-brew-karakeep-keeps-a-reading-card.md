@@ -1,6 +1,6 @@
-# ADR: The digest text comes from Brew; Karakeep keeps a reading card
+# ADR-130: ADR: The digest text comes from Brew; Karakeep keeps a reading card
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-10
 - **Issue**: GUL-1183 (decided), recorded by GUL-1251
 - **Related**: GUL-372 (the Morning Brew epic), GUL-1242 (the one-shot Job that converges the prompt), `apps/karakeep/`, `Projects/morning-brew/pipeline/brew.py`

@@ -1,6 +1,6 @@
-# ADR: Heartbeat run payloads are trimmed on a 14-day window
+# ADR-131: ADR: Heartbeat run payloads are trimmed on a 14-day window
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-10
 - **Issue**: GUL-1288
 - **Related**: ADR-107 (host jobs run as system LaunchDaemons), ADR-032 (Cloudflare tunnels), the CNPG cluster in `apps/paperclip/postgres-cluster.yaml`
@@ -50,6 +50,18 @@ reporting still work. What goes away is the raw transcript of runs older than tw
   `gulasz101/paperclip` and belongs to the factory, not to this repo.
 - The first pass freed 81 MB (`vacuum full`); routine passes only run `vacuum (analyze)`, so the
   file stops growing rather than shrinking to the theoretical minimum.
+
+## Verified after merge
+
+Flux `apps` is at `main@sha1:1d26676`; both the ConfigMap and the CronJob carry
+`kustomize.toolkit.fluxcd.io/name: apps`, all four kustomizations `Ready`. First scheduled run
+04:30 CET, job `Complete 1/1` in 9 s.
+
+Board path: `GET /api/issues/<id>/heartbeat-context` **0.15 s** — it was 1.60 s of Postgres CPU
+per call before the expression index, and 14.7 s while an unfiltered `SELECT * FROM heartbeat_runs`
+was in flight. `heartbeat_runs` sits at 391 MB / 3,226 rows, of which only **206 MB of `result_json`
+is inside the 14-day window**: that is the steady state this policy holds, about 15 MB/day of new
+payload.
 
 ## Alternatives
 
