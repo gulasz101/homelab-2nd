@@ -109,7 +109,7 @@ done
 grep -q '^| ADR-008 | A first pending decision | Accepted | 2026-10-28 |$' "$t/docs/adr/README.md" \
   && ok "row 008 uses the ADR's own date" || bad "row 008 missing or wrong: $(grep 'ADR-008' "$t/docs/adr/README.md")"
 grep -q '^| ADR-009 | A second pending decision | Accepted | 2026-10-29 |$' "$t/docs/adr/README.md" \
-  && ok "row 009 uses the ADR's own date" || bad "row 009 missing or wrong: $(grep 'ADR-009' "$t/docs/adr/README.md")"
+  && ok "row 009 uses the ADR's own date" || bad "row 009 missing or wrong: $(grep 'ADR-010' "$t/docs/adr/README.md")"
 # Row order: 007, 008, 009, then the note — never appended below the prose.
 order=$(grep -n '^| ADR-00[789] ' "$t/docs/adr/README.md" | cut -d: -f1 | tr '\n' ' ')
 note=$(grep -n '^> Note: ADR-001' "$t/docs/adr/README.md" | cut -d: -f1)
@@ -126,6 +126,37 @@ out=$(bash "$SCRIPT" --root "$t" --apply 2>&1); rc=$?
 after=$(cd "$t" && find . -type f | sort | xargs shasum | shasum)
 [ "$rc" -eq 0 ] && ok "second run exits 0" || bad "second run exited $rc: $out"
 [ "$before" = "$after" ] && ok "second run changed nothing" || bad "second run rewrote the tree"
+
+# ---- 3b. a draft that already carries the "ADR:" prefix -------------------
+# Seen for real on 2026-11-11: three drafts written as "# ADR: <title>" came out of
+# --apply as "# ADR-131: ADR: <title>" and the same "ADR: " landed in the index row.
+head1 "3b. draft with an ADR: prefix"
+t="$WORK/prefix"; new_tree "$t"
+cat > "$t/docs/adr/pending/c-prefixed.md" <<'EOF'
+# ADR: A decision whose title already says ADR:
+EOF
+cat >> "$t/docs/adr/pending/c-prefixed.md" <<'EOF'
+
+- **Status**: Pending
+- **Date**: 2026-11-11
+- **Issue**: GUL-1288
+EOF
+out=$(bash "$SCRIPT" --root "$t" --apply 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "adopts a draft carrying the prefix" || bad "exit $rc: $out"
+f=$(ls "$t/docs/adr"/adr-010-*.md 2>/dev/null | head -1)
+if [ -n "$f" ]; then
+  h1=$(head -1 "$f")
+  [ "$h1" = "# ADR-010: A decision whose title already says ADR:" ] \
+    && ok "H1 does not repeat the prefix" || bad "H1 is '$h1'"
+  [ "$(head -1 "$f" | grep -o 'ADR: ' | wc -l | tr -d ' ')" -le 1 ] \
+    && ok "exactly one 'ADR: ' survives (the author's own, inside the title)" \
+    || bad "prefix duplicated: $h1"
+else
+  bad "adr-010-*.md missing after adopting a prefixed draft"
+fi
+grep -q '^| ADR-010 | A decision whose title already says ADR: | Accepted | 2026-11-11 |$' "$t/docs/adr/README.md" \
+  && ok "index row carries the cleaned title" \
+  || bad "index row wrong: $(grep 'ADR-010' "$t/docs/adr/README.md")"
 
 # ---- 4. a numbered pending ADR is refused, nothing moves ------------------
 head1 "4. refusal"
