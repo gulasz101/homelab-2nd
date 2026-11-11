@@ -31,7 +31,7 @@ spec:
           # opengym-data is a local-path volume, node-local by definition;
           # the app deployment carries the same selector (H2-107).
           nodeSelector:
-            kubernetes.io/hostname: homelab-2nd
+            kubernetes.io/hostname: mimir
           containers:
             - name: backup
               image: python:3.13-alpine

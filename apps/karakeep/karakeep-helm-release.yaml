@@ -165,10 +165,10 @@ spec:
 
     # Prometheus scraping annotations on the karakeep pod
     defaultPodOptions:
-      # The karakeep-data NFS export on OMV is granted only to homelab-2nd
-      # (192.168.1.179), so the karakeep pod must run there to mount it.
+      # The karakeep-data NFS export on OMV is granted per node IP (mimir 192.168.1.145,
+      # loki .190 since the 2026-11-11 node move); pinned to mimir, the data node.
       nodeSelector:
-        kubernetes.io/hostname: homelab-2nd
+        kubernetes.io/hostname: mimir
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "3000"
