@@ -7,7 +7,14 @@ metadata:
   name: paperclip-db
   namespace: paperclip
 spec:
-  instances: 1
+  instances: 2   # TEMP (node move 2026-11-11): replica on mimir, switchover, then back to 1
+  # Switchover (not restart) on any primary pod-spec change: moving node = new replica +
+  # promote, never an in-place restart that a node-bound local-path PV can't follow.
+  primaryUpdateMethod: switchover
+  # local-path PVs are node-bound for life: pin explicitly (H2-306 lesson), node move 2026-11-11.
+  affinity:
+    nodeSelector:
+      kubernetes.io/hostname: mimir
   imageName: ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie
 
   enableSuperuserAccess: true
