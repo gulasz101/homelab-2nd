@@ -22,7 +22,7 @@
       "allowPush": false
     },
     "readonly": {
-      "turnCap": 40,
+      "turnCap": 60,
       "writesOutsideWorkspace": false,
       "writeScope": "none",
       "allowCommit": false,
