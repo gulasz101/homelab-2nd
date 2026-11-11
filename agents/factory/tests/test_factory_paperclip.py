@@ -11,6 +11,7 @@ Exit 0 = every case passed. Non-zero = at least one failed.
 
 import json
 import os
+import inspect
 import re
 import shutil
 import subprocess
@@ -676,6 +677,19 @@ def case_decide_red(stub, base_sha, repo):
 
 
 def case_verify_fix_round(stub, base_sha, repo):
+    """The name the full suite has always used; the GUL-1267 red check runs the
+    same case by its own name."""
+    return case_fix_round_supersedes_the_old_gate(stub, base_sha, repo)
+
+
+def case_fix_round_supersedes_the_old_gate(stub, base_sha, repo):
+    """GUL-1267 G2/G3: a fix round carries a gate of its own, and opening it
+    cancels the previous round's gate and stops that gate's merge monitor.
+
+    The ledger keeps a round-1 `gate` row and the work order carries a monitor:
+    that is the GUL-1199 state, where PR #189 stayed on offer for a merge while a
+    fix round had not even started.
+    """
     wo = base_work_order(stub, base_sha, repo)
     stub.state.documents[(wo["id"], "ledger")]["body"] = (
         "# Factory ledger\n\n```json\n%s\n```\n" % json.dumps({
@@ -690,6 +704,8 @@ def case_verify_fix_round(stub, base_sha, repo):
         }))
     review = stub.state.add_issue(identifier="GUL-950", title="[review] GUL-900", parentId=wo["id"])
     verify = stage_issue(stub, wo, "[verify] GUL-900 — Add the fixture")
+    gate = stub.state.add_issue(identifier="GUL-949", title="[gate] GUL-900 — Merge",
+                                parentId=wo["id"], status="blocked")
     stub.state.doc(review["id"], "findings",
                    '# Findings\n\n```json\n[{"id": "F-1", "file": "tests/ac.sh", "line": 1, '
                    '"severity": "blocking", "claim": "the AC check never runs"}]\n```\n')
@@ -700,18 +716,51 @@ def case_verify_fix_round(stub, base_sha, repo):
     ledger = json.loads(stub.state.documents[(wo["id"], "ledger")]["body"].split("```json")[1].split("```")[0])
     ledger["stages"]["review"]["issueId"] = review["id"]
     ledger["stages"]["verify"]["issueId"] = verify["id"]
+    ledger["stages"]["gate"] = {"issueId": gate["id"], "identifier": gate["identifier"],
+                                 "round": 1, "attempts": 0, "sha": None}
     stub.state.documents[(wo["id"], "ledger")]["body"] = "# Factory ledger\n\n```json\n%s\n```\n" % json.dumps(ledger)
+    # the round-1 gate already ran once: its merge monitor is still on the work order
+    pr = {"number": 189, "url": "https://github.com/gulasz101/homelab-2nd/pull/189"}
+    stub.state.issues[wo["id"]]["executionPolicy"] = {"monitor": factory.monitor_payload(pr)}
+    stub.state.issues[wo["id"]]["status"] = "in_review"
 
     code, out, raw = run(stub, ["decide", verify["identifier"], "--apply"])
     children = [i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]
     round2 = [c for c in children if " r2]" in c["title"]]
+    ledger = ledger_of(stub, wo)
+    said_gate = comments_on(stub, gate["id"])
     check("decide verify: a confirmed blocking finding opens round 2",
-          code == 0 and out.get("decision") == "approve" and len(round2) == 3, raw[-600:])
-    check("decide verify: round 2 is green → review → verify, chained",
-          [c["title"].split("]")[0] + "]" for c in round2] == ["[green r2]", "[review r2]", "[verify r2]"]
-          and round2[1]["blockedByIssueIds"] == [round2[0]["id"]], [c["title"] for c in round2])
+          code == 0 and out.get("decision") == "approve" and len(round2) == 4, raw[-600:])
+    check("decide verify: round 2 is green → review → verify → gate, chained",
+          [c["title"].split("]")[0] + "]" for c in round2] ==
+          ["[green r2]", "[review r2]", "[verify r2]", "[gate r2]"]
+          and [c["blockedByIssueIds"] for c in round2] ==
+          [[], [round2[0]["id"]], [round2[1]["id"]], [round2[2]["id"]]],
+          [c["title"] for c in round2])
     check("decide verify: the confirmed finding is pasted into the fix issue",
           "F-1" in round2[0]["description"], round2[0]["description"][:200])
+    # GUL-1267 G2: the round-2 gate is a real ledger row, the last stage created.
+    gate_r2 = (ledger.get("stages") or {}).get("gate:r2") or {}
+    check("decide verify: the round-2 gate is recorded in the ledger as gate:r2, round 2",
+          bool(gate_r2) and gate_r2.get("round") == 2
+          and any(c["id"] == gate_r2.get("issueId") and c["title"].startswith("[gate r2]")
+                  for c in round2), gate_r2)
+    # GUL-1267 G3: the round-1 gate is superseded by the new round.
+    check("decide verify: the previous round's gate issue is cancelled",
+          stub.state.issues[gate["id"]]["status"] == "cancelled",
+          stub.state.issues[gate["id"]]["status"])
+    check("decide verify: the cancellation comment names the new round",
+          any("round 2" in body for body in said_gate), said_gate)
+    wo_patches = [p["body"] for p in stub.state.patches
+                  if p["path"] == "api/issues/%s" % wo["id"]]
+    check("decide verify: the old monitor is stopped by a policy-only work-order PATCH",
+          any(b.get("executionPolicy", "absent") is None and "status" not in b
+              for b in wo_patches)
+          and not any((b.get("executionPolicy") or {}).get("monitor") for b in wo_patches),
+          wo_patches)
+    check("decide verify: the work order carries no merge monitor afterwards",
+          not (stub.state.issues[wo["id"]].get("executionPolicy") or {}).get("monitor"),
+          stub.state.issues[wo["id"]].get("executionPolicy"))
     # GUL-989: round 2 re-renders too — verify r2 must name review r2, never the
     # round-1 review (the ledger fallback) and never a `?`.
     check("decide verify: round 2's verify description names round 2's review issue",
@@ -719,6 +768,107 @@ def case_verify_fix_round(stub, base_sha, repo):
           and "`?`" not in round2[2]["description"]
           and "GUL-950" not in round2[2]["description"],
           round2[2]["description"].split("\n")[0][:160])
+    stub.state.issues[wo["id"]]["status"] = "done"
+
+
+def case_gate_refuses_on_an_open_fix_round(stub, base_sha, repo):
+    """GUL-1267 G1: a gate must not decide for a round that is still open.
+
+    The GUL-1199 gate decided 37 s after verify round 1 opened fix round 2, so it
+    judged a head nobody had re-reviewed. It has to refuse as a setup error and
+    write nothing — and it must still decide once that round is closed, otherwise
+    the guard would be a permanent refusal.
+    """
+    wo = base_work_order(stub, base_sha, repo, identifier="GUL-930")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 130, "url": "https://github.com/gulasz101/homelab-2nd/pull/130"}
+    ledger["fixRounds"] = 1
+    gate = stage_issue(stub, wo, "[gate] GUL-930 — Add the fixture")
+    green2 = stage_issue(stub, wo, "[green r2] GUL-930 — Add the fixture", status="done")
+    review2 = stage_issue(stub, wo, "[review r2] GUL-930 — Add the fixture", status="done")
+    verify2 = stage_issue(stub, wo, "[verify r2] GUL-930 — Add the fixture")
+    ledger["stages"] = {
+        "gate": {"issueId": gate["id"], "identifier": gate["identifier"], "round": 1,
+                 "attempts": 0, "sha": None},
+        "green:r2": {"issueId": green2["id"], "identifier": green2["identifier"], "round": 2,
+                     "attempts": 0, "sha": None},
+        "review:r2": {"issueId": review2["id"], "identifier": review2["identifier"], "round": 2,
+                      "attempts": 0, "sha": None},
+        "verify:r2": {"issueId": verify2["id"], "identifier": verify2["identifier"], "round": 2,
+                      "attempts": 0, "sha": None},
+    }
+    write_ledger(stub, wo, ledger)
+
+    ledger_before = stub.state.documents[(wo["id"], "ledger")]["body"]
+    patches_before = len(stub.state.patches)
+    comments_before = len(stub.state.comments)
+    code, out, raw = run(stub, ["decide", gate["identifier"], "--apply"],
+                         extra_env=merge_env("gate-open-r2", GATE_VIEW))
+    reasons = (out or {}).get("reasons") or []
+    reason_text = " ".join(reasons)
+    # `raise SetupError` reaches the CLI through `main()`, which emits no
+    # `decision` key (CONTRACT point 8); the in-function exit-2 path does. Either
+    # shape is a setup error and neither is a verdict on the diff.
+    check("gate r1, open fix round: decide answers a setup error, not a verdict",
+          code == 2 and (out or {}).get("ok") is False
+          and ((out or {}).get("decision") == "setup_error"
+               or reason_text.startswith("setup error:")), raw[-600:])
+    check("gate r1, open fix round: the reason names round 2 and superseded",
+          any("2" in r and "superseded" in r for r in reasons), reasons)
+    check("gate r1, open fix round: the reason names the open stage issue",
+          any(verify2["identifier"] in r for r in reasons), reasons)
+    check("gate r1, open fix round: the ledger body is byte-identical",
+          stub.state.documents[(wo["id"], "ledger")]["body"] == ledger_before,
+          stub.state.documents[(wo["id"], "ledger")]["body"][:400])
+    check("gate r1, open fix round: the gate stage and the work order are not patched",
+          len(stub.state.patches) == patches_before, stub.state.patches[patches_before:])
+    check("gate r1, open fix round: no comment is written",
+          len(stub.state.comments) == comments_before,
+          [c["body"][:100] for c in stub.state.comments[comments_before:]])
+    check("gate r1, open fix round: the gate stage is untouched",
+          stub.state.issues[gate["id"]]["status"] == "in_progress",
+          stub.state.issues[gate["id"]]["status"])
+
+    # positive control: the same ledger, every later-round row closed. The guard
+    # reads the live stage issues, so only they change.
+    stub.state.issues[green2["id"]]["status"] = "done"
+    stub.state.issues[review2["id"]]["status"] = "done"
+    stub.state.issues[verify2["id"]]["status"] = "cancelled"
+    code2, out2, raw2 = run(stub, ["decide", gate["identifier"], "--apply"],
+                            extra_env=merge_env("gate-closed-r2", GATE_VIEW))
+    after = ledger_of(stub, wo)
+    check("gate r1, later round closed: the gate still decides",
+          code2 == 0 and (out2 or {}).get("decision") == "approve", raw2[-600:])
+    check("gate r1, later round closed: the ledger records the pass",
+          after.get("outcome") == "pass", after.get("outcome"))
+    stub.state.issues[wo["id"]]["status"] = "done"
+
+
+def case_fix_round_plans_a_gate(stub, base_sha, repo):
+    """GUL-1267 G2: `plan_stages` puts a gate at the end of a fix round, so a
+    clean verify r2 has something that re-runs `check-gate` against the new head."""
+    cfg = factory.load_agent_config()
+    spec, problems = factory.extract_json_block(SPEC_BODY, "spec")
+    check("fix round plan: the fixture spec parses", spec is not None, problems)
+    ledger = {"workOrder": "GUL-931", "repo": "gulasz101/homelab-2nd", "cwd": repo,
+              "branch": "gul-931", "base": "main", "baseSha": base_sha, "stages": {}}
+    work_order = {"id": "wo-931", "title": "Add the fixture"}
+    plan = factory.plan_stages(cfg, spec, ledger, work_order, 2, "")
+    check("fix round plan: round 2 is green, review, verify, gate",
+          [i["stage"] for i in plan] == ["green", "review", "verify", "gate"],
+          [i["stage"] for i in plan])
+    check("fix round plan: round 2 keys are green:r2, review:r2, verify:r2, gate:r2",
+          [i["key"] for i in plan] == ["green:r2", "review:r2", "verify:r2", "gate:r2"],
+          [i["key"] for i in plan])
+    check("fix round plan: the gate is titled [gate r2]",
+          bool(plan) and plan[-1]["title"].startswith("[gate r2] GUL-931"),
+          plan[-1]["title"] if plan else "(empty plan)")
+    check("fix round plan: the gate goes to Majster, not a stage agent",
+          bool(plan) and plan[-1]["agentId"] == MAJSTER,
+          plan[-1]["agentId"] if plan else "(empty plan)")
+    check("fix round plan: round 1 stays the full five-stage chain",
+          [i["stage"] for i in factory.plan_stages(cfg, spec, ledger, work_order, 1, "")] ==
+          ["red", "green", "review", "verify", "gate"])
 
 
 def case_decide_settles_a_merged_pr(stub, base_sha, repo):
@@ -1458,6 +1608,43 @@ def case_tick_blocks_a_closed_pr(stub):
           (ledger.get("merge") or {}).get("state") == "closed", ledger.get("merge"))
 
 
+def case_tick_settles_on_the_latest_gate_round(stub, base_sha, repo):
+    """GUL-1267 G4: once opening a fix round cancels the round-1 gate, a work
+    order whose round-2 gate passed must still be settled by `tick`."""
+    wo = base_work_order(stub, base_sha, repo, identifier="GUL-933")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 133, "url": "https://github.com/gulasz101/homelab-2nd/pull/133"}
+    ledger["fixRounds"] = 1
+    gate1 = stage_issue(stub, wo, "[gate] GUL-933 — Add the fixture", status="cancelled")
+    gate2 = stage_issue(stub, wo, "[gate r2] GUL-933 — Add the fixture", status="done")
+    ledger["stages"] = {
+        "gate": {"issueId": gate1["id"], "identifier": gate1["identifier"], "round": 1,
+                 "attempts": 0, "sha": None},
+        "gate:r2": {"issueId": gate2["id"], "identifier": gate2["identifier"], "round": 2,
+                    "attempts": 0, "sha": None},
+    }
+    write_ledger(stub, wo, ledger)
+    stub.state.issues[wo["id"]]["status"] = "in_review"
+    stub.state.issues[wo["id"]]["executionPolicy"] = {"monitor": factory.monitor_payload(ledger["pr"])}
+
+    code, out, raw = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "latest-gate", {"state": "MERGED", "mergedAt": "2026-11-10T06:00:00Z",
+                        "mergeCommit": {"oid": "f1xed1267"}}))
+    issue = stub.state.issues[wo["id"]]
+    ledger = ledger_of(stub, wo)
+    check("tick latest gate: a done gate:r2 settles the merge while gate r1 is cancelled",
+          code == 0 and issue["status"] == "done", raw[-600:])
+    check("tick latest gate: the ledger records the merge and the outcome",
+          (ledger.get("merge") or {}).get("state") == "merged"
+          and ledger.get("outcome") == "merged", ledger.get("merge"))
+    check("tick latest gate: the monitor is cleared",
+          issue.get("executionPolicy") is None, issue.get("executionPolicy"))
+    check("tick latest gate: the merge commit is on the work order",
+          any("f1xed1267" in body for body in comments_on(stub, wo["id"])),
+          comments_on(stub, wo["id"])[-1:])
+    stub.state.issues[wo["id"]]["status"] = "done"
+
+
 def case_tick_survives_a_stale_stage_row(stub):
     """GUL-557: a ledger row naming a deleted stage issue is one flag on one
     work order; the sweep still reads and settles the others."""
@@ -1672,13 +1859,37 @@ def case_start_ignores_a_parked_blocker(stub):
         stub.state.issues[issue["id"]]["status"] = "done"
 
 
+def run_one_case(name, stub, base_sha, repo):
+    """Run a single case by name; `--case NAME` is how the red check isolates one."""
+    cases = {n: f for n, f in globals().items() if n.startswith("case_") and callable(f)}
+    fn = cases.get(name)
+    if fn is None:
+        raise SystemExit("unknown case %r; known: %s" % (name, ", ".join(sorted(cases))))
+    if len(inspect.signature(fn).parameters) == 1:
+        fn(stub)
+    else:
+        fn(stub, base_sha, repo)
+
+
 def main():
     global WORKDIR
+    argv = sys.argv[1:]
+    only = None
+    if "--case" in argv:
+        idx = argv.index("--case")
+        if idx + 1 >= len(argv):
+            print("--case needs a case name", file=sys.stderr)
+            return 2
+        only = argv[idx + 1]
     WORKDIR = tempfile.mkdtemp(prefix="factory-pc-tests-")
     try:
         repo, base_sha = make_repo()
         stub = Stub()
         try:
+            if only:
+                run_one_case(only, stub, base_sha, repo)
+                print("\n%s passed, %s failed" % (len(PASSES), len(FAILURES)))
+                return 0 if not FAILURES else 1
             case_start_cuts_branch(stub)
             case_start_refuses_tooling_checkout(stub)
             case_start_ignores_a_parked_blocker(stub)
@@ -1707,6 +1918,9 @@ def main():
             case_tick_waits_on_an_open_pr(stub)
             case_tick_blocks_a_closed_pr(stub)
             case_tick_survives_a_stale_stage_row(stub)
+            case_fix_round_plans_a_gate(stub, base_sha, repo)
+            case_gate_refuses_on_an_open_fix_round(stub, base_sha, repo)
+            case_tick_settles_on_the_latest_gate_round(stub, base_sha, repo)
         finally:
             stub.close()
     finally:
