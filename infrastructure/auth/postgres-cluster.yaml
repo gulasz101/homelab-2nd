@@ -85,7 +85,9 @@ spec:
       parameters:
         barmanObjectName: authentik-db-backups
         # Current generation (archiver target); bump to "<name>-genN" (fresh) on rebuild.
-        serverName: authentik-db
+        # gen2 (2026-11-11): the un-suffixed path held WAL from an earlier authentik-db
+        # system; promoting a replica during the node move pulled it and aborted.
+        serverName: authentik-db-gen2
 
   backup:
     retentionPolicy: "30d"
