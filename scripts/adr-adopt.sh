@@ -111,6 +111,10 @@ while IFS= read -r f; do
     fail=1; continue
   fi
   title=${h1#\# }
+  # A draft written as "# ADR: <title>" must not come out as "# ADR-131: ADR: <title>".
+  title=${title#ADR: }
+  title=${title#ADR:}
+  title=${title#"${title%%[! ]*}"}
   case "$title" in
     *'|'*)
       printf 'adopt: %s: the H1 contains "|" and cannot be an index row\n' "$base" >&2

@@ -1,4 +1,4 @@
-# ADR-131: ADR: Heartbeat run payloads are trimmed on a 14-day window
+# ADR-131: Heartbeat run payloads are trimmed on a 14-day window
 
 - **Status**: Accepted
 - **Date**: 2026-11-10

@@ -1,4 +1,4 @@
-# ADR-129: ADR: A permanently red agent is caught by the hourly sweep, not by the Attention panel
+# ADR-129: A permanently red agent is caught by the hourly sweep, not by the Attention panel
 
 - **Status**: Accepted
 - **Date**: 2026-11-02
