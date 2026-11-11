@@ -44,7 +44,7 @@ spec:
       # from the Service named "openchamber", clobbering the app's own vars.
       enableServiceLinks: false
       nodeSelector:
-        kubernetes.io/hostname: t460
+        kubernetes.io/hostname: loki
       securityContext:
         fsGroup: 1000
       initContainers:

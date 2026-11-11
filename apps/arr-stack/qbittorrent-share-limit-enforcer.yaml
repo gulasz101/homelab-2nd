@@ -97,7 +97,7 @@ spec:
           restartPolicy: Never
           # Not on arr-box: that node runs at ~92% of allocatable memory.
           nodeSelector:
-            kubernetes.io/hostname: homelab-2nd
+            kubernetes.io/hostname: loki
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534

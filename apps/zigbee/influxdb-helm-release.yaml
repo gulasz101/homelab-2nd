@@ -90,7 +90,7 @@ spec:
     # local-path volumes are node-local: keep the pod on the node that holds the
     # volume. Harmless if the PVC is ever repointed at OMV NFS.
     nodeSelector:
-      kubernetes.io/hostname: homelab-2nd
+      kubernetes.io/hostname: mimir
 
     resources:
       requests:
