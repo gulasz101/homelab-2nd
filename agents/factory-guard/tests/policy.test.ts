@@ -274,9 +274,9 @@ const toolCases: Array<[string, unknown, typeof exec, string | undefined]> = [
 
 test("roles.json carries the plan's profiles", () => {
   assert.equal(exec.turnCap, 60);
-  assert.equal(tester.turnCap, 25);
+  assert.equal(tester.turnCap, 60);
   assert.equal(builder.turnCap, 40);
-  assert.equal(ro.turnCap, 40);
+  assert.equal(ro.turnCap, 60);
 });
 
 for (const [cmd, role, expected] of bashCases) {

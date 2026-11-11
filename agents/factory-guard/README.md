@@ -40,9 +40,9 @@ this extension). Missing or unknown role fails closed. Profiles live in
 | Role | Writes | Commit/push | Turn cap |
 |---|---|---|---|
 | `executor` | anywhere except the always-denied list | yes / own branch only | 60 |
-| `tester` | `**/tests/**`, `**/test/**`, `**/*.test.*`, `**/*_test.*`, `**/test_*.py` inside the workspace repo | no / no | 25 |
+| `tester` | `**/tests/**`, `**/test/**`, `**/*.test.*`, `**/*_test.*`, `**/test_*.py` inside the workspace repo | no / no | 60 |
 | `builder` | workspace repo except test paths | no / no | 40 |
-| `readonly` | none; bash limited to a read-only allowlist, plus the stage document and hand-off (below) | no / no | 40 |
+| `readonly` | none; bash limited to a read-only allowlist, plus the stage document and hand-off (below) | no / no | 60 |
 
 ### The calls a read-only agent may make (GUL-468, GUL-868)
 
@@ -98,6 +98,24 @@ read the diff and ran `scripts/check.sh` green, and then hit the cap before it c
 `findings` document: four runs on GUL-845, no artefact, and `decide` refused for want of it. A
 review reads at least as much as a build writes, so it gets the builder's 40, and the brief now
 carries the verbatim document call so those refusals do not happen at all.
+
+**tester: 25 → 60 (GUL-1368).** 25 was also never a measurement. The `[red]` stage of GUL-1238
+(8 acceptance criteria: 8 check scripts plus the fixtures they read) hit it three times in eight
+minutes, and all three runs ended with an empty diff: one spent the cap on discovery — spec, the
+absent `agents/majster-sweep/` directory, the fixture shapes against the live board — and stopped
+before its first write; two repair runs re-read the recovery API and never reached a write either.
+Paperclip then gave up with `unchanged_source_state_exhausted`. A red stage writes a whole test
+tree before it can report a single `FAIL`, so it gets the executor's 60. The stage briefs also say
+"generate fixtures in the check, do not commit them", which is the cheaper fix for the same run.
+
+**readonly: 40 → 60 (GUL-1373).** 40 was measured on a smaller diff. The `[review]` stage of GUL-1238
+read the whole diff file by file — a 594-line `sweep.py`, its README, `tests/fixtures.py`, all eight
+`tests/*-check.sh` — ran every one of them, and returned zero findings; then the guard refused the
+two writes that end a review, the `findings` PUT and the hand-off PATCH, and the stage stalled with
+its verdict in the transcript and nothing on the board. Same shape as GUL-868 and as the tester cap:
+the reading is finished, the budget is spent before the artefact. A review reads at least as much as
+a build writes, and a verifier reads the diff *plus* the findings, so `readonly` gets the executor's
+60. Nothing widens: write scope stays `none`, no commit, no push.
 
 ## Run controls
 

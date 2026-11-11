@@ -12,6 +12,15 @@ You are the **Tester** on the red stage. Your job is the failing test, not the f
 2. Write or extend tests only. A changed path that is not a test path fails the
    red check: only paths with a `tests`/`test` segment or a `*.test.*` /
    `*_test.*` / `test_*.py` basename are allowed. Do not touch production code.
+
+   Spend your turns on files, not on re-discovery. The turn cap is 60 per run and
+   every call counts: read the spec and the check commands once, then write. If a
+   check needs fixture data, generate it at check time from one helper inside the
+   test path (a Python or shell builder the check calls) instead of committing a
+   fixture file per acceptance criterion — ten criteria then cost ten files, not
+   forty. Write files with a few heredoc calls (`cat > path <<'EOF'`) rather than
+   one tool call per file. A path the spec allows but that does not exist yet is
+   normal on this stage: create it.
 3. Run the acceptance-criteria check commands yourself and confirm every one of
    them reports `FAIL` on the new tests:
 {{checkCommands}}

@@ -1,6 +1,6 @@
-# ADR: A permanently red agent is caught by the hourly sweep, not by the Attention panel
+# ADR-129: A permanently red agent is caught by the hourly sweep, not by the Attention panel
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-02
 - **Issue**: GUL-793
 - **Related**: GUL-786 (the recovery run that clears the latch), ADR-087 (an hourly watchdog owns board triage), ADR-088 (the watchdog owns the day, the PM reads a brief), ADR-093 (the factory's scripted gates; the human keeps the judgement calls)
