@@ -25,6 +25,10 @@ outside those paths is blocked, and the diff guard puts the file back when the r
 everything a check needs — helpers, fixtures, sample data — inside a test path, because that is
 the only place you can write.
 
+Fixtures are generated, not committed: a check that needs eight fixture shapes builds them at check
+time from one helper in the test path. Write files with a few heredoc calls, not one tool call per
+file — the cap counts every turn, and discovery spends them faster than writing does.
+
 ## Your output
 
 - One check for every AC, in the file the spec names, left **uncommitted** in the worktree. Never
