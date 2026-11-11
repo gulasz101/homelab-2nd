@@ -1,0 +1,104 @@
+---
+# Daily hygiene for Paperclip's heartbeat_runs table (ADR-129).
+# Two jobs, both idempotent:
+#   1. ensure the expression index the board's redaction query needs
+#   2. trim raw stdout/output blobs from terminal runs older than RETENTION_DAYS
+# No rows are deleted: 60 foreign keys point at heartbeat_runs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paperclip-heartbeat-retention-sql
+  namespace: paperclip
+data:
+  trim.sql: |
+    -- Remove the bulk blobs from terminal runs past the retention window.
+    -- Keeps the row, its identity keys and its summary/usage fields intact.
+    with trim as (
+      select id from heartbeat_runs
+      where created_at < now() - make_interval(days => :days)
+        and coalesce(status, '') not in ('running', 'queued', 'pending')
+        and (result_json ? 'stdout'
+             or result_json ? 'output'
+             or stdout_excerpt is not null
+             or stderr_excerpt is not null)
+    ), upd as (
+      update heartbeat_runs r
+      set result_json     = r.result_json - 'stdout' - 'output',
+          stdout_excerpt  = null,
+          stderr_excerpt  = null
+      from trim
+      where r.id = trim.id
+      returning r.id
+    )
+    select count(*) as rows_trimmed from upd;
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: paperclip-heartbeat-retention
+  namespace: paperclip
+spec:
+  schedule: "30 4 * * *"          # daily, after the 03:00 base backup
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 172800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: paperclip-heartbeat-retention
+            app.kubernetes.io/part-of: paperclip
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 26
+            runAsGroup: 26
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: retention
+              image: ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: PGHOST
+                  value: paperclip-db-rw.paperclip.svc.cluster.local
+                - name: PGPORT
+                  value: "5432"
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef: { name: paperclip-db-credentials, key: username }
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: paperclip-db-credentials, key: password }
+                - name: PGDATABASE
+                  valueFrom:
+                    secretKeyRef: { name: paperclip-db-credentials, key: database }
+                - name: RETENTION_DAYS
+                  value: "14"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  echo "== ensure expression index (no-op when present) =="
+                  psql -v ON_ERROR_STOP=1 -c "create index concurrently if not exists heartbeat_runs_ctx_paperclip_issue_idx on heartbeat_runs (company_id, ((context_snapshot -> 'paperclipIssue' ->> 'id')));"
+                  echo "== trim blobs older than ${RETENTION_DAYS} days =="
+                  psql -v ON_ERROR_STOP=1 -v days="${RETENTION_DAYS}" -f /sql/trim.sql
+                  echo "== reclaim inside the table =="
+                  psql -v ON_ERROR_STOP=1 -c "vacuum (analyze) heartbeat_runs;"
+              volumeMounts:
+                - name: sql
+                  mountPath: /sql
+                  readOnly: true
+          volumes:
+            - name: sql
+              configMap:
+                name: paperclip-heartbeat-retention-sql
