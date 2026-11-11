@@ -971,6 +971,26 @@ def cmd_commit(args) -> int:
     return 0
 
 
+def cmd_push(args) -> int:
+    """Push the checkout's branch to origin (GUL-1267 F-1).
+
+    A fix round commits on the same branch the first green stage opened its PR
+    from, so the PR head is only the round's work once that commit is pushed.
+    Round 1 opened the PR *and* pushed; a later round reuses the PR and must
+    still push, or the gate reads the round-1 head and offers to merge it.
+    """
+    if not re.match(r"^GUL-[0-9]+$", args.issue):
+        raise SetupError("--issue must be GUL-<n>, got %r" % args.issue)
+    branch = git(args.repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    if branch in ("main", "master"):
+        emit(False, "push", ["refusing to push %s" % branch])
+        return 1
+    git(args.repo, "push", "-u", "origin", branch)
+    emit(True, "push", [], {"branch": branch,
+                            "sha": git(args.repo, "rev-parse", "HEAD").strip()})
+    return 0
+
+
 def cmd_open_pr(args) -> int:
     if not re.match(r"^GUL-[0-9]+$", args.issue):
         raise SetupError("--issue must be GUL-<n>, got %r" % args.issue)
@@ -1222,8 +1242,12 @@ def template_values(spec: dict, ledger: dict, cfg: dict, stage: str, round_no: i
 
 def plan_stages(cfg: dict, spec: dict, ledger: dict, work_order: dict, round_no: int,
                 findings_block: str) -> list:
+    # GUL-1267 G2: a fix round ends in a gate of its own. Without one, a clean
+    # verify r2 approved the chain on the *round-1* gate, which had already
+    # decided the head the fix round rewrote — nobody re-ran `check-gate`.
     plan = []
-    for stage in STAGE_ORDER if round_no == 1 else ("green", "review", "verify"):
+    order = STAGE_ORDER if round_no == 1 else ("green", "review", "verify", "gate")
+    for stage in order:
         agent = stage_agent(cfg, stage)
         extra = {"findingsBlock": findings_block if stage == "green" else ""}
         plan.append({
@@ -1882,6 +1906,24 @@ def cmd_factory_decide(args) -> int:
             emit(merge_state == "merged", "decide", [reason], result)
             return 0 if merge_state == "merged" else 1
 
+    if stage == "gate":
+        # GUL-1267 G1: a gate decides the whole chain, so it is superseded the
+        # moment a later round opens — the head it would judge is the one the
+        # fix round is rewriting. GUL-1199 merged PR #189 thirty-seven seconds
+        # after verify round 1 opened round 2. Refuse as a setup error and write
+        # nothing: this is not a verdict on the diff, and booking it as a failed
+        # check would spend one of the three attempts the gate never got
+        # (GUL-1155).
+        later = open_later_round_stages(api, ledger, work_order, round_no)
+        if later:
+            rounds = ", ".join(str(r) for r in sorted({r for r, _k, _i in later}))
+            opened = ", ".join("%s (%s) is %s" % (k, i.get("identifier") or "?", i.get("status"))
+                               for _r, k, i in later)
+            raise SetupError(
+                "superseded: round %s is open (%s), so the gate for round %d decides no "
+                "head; it decides once every stage of round %s is done or cancelled"
+                % (rounds, opened, round_no, rounds))
+
     spec_doc = api.document(work_order["id"], "spec")
     if not spec_doc or not spec_doc.get("body"):
         raise SetupError("%s has no `spec` document" % work_order.get("identifier"))
@@ -2050,8 +2092,17 @@ def cmd_factory_decide(args) -> int:
         ledger["stages"][key]["sha"] = (cparsed or {}).get("sha")
         existing_pr = ledger.get("pr") or {}
         if existing_pr.get("number"):
-            # a decide re-run must not open a second PR for the same branch
-            pass
+            # a decide re-run must not open a second PR for the same branch, but
+            # the commit still has to reach that PR's head (GUL-1267 F-1): a
+            # green r2 that never pushed left the round-1 head on the PR, so
+            # the gate passed round-1 code and re-armed its merge monitor.
+            hcode, hparsed, hout = _run_self(["push", "--repo", cwd,
+                                              "--issue", work_order["identifier"]])
+            if hcode != 0:
+                raise SetupError("push refused: %s" % ((hparsed or {}).get("reasons")))
+            # `pr.head` is the sha the PR head carries; a reader (the gate) can
+            # compare it with the latest green row instead of trusting the round.
+            ledger["pr"]["head"] = (hparsed or {}).get("sha") or ledger["stages"][key].get("sha")
         else:
             pcode, pparsed, pout = _run_self(["open-pr", "--repo", cwd,
                                               "--issue", work_order["identifier"],
@@ -2064,7 +2115,8 @@ def cmd_factory_decide(args) -> int:
             match = re.search(r"/pull/([0-9]+)", url or "")
             if match:
                 number = int(match.group(1))
-            ledger["pr"] = {"number": number, "url": url}
+            ledger["pr"] = {"number": number, "url": url,
+                            "head": ledger["stages"][key].get("sha")}
             # the work product links the PR to the board; it is not the record
             # the next stage reads, so it lands after the ledger is durable. A
             # re-run reuses ledger["pr"] and leaves the link to be re-added by
@@ -2081,6 +2133,8 @@ def cmd_factory_decide(args) -> int:
         pass
     elif stage == "verify":
         if open_fix_round:
+            new_round = round_no + 1
+            superseded = latest_gate_row(ledger, round_no)
             ledger["fixRounds"] = int(ledger.get("fixRounds", 0)) + 1
             findings_block = ("\n**Confirmed blocking findings from verify (fix these, round %d):**\n%s\n"
                               % (round_no + 1, "\n".join("- %s" % b for b in blocking)))
@@ -2096,10 +2150,17 @@ def cmd_factory_decide(args) -> int:
                 }
             # GUL-989: the round's stage ids exist now, so the verify description
             # can name its own review stage instead of a `?`.
-            settle_stage_descriptions(api, cfg, spec, ledger, work_order, round_no + 1,
+            settle_stage_descriptions(api, cfg, spec, ledger, work_order, new_round,
                                       findings_block, plan, created)
+            # GUL-1267 G3: the round that just closed left a gate behind. Side
+            # effects, not the record: they run after the ledger write, like the
+            # gate's own monitor (GUL-497).
+            after_ledger.append(
+                lambda _row=superseded, _n=new_round: supersede_gate(
+                    api, _row, _n, work_order["id"]))
             api.comment(work_order["id"], "fix round %d opened: %s"
-                        % (round_no + 1, ", ".join(i["issue"].get("identifier", "?") for i in created)))
+                        % (new_round, ", ".join(i["issue"].get("identifier", "?")
+                                                 for i in created)))
     else:  # gate
         pr = ledger.get("pr") or {}
 
@@ -2168,6 +2229,85 @@ def _stage_issue(api, entry, flags, work_order, label):
         sys.stderr.write("factory tick: %s: stage issue %s (%s) is gone: %s\n"
                          % (work_order, issue_id, label, exc))
         return None
+
+
+def latest_gate_row(ledger: dict, upto_round: int | None = None):
+    """The newest gate row in the ledger, as `(round, key, row)` or None (GUL-1267).
+
+    A fix round carries a gate of its own, so "the gate stage" is no longer one
+    key: `upto_round` picks the newest gate at or before that round — the one a
+    new fix round supersedes — and no bound picks the newest overall, which is the
+    one that settles the merge in `tick`.
+    """
+    rows = []
+    for key, row in (ledger.get("stages") or {}).items():
+        if not isinstance(row, dict) or not (key == "gate" or key.startswith("gate:r")):
+            continue
+        row_round = int(row.get("round") or 1)
+        if upto_round is not None and row_round > upto_round:
+            continue
+        rows.append((row_round, key, row))
+    rows.sort(key=lambda item: (item[0], item[1]))
+    return rows[-1] if rows else None
+
+
+def open_later_round_stages(api, ledger: dict, work_order: dict, round_no: int) -> list:
+    """Later-round stage issues that are still open: `[(round, key, issue)]`.
+
+    GUL-1267 G1: a gate for round N is superseded by round N+1. The guard reads
+    the live stage issues, not the ledger alone, because a row stays in the
+    ledger after its issue is cancelled or done. A row whose issue is gone (404)
+    counts as closed: a deleted stage must not block the gate forever.
+    """
+    flags: list = []
+    open_rows = []
+    for key, row in sorted((ledger.get("stages") or {}).items()):
+        if not isinstance(row, dict):
+            continue
+        row_round = int(row.get("round") or 1)
+        if row_round <= round_no:
+            continue
+        issue = _stage_issue(api, row, flags, work_order.get("identifier", "?"), key)
+        if issue is None or issue.get("status") in ("done", "cancelled"):
+            continue
+        open_rows.append((row_round, key, issue))
+    return open_rows
+
+
+def supersede_gate(api, gate_row, new_round: int, work_order_id: str) -> None:
+    """Cancel the gate a fix round supersedes and stop its merge watch (GUL-1267 G3).
+
+    GUL-1199: verify round 1 opened round 2 thirty-seven seconds after the round-1
+    gate had put PR #189 `in_review` with a merge monitor — a live offer to merge
+    a head the fix round was about to rewrite. So opening a round cancels the gate
+    it supersedes, with a comment that names the new round, and clears the work
+    order's monitor. The monitor clear is a policy-only PATCH: the work order's
+    status is not the factory's to change here (GUL-1128).
+    """
+    import pc
+    if gate_row is not None:
+        _round, key, row = gate_row
+        issue_id = row.get("issueId")
+        if issue_id:
+            try:
+                issue = api.issue(issue_id)
+            except pc.ApiError as exc:
+                if exc.status != 404:
+                    raise
+                issue = None
+            if issue and issue.get("status") not in ("done", "cancelled"):
+                api.patch_issue(issue_id, {
+                    "status": "cancelled",
+                    "comment": ("superseded: fix round %d opened, so this gate (%s) no "
+                                "longer decides this work order; the round-%d gate does."
+                                % (new_round, key, new_round)),
+                })
+    try:
+        order = api.issue(work_order_id)
+    except pc.ApiError:
+        order = None
+    if (order or {}).get("executionPolicy"):
+        api.patch_issue(work_order_id, {"executionPolicy": None})
 
 
 def cmd_factory_tick(args) -> int:
@@ -2244,12 +2384,15 @@ def cmd_factory_tick(args) -> int:
         if stop:
             flags.append("STOP")
         # the merge watch (GUL-553): a gate-passed work order waits `in_review`
-        # for a merge on GitHub, and this is what notices it.
+        # for a merge on GitHub, and this is what notices it. GUL-1267 G4: the
+        # gate that matters is the newest round's, not the round-1 `gate` row —
+        # opening a fix round cancels that one.
         merge_state = None
         pr = ledger.get("pr") or {}
-        gate_entry = stages.get("gate") or {}
+        newest_gate = latest_gate_row(ledger)
+        gate_entry = newest_gate[2] if newest_gate else {}
         if pr.get("number") and not ledger.get("merge") and gate_entry.get("issueId"):
-            gate_issue = stage_issue(gate_entry, "gate")
+            gate_issue = stage_issue(gate_entry, newest_gate[1])
             if gate_issue and gate_issue.get("status") == "done":
                 try:
                     view = pr_merge_view(ledger.get("repo") or "", pr["number"])
@@ -2376,6 +2519,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--stage", required=True, choices=["red", "green"])
     s.add_argument("--issue", required=True)
     s.set_defaults(fn=cmd_commit)
+
+    s = sub.add_parser("push")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--issue", required=True)
+    s.set_defaults(fn=cmd_push)
 
     s = sub.add_parser("open-pr")
     s.add_argument("--repo", required=True)

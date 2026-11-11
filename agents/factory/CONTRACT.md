@@ -207,6 +207,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 | `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed` |
 | `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ maxDiffLines`; every HelmRelease the PR changes pins a chart version at or above the one the cluster runs (ADR-097, below) |
 | `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only). A second run on a clean tree whose HEAD is already `factory(GUL-N): <stage>` is not an error: it passes and returns that HEAD sha, so a `decide` that died after its commit can be re-run (GUL-497) |
+| `push --repo DIR --issue GUL-N` | pushes the checkout's branch to origin (`git push -u origin <branch>`, never `--force`); refuses (exit 1) on `main`/`master`. JSON adds `"branch"` and `"sha"`. Used by `decide` when the PR already exists, so a later round's commit reaches the PR head (GUL-1267 F-1) |
 | `open-pr --repo DIR --issue GUL-N --title T` | current branch is not `main`/`master` (refuse, exit 1); `git push -u origin <branch>` (never `--force`); `gh pr create` with body linking the work order: `Work order: [GUL-N](https://paperclip.voitech.dev/GUL/issues/GUL-N)`. JSON adds `"url": "<PR url>"`. Repo comes from `git remote get-url origin` |
 | `start GUL-N [--dry-run]` | point 9 below |
 | `decide GUL-M [--apply]` | point 9 below |
@@ -321,7 +322,11 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   write exits 2 as a setup error and leaves the stage `in_progress` with its
   work already in git; the same `decide` is re-runnable because `commit` hands
   back HEAD for this stage and a recorded `pr` is reused instead of opening a
-  second PR. Side effects that are not the record — the green stage's work
+  second PR. A reused PR is **pushed, not skipped**: round 1 opened it and
+  pushed then, and a later round commits on the same branch, so the green pass
+  of a fix round runs `push` and records the sha on the PR head in `pr.head`
+  (GUL-1267 F-1). Without that push the gate would read the round-1 head, pass
+  round-1 code and re-arm its merge monitor on a head nobody re-reviewed. Side effects that are not the record — the green stage's work
   product, the gate's merge monitor and the work order's `in_review` — run after
   the `done` PATCH. Request-changes writes the ledger before its `in_progress` PATCH
   for the same reason: the `attempts` counter that escalates on the third
@@ -330,8 +335,24 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   Paperclip routes it back to the stage agent). The comment is the check's JSON
   line plus the last 60 lines of its output.
 - verify with a non-empty `blockingConfirmed` → approve it and open a fix round
-  (`[green r2]` → `[review r2]` → `[verify r2]`, chained the same way), confirmed
-  findings pasted into the fix issue. At most 2 fix rounds.
+  (`[green r2]` → `[review r2]` → `[verify r2]` → `[gate r2]`, chained the same
+  way), confirmed findings pasted into the fix issue, and the gate recorded in
+  the ledger as `gate:r2`. At most 2 fix rounds. Opening the round **supersedes
+  the previous round's gate**: that gate issue is cancelled with a comment naming
+  the new round, and the work order's merge monitor is cleared in a policy-only
+  PATCH (`{"executionPolicy": null}`, no `status`), so no live offer to merge a
+  head the fix round is rewriting is left behind (GUL-1267 G3). The round's green
+  stage then commits **and pushes** that commit to the branch of the round-1 PR
+  (`pr.head`), so `check-gate` in gate r2 reads the fixed head and not round 1's
+  (GUL-1267 F-1). A gate that runs while a later round is still open is a
+  **setup error** (exit 2) naming the open
+  stage and the round it is superseded by, and it writes nothing: no ledger, no
+  stage PATCH, no comment (GUL-1267 G1). The same ledger still decides once every
+  later-round stage is `done` or `cancelled`.
+- **latest gate round**: because a fix round carries a gate of its own, "the gate
+  stage" is whichever `gate` / `gate:rN` row has the highest round, and every
+  reader uses that one. The round-1 `gate` row is the latest gate round only
+  while no fix round has opened.
 - gate pass → **no card** (GUL-553). The work order goes `in_review` with a
   comment that names the PR and says merge it on GitHub, plus an issue monitor
   (`executionPolicy.monitor`: `kind: external_service` — the only accepted value —
@@ -391,8 +412,9 @@ skips the drift check there and prints `guard: not required` instead of reportin
 Majster as drift on every sweep.
 
 **`tick --apply` — the merge watch (GUL-553).** For every open work order whose
-ledger has a `pr.number`, whose `gate` stage issue is `done`, and whose ledger has
-no `merge` record, `tick` reads
+ledger has a `pr.number`, whose **latest gate round** (`gate`, `gate:r2`, … — the
+highest `round` in the ledger, GUL-1267 G4) stage issue is `done`, and whose
+ledger has no `merge` record, `tick` reads
 `gh pr view <n> --repo OWNER/REPO --json state,mergedAt,mergeCommit` and settles it:
 
 - `MERGED` → withdraw any leftover "Merge PR #N?" card, write `merge: {state,
