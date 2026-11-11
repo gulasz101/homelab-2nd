@@ -336,6 +336,34 @@ printf '%s' '<that value>' > ~/.config/homelab/heartbeat-token && chmod 600 ~/.c
 - **After a macOS major upgrade,** re-run `--status` and one drill: system-domain launchd semantics
   and `UserName` daemons' access to the user's home are the things that break.
 
+### 6a. The Paperclip server's own hourly database backup (GUL-1331)
+
+`paperclipai` backs the DB up itself, **hourly at :05**, into `~/.paperclip/instances/default/data/backups`.
+With engine `auto` it tries `pg_dump` first and, on any error, silently drops to a JavaScript dump
+that reads every table with `SELECT * FROM <table>` and writes one `INSERT` per row. There is no
+`pg_dump` on this Mac, so every hour spent ~5 minutes escaping 2.4 GB (2.1 GB of it `heartbeat_runs`
+JSONB) and held the board's pool connection while it did it.
+
+The fix on this host (takes effect the next time the server starts):
+`PAPERCLIP_PG_DUMP_PATH=/usr/local/bin/paperclip-pg-dump`
+(in `~/.paperclip/.env` and `~/.paperclip/instances/default/.env`), a shim that ignores the host in
+the connection string and runs the `pg_dump` that ships **inside** `paperclip-db-1` — same build as
+the server, no Homebrew, nothing new on the host. Source of truth for the shim: `bin/paperclip-pg-dump`.
+
+```sh
+# how long the last three took and where they landed (JS engine ~290 s, pg_dump ~60 s)
+grep -a "Automatic database backup complete" ~/Library/Logs/homelab/paperclip.log | tail -3
+# a pg_dump dump is all COPY; a JavaScript dump has zero COPY lines and thousands of INSERTs
+/usr/bin/gzip -dc ~/.paperclip/instances/default/data/backups/<newest>.sql.gz | grep -c '^COPY public\.'
+
+# rollback: unset the override, restart, and you are back on the (slow, working) JS engine
+#   remove the PAPERCLIP_PG_DUMP_PATH line from both .env files, then
+sudo /bin/launchctl kickstart -k system/dev.voitech.homelab.paperclip
+```
+
+Restart only when the board is idle: `launchctl kickstart` kills in-flight runs. The env is read at
+process start, so an edit alone does nothing.
+
 ## 7. Moving the whole fleet between models (GUL-769)
 
 Every agent's primary model is pinned in four places, and they have to agree or the fleet ends up

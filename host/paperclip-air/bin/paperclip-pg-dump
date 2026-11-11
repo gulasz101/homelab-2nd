@@ -1,0 +1,70 @@
+#!/usr/bin/python3
+"""pg_dump shim for Paperclip's automatic database backup (GUL-1331).
+
+Paperclip spawns PAPERCLIP_PG_DUMP_PATH with:
+    <bin> --dbname=<connstr> --format=plain --clean --if-exists --no-owner --no-privileges
+and pipes stdout into gzip. There is no pg_dump on this Mac, so without this shim the server
+silently falls back to its JavaScript dump engine, which reads every table with
+`SELECT * FROM <table>` and writes one INSERT per row (2.4 GB, ~5 min, every hour).
+
+This shim ignores the connection string's host/port, extracts only user + database name, and runs
+the pg_dump that ships inside the Postgres pod itself (same major as the server, no version skew),
+streaming the plain SQL to stdout. Exec, not subprocess: the child inherits stdout directly.
+
+Env knobs: PAPERCLIP_PG_DUMP_NAMESPACE (default paperclip), PAPERCLIP_PG_DUMP_POD
+(default paperclip-db-1), PAPERCLIP_PG_DUMP_USER (default postgres), KUBECTL_BIN, KUBECONFIG.
+Read-only on the database: pg_dump only SELECTs.
+"""
+import os
+import sys
+import urllib.parse
+
+KUBECTL = os.environ.get("KUBECTL_BIN", "/Users/paperclip/.local/bin/kubectl")
+KUBECONFIG = os.environ.get("KUBECONFIG", "/Users/paperclip/.kube/config")
+NAMESPACE = os.environ.get("PAPERCLIP_PG_DUMP_NAMESPACE", "paperclip")
+POD = os.environ.get("PAPERCLIP_PG_DUMP_POD", "paperclip-db-1")
+
+
+def main(argv):
+    dbname = None
+    passthrough = []           # flags pg_dump accepts and we keep verbatim
+    keep_next = False
+    for arg in argv:
+        if keep_next:
+            passthrough += ["-t", arg]
+            keep_next = False
+            continue
+        if arg.startswith("--dbname="):
+            dbname = arg.split("=", 1)[1]
+        elif arg == "-d":
+            keep_next = "db"
+        elif arg in ("--table", "-t"):
+            keep_next = True
+        else:
+            passthrough.append(arg)
+    if not dbname:
+        sys.stderr.write("paperclip-pg-dump: no --dbname given\n")
+        return 2
+
+    parsed = urllib.parse.urlsplit(dbname) if "://" in dbname else None
+    if parsed is not None:
+        database = parsed.path.lstrip("/") or "postgres"
+        user = urllib.parse.unquote(parsed.username) if parsed.username else "postgres"
+    else:
+        database, user = "postgres", "postgres"
+    user = os.environ.get("PAPERCLIP_PG_DUMP_USER", "postgres") or user
+
+    cmd = [
+        KUBECTL, "--kubeconfig", KUBECONFIG, "-n", NAMESPACE, "exec", "-i", POD, "-c", "postgres",
+        "--", "pg_dump", "-U", user, "-d", database,
+    ] + passthrough
+    sys.stderr.write(
+        "paperclip-pg-dump: pg_dump %s in pod %s/%s (%d passthrough flags)\n"
+        % (database, NAMESPACE, POD, len(passthrough))
+    )
+    sys.stderr.flush()
+    os.execvp(cmd[0], cmd)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
