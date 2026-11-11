@@ -351,10 +351,15 @@ the host. Source of truth: `bin/paperclip-pg-dump`, installed to `/usr/local/bin
 
 Two delivery levers, deliberately redundant:
 
-1. `~/.local/bin/pg_dump` → symlink to the shim. The LaunchDaemon `PATH` starts with
-   `/Users/paperclip/.local/bin`, and `spawn(process.env.PAPERCLIP_PG_DUMP_PATH || "pg_dump")`
-   resolves the bare name through `PATH` **on every run**, not at process start — so this lever needs
-   **no restart**.
+1. `pg_dump` symlinks to the shim, on the paths the daemon actually searches:
+   `/usr/local/bin/pg_dump` (live today — the running daemon's `PATH` is
+   `/opt/homebrew/Cellar/node@24/24.22.0/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:...`,
+   **no `~/.local/bin`**) and `~/.local/bin/pg_dump` (for the on-disk plist `PATH`, which leads with
+   it — that one only applies after a restart). `spawn(process.env.PAPERCLIP_PG_DUMP_PATH ||
+   "pg_dump")` resolves the bare name through `PATH` **on every run**, not at process start — so
+   this lever needs **no restart**. Check with
+   `ps -Eww -p $(pgrep -f "paperclipai run --instance default") | tr ' ' '\n' | grep ^PATH=` and
+   `launchctl print system/dev.voitech.homelab.paperclip | sed -n '/environment = {/,/}/p'`.
 2. `PAPERCLIP_PG_DUMP_PATH=/usr/local/bin/paperclip-pg-dump` on the `SVC_PAPERCLIP_CMD` line in
    `/Users/paperclip/.config/homelab/services.env` (0600, host state, not in git). That file is
    `eval`ed by `/usr/local/libexec/homelab/homelab-service-run.sh`, so it is read at daemon start —
@@ -376,7 +381,7 @@ grep -a "Automatic database backup complete" ~/Library/Logs/homelab/paperclip.lo
   | grep -c '^INSERT INTO'                                   # expect 0
 
 # rollback (either lever alone does nothing; remove both and you are back on the slow JS engine)
-rm -f /Users/paperclip/.local/bin/pg_dump
+sudo /bin/rm -f /usr/local/bin/pg_dump /Users/paperclip/.local/bin/pg_dump
 #   and strip PAPERCLIP_PG_DUMP_PATH from SVC_PAPERCLIP_CMD in ~/.config/homelab/services.env, then
 sudo /bin/launchctl kickstart -k system/dev.voitech.homelab.paperclip
 ```
