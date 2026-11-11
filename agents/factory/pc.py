@@ -158,6 +158,12 @@ class Api:
     def issues(self, company_id):
         return self.get(f"/companies/{company_id}/issues")
 
+    def projects(self, company_id):
+        """Every project in the company. Used to find the checkout of a repo a
+        work order's spec names, when the issue's own project does not hold it
+        (GUL-1389)."""
+        return self.get(f"/companies/{company_id}/projects")
+
     def issue(self, issue_id):
         return self.get(f"/issues/{issue_id}")
 

@@ -1157,25 +1157,133 @@ def resolve_issue(api, company_id: str, identifier: str):
     return issue
 
 
-def work_order_cwd(api, issue: dict) -> str:
-    workspace = issue.get("currentExecutionWorkspace")
-    if isinstance(workspace, dict) and workspace.get("cwd"):
-        return workspace["cwd"]
-    project_id = issue.get("projectId")
-    if project_id:
-        try:
-            for ws in api.project_workspaces(project_id) or []:
-                if ws.get("isPrimary") and ws.get("cwd"):
-                    return ws["cwd"]
-        except Exception:  # noqa: BLE001 - a missing project must not hide FACTORY_REPO
-            pass
-    return os.environ.get("FACTORY_REPO") or os.path.abspath(os.path.join(FACTORY_DIR, "..", ".."))
+def repo_slug(value) -> str:
+    """`gulasz101/homelab-2nd` from a spec's repo field or any clone URL."""
+    text = str(value or "").strip().rstrip("/")
+    if text.endswith(".git"):
+        text = text[:-4]
+    for marker in ("github.com/", "github.com:"):
+        if marker in text:
+            text = text.split(marker, 1)[1]
+    parts = [part for part in text.strip("/").split("/") if part]
+    return "/".join(parts[-2:]).lower() if len(parts) >= 2 else ""
 
 
-def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_id) -> list:
-    """Every other open issue in the same project that is assigned to Majster and
-    carries a `spec` document. Document check is per issue: the company list does
-    not include document summaries.
+def _workspace_slug(workspace) -> str:
+    return repo_slug(workspace.get("repoUrl") or workspace.get("repo") or "") if isinstance(workspace, dict) else ""
+
+
+def _workspace_cwd(workspace) -> str:
+    return (workspace.get("cwd") or "") if isinstance(workspace, dict) else ""
+
+
+def _project_workspaces(api, project_id) -> list:
+    if not project_id:
+        return []
+    try:
+        return [ws for ws in (api.project_workspaces(project_id) or []) if isinstance(ws, dict)]
+    except Exception:  # noqa: BLE001 - a missing project must not hide the fallback
+        return []
+
+
+def _company_workspaces(api, company_id) -> list:
+    """Every workspace in the company, flattened. One API call per project, so
+    only the repo-lookup path pays for it."""
+    found = []
+    try:
+        projects = api.projects(company_id) or []
+    except Exception:  # noqa: BLE001 - no project list means no cross-project lookup
+        return found
+    if isinstance(projects, dict):
+        projects = projects.get("projects") or []
+    for project in projects:
+        if isinstance(project, dict):
+            found.extend(_project_workspaces(api, project.get("id")))
+    return found
+
+
+def work_order_cwd(api, issue: dict, repo: str = "", company_id: str = "") -> tuple:
+    """`(cwd, note)`: the checkout this work order runs in.
+
+    The spec names the repo the work order changes. The issue's project names a
+    checkout. They can disagree: three Image Studio work orders asked for
+    `gulasz101/homelab-2nd`, their project checks out `ideogram4-local`, and the
+    factory cut branches in the wrong tree (GUL-1389). So the repo decides.
+
+    - A workspace whose own repo (or, with no `repoUrl`, whose name) is the spec's
+      repo is the answer, project first.
+    - Otherwise the checkout is looked up across the company's workspaces, because
+      a repo can be checked out by another project.
+    - A project checkout that provably holds a *different* repo is not used, and
+      the answer is refused rather than guessed: a wrong tree produces an empty
+      `red` stage and a fake pass, which is what GUL-1340 did.
+    - Two checkouts of the same repo are refused too. One checkout, one diff
+      (ADR-095), and two work orders must not cut branches in one tree.
+    """
+    want = repo_slug(repo)
+    own = _project_workspaces(api, issue.get("projectId"))
+    execution = issue.get("currentExecutionWorkspace")
+    ordered = ([execution] if isinstance(execution, dict) else []) + own
+
+    def holds(workspace) -> bool:
+        slug = _workspace_slug(workspace)
+        if slug:
+            return slug == want
+        return bool(want) and repo_slug(workspace.get("name")) == want
+
+    for workspace in ordered:
+        if _workspace_cwd(workspace) and holds(workspace):
+            return _workspace_cwd(workspace), "issue workspace holds %s" % want
+
+    if not want:
+        for workspace in ordered:
+            if _workspace_cwd(workspace) and workspace.get("isPrimary"):
+                return _workspace_cwd(workspace), "project workspace (spec names no repo)"
+        return (os.environ.get("FACTORY_REPO")
+                or os.path.abspath(os.path.join(FACTORY_DIR, "..", ".."))), "FACTORY_REPO"
+
+    factory_root = os.path.realpath(os.path.abspath(os.path.join(FACTORY_DIR, "..", "..")))
+    checkouts, seen = [], set()
+    for workspace in own + _company_workspaces(api, company_id):
+        cwd = _workspace_cwd(workspace)
+        if not cwd or not holds(workspace):
+            continue
+        real = os.path.realpath(cwd)
+        if real in seen or real == factory_root:
+            continue
+        seen.add(real)
+        checkouts.append(real)
+    if len(checkouts) == 1:
+        return checkouts[0], "company workspace holds %s" % want
+    if len(checkouts) > 1:
+        raise SetupError(
+            "%s spec names repo %s and %d checkouts hold it (%s); pass --repo to pick one, "
+            "because two work orders in one checkout cut branches in the same tree"
+            % (issue.get("identifier") or issue.get("id"), want, len(checkouts), ", ".join(checkouts)))
+
+    known_wrong = sorted({_workspace_slug(ws) or _workspace_cwd(ws) for ws in own
+                          if _workspace_cwd(ws) and _workspace_slug(ws)})
+    if known_wrong:
+        raise SetupError(
+            "%s spec names repo %s but its project checks out %s and no workspace in this "
+            "company holds %s: move the issue to the project that checks it out, or pass --repo"
+            % (issue.get("identifier") or issue.get("id"), want, ", ".join(known_wrong), want))
+
+    for workspace in own:
+        if _workspace_cwd(workspace):
+            return _workspace_cwd(workspace), "project workspace (repo %s unverified)" % want
+    return (os.environ.get("FACTORY_REPO")
+            or os.path.abspath(os.path.join(FACTORY_DIR, "..", ".."))), "FACTORY_REPO"
+
+
+def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_id,
+                     cwd: str = "") -> list:
+    """Every other open issue assigned to Majster that carries a `spec` document and
+    would fight this one for a checkout: same project, or another project pointed at
+    the same `cwd` (`cwd` is what the ledger records, so it is what is compared).
+
+    Document check is per issue: the company list does not include document
+    summaries.
 
     A work order parked as `blocked` before it ever started holds no branch and no
     checkout: the shared checkout is only taken by `start`, and `start` is what
@@ -1184,6 +1292,7 @@ def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_i
     "open", and 948 cannot start because 875 is not done. A blocked work order that
     has already started still counts: its diff may be the one in the checkout.
     """
+    wanted_cwd = os.path.realpath(cwd) if cwd else ""
     found = []
     for item in api.issues(company_id):
         if item.get("id") == exclude_id:
@@ -1192,10 +1301,16 @@ def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_i
             continue
         if item.get("assigneeAgentId") != cfg["majster"]:
             continue
-        if project_id and item.get("projectId") != project_id:
+        same_project = bool(project_id) and item.get("projectId") == project_id
+        if not same_project and not wanted_cwd:
             continue
         if item.get("status") == "blocked" and not api.document(item["id"], "ledger"):
             continue
+        if not same_project:
+            ledger = load_json_document(api, item["id"], "ledger") or {}
+            other = ledger.get("cwd") if isinstance(ledger, dict) else ""
+            if not other or os.path.realpath(other) != wanted_cwd:
+                continue
         if api.document(item["id"], "spec"):
             found.append(item)
     return found
@@ -1507,6 +1622,8 @@ def cmd_factory_start(args) -> int:
     cfg = load_agent_config()
 
     work_order = resolve_issue(api, company, args.work_order)
+    if not isinstance(work_order, dict):
+        raise SetupError("%s did not resolve to an issue" % args.work_order)
     spec_doc = api.document(work_order["id"], "spec")
     if not spec_doc or not spec_doc.get("body"):
         raise SetupError("%s has no `spec` document" % args.work_order)
@@ -1524,7 +1641,10 @@ def cmd_factory_start(args) -> int:
     if spec is None:
         raise SetupError("spec document does not parse: %s" % "; ".join(spec_reasons))
 
-    cwd = args.repo or work_order_cwd(api, work_order)
+    if args.repo:
+        cwd, cwd_note = args.repo, "--repo"
+    else:
+        cwd, cwd_note = work_order_cwd(api, work_order, spec.get("repo") or "", company)
     # The factory's own code now runs from a checkout of main (GUL-502, ADR-096).
     # That checkout must never be a work order's workspace: `start` would cut the
     # work order branch in it and the next invocation would move it back to main,
@@ -1535,7 +1655,7 @@ def cmd_factory_start(args) -> int:
             "that copy must stay on main. The work order runs in its own workspace — "
             "check the project workspace, or pass --repo" % cwd)
     project_id = work_order.get("projectId")
-    busy = open_work_orders(api, company, cfg, work_order["id"], project_id)
+    busy = open_work_orders(api, company, cfg, work_order["id"], project_id, cwd)
     if busy:
         emit(False, "start", [
             "another factory work order is open: %s (%s)" % (b["identifier"], b.get("status"))
@@ -1586,6 +1706,7 @@ def cmd_factory_start(args) -> int:
         "base": base,
         "baseSha": base_sha,
         "cwd": cwd,
+        "cwdSource": cwd_note,
         "branch": branch,
         "projectId": project_id,
         "stages": {},
