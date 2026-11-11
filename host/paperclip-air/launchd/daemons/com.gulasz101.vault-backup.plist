@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.gulasz101.vault-backup — nightly restic backup of the Obsidian vault and
+  ~/image-studio to OMV MinIO (bucket paperclip-backups). SYSTEM LaunchDaemon
+  (ADR-107, ADR-129).
+
+  Why a daemon: the Air is headless most days. A gui/501 LaunchAgent does not
+  fire while nobody is logged in — the exact failure that lost the 30 Oct state
+  backup (ADR-071/ADR-107). UserName=paperclip because the daemon defaults to
+  root and every path here is $HOME-based; HOME is set explicitly for the same
+  reason.
+
+  MINIO_ENDPOINT is the 127.0.0.1:9000 loopback relay, never the OMV address:
+  macOS Local Network privacy refuses LAN sockets from launchd-spawned non-Apple
+  binaries and reports it as "no route to host" (GUL-87, ADR-079).
+
+  Schedule 02:40 — clear of hermes-state-backup at 03:30 and the 05:30 Claude
+  Code run, and early enough that a long first run is finished before morning.
+
+  Install (person or agent, from a merged main checkout):
+    sudo ./bin/homelab-install-scheduled-jobs.sh
+  Prove it:
+    sudo launchctl print system/com.gulasz101.vault-backup | head -20
+    sudo launchctl kickstart -k system/com.gulasz101.vault-backup
+    tail -5 ~/Library/Logs/homelab/vault-backup.log
+  A hand-run backup is not a substitute: it hides a dead schedule.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.gulasz101.vault-backup</string>
+
+  <key>UserName</key>
+  <string>paperclip</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/usr/local/libexec/homelab/vault-backup.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/paperclip/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/paperclip</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>40</integer>
+  </dict>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/paperclip/Library/Logs/homelab/vault-backup.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/paperclip/Library/Logs/homelab/vault-backup.launchd.log</string>
+</dict>
+</plist>

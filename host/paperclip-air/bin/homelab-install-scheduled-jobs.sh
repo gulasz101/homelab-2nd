@@ -46,7 +46,7 @@ TREE_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 # for the same reason the backups are — it must run with nobody logged in — but
 # it keeps its own label (dev.voitech.homelab.heartbeat, the historical name the
 # receiver's docs and every tracking note use) and its own script name.
-SCHEDULED_JOBS="hermes-state-backup hermes-memory-watchdog heartbeat"
+SCHEDULED_JOBS="hermes-state-backup vault-backup hermes-memory-watchdog heartbeat"
 TS=$(date '+%Y%m%d-%H%M%S')
 BACKUP_DIR="$HOMELAB_HOME/Library/LaunchAgents.h2-336-backup-$TS"
 SCRIPTS_BACKUP_DIR="$HOMELAB_HOME/.hermes/scripts.superseded-$TS"
@@ -95,6 +95,7 @@ print_plan() {
   say ""
   say "job                     label                                    schedule"
   say "hermes-state-backup     $(sched_label hermes-state-backup)       daily 03:30 (StartCalendarInterval)"
+  say "vault-backup            $(sched_label vault-backup)              daily 02:40 (StartCalendarInterval)"
   say "hermes-memory-watchdog  $(sched_label hermes-memory-watchdog)    hourly (StartInterval 3600)"
   say "heartbeat               $(sched_label heartbeat)     every 60 s (StartInterval 60, ADR-126)"
   say ""
