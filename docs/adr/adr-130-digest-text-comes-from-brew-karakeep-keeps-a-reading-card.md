@@ -1,4 +1,4 @@
-# ADR-130: ADR: The digest text comes from Brew; Karakeep keeps a reading card
+# ADR-130: The digest text comes from Brew; Karakeep keeps a reading card
 
 - **Status**: Accepted
 - **Date**: 2026-11-10

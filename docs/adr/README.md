@@ -128,9 +128,9 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-126 | The heartbeat sender is a system daemon that reports the session, not one that dies with it | Accepted | 2026-11-02 |
 | ADR-127 | Hindsight reflect pays for the DeepSeek route, because the free routes are metered | Accepted | 2026-11-06 |
 | ADR-128 | The refresh and reflect ride the free lane, with a free fallback behind the router | Accepted | 2026-11-09 |
-| ADR-129 | ADR: A permanently red agent is caught by the hourly sweep, not by the Attention panel | Accepted | 2026-11-02 |
-| ADR-130 | ADR: The digest text comes from Brew; Karakeep keeps a reading card | Accepted | 2026-11-10 |
-| ADR-131 | ADR: Heartbeat run payloads are trimmed on a 14-day window | Accepted | 2026-11-10 |
+| ADR-129 | A permanently red agent is caught by the hourly sweep, not by the Attention panel | Accepted | 2026-11-02 |
+| ADR-130 | The digest text comes from Brew; Karakeep keeps a reading card | Accepted | 2026-11-10 |
+| ADR-131 | Heartbeat run payloads are trimmed on a 14-day window | Accepted | 2026-11-10 |
 | ADR-132 | The Lodge learns an agent's Paperclip state by polling, because nothing inside the run can tell it | Accepted | 2026-11-02 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
