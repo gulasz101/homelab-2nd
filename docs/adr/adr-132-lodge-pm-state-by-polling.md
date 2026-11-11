@@ -1,6 +1,6 @@
-# The Lodge learns an agent's Paperclip state by polling, because nothing inside the run can tell it
+# ADR-132: The Lodge learns an agent's Paperclip state by polling, because nothing inside the run can tell it
 
-- **Status**: Pending
+- **Status**: Accepted
 - **Date**: 2026-11-02
 - **Issue**: GUL-827 (parent GUL-818)
 - **Related**: GUL-826 (Claude Code hooks do not load under Paperclip), ADR-078 (the ingest-token registry), ADR-060 (room design), ADR-107 (the Air's scheduled jobs are system daemons)
