@@ -58,6 +58,10 @@ class State:
         self.interactions = []
         self.agents = {}
         self.runs = {}
+        # projects and their workspaces: the factory resolves a work order's
+        # checkout from the repo its spec names (GUL-1389)
+        self.projects = {}
+        self.workspaces = {}
         # every PATCH body as it arrived, before the normaliser can rewrite it
         self.patches = []
         self.counter = 700
@@ -99,6 +103,17 @@ class State:
     def next_number(self):
         self.counter += 1
         return self.counter
+
+    def add_project(self, name, project_id=None):
+        pid = project_id or str(uuid.uuid4())
+        self.projects[pid] = {"id": pid, "companyId": COMPANY, "name": name}
+        return pid
+
+    def add_workspace(self, project_id, name, cwd, repo_url=None, is_primary=True):
+        workspace = {"id": str(uuid.uuid4()), "projectId": project_id, "name": name,
+                     "cwd": cwd, "repoUrl": repo_url, "isPrimary": is_primary}
+        self.workspaces.setdefault(project_id, []).append(workspace)
+        return workspace
 
     def doc(self, issue_id, key, body):
         self.documents[(issue_id, key)] = {
@@ -147,8 +162,10 @@ def make_handler(state):
             if parts[:2] == ["api", "agents"] and len(parts) == 3:
                 agent = state.agents.get(parts[2])
                 return self._send(200, agent) if agent else self._send(404, {"error": "no agent"})
+            if parts[:3] == ["api", "companies", COMPANY] and parts[3:] == ["projects"]:
+                return self._send(200, list(state.projects.values()))
             if parts[:2] == ["api", "projects"] and parts[3:] == ["workspaces"]:
-                return self._send(200, [])
+                return self._send(200, state.workspaces.get(parts[2], []))
             return self._send(404, {"error": "API route not found"})
 
         def do_POST(self):
@@ -495,26 +512,36 @@ def case_start_cuts_branch(stub):
           code2 == 0 and (out2 or {}).get("created") == 0
           and branch_sha(repo, branch) == base_sha and head_branch(repo) == branch, raw2[-300:])
 
+    # GUL-902 still holds `repo` with its branch cut. A work order in another project
+    # pointed at the same checkout must wait (GUL-1389): one checkout, one diff. The
+    # next two cases need a checkout of their own, which is what they get.
+    repo_b, base_sha_b = make_repo("repo-branch-b")
+    repo_c, base_sha_c = make_repo("repo-branch-c")
+
     # a branch already cut at baseSha but no ledger yet: switch to it, do not fail
-    wo3 = base_work_order(stub, base_sha, repo, identifier="GUL-903", project_id=PROJECT + "-b")
+    wo3 = base_work_order(stub, base_sha_b, repo_b, identifier="GUL-903", project_id=PROJECT + "-b")
     reused = "gul-903-add-the-fixture"
-    git(repo, "branch", reused, base_sha)
-    git(repo, "switch", "--detach", base_sha)
-    code3, out3, raw3 = run(stub, ["start", "GUL-903"], extra_env=env)
+    git(repo_b, "branch", reused, base_sha_b)
+    git(repo_b, "switch", "--detach", base_sha_b)
+    code3, out3, raw3 = run(stub, ["start", "GUL-903"], extra_env={"FACTORY_REPO": repo_b})
     check("start: an existing branch at baseSha is re-used, not re-created",
-          code3 == 0 and head_branch(repo) == reused, raw3[-300:])
+          code3 == 0 and head_branch(repo_b) == reused, raw3[-300:])
 
     # a branch that exists at another sha is refused, not force-reset
-    wo4 = base_work_order(stub, base_sha, repo, identifier="GUL-904", project_id=PROJECT + "-c")
-    git(repo, "switch", "-c", "gul-904-add-the-fixture", base_sha)
-    with open(os.path.join(repo, "README.md"), "a") as fh:
+    wo4 = base_work_order(stub, base_sha_c, repo_c, identifier="GUL-904", project_id=PROJECT + "-c")
+    git(repo_c, "switch", "-c", "gul-904-add-the-fixture", base_sha_c)
+    with open(os.path.join(repo_c, "README.md"), "a") as fh:
         fh.write("another commit\n")
-    git(repo, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-qam", "moved")
-    git(repo, "switch", "main")
-    code4, out4, raw4 = run(stub, ["start", "GUL-904"], extra_env=env)
+    git(repo_c, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-qam", "moved")
+    git(repo_c, "switch", "main")
+    code4, out4, raw4 = run(stub, ["start", "GUL-904"], extra_env={"FACTORY_REPO": repo_c})
     check("start: a branch that moved off baseSha is refused",
           code4 == 1 and any("already exists" in r for r in (out4 or {}).get("reasons", [])),
           raw4[-300:])
+
+    # settled, so the cases that follow do not wait on this checkout
+    for settled in (wo, wo3, wo4):
+        stub.state.issues[settled["id"]]["status"] = "done"
 
     # keep these work orders out of the shared-project busy check of later cases
     for issue in (wo, wo3, wo4):
@@ -537,6 +564,82 @@ def case_start_refuses_tooling_checkout(stub):
           git_out(tooling, "rev-parse", "--abbrev-ref", "HEAD") != "gul-905-add-the-fixture",
           git_out(tooling, "rev-parse", "--abbrev-ref", "HEAD"))
     stub.state.issues[wo["id"]]["status"] = "done"
+
+
+def case_repo_decides_the_checkout(stub):
+    """GUL-1389: the spec names the repo, the project names a checkout, and they can
+    disagree. The checkout that holds the named repo wins; a project checkout that
+    provably holds another repo is refused, not used; two checkouts of one repo are
+    refused; and the checkout guard follows the cwd, not the project."""
+    wanted, wanted_sha = make_repo("repo-wanted")
+    other, other_sha = make_repo("repo-studio")
+    studio = stub.state.add_project("Image Studio")
+    homelab = stub.state.add_project("Homelab")
+    stub.state.add_workspace(studio, "ideogram4-local", other,
+                       repo_url="https://github.com/gulasz101/ideogram4-local")
+    stub.state.add_workspace(homelab, "homelab-2nd", wanted,
+                       repo_url="https://github.com/gulasz101/homelab-2nd")
+    branch = "gul-920-add-the-fixture"
+
+    wo = stub.state.add_issue(identifier="GUL-920", title="Add the fixture",
+                              assigneeAgentId=MAJSTER, projectId=studio, status="in_progress")
+    stub.state.doc(wo["id"], "spec", SPEC_BODY)
+    code, out, raw = run(stub, ["start", "GUL-920"])
+    check("repo lookup: the branch is cut in the checkout that holds the spec's repo",
+          code == 0 and branch_sha(wanted, branch) == wanted_sha, "%s %s" % (code, raw[-400:]))
+    check("repo lookup: the project's own checkout is left on main",
+          branch_sha(other, branch) == "" and head_branch(other) == "main",
+          "%s/%s" % (branch_sha(other, branch), head_branch(other)))
+    ledger_body = stub.state.documents[(wo["id"], "ledger")]["body"]
+    check("repo lookup: the ledger records the resolved cwd and says why",
+          wanted in ledger_body and "company workspace holds gulasz101/homelab-2nd" in ledger_body,
+          ledger_body[:300])
+
+    # a second project pointed at the same checkout: same repo, different project
+    fleet = stub.state.add_project("Agent Fleet")
+    stub.state.add_workspace(fleet, "homelab-2nd", wanted,
+                       repo_url="https://github.com/gulasz101/homelab-2nd")
+    sib = stub.state.add_issue(identifier="GUL-921", title="Add the fixture",
+                               assigneeAgentId=MAJSTER, projectId=fleet, status="in_progress")
+    stub.state.doc(sib["id"], "spec", SPEC_BODY)
+    code, out, raw = run(stub, ["start", "GUL-921"])
+    check("repo lookup: an open work order in the same checkout blocks a second one, "
+          "even from another project",
+          code != 0 and any("GUL-920" in r for r in (out or {}).get("reasons", [])), raw[-400:])
+    check("repo lookup: the blocked work order cuts no branch",
+          branch_sha(wanted, "gul-921-add-the-fixture") == "", "branch exists")
+
+    # two checkouts of one repo: refused, never guessed
+    riff_a, _ = make_repo("repo-riff-a")
+    riff_b, _ = make_repo("repo-riff-b")
+    spec_riff = SPEC_BODY.replace("gulasz101/homelab-2nd", "gulasz101/riff_radar")
+    ra = stub.state.add_project("Riff A")
+    rb = stub.state.add_project("Riff B")
+    neither = stub.state.add_project("No Checkout")
+    stub.state.add_workspace(ra, "riff_radar", riff_a, repo_url="gulasz101/riff_radar")
+    stub.state.add_workspace(rb, "riff_radar", riff_b, repo_url="gulasz101/riff_radar")
+    amb = stub.state.add_issue(identifier="GUL-922", title="Add the fixture",
+                               assigneeAgentId=MAJSTER, projectId=neither, status="in_progress")
+    stub.state.doc(amb["id"], "spec", spec_riff)
+    code, out, raw = run(stub, ["start", "GUL-922"])
+    check("repo lookup: two checkouts of the repo are refused, with both paths named",
+          code != 0 and any("pass --repo" in r and riff_a in r and riff_b in r
+                            for r in (out or {}).get("reasons", [])), raw[-500:])
+
+    # a project checkout that provably holds another repo, and nobody holds this one
+    nowhere = stub.state.add_issue(identifier="GUL-923", title="Add the fixture",
+                                   assigneeAgentId=MAJSTER, projectId=studio, status="in_progress")
+    stub.state.doc(nowhere["id"], "spec",
+                   SPEC_BODY.replace("gulasz101/homelab-2nd", "gulasz101/no-such-repo"))
+    code, out, raw = run(stub, ["start", "GUL-923"])
+    check("repo lookup: a project checkout holding another repo is refused by name",
+          code != 0 and any("gulasz101/ideogram4-local" in r for r in (out or {}).get("reasons", [])),
+          raw[-500:])
+    for issue_id in (wo["id"], sib["id"], amb["id"], nowhere["id"]):
+        stub.state.issues[issue_id]["status"] = "done"
+    # these workspaces would resolve every later case's work order too
+    stub.state.projects.clear()
+    stub.state.workspaces.clear()
 
 
 def case_start_creates_chain(stub, base_sha, repo):
@@ -1893,6 +1996,7 @@ def main():
             case_start_cuts_branch(stub)
             case_start_refuses_tooling_checkout(stub)
             case_start_ignores_a_parked_blocker(stub)
+            case_repo_decides_the_checkout(stub)
             case_start_creates_chain(stub, base_sha, repo)
             case_settle_repairs(stub, base_sha, repo)
             case_stop_blocks(stub, base_sha, repo)
