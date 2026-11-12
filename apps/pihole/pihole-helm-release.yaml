@@ -1,7 +1,8 @@
 ---
 # Pi-hole Family Shield — network-wide DNS discipline (H2-73 + H2-74).
 # Chart 2.38.0 / Pi-hole core 2026.07.2 (FTL v6).
-# DNS: hostNetwork so the pod binds homelab-2nd :53 directly (UDP+TCP).
+# DNS: hostNetwork so the pod binds the node's :53 directly (UDP+TCP). Node: mimir since
+# 2026-11-12; 192.168.1.179 (the DHCP-advertised DNS) is a secondary IP on mimir (pending ADR k3s-control-plane-moves-to-mimir).
 # This eliminates the NodePort 30053 reply-source asymmetry that broke Android clients.
 # serviceDns becomes an in-cluster ClusterIP for internal consumers; LAN clients reach
 # 192.168.1.179:53 directly, with real client IPs preserved (no NAT).
@@ -37,9 +38,9 @@ spec:
       tag: "2026.07.2"
       pullPolicy: IfNotPresent
 
-    # Keep the shield on the stable wired node.
+    # Keep the shield on the node that carries the 192.168.1.179 front-door alias (pending ADR k3s-control-plane-moves-to-mimir).
     nodeSelector:
-      kubernetes.io/hostname: homelab-2nd
+      kubernetes.io/hostname: mimir
 
     # DNS: hostNetwork so the pod binds the node's real :53 directly.
     # This eliminates the NodePort 30053 reply-source asymmetry that broke Android clients.

@@ -9,8 +9,11 @@
 # It answers the five acceptance criteria of the work order in one pass, one
 # line per AC, in the factory protocol (agents/factory/CONTRACT.md point 2):
 #
-#   AC-1  apps/openviking/ holds only namespace.yaml and the four *.sops.yaml
-#         files; every other OpenViking manifest is gone.
+#   AC-1  apps/openviking/ is gone entirely. GUL-1199 shipped the directory
+#         with only namespace.yaml and the four *.sops.yaml files left (the
+#         factory cannot delete files no manifest points at); GUL-402 deleted
+#         those five by hand, so the directory must now be absent and no
+#         openviking/*.sops.yaml may come back.
 #   AC-2  apps/kustomization.yaml carries no `openviking/` resource entry
 #         (read out of `.resources` with yq), a comment naming GUL-355 sits
 #         where that block used to be, and the Honcho comment no longer
@@ -18,9 +21,10 @@
 #         GUL-355 decision, so an H2-295 reference there is stale text).
 #   AC-3  the OpenViking / Honcho credential names are gone from apps/:
 #         OPENVIKING_KEY, MEMORY_HONCHO_KEY, OPENVIKING_API_KEY,
-#         openviking-key, memory-honcho-key. The *.sops.yaml files keep their
-#         keys (they are the encrypted secrets, not references to them) and
-#         apps/tests/ is excluded because this file has to spell the names out.
+#         openviking-key, memory-honcho-key. apps/tests/ is excluded because
+#         this file has to spell the names out; the *.sops.yaml exclusion that
+#         GUL-1199 needed is gone, because GUL-402 deleted the four secrets
+#         that held those keys.
 #         Case-insensitive: `openviking_key` in a shell script is the same
 #         credential as `OPENVIKING_KEY` in a Deployment.
 #   AC-4  the whole tree still renders (`kubectl kustomize apps`) and the
@@ -43,10 +47,6 @@ cd "$ROOT" || exit 2
 OV_DIR='apps/openviking'
 KUST='apps/kustomization.yaml'
 DASHBOARD='scripts/render_namespace_dashboard.py'
-SOPS_KEEP='openviking-mattermost-webhook-url.sops.yaml
-openviking-minio-backup-creds.sops.yaml
-openviking-root-api-key.sops.yaml
-openviking-vlm-api-key.sops.yaml'
 # The credential names this work order retires (AC-3).
 TOKENS='OPENVIKING_KEY|MEMORY_HONCHO_KEY|OPENVIKING_API_KEY|openviking-key|memory-honcho-key'
 
@@ -76,34 +76,15 @@ for bin in git yq kubectl; do
 done
 
 # =========================================================================
-# AC-1: apps/openviking/ holds only namespace.yaml + the four *.sops.yaml
+# AC-1: apps/openviking/ is gone entirely (GUL-402 removed the last five files)
 # =========================================================================
 ac1=''
-if [ ! -d "$OV_DIR" ]; then
-  ac1="$OV_DIR/ is gone entirely - the namespace and its four encrypted secrets must stay"
-else
-  [ -f "$OV_DIR/namespace.yaml" ] || ac1="$OV_DIR/namespace.yaml is missing; "
-  for path in "$OV_DIR"/*; do
-    [ -e "$path" ] || continue
-    base=${path##*/}
-    case "$base" in
-      namespace.yaml) ;;
-      *.sops.yaml) ;;
-      *) ac1="${ac1}${base} is still there; " ;;
-    esac
-  done
-  # The four secrets are named, not merely counted: a stray fifth *.sops.yaml
-  # is a manifest that survived the retirement under a name nobody reads.
-  while IFS= read -r want; do
-    [ -f "$OV_DIR/$want" ] || ac1="${ac1}${want} is missing; "
-  done <<< "$SOPS_KEEP"
-  for path in "$OV_DIR"/*.sops.yaml; do
-    [ -e "$path" ] || continue
-    base=${path##*/}
-    printf '%s\n' "$SOPS_KEEP" | grep -qxF "$base" || ac1="${ac1}${base} is not one of the four secrets this ticket keeps; "
-  done
+if [ -d "$OV_DIR" ]; then
+  leftovers=$(find "$OV_DIR" -maxdepth 1 -mindepth 1 -printf '%f ' 2>/dev/null \
+    || ls -1 "$OV_DIR" | tr '\n' ' ')
+  ac1="$OV_DIR/ still exists (${leftovers% }) - GUL-402 deleted namespace.yaml and the four *.sops.yaml the retirement left behind"
 fi
-verdict AC-1 "$(printf '%s' "$ac1" | sed 's/; *$//')"
+verdict AC-1 "$ac1"
 
 # =========================================================================
 # AC-2: apps/kustomization.yaml
@@ -156,11 +137,9 @@ verdict AC-2 "$(printf '%s' "$ac2" | sed 's/; *$//')"
 # AC-3: no OpenViking / Honcho credential name left in apps/
 # =========================================================================
 ac3=''
-# git grep, not a filesystem walk: this must see what the repo tracks, and
-# the two explicit excludes are part of the AC (the *.sops.yaml files keep
-# their keys, and this script has to spell the names out).
-token_hits=$(git grep -I -i -n -E "$TOKENS" -- 'apps/' \
-  ':(exclude)*.sops.yaml' ':(exclude)apps/tests/' )
+# git grep, not a filesystem walk: this must see what the repo tracks.
+# apps/tests/ is excluded because this script has to spell the names out.
+token_hits=$(git grep -I -i -n -E "$TOKENS" -- 'apps/' ':(exclude)apps/tests/' )
 token_n=$(printf '%s\n' "$token_hits" | grep -c . || true)
 if [ "${token_n:-0}" -ne 0 ]; then
   files=$(printf '%s\n' "$token_hits" | cut -d: -f1 | sort -u | tr '\n' ' ')
