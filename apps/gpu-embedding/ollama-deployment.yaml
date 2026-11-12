@@ -1,7 +1,7 @@
 ---
 # GPU-accelerated Ollama embedding server.
 # Runs in the shared gpu-embedding namespace so other services can reuse it.
-# Since the 2026-11-12 node move (ADR-134): mimir's Radeon Vega 7 iGPU via
+# Since the 2026-11-12 node move (pending ADR embeddings-on-mimir-igpu-vulkan): mimir's Radeon Vega 7 iGPU via
 # Ollama's Vulkan backend. The GPU comes from the AMD device plugin
 # (amd.com/gpu), so the pod is NOT privileged and mounts no host /dev.
 # Measured on mimir: 36.6 ms/embed and 35.4 embeds/s (batch 64), vs 101 ms and
