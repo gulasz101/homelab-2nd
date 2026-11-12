@@ -425,7 +425,14 @@ CLAUDE_TOKEN_SOPS_FILE=${CLAUDE_TOKEN_SOPS_FILE:-$HOMELAB_HOME/claude-code-oauth
 CLAUDE_TOKEN_MINT_FILE=${CLAUDE_TOKEN_MINT_FILE:-$HOMELAB_STATE_DIR/claude-token-mint}
 CLAUDE_TOKEN_COMPANY_ID=${CLAUDE_TOKEN_COMPANY_ID:-0e2eb054-4cb6-4ea1-a2e7-2b1894285d8c}
 CLAUDE_TOKEN_KUBE_NS=${CLAUDE_TOKEN_KUBE_NS:-paperclip}
-CLAUDE_TOKEN_KUBE_DB_POD=${CLAUDE_TOKEN_KUBE_DB_POD:-paperclip-db-1}
+# Empty = look up the CNPG primary by label at use time (the instance name moved
+# from paperclip-db-1 to -2 in the 2026-11-12 node move; never hard-code it).
+CLAUDE_TOKEN_KUBE_DB_POD=${CLAUDE_TOKEN_KUBE_DB_POD:-}
+claude_token_db_pod() { # $1 = kubectl
+  if [ -n "$CLAUDE_TOKEN_KUBE_DB_POD" ]; then printf '%s' "$CLAUDE_TOKEN_KUBE_DB_POD"; return; fi
+  "$1" get pod -n "$CLAUDE_TOKEN_KUBE_NS" -l cnpg.io/cluster=paperclip-db,cnpg.io/instanceRole=primary \
+    -o jsonpath='{.items[0].metadata.name}'
+}
 CLAUDE_TOKEN_SECRET_ID=${CLAUDE_TOKEN_SECRET_ID:-}
 # A setup token lives about a year; alert 30 days out.
 CLAUDE_TOKEN_LIFETIME_DAYS=${CLAUDE_TOKEN_LIFETIME_DAYS:-365}
@@ -459,7 +466,7 @@ claude_token_kubectl() {
 claude_token_vault_digest() {
   local kc
   kc=$(claude_token_kubectl) || return 0
-  "$kc" exec -n "$CLAUDE_TOKEN_KUBE_NS" "$CLAUDE_TOKEN_KUBE_DB_POD" -c postgres -- \
+  "$kc" exec -n "$CLAUDE_TOKEN_KUBE_NS" "$(claude_token_db_pod "$kc")" -c postgres -- \
     psql -U postgres -d paperclip -At -F'|' -c \
     "select v.version, v.value_sha256 from company_secret_versions v
        join company_secrets s on s.id = v.secret_id
