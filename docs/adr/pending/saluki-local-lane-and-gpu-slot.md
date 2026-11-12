@@ -68,8 +68,16 @@ Measured on 2026-11-12, LM Studio 0.4 llama.cpp Metal backend 2.71.0, 64k contex
 
 - When the Ollama allowance runs out, `saluki-27b-local` is a free lane, but a slow one: one
   request at a time gets ~10 tok/s, and a cold 30k-token prompt takes minutes.
-- During a local image job (2-6 min) LLM calls on `saluki-27b-local` go to the cloud chain, and
-  Karakeep calls fail and are retried by Karakeep. `KarakeepInferenceFailing` waits 30 min.
+- During a local image job LLM calls on `saluki-27b-local` go to the cloud chain, and Karakeep
+  calls fail and are retried by Karakeep. `KarakeepInferenceFailing` waits 30 min. Measured gaps:
+  flux2-klein about 2 min, ideogram4 about 20-25 min (20 steps at ~50 s each; job `3B0xezKVwc4`
+  on 2026-11-12: unload 21:23:15Z, reload 21:43:11Z). An ideogram4 job close to 30 min can trip
+  that alert once.
+- The fallback chain was tested live on 2026-11-12 with Saluki unloaded: LM Studio answers 400
+  "No models loaded" at once, LiteLLM tries both Ollama routes and, when the Ollama weekly limit is
+  used up (both 429), the call ends on the paid `deepseek-v4.1-flash-1017-ds` after about 11-12 s.
+  So in the week's last days an image job makes the "free" lane cost DeepSeek tokens for its
+  whole gap. `begin` waited for a running request (8 s) before it unloaded.
 - With JIT off, LM Studio answers a request for any model name with the loaded model. The model id
   in the LiteLLM route is a label, not a selector.
 - If the Mac's LAN IP moves, three places change: both Saluki routes and the Karakeep alert text.
