@@ -321,9 +321,9 @@ resources:
   # same mechanism the Honcho note above records. Wojtek approved losing exactly
   # that namespace and its PVC on GUL-355 (2026-11-09), after the memory content
   # moved to Hindsight; the hourly backup CronJob to OMV MinIO went with it.
-  # Only apps/openviking/namespace.yaml and its four SOPS secrets stay on disk,
-  # unreferenced, because they hold the only copies of those keys: Ops removes
-  # them by hand in GUL-402 once the live check is done.
+  # apps/openviking/ itself is gone as of GUL-402 (2026-11-10): the namespace
+  # manifest and its four SOPS secrets held the only copies of keys that have
+  # now been revoked at LiteLLM and removed from the MinIO user they belonged to.
 
   # arr-stack namespace
   - arr-stack/

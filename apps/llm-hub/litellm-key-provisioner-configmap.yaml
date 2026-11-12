@@ -52,7 +52,9 @@ data:
         "gemma-4-12b-uncensored",
         "qwen3.8-9b-heretic-uncensored",
         "qwen3.8-27b-mlx",
-        # Honcho deriver/summary/dream/dialectic models
+        # Local Ollama models formerly used by the Honcho deriver (Honcho
+        # retired, GUL-355/GUL-402); kept routed for Hindsight experiments and
+        # the OpenChamber agents.
         "nemotron-3-nano-30b-ollama",
         "openai/nemotron-3-nano-30b-ollama",
         "nemotron-3-super-ollama",
