@@ -7,7 +7,7 @@
 # Ryzen 5 PRO 4650GE has a Radeon Vega 7 iGPU ("Renoir", gfx90c). Ollama's
 # Vulkan backend runs nomic-embed-text on it 2.8x faster than on 4 CPU cores
 # (36.6 vs 101 ms/embed; 35.4 vs 10.2 embeds/s in batches of 64). See the
-# 2026-11-11 control-plane-move tracking note and ADR-134.
+# 2026-11-11 control-plane-move tracking note and pending ADR embeddings-on-mimir-igpu-vulkan.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
