@@ -26,6 +26,10 @@ resources:
   - nvidia-device-plugin/configmap.yaml
   - nvidia-device-plugin/helm-repository.yaml
   - nvidia-device-plugin/helm-release.yaml
+  # AMD GPU device plugin (mimir's Vega 7 iGPU -> amd.com/gpu, used by Ollama via Vulkan)
+  - amd-gpu-device-plugin/namespace.yaml
+  - amd-gpu-device-plugin/helm-repository.yaml
+  - amd-gpu-device-plugin/helm-release.yaml
   # LGTM observability stack
   - observability/namespace.yaml
   - observability/helm-repositories.yaml
