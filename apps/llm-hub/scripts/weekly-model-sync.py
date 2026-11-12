@@ -532,27 +532,88 @@ def _collect_model_strings(obj, protected: set[str]) -> None:
 
 
 def scan_openwebui_defaults(data) -> set[str]:
-    """Extract model names from Open WebUI DEFAULT_MODELS and DEFAULT_PINNED_MODELS env vars."""
+    """Model names in Open WebUI DEFAULT_MODELS: the owner's chosen default.
+
+    GUL-1431: DEFAULT_PINNED_MODELS no longer protects a route. A pin used to
+    block the removal of the very route it pointed at, so a dead pin could
+    never go away. Pins now follow the routes (prune_openwebui_pins); only the
+    default is protected, because changing it is the owner's call.
+    """
     protected: set[str] = set()
     env_vars = data["spec"]["values"].get("extraEnvVars", [])
     for ev in env_vars:
-        name = ev.get("name", "")
-        if name in ("DEFAULT_MODELS", "DEFAULT_PINNED_MODELS"):
+        if ev.get("name", "") == "DEFAULT_MODELS":
             value = ev.get("value", "")
             protected.update(v.strip() for v in value.split(",") if v.strip())
     return protected
+
+
+def _openwebui_env(data, name: str):
+    for ev in data["spec"]["values"].get("extraEnvVars", []):
+        if ev.get("name") == name:
+            return ev
+    return None
+
+
+def prune_openwebui_pins(data, routes: set[str]) -> set[str]:
+    """Drop pins for models LiteLLM no longer routes. Returns the dropped names.
+
+    GUL-1431: the sync only ever added pins, so Open WebUI kept showing
+    gemma-4-12b-uncensored long after it stopped being a good default, and a
+    route removed by hand stayed pinned forever.
+    """
+    pinned_var = _openwebui_env(data, "DEFAULT_PINNED_MODELS")
+    if not pinned_var:
+        return set()
+    current = [v.strip() for v in str(pinned_var.get("value", "")).split(",") if v.strip()]
+    dead = {m for m in current if m not in routes}
+    if dead:
+        pinned_var["value"] = ",".join(m for m in current if m not in dead)
+    return dead
+
+
+def dead_openwebui_defaults(data, routes: set[str]) -> set[str]:
+    """DEFAULT_MODELS entries with no LiteLLM route. Reported, never rewritten."""
+    return {m for m in scan_openwebui_defaults(data) if m not in routes}
+
+
+# ---------------------------------------------------------------------------
+# Cluster access
+# ---------------------------------------------------------------------------
+# GUL-1431: the sync used `ssh homelab-2nd sudo kubectl ...`. The Clevo node
+# `homelab-2nd.local` was retired on 2026-11-12 (control plane moved to
+# mimir), so that hostname no longer resolves and every run would die on its
+# first secret read. The Air has its own kubeconfig (~/.kube/config ->
+# https://192.168.1.179:6443), so kubectl runs locally. SYNC_KUBECTL overrides
+# the command (space-separated), e.g. for a different kubeconfig.
+KUBECTL = os.environ.get("SYNC_KUBECTL", "kubectl").split()
+
+
+def kubectl(*args: str) -> list[str]:
+    return [*KUBECTL, *args]
+
+
+def read_secret_value(namespace: str, secret: str, key: str) -> str:
+    """Decoded value of one Secret key, '' when absent. Never printed."""
+    import base64
+    jsonpath = "{.data." + key.replace(".", "\\.") + "}"
+    print(f"+ {' '.join(kubectl('-n', namespace, 'get', 'secret', secret, '-o', 'jsonpath=' + jsonpath))}")
+    result = subprocess.run(
+        kubectl("-n", namespace, "get", "secret", secret, "-o", f"jsonpath={jsonpath}"),
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(result.stderr, file=sys.stderr)
+        raise subprocess.CalledProcessError(result.returncode, result.args, "", result.stderr)
+    raw = result.stdout.strip()
+    return base64.b64decode(raw).decode("utf-8").strip() if raw else ""
 
 
 # ---------------------------------------------------------------------------
 # Model probing
 # ---------------------------------------------------------------------------
 def get_master_key() -> str:
-    cmd = [
-        "ssh", "homelab-2nd",
-        "sudo", "kubectl", "-n", "llm-hub", "get", "secret", "litellm-master-key",
-        "-o", "jsonpath={.data.master-key}", "|", "base64", "-d",
-    ]
-    out = run(cmd, capture=True).strip()
+    out = read_secret_value("llm-hub", "litellm-master-key", "master-key")
     if not out:
         raise RuntimeError("Could not retrieve LiteLLM master key")
     return out
@@ -566,12 +627,7 @@ def get_provider_keys() -> dict[str, str]:
         # GUL-591: DeepSeek's own API, paying on Wojtek's key.
         ("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY"),
     ]:
-        cmd = [
-            "ssh", "homelab-2nd",
-            "sudo", "kubectl", "-n", "llm-hub", "get", "secret", "litellm-provider-keys",
-            "-o", f"jsonpath={{.data.{secret_key}}}", "|", "base64", "-d",
-        ]
-        value = run(cmd, capture=True).strip()
+        value = read_secret_value("llm-hub", "litellm-provider-keys", secret_key)
         if not value:
             if key_name == "DEEPSEEK_API_KEY":
                 # The -ds routes are opt-in: a missing key must not break the
@@ -803,32 +859,32 @@ def update_openwebui_pins(data, newly_added: set[str]) -> set[str]:
 # ---------------------------------------------------------------------------
 def flux_reconcile() -> None:
     ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    run(["ssh", "homelab-2nd", "sudo", "kubectl", "-n", "flux-system",
+    run(kubectl("-n", "flux-system",
          "annotate", "gitrepository", "flux-system",
-         f"reconcile.fluxcd.io/requestedAt={ts}", "--overwrite"], check=True)
-    run(["ssh", "homelab-2nd", "sudo", "kubectl", "-n", "flux-system",
+         f"reconcile.fluxcd.io/requestedAt={ts}", "--overwrite"), check=True)
+    run(kubectl("-n", "flux-system",
          "annotate", "kustomization", "apps",
-         f"reconcile.fluxcd.io/requestedAt={ts}", "--overwrite"], check=True)
+         f"reconcile.fluxcd.io/requestedAt={ts}", "--overwrite"), check=True)
 
 
 def wait_for_helmrelease_ready(namespace: str, name: str, timeout_seconds: int = 300) -> None:
-    run([
-        "ssh", "homelab-2nd", "sudo", "kubectl", "-n", namespace,
+    run(kubectl(
+        "-n", namespace,
         "wait", "--for=condition=ready", f"helmrelease/{name}",
         f"--timeout={timeout_seconds}s",
-    ], check=True)
+    ), check=True)
 
 
 def trigger_key_provisioner() -> str:
     job_name = f"litellm-key-provisioner-manual-{int(time.time())}"
-    run([
-        "ssh", "homelab-2nd", "sudo", "kubectl", "-n", "llm-hub",
+    run(kubectl(
+        "-n", "llm-hub",
         "create", "job", "--from=cronjob/litellm-key-provisioner", job_name,
-    ], check=True)
-    run([
-        "ssh", "homelab-2nd", "sudo", "kubectl", "-n", "llm-hub",
+    ), check=True)
+    run(kubectl(
+        "-n", "llm-hub",
         "wait", "--for=condition=complete", f"job/{job_name}", "--timeout=120s",
-    ], check=True)
+    ), check=True)
     return job_name
 
 
@@ -893,9 +949,18 @@ def main() -> int:
     # Routes the sync does not regenerate still have to point at something real.
     dead_upstreams = dead_upstream_routes(litellm_data, ollama_ids, go_ids, ds_ids)
 
+    # GUL-1431: a default that points at a removed route is the failure the
+    # owner saw (Open WebUI opening on a model nobody serves). The sync does not
+    # pick a new default by itself; it goes red and names the entry.
+    dead_defaults = dead_openwebui_defaults(openwebui_data, current)
+    if dead_defaults:
+        print("\n!! Open WebUI DEFAULT_MODELS points at model(s) LiteLLM does not route: "
+              + ", ".join(sorted(dead_defaults)))
+        print("!! Pick a new default in apps/llm-hub/openwebui-helm-release.yaml.")
+
     def exit_code() -> int:
-        """3 when a dead upstream reference survived the run, so the CronJob goes red."""
-        return 3 if dead_upstreams else 0
+        """3 when a dead upstream reference or a dead Open WebUI default survived the run."""
+        return 3 if (dead_upstreams or dead_defaults) else 0
 
     # Preserve non-Ollama/non-Go routes in the LiteLLM model list (z.ai, OpenRouter, Gemini, etc.)
     litellm_desired = upstream_desired | {m for m in current if not (is_ollama_model(m) or is_go_model(m))}
@@ -990,7 +1055,15 @@ def main() -> int:
         print("Removals disabled (use --allow-removals to enable). Stale models kept in config.")
         safe_removals = set()
 
-    if not verified_additions and not safe_removals:
+    routes_after = (current | verified_additions) - safe_removals
+    stale_pins = {
+        m for m in (v.strip() for v in str((_openwebui_env(openwebui_data, "DEFAULT_PINNED_MODELS") or {}).get("value", "")).split(","))
+        if m and m not in routes_after
+    }
+    if stale_pins:
+        print(f"Open WebUI pins with no route (will be dropped): {', '.join(sorted(stale_pins))}")
+
+    if not verified_additions and not safe_removals and not stale_pins:
         print("\nNo changes.")
         return exit_code()
 
@@ -1000,6 +1073,7 @@ def main() -> int:
         print(f"Would remove: {sorted(safe_removals)}")
         print(f"Would skip (failed probe): {sorted(failed_additions)}")
         print(f"Would skip (protected):    {sorted(blocked_removals)}")
+        print(f"Would unpin in Open WebUI: {sorted(stale_pins)}")
         if not verified_additions and not safe_removals:
             print("No changes.")
         return exit_code()
@@ -1012,6 +1086,9 @@ def main() -> int:
     newly_pinned = update_openwebui_pins(openwebui_data, verified_additions)
     if newly_pinned:
         print(f"Auto-pinned in Open WebUI: {', '.join(sorted(newly_pinned))}")
+    unpinned = prune_openwebui_pins(openwebui_data, routes_after)
+    if unpinned:
+        print(f"Unpinned in Open WebUI (no route): {', '.join(sorted(unpinned))}")
 
     # Key provisioner is edited as text so the embedded Python comments survive.
     provisioner_text = PROVISIONER_CM.read_text(encoding="utf-8")
@@ -1038,6 +1115,8 @@ def main() -> int:
     commit_msg = f"feat(llm-hub): weekly model sync — add {len(verified_additions)} model(s)"
     if safe_removals:
         commit_msg += f", remove {len(safe_removals)} stale model(s)"
+    if stale_pins:
+        commit_msg += f", unpin {len(stale_pins)} dead Open WebUI pin(s)"
     commit_body = f"""Weekly sync against upstream catalogues.
 
 Additions ({len(verified_additions)} verified by live probe):
@@ -1051,6 +1130,9 @@ Removals:
 
 Blocked removals (still referenced):
 {chr(10).join(f"- {m}" for m in sorted(blocked_removals)) or "- none"}
+
+Open WebUI pins dropped (no route):
+{chr(10).join(f"- {m}" for m in sorted(stale_pins)) or "- none"}
 
 Co-Authored-By: Paperclip <noreply@paperclip.ing>
 """
