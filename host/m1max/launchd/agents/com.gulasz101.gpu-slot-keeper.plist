@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  GUL-1431: keeps Saluki loaded in LM Studio on the M1 Max unless a local image
+  job holds the GPU slot. Runs host/m1max/bin/gpu-slot.sh keep every 2 minutes.
+  Install: see host/m1max/README.md, section "GPU slot".
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gulasz101.gpu-slot-keeper</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/wojciechgula/.local/bin/gpu-slot.sh</string>
+        <string>keep</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>120</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/wojciechgula/Library/Logs/homelab/gpu-slot-keeper.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/wojciechgula/Library/Logs/homelab/gpu-slot-keeper.out.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

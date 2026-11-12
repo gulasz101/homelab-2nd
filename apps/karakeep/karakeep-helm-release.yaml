@@ -76,13 +76,16 @@ spec:
 
               # ── AI tagging via LiteLLM proxy ─────────────────────────────
               OPENAI_BASE_URL: "http://litellm.llm-hub.svc.cluster.local:4000/v1"
-              INFERENCE_TEXT_MODEL: "gemma-4-12b-uncensored"
-              INFERENCE_IMAGE_MODEL: "gemma-4-12b-uncensored"
+              # GUL-1431: Saluki 27B on the M1 Max, thinking forced off at the
+              # route (with thinking on, ~1,200 calls a day would fill the GPU).
+              # It is slower than Gemma was (~10 tok/s), hence the job timeout.
+              INFERENCE_TEXT_MODEL: "saluki-27b-local-nothink"
+              INFERENCE_IMAGE_MODEL: "saluki-27b-local-nothink"
               INFERENCE_CONTEXT_LENGTH: "8192"
               INFERENCE_ENABLE_AUTO_TAGGING: "true"
               INFERENCE_ENABLE_AUTO_SUMMARIZATION: "true"
               INFERENCE_OUTPUT_SCHEMA: "plain"
-              INFERENCE_JOB_TIMEOUT_SEC: "300"
+              INFERENCE_JOB_TIMEOUT_SEC: "900"
 
               # Chrome sidecar disabled; unset browser URL so crawler uses plain HTTP.
               BROWSER_WEB_URL: ""

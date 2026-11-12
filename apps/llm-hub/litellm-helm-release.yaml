@@ -382,71 +382,61 @@ spec:
           # attempt, then the router moves on.
           num_retries: 0
 
-        # ── Local LM Studio model on the Hermes M1 Max (same LAN as the cluster) ──
-      - model_name: gemma-4-12b-uncensored
+        # ── Saluki 27B, the only model in LM Studio on the M1 Max (GUL-1431) ──
+        # Underdog Saluki 27B 1.0 (ConwayResearch), a 2-bit IQ2 GGUF of
+        # Qwen3.8-27B, with the Q8 vision add-on. It replaced Gemma 4 12B,
+        # qwen3.8-9b-heretic and qwen3.8-27b-mlx on 2026-11-12; those files are
+        # deleted from the Mac. LM Studio loads it as identifier `saluki-27b`
+        # at 64k context, 2 parallel slots, JIT auto-load OFF.
+        # LAN IP pinned because pods cannot resolve `.local`; if the lease moves,
+        # change it here (both entries) and in karakeep-prometheus-rules.yaml.
+        #
+        # Measured 2026-11-12 (pending ADR saluki-local-lane-and-gpu-slot):
+        # ~10 tok/s output for one request, ~5.5 each for two, prompt reading
+        # ~60-85 tok/s, so a 30k-token prompt takes 6-10 min cold and ~1 min
+        # when the prompt cache hits. Hence the long timeouts.
+        #
+        # The GPU slot (host/m1max/bin/gpu-slot.sh): a local image job unloads
+        # Saluki for a few minutes. LM Studio then answers every request with a
+        # fast HTTP 400 "No models loaded", and the chain below moves the call.
+        # With JIT off LM Studio also serves ANY model name with whatever is
+        # loaded, so the upstream id here is a label, not a selector.
+        #
+        # Thinking is on by default and a "write 300 words" prompt burned 2,500
+        # thinking tokens with no answer. `reasoning_effort: none` turns it off
+        # cleanly (measured), so it is declared, never dropped.
+      - model_name: saluki-27b-local
         litellm_params:
-            # LM Studio on the M1 Max, reached over the LAN (NOT NetBird).
-            # The Mac's address comes from an OPNsense DHCP lease (m1max.local);
-            # K8s pods cannot resolve `.local`, so pin the LAN IP here. If the
-            # address ever changes it must be updated in ONE place: this line.
-            # NOTE 2026-09-19: the lease is NOT truly static — it moved .148 → .129
-            # and broke this route (connection refused). Set a static DHCP
-            # reservation on OPNsense to stop this recurring.
-            # Reachable from homelab-2nd; no real API key required.
-          model: openai/gemma4-12b-qat-uncensored-hauhaucs-balanced
+          model: openai/saluki-27b
           api_base: "http://192.168.1.119:1234/v1"
           api_key: "os.environ/DUMMY_API_KEY"
-
-        # Qwen3.8-9B heretic-uncensored (MLX 4-bit) — LM Studio on the M1 Max,
-        # same LAN route/caveats as the gemma entry above (pinned DHCP IP).
-        # NOTE: reasoning model — emits reasoning_content; test prompts need
-        # generous max_tokens or content comes back empty (reasoning burn).
-        # ⚠ DEPRECATED 2026-10-03: lineage runaway-think trap (9B-Distill has no
-        # documented enable_thinking path). Prefer qwen3.8-27b-mlx.
-      - model_name: qwen3.8-9b-heretic-uncensored
-        litellm_params:
-          model: openai/qwen3.8-9b-heretic-uncensored-mtplx
-          api_base: "http://192.168.1.119:1234/v1"
-          api_key: "os.environ/DUMMY_API_KEY"
-          # Advertise the real native window (ADR-036 pattern). Qwen3.8-9B
-          # Distill is Qwen3.5-arch with 262,144 native context (HF model
-          # card, confirmed 2026-10-05). Without this LiteLLM omits
-          # max_input_tokens and clients silently guess 131072. CAVEAT: the
-          # engine only honours 262k if LM Studio's load setting matches AND
-          # the MLX runtime escapes the auto-fit bug (pin 1.8.5, see
-          # qwen3.8-27b-mlx note / H2-129).
+          allowed_openai_params:
+          - reasoning_effort
+          timeout: 1800
+          num_retries: 0
         model_info:
-          max_input_tokens: 262144
+          max_input_tokens: 65536
           max_output_tokens: 32768
-
-        # Qwen3.8-27B MLX 4-bit (lmstudio-community, official weights) — LM
-        # Studio on the M1 Max. Chosen over the 9B distills because the
-        # official chat template ships a REAL thinking kill switch
-        # (chat_template_kwargs.enable_thinking=false pre-emits an empty
-        # think block) — verified live on 2026-10-03: loop-trap with 4000
-        # max_tokens completed clean, finish=stop, no runaway deliberation.
-        # Two aliases WERE planned: passthrough + nothink (route-side kill
-        # switch). PROBE 2026-10-03 after deploy: chat_template_kwargs is
-        # DROPPED on the way — LiteLLM does not forward it, and even a direct
-        # curl to LM Studio's /v1 with enable_thinking=false still returns
-        # reasoning_content. The kill switch only works inside the LM Studio
-        # UI/engine, not via its OpenAI-compatible API. Aliases removed;
-        # disable thinking from the LM Studio UI if you want it off globally.
-        # Sampling note: never greedy-decode this family (documented
-        # repetition loops): temp 0.7, top_p 0.8, top_k 20, presence 1.5.
-      - model_name: qwen3.8-27b-mlx
+          supports_function_calling: true
+          supports_vision: true
+        # Karakeep's route: same model, thinking forced off at the route.
+        # Karakeep sends ~1,200 tagging calls a day; with thinking on it alone
+        # would fill the GPU. No fallback on purpose: image tagging needs vision,
+        # and Karakeep retries a failed job by itself.
+      - model_name: saluki-27b-local-nothink
         litellm_params:
-          model: openai/qwen3.8-27b-mlx
+          model: openai/saluki-27b
           api_base: "http://192.168.1.119:1234/v1"
           api_key: "os.environ/DUMMY_API_KEY"
-          # Advertise the real context window (ADR-036). Without this, LiteLLM
-          # omits max_input_tokens for the openai/ passthrough and clients
-          # (Hermes) fall back to a 131072 default — which is why the nightly
-          # karakeep digest "could not shrink" a ~28k-token session. LM Studio
-          # now serves this model at 262144 (MLX runtime pinned to 1.8.5).
+          reasoning_effort: "none"
+          allowed_openai_params:
+          - reasoning_effort
+          timeout: 900
+          num_retries: 0
         model_info:
-          max_input_tokens: 262144
-          max_output_tokens: 32768
+          max_input_tokens: 65536
+          max_output_tokens: 8192
+          supports_vision: true
 
         # ── FreeLLMAPI free-tier pool (GUL-184 / ADR-091) ──────────────
         # GUL-184 / ADR-091 (2026-10-26): free gpt-oss-120b pool in FreeLLMAPI
@@ -857,6 +847,10 @@ spec:
         #     these calls on 2026-11-09 (ADR-127 reversed). Adding `-ds` here
         #     would silently reintroduce the bill.
         - {"gpt-oss-120b-ollama": ["gpt-oss-120b-freellmapi"]}
+        # GUL-1431 (2026-11-12, owner ruling): Saluki first, then the Ollama
+        # subscription, then the paid DeepSeek API as the last resort. The
+        # first hop fires every time a local image job holds the GPU slot.
+        - {"saluki-27b-local": ["deepseek-v4.1-flash-1017-ollama", "deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-1017-ds"]}
         content_policy_fallbacks:
         - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama"]}
         - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama"]}
