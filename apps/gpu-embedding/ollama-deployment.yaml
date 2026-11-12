@@ -1,7 +1,11 @@
 ---
 # GPU-accelerated Ollama embedding server.
 # Runs in the shared gpu-embedding namespace so other services can reuse it.
-# Uses the NVIDIA RuntimeClass and requests one nvidia.com/gpu.
+# Since the 2026-11-12 node move (ADR-134): mimir's Radeon Vega 7 iGPU via
+# Ollama's Vulkan backend. The GPU comes from the AMD device plugin
+# (amd.com/gpu), so the pod is NOT privileged and mounts no host /dev.
+# Measured on mimir: 36.6 ms/embed and 35.4 embeds/s (batch 64), vs 101 ms and
+# 10.2/s on 4 CPU cores. The old GTX 970M left with the Clevo.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -19,19 +23,15 @@ spec:
       labels:
         app.kubernetes.io/name: ollama-embeddings
     spec:
-      # Use the NVIDIA container runtime so CUDA devices and driver libs are mounted.
-      runtimeClassName: nvidia
+      # mimir holds the ollama-models local-path volume and the AMD iGPU.
       nodeSelector:
-        feature.node.kubernetes.io/pci-10de.present: "true"
-      tolerations:
-        - key: nvidia.com/gpu
-          operator: Exists
-          effect: NoSchedule
+        kubernetes.io/hostname: mimir
+        feature.node.kubernetes.io/pci-1002.present: "true"
       initContainers:
         - name: pull-model
-          image: ollama/ollama:0.3.14
+          image: ollama/ollama:0.40.12
           # Only pull if the model manifest is missing. Avoid starting 'ollama serve'
-          # in init because it can hang during Maxwell GPU detection and block startup.
+          # in init (historic: it hung on Maxwell GPU detection on the Clevo).
           command:
             - /bin/sh
             - -c
@@ -48,9 +48,6 @@ spec:
           env:
             - name: HOME
               value: "/root"
-            # Force CPU-only for the pull operation so it never hangs on GPU detection.
-            - name: CUDA_VISIBLE_DEVICES
-              value: ""
           volumeMounts:
             - name: ollama-models
               mountPath: /root/.ollama
@@ -62,7 +59,7 @@ spec:
               memory: 4Gi
       containers:
         - name: ollama
-          image: ollama/ollama:0.3.14
+          image: ollama/ollama:0.40.12
           ports:
             - name: http
               containerPort: 11434
@@ -72,6 +69,14 @@ spec:
               value: "0.0.0.0:11434"
             - name: HOME
               value: "/root"
+            # Vulkan backend (RADV, Mesa) - works on the Renoir iGPU where ROCm does not
+            # officially support gfx90c.
+            - name: OLLAMA_VULKAN
+              value: "1"
+            # Ollama >= 0.40 drops integrated GPUs by default ("dropping integrated GPU;
+            # to enable, set OLLAMA_IGPU_ENABLE=1"). The iGPU is the whole point here.
+            - name: OLLAMA_IGPU_ENABLE
+              value: "1"
           volumeMounts:
             - name: ollama-models
               mountPath: /root/.ollama
@@ -79,11 +84,11 @@ spec:
             requests:
               cpu: "250m"
               memory: 1Gi
-              nvidia.com/gpu: 1
+              amd.com/gpu: 1
             limits:
               cpu: "4"
               memory: 4Gi
-              nvidia.com/gpu: 1
+              amd.com/gpu: 1
           livenessProbe:
             httpGet:
               path: /
