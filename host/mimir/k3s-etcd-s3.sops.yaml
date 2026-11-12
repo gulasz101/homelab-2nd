@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: k3s-etcd-s3
+    annotations:
+        homelab/not-applied: host credential (mimir /etc/rancher/k3s/config.yaml etcd-s3-*), NOT a cluster object; kept for rebuilds
+stringData:
+    etcd-s3-endpoint: ENC[AES256_GCM,data:QtwWjxIBeDkbe8ke+f3PQu83,iv:yNMEUPKywxNgjbjBqPm0ODsr/HAzWjzzl1JDIcBbzaI=,tag:Cif7QiAzAqlDeIWTGOSTGg==,type:str]
+    etcd-s3-bucket: ENC[AES256_GCM,data:kunv3MALde/dUT6vdjJpIR7w,iv:2iXTuTuDU8PLCRFPDO5CBfyG0JZiJ4D+AVIaxPhDXio=,tag:E1Vs24uK9enImZb1pS0j4g==,type:str]
+    etcd-s3-access-key: ENC[AES256_GCM,data:hHoD0HPirL0=,iv:MUEmgqgRCEt8d+vNfnHKSc7Nl/AqR1n4eDestPoBPWQ=,tag:/E2sMSHzEXA8MJLjJygAzA==,type:str]
+    etcd-s3-secret-key: ENC[AES256_GCM,data:a12ZGsx8iKcxveUmt8mA8iBVGmwbgZs0dfNy9OQxh1B/o8hnjBxfTgttmPdX96oc,iv:Me7p5LwtikxeWhK3n0/DpoKmEj8mSPMBHyESNbISe8o=,tag:p0EsvihTYX06luN/cfAvAw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBJeG1iaFd1QkpkZ1JlMStl
+            emZWck5aelVlalpnSzlHdnk5L2owS3JkVHowCmxNaWc1M1JKQTR2VHlQY3JZRkZx
+            cXI4Z01GRi9TUm1qMG01UHMyRTNvV3cKLS0tIGNDeXBWMXpxSTVUR1o5cGdXOWE3
+            THNNaEd4TVNBMi91M2paem9yOTdtVncKvf77HVgRj4QrNdYX9KnLxFNCgNNV6QN6
+            qpa+ziCCiOlvPBN34Wk+GAHLxhkAjS5gqfpyaN+rIq7ysXG9vz9Dpw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBDTHM3YUEvODlzZmhGaXdJ
+            ME5XU0pQek85Nm5BWnByS1RYNTdHRjlQOXhrCnRzVzZnMDY3UFY0akE3YnpSZFFp
+            aXZDN2xVbnhmRFI0SDI5RWtKaU1Ca0kKLS0tIFcxS1FCKzhORUtxYmJpWjdXaG84
+            RjdKaERNR2R0S0p4YXZNOVJZL0w0dkUKdaxKoMFIUgCQwbjirYOoXvBFEbCPYqaV
+            H9HZf45/9DQ7Gr6BnRAt6P2wIeHQK977LfZBQVEoYG+nba7OhFQmdg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1mt6y86q9lhrmky0c0j7xwvacfzpep3w6e7z8zsrr22jj2u49gs6s59h7w2
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-11-12T07:40:29Z"
+    mac: ENC[AES256_GCM,data:cUL+XkuJKYmBF8+7qGcyuTC1raMZTRnDORYtog3HTGC/KEK1SY1VbVAFR34DFyN1W8Xs2OFok6nG24ahEFu8/Ov9wDWxBnNOBS/xMXgUA/uXRk/1YWMaJFXSolLaAmo+I7UHTqnm6C7FzeOh7sJgV6WSjunEaXoTyzktoap3xCk=,iv:G8HpBgF6NHjUoJWSX3FlaCFpJp51s66g8ifKTXfQiW8=,tag:3WbByvgPZCm7c/unwzun1A==,type:str]
+    version: 3.13.3

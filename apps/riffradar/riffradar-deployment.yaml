@@ -40,7 +40,7 @@ spec:
         - name: ghcr-pull
       # local-path PVC is node-local; the backup Job pins the same node.
       nodeSelector:
-        kubernetes.io/hostname: homelab-2nd
+        kubernetes.io/hostname: mimir
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

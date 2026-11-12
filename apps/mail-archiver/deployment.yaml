@@ -48,7 +48,7 @@ spec:
       #     single-replica app selects its node instead of letting the scheduler gamble.
       #  2. Architecture: workloads live on homelab-2nd.
       nodeSelector:
-        kubernetes.io/hostname: homelab-2nd
+        kubernetes.io/hostname: mimir
       # The image has no USER directive (runs as root by default). We run it as
       # uid/gid 1000 to match the ST1 NFS export dir (uid 1000, mode 0770,
       # no_root_squash), so the app writes the DataProtection keyring directly and
