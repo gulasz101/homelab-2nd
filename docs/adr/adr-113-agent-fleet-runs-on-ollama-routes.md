@@ -1,6 +1,6 @@
 # ADR-113: The agent fleet runs on Ollama Cloud routes, not on the OpenCode Go allowance
 
-- **Status**: Accepted (amended 2026-11-05 by GUL-971 / GUL-972)
+- **Status**: Accepted (amended 2026-11-05 by GUL-971 / GUL-972; amended 2026-11-12 by GUL-1428 / GUL-1429)
 - **Date**: 2026-10-29
 - **Issue**: GUL-581
 - **Related**: ADR-085 (LiteLLM carries paid subscriptions only), ADR-094 (Hindsight reflect on a paid Ollama route), ADR-075 (Paperclip org and agent runtimes), GUL-122 / GUL-480 (Pi sends `reasoning_effort`)
@@ -57,7 +57,7 @@ The Ollama Pro weekly allowance ran dry again (`HTTP 429 ... reached your weekly
 | Paperclip runners: Tester, Builder, Reviewer, Verifier, Majster, Pi (`pi_local`) | `llmhub/deepseek-v4.1-flash-1017-ds` | 30–90 minute tool-calling runs |
 | Paperclip OpenCode runner + `~/.config/opencode/opencode.json` (`model`, `small_model`) | `llmhub/deepseek-v4.1-flash-1017-ds` | same work, local CLI |
 | Hermes `andrzej` | `deepseek-v4.1-flash-1017-ds` | ops executor, tool-heavy |
-| Hermes root (Bill Cipher), `florian`, `matejko`, `szarik`, `zdzislaw` | `beam-free-go` | chat-shaped work, does not hold the paid allowance |
+| Hermes root (Bill Cipher), `florian`, `matejko`, `szarik`, `zdzislaw` | `beam-free-go` | chat-shaped work, does not hold the paid allowance — **superseded 2026-11-12, see the amendment below** |
 | `claude_local` (Claude Code) | unchanged | bills Anthropic |
 
 Why the free pool is acceptable here and was not in 2026-10-29: the profiles that move are the ones
@@ -74,6 +74,20 @@ Two traps recorded on the way, both of which cost a run:
 - `deepseek-v4.1-flash-1017-ds` rejects a *forced* `tool_choice` (`Thinking mode does not support
   this tool_choice`). `tool_choice: "auto"` works and returns `tool_calls`. A probe that forces the
   tool call will report the paid route as broken when it is fine.
+
+## Amendment 2026-11-12 — the chat profiles come off the free pool too (GUL-1428 → GUL-1429)
+
+**Date** 2026-11-12. **Moved** Hermes root (Bill Cipher), `florian`, `matejko` and `szarik` from
+`beam-free-go`, and `zdzislaw` from `glm-5.3-ollama`, all to `deepseek-v4.1-flash-1017-ds` — the pin
+the runners and `andrzej` already carry. **Why** every cheaper route was walled in one day:
+`beam-free-go` answered `429 Rate limit exceeded` from 2026-11-11 22:57Z, both `-ollama` routes were
+on the Ollama weekly limit, and matejko's last FreeLLMAPI hop answered `429 All models exhausted`
+at 2026-11-12 06:02Z. Nothing else was touched: `fallback_providers`, `auxiliary` and `compression`
+stay as they are, because a fallback only fires once `-ds` has already failed.
+
+The 2026-11-05 tool-call finding still holds, and was re-probed on 2026-11-12: `-ds` answers
+`tool_choice: "auto"` with `tool_calls` (`get_node_status`, `{"node": "homelab-2nd"}`), while a
+*forced* `tool_choice` returns `400 Thinking mode does not support this tool_choice`.
 
 ## Consequences
 
