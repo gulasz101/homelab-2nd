@@ -345,7 +345,7 @@ that reads every table with `SELECT * FROM <table>` and writes one `INSERT` per 
 JSONB) and held the board's pool connection while it did it.
 
 The fix on this host: a shim that ignores the host in the connection string and runs the `pg_dump`
-that ships **inside** `paperclip-db-1` — same 17.11 build as the server, no Homebrew, nothing new on
+that ships **inside** the CNPG primary pod (looked up by label; `paperclip-db-2` since 2026-11-12) — same 17.11 build as the server, no Homebrew, nothing new on
 the host. Source of truth: `bin/paperclip-pg-dump`, installed to `/usr/local/bin/paperclip-pg-dump`
 (root:wheel 0755). It emits **plain SQL on stdout**; the server does the gzip itself.
 

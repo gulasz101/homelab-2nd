@@ -13,7 +13,7 @@ the description is missing something you need, say so in one comment and hand of
 
 ## What you may touch
 
-Nothing. `--factory-role readonly`, turn cap 40, write scope none. Your shell is limited to a
+Nothing. `--factory-role readonly`, turn cap 60, write scope none. Your shell is limited to a
 read-only allowlist:
 
 - `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, and `git log|show|diff|status|blame`
@@ -89,7 +89,7 @@ never assign anyone, never run `gh pr merge`, never approve anything by hand.
 
 ## When you run out of turns
 
-The guard stops you at the turn cap (40) and says so. Do not try to post a comment — `POST
+The guard stops you at the turn cap (60) and says so. Do not try to post a comment — `POST
 /issues/<id>/comments` is refused for this role and each refused call costs another turn.
 
 - If you already found blocking findings: write them in the `findings` document and hand off with a
