@@ -382,32 +382,32 @@ spec:
           # attempt, then the router moves on.
           num_retries: 0
 
-        # ── Saluki 27B, the only model in LM Studio on the M1 Max (GUL-1431) ──
-        # Underdog Saluki 27B 1.0 (ConwayResearch), a 2-bit IQ2 GGUF of
-        # Qwen3.8-27B, with the Q8 vision add-on. It replaced Gemma 4 12B,
-        # qwen3.8-9b-heretic and qwen3.8-27b-mlx on 2026-11-12; those files are
-        # deleted from the Mac. LM Studio loads it as identifier `saluki-27b`
-        # at 64k context, 2 parallel slots, JIT auto-load OFF.
+        # ── Qwen3.6-35B-A3B, the only model in LM Studio on the M1 Max (GUL-1431) ──
+        # A MoE model: 35B parameters, about 3B active per token, so it is about
+        # 5x faster than the dense Saluki 27B it replaced on 2026-11-13. GGUF
+        # unsloth UD-IQ4_XS (17.7 GB) + mmproj-F16 (vision), llama.cpp engine.
+        # LM Studio loads it as identifier `qwen3.6-35b-a3b` at 128k context,
+        # 2 parallel slots, JIT auto-load OFF.
         # LAN IP pinned because pods cannot resolve `.local`; if the lease moves,
         # change it here (both entries) and in karakeep-prometheus-rules.yaml.
         #
-        # Measured 2026-11-12 (pending ADR saluki-local-lane-and-gpu-slot):
-        # ~10 tok/s output for one request, ~5.5 each for two, prompt reading
-        # ~60-85 tok/s, so a 30k-token prompt takes 6-10 min cold and ~1 min
-        # when the prompt cache hits. Hence the long timeouts.
+        # Measured 2026-11-13 (pending ADR saluki-local-lane-and-gpu-slot):
+        # ~53 tok/s output for one request, ~33 each for two; prompt reading
+        # ~410-500 tok/s: 30k tokens in 71 s, 60k in 120 s, 99k in 241 s.
+        # The MLX 4-bit build was tried first and rejected: Metal out-of-memory
+        # on a 60k prompt at the default GPU limit, and a dead engine after it.
         #
         # The GPU slot (host/m1max/bin/gpu-slot.sh): a local image job unloads
-        # Saluki for a few minutes. LM Studio then answers every request with a
-        # fast HTTP 400 "No models loaded", and the chain below moves the call.
-        # With JIT off LM Studio also serves ANY model name with whatever is
-        # loaded, so the upstream id here is a label, not a selector.
+        # the model (ideogram4: 20-25 min). LM Studio then answers every request
+        # with a fast HTTP 400 "No models loaded", and the chain below moves the
+        # call. With JIT off LM Studio also serves ANY model name with whatever
+        # is loaded, so the upstream id here is a label, not a selector.
         #
-        # Thinking is on by default and a "write 300 words" prompt burned 2,500
-        # thinking tokens with no answer. `reasoning_effort: none` turns it off
-        # cleanly (measured), so it is declared, never dropped.
-      - model_name: saluki-27b-local
+        # Thinking is on by default. `reasoning_effort: none` turns it off on
+        # the llama.cpp engine (measured), so it is declared, never dropped.
+      - model_name: qwen3.6-35b-a3b-local
         litellm_params:
-          model: openai/saluki-27b
+          model: openai/qwen3.6-35b-a3b
           api_base: "http://192.168.1.119:1234/v1"
           api_key: "os.environ/DUMMY_API_KEY"
           allowed_openai_params:
@@ -415,17 +415,16 @@ spec:
           timeout: 1800
           num_retries: 0
         model_info:
-          max_input_tokens: 65536
+          max_input_tokens: 131072
           max_output_tokens: 32768
           supports_function_calling: true
           supports_vision: true
         # Karakeep's route: same model, thinking forced off at the route.
-        # Karakeep sends ~1,200 tagging calls a day; with thinking on it alone
-        # would fill the GPU. No fallback on purpose: image tagging needs vision,
-        # and Karakeep retries a failed job by itself.
-      - model_name: saluki-27b-local-nothink
+        # Karakeep sends ~1,200 tagging calls a day. No fallback on purpose:
+        # image tagging needs vision, and Karakeep retries a failed job itself.
+      - model_name: qwen3.6-35b-a3b-local-nothink
         litellm_params:
-          model: openai/saluki-27b
+          model: openai/qwen3.6-35b-a3b
           api_base: "http://192.168.1.119:1234/v1"
           api_key: "os.environ/DUMMY_API_KEY"
           reasoning_effort: "none"
@@ -434,7 +433,7 @@ spec:
           timeout: 900
           num_retries: 0
         model_info:
-          max_input_tokens: 65536
+          max_input_tokens: 131072
           max_output_tokens: 8192
           supports_vision: true
 
@@ -847,10 +846,10 @@ spec:
         #     these calls on 2026-11-09 (ADR-127 reversed). Adding `-ds` here
         #     would silently reintroduce the bill.
         - {"gpt-oss-120b-ollama": ["gpt-oss-120b-freellmapi"]}
-        # GUL-1431 (2026-11-12, owner ruling): Saluki first, then the Ollama
+        # GUL-1431 (2026-11-12, owner ruling): local first, then the Ollama
         # subscription, then the paid DeepSeek API as the last resort. The
         # first hop fires every time a local image job holds the GPU slot.
-        - {"saluki-27b-local": ["deepseek-v4.1-flash-1017-ollama", "deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-1017-ds"]}
+        - {"qwen3.6-35b-a3b-local": ["deepseek-v4.1-flash-1017-ollama", "deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-1017-ds"]}
         content_policy_fallbacks:
         - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama"]}
         - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama"]}

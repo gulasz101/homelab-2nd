@@ -66,14 +66,14 @@ def owui(default, pins):
         {"name": "OTHER", "value": "dead-route"},
     ]}}}
 
-routes = {"beam-free-go", "kimi-k2.7-code", "saluki-27b-local"}
+routes = {"beam-free-go", "kimi-k2.7-code", "qwen3.6-35b-a3b-local"}
 
 # AC-1
-d = owui("beam-free-go", "beam-free-go,gemma-4-12b-uncensored,kimi-k2.7-code,qwen3.8-27b-mlx,saluki-27b-local")
+d = owui("beam-free-go", "beam-free-go,gemma-4-12b-uncensored,kimi-k2.7-code,qwen3.8-27b-mlx,qwen3.6-35b-a3b-local")
 dropped = mod.prune_openwebui_pins(d, routes)
 pins = d["spec"]["values"]["extraEnvVars"][1]["value"]
 check("AC-1", dropped == {"gemma-4-12b-uncensored", "qwen3.8-27b-mlx"}
-      and pins == "beam-free-go,kimi-k2.7-code,saluki-27b-local",
+      and pins == "beam-free-go,kimi-k2.7-code,qwen3.6-35b-a3b-local",
       f"dead pins dropped, order kept (dropped={sorted(dropped)}, pins={pins})")
 d2 = owui("beam-free-go", "beam-free-go,kimi-k2.7-code")
 check("AC-1", mod.prune_openwebui_pins(d2, routes) == set()

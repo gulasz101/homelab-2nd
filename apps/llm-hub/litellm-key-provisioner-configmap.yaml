@@ -48,10 +48,10 @@ data:
         # Studio models; free tiers live in FreeLLMAPI (apps/freellmapi/).
         # ADR-091: one named free route into FreeLLMAPI's gpt-oss-120b pool.
         "gpt-oss-120b-freellmapi",
-        # Local LM Studio on the M1 Max: Saluki 27B is the only model there
+        # Local LM Studio on the M1 Max: Qwen3.6-35B-A3B is the only model there
         # (GUL-1431; Gemma and the local Qwens were deleted on 2026-11-12).
-        "saluki-27b-local",
-        "saluki-27b-local-nothink",
+        "qwen3.6-35b-a3b-local",
+        "qwen3.6-35b-a3b-local-nothink",
         # Local Ollama models formerly used by the Honcho deriver (Honcho
         # retired, GUL-355/GUL-402); kept routed for Hindsight experiments and
         # the OpenChamber agents.
