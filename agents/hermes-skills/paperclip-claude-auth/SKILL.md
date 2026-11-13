@@ -35,6 +35,11 @@ provider. So the connection dies about 8 hours after each login, by design. The 
 
 ## Traps
 
+- **A Cloudflare 403 is not a logout.** `Failed to authenticate. API Error: 403 Attention Required! | Cloudflare`
+  is Cloudflare's interstitial in front of `api.anthropic.com`: the API never saw the request, no
+  credential was rejected, yet the classifier stamps `claude_auth_required`. Prove the token with a
+  live `claude -p` before touching any secret — see
+  [references/cloudflare-403.md](references/cloudflare-403.md).
 - Never mark a subscription connection `method: api_key` to "stabilise" it: the provider validates a
   key, rejects a setup token, and it moves the agent onto per-token billing.
 - The grant's credential ref is `versionSelector: "latest"`, so a rotation needs no other change and
