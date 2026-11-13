@@ -1,34 +1,35 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
-# gpu-slot.sh — one GPU slot on the M1 Max, shared by Saluki and the local
+# gpu-slot.sh — one GPU slot on the M1 Max, shared by the local LLM and the local
 # image engines (GUL-1431).
 #
-# The M1 Max has 32 GB. Saluki 27B in LM Studio needs about 12-13 GB at 64k
-# context (measured 2026-11-12). One Ideogram 4 job needs about 17-18 GB. Both
+# The M1 Max has 32 GB. Qwen3.6-35B-A3B (GGUF UD-IQ4_XS) in LM Studio wires
+# about 22-23 GB at 128k context (measured 2026-11-13). One Ideogram 4 job
+# needs about 17-18 GB. Both
 # together would push the box past the GPU limit, so they take turns, and the
 # owner ruled that images win:
 #
 #   begin <engine>  called by the ideogram4-local worker before a LOCAL job
 #                   (ideogram4, flux2-klein). Writes the marker, waits for
 #                   running LLM requests to finish (max GPU_SLOT_DRAIN_SECS),
-#                   then unloads Saluki. Exit 0 even if the drain timed out:
+#                   then unloads the model. Exit 0 even if the drain timed out:
 #                   the image job runs anyway.
 #   end             called by the worker after the job, success or not.
-#                   Removes the marker and loads Saluki again.
-#   keep            run by launchd every 2 minutes. Loads Saluki when no image
+#                   Removes the marker and loads the model again.
+#   keep            run by launchd every 2 minutes. Loads the model when no image
 #                   job holds the slot and it is not loaded (after a reboot, a
 #                   crashed worker, a failed `end`). Clears a stale marker
 #                   whose worker PID is dead or older than GPU_SLOT_MAX_SECS.
 #   status          one line: loaded or not, marker or not.
 #
-# While Saluki is unloaded, LM Studio answers every request with a fast
+# While the model is unloaded, LM Studio answers every request with a fast
 # HTTP 400 "No models loaded" (measured: 14 ms), and LiteLLM's fallback chain
-# for saluki-27b-local moves the call to the cloud routes. JIT auto-load MUST be
+# for qwen3.6-35b-a3b-local moves the call to the cloud routes. JIT auto-load MUST be
 # off in LM Studio (http-server-config.json justInTimeModelLoading=false), or
 # the first request during an image job would load the model straight back.
 #
 # Loads are serialised with a mkdir lock: two `lms load` calls at once create a
-# second instance (saluki-27b:2) and double the RAM, which is the exact failure
+# second instance (qwen3.6-35b-a3b:2) and double the RAM, which is the exact failure
 # this script exists to prevent.
 #
 # Written for bash 3.2 (macOS /bin/bash): no associative arrays, no mapfile.
@@ -36,9 +37,9 @@
 set -uo pipefail
 
 LMS="${LMS:-$HOME/.lmstudio/bin/lms}"
-MODEL_KEY="${GPU_SLOT_MODEL_KEY:-underdog-saluki-27b-1.0}"
-IDENTIFIER="${GPU_SLOT_IDENTIFIER:-saluki-27b}"
-CONTEXT="${GPU_SLOT_CONTEXT:-65536}"
+MODEL_KEY="${GPU_SLOT_MODEL_KEY:-qwen3.6-35b-a3b}"
+IDENTIFIER="${GPU_SLOT_IDENTIFIER:-qwen3.6-35b-a3b}"
+CONTEXT="${GPU_SLOT_CONTEXT:-131072}"
 PARALLEL="${GPU_SLOT_PARALLEL:-2}"
 STATE_DIR="${GPU_SLOT_STATE_DIR:-$HOME/Library/Application Support/gpu-slot}"
 LOG_FILE="${GPU_SLOT_LOG:-$HOME/Library/Logs/homelab/gpu-slot.log}"
@@ -94,7 +95,7 @@ take_load_lock() {
   local waited=0
   while ! mkdir "$LOAD_LOCK" 2>/dev/null; do
     # A lock older than 5 minutes belongs to a dead caller: `lms load` takes
-    # about 11 s for Saluki.
+    # 10-20 s for the model.
     if [ -n "$(find "$LOAD_LOCK" -maxdepth 0 -mmin +5 2>/dev/null)" ]; then
       log "load lock is stale, removing"
       rmdir "$LOAD_LOCK" 2>/dev/null

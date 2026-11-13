@@ -63,16 +63,16 @@ spec:
           # Karakeep-facing alias. No successes + repeated failures = the
           # LM Studio backend on the M1 Max is unreachable (wrong IP, LM Studio
           # down, model unloaded).
-          # GUL-1431: a local image job unloads Saluki for a few minutes on
+          # GUL-1431: a local image job unloads the local model for a few minutes on
           # purpose (host/m1max/bin/gpu-slot.sh), so a short burst is normal.
           # `for: 30m` waits out a run of image jobs; the gpu-slot keeper
           # reloads the model within 2 minutes of the slot going free.
           expr: |
-            increase(litellm_deployment_failure_responses_total{requested_model="saluki-27b-local-nothink"}[30m]) > 3
+            increase(litellm_deployment_failure_responses_total{requested_model="qwen3.6-35b-a3b-local-nothink"}[30m]) > 3
           for: 30m
           labels:
             severity: warning
             namespace: karakeep
           annotations:
             summary: "Karakeep AI inference is failing"
-            description: "LiteLLM is recording repeated failures for saluki-27b-local-nothink (Karakeep tagging/summarization) for 30 min. On the M1 Max run `~/.local/bin/gpu-slot.sh status` (model loaded? image job stuck?) and check that its LAN IP still matches the litellm api_base (currently 192.168.1.119:1234)."
+            description: "LiteLLM is recording repeated failures for qwen3.6-35b-a3b-local-nothink (Karakeep tagging/summarization) for 30 min. On the M1 Max run `~/.local/bin/gpu-slot.sh status` (model loaded? image job stuck?) and check that its LAN IP still matches the litellm api_base (currently 192.168.1.119:1234)."

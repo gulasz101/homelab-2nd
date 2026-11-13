@@ -101,6 +101,8 @@ resources:
   # Cloudflare Tunnels for llm.voitech.dev and ai-chat.voitech.dev
   - llm-hub/cloudflared-litellm-deployment.yaml
   - llm-hub/cloudflared-openwebui-deployment.yaml
+  # LAN NodePort 30400 for agents on the local model (no Cloudflare 120 s cut, GUL-1431)
+  - llm-hub/litellm-lan-service.yaml
   # Docs MCP namespace
   - docs-mcp/namespace.yaml
   # SOPS-encrypted secrets
