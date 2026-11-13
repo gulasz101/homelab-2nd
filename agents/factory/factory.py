@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import json
 import os
 import re
@@ -1053,6 +1054,21 @@ def _ledger_jsonl() -> str:
         "~/paperclip-agents/majster/factory/ledger.jsonl")
 
 
+def _var_dir() -> str:
+    """Durable factory scratch outside the repo: ledger archives land here.
+
+    Same neighbourhood as the STOP flag and the jsonl ledger, and for the same
+    reason — the repo is public and a work order's ledger is operational state,
+    not documentation. FACTORY_VAR points it at a sandbox in the tests.
+    """
+    return os.environ.get("FACTORY_VAR") or os.path.expanduser(
+        "~/paperclip-agents/majster/factory/var")
+
+
+def _utc_stamp() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
 def load_agent_config() -> dict:
     path = os.environ.get("FACTORY_AGENTS_FILE") or os.path.join(FACTORY_DIR, "agents.json")
     try:
@@ -1096,12 +1112,13 @@ def slugify(text: str, limit: int = 40) -> str:
     return (slug[:limit].rstrip("-") or "work")
 
 
-def load_json_document(api, issue_id: str, key: str):
-    """Read a document and parse its one fenced json block. Returns None when
-    the document does not exist, an empty dict when it has no block."""
-    doc = api.document(issue_id, key)
-    if not doc:
-        return None
+def parse_json_document(doc, key: str):
+    """Parse the one fenced json block out of an already-fetched document.
+
+    Split out of `load_json_document` for `start --recut`, which needs the raw
+    body as well as the parsed ledger: the archive it writes must hold the
+    document byte for byte, not a re-rendering of what this version parses.
+    """
     body = doc.get("body") if isinstance(doc, dict) else None
     if not isinstance(body, str):
         return None
@@ -1109,6 +1126,12 @@ def load_json_document(api, issue_id: str, key: str):
         return {}
     value, _reasons = extract_json_block(body, key)
     return value
+
+
+def load_json_document(api, issue_id: str, key: str):
+    """Read a document and parse its one fenced json block. Returns None when
+    the document does not exist, an empty dict when it has no block."""
+    return parse_json_document(api.document(issue_id, key), key)
 
 
 def fence_json_document(title: str, prose: str, payload) -> str:
@@ -1606,6 +1629,135 @@ def cmd_factory_settle(args) -> int:
     return 0
 
 
+def recut_refusals(ledger, identifier: str) -> list:
+    """Why this work order cannot be re-cut (empty list = it can) (GUL-1455).
+
+    A re-cut mints five new stage issues and cuts a new branch; whatever the old
+    attempt pushed would be orphaned by that. One recorded stage `sha` means a
+    commit exists, `pr` means it is on the forge, `merge` means it landed — all
+    three are work a human already reviewed, so the factory refuses and says
+    which. Only a work order whose stages all still read `sha: null` and whose
+    ledger never reached a PR is a misfiling the factory may undo itself.
+    """
+    if not isinstance(ledger, dict) or not ledger.get("stages"):
+        return ["%s has no factory ledger with stages: nothing to re-cut, run "
+                "`factory start %s` instead" % (identifier, identifier)]
+    reasons = []
+    pr = ledger.get("pr")
+    if pr:
+        number = pr.get("number") if isinstance(pr, dict) else pr
+        reasons.append("the ledger already has a PR (%s#%s): a re-cut would abandon "
+                       "reviewed work instead of moving it"
+                       % (ledger.get("repo") or "?", number))
+    merge = ledger.get("merge")
+    if merge:
+        sha = merge.get("sha") if isinstance(merge, dict) else merge
+        reasons.append("the ledger records a merge (%s): that work is on `%s` already "
+                       "and re-cutting it would re-cut landed code"
+                       % (str(sha)[:12], ledger.get("base") or "the base branch"))
+    pushed = ["%s (%s)" % ((row or {}).get("identifier") or key, str((row or {}).get("sha"))[:12])
+              for key, row in sorted((ledger.get("stages") or {}).items())
+              if (row or {}).get("sha")]
+    if pushed:
+        reasons.append("stages have committed already: %s — a re-cut must never throw "
+                       "away pushed work" % ", ".join(pushed))
+    if ledger.get("recut") and not pushed:
+        reasons.append("this ledger is already a re-cut (%s) and no stage has committed "
+                       "since: the chain on the board is the re-cut, so running it again "
+                       "would only supersede it with itself. Check the board first"
+                       % ((ledger.get("recut") or {}).get("archive") or "no archive recorded"))
+    return reasons
+
+
+def archive_ledger(doc: dict, ledger, path: str, cwd: str) -> None:
+    """Write the ledger a re-cut replaces, outside the repo, before anything moves.
+
+    The body goes in byte for byte (`document.body`) next to what this version
+    parses out of it: a re-cut exists because the old ledger was cut against the
+    wrong checkout, so the audit trail has to survive even if the parse rules
+    change afterwards. Written before any board write — a failed archive means
+    `start --recut` stops with the old ledger still on the work order.
+    """
+    body = (doc or {}).get("body") if isinstance(doc, dict) else None
+    if not isinstance(body, str) or not body.strip():
+        raise SetupError("the old ledger document has no body: refusing to re-cut "
+                         "without an archive of it")
+    payload = {
+        "workOrder": (ledger or {}).get("workOrder"),
+        "workOrderId": (ledger or {}).get("workOrderId"),
+        "archivedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "archivedFor": {"cwd": cwd, "repo": (ledger or {}).get("repo")},
+        "document": {"revisionId": (doc or {}).get("latestRevisionId"), "body": body},
+        "parsed": ledger,
+    }
+    folder = os.path.dirname(path)
+    try:
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=1, ensure_ascii=False)
+            fh.write("\n")
+    except OSError as exc:
+        raise SetupError("cannot archive the old ledger to %s: %s" % (path, exc))
+
+
+def cancel_superseded_stages(api, ledger: dict, identifier: str, cwd: str, archive: str) -> list:
+    """Cancel the stage issues the old ledger holds, without re-arming their agents.
+
+    A bare `{"status": "cancelled"}` does not survive the trip: a stage issue
+    carries an `executionPolicy`, and the server routes the write through that
+    policy's live review stage — which re-arms the stage agent instead of
+    cancelling it (measured on GUL-1381: `cancelled` went in, the issue came back
+    `in_progress` with a fresh run). Sending the same policy with its stage ids
+    stripped (`_park_policy`) leaves the issue's `executionState` pointing at a
+    stage that is no longer in the list, and that is the branch that clears the
+    state and keeps the status asked for.
+
+    Every cancel is read back. A stage that is still live after the PATCH raises
+    a setup error rather than letting the re-cut mint a second set of stages on
+    top of a running one — re-running `start --recut` picks up where this stopped,
+    the refusals still pass because nothing was committed.
+    """
+    import pc
+    cancelled = []
+    for key in sorted(ledger.get("stages") or {}):
+        row = ledger["stages"].get(key) or {}
+        issue_id = row.get("issueId")
+        if not issue_id:
+            continue
+        label = row.get("identifier") or key
+        try:
+            issue = api.issue(issue_id)
+        except pc.ApiError as exc:
+            if exc.status != 404:
+                raise
+            cancelled.append({"stage": key, "issue": label, "status": "gone", "live": False})
+            continue
+        if (issue or {}).get("status") in ("done", "cancelled"):
+            cancelled.append({"stage": key, "issue": label,
+                              "status": issue.get("status"), "live": False})
+            continue
+        body: dict = {
+            "status": "cancelled",
+            "comment": ("superseded: %s is being re-cut. This stage was cut against `%s`; "
+                        "the re-cut runs in `%s`. Nothing here decides the work order any "
+                        "more, and the old ledger is archived at `%s`."
+                        % (identifier, ledger.get("cwd") or "?", cwd, archive)),
+        }
+        policy = _park_policy(issue)
+        if policy["stages"]:
+            body["executionPolicy"] = policy
+        api.patch_issue(issue_id, body)
+        after = api.issue(issue_id) or {}
+        if after.get("status") != "cancelled":
+            raise SetupError(
+                "stage %s did not cancel (came back %r): refusing to mint new stages on top "
+                "of a live one; the old ledger is untouched and archived at %s"
+                % (label, after.get("status"), archive))
+        cancelled.append({"stage": key, "issue": label, "status": "cancelled", "live": True})
+    return cancelled
+
+
 def cmd_factory_start(args) -> int:
     _sys_path_for_modules()
     import pc
@@ -1641,6 +1793,18 @@ def cmd_factory_start(args) -> int:
     if spec is None:
         raise SetupError("spec document does not parse: %s" % "; ".join(spec_reasons))
 
+    # The ledger is read before the checkout is resolved: a re-cut refuses on
+    # pushed work before it touches a tree, and a plain start still refuses on an
+    # existing one below (GUL-1455).
+    existing_doc = api.document(work_order["id"], "ledger")
+    existing = parse_json_document(existing_doc, "ledger") if existing_doc else None
+    recut = bool(getattr(args, "recut", False))
+    if recut:
+        reasons = recut_refusals(existing, args.work_order)
+        if reasons:
+            emit(False, "start", reasons, {"workOrder": args.work_order, "recut": True})
+            return 1
+
     if args.repo:
         cwd, cwd_note = args.repo, "--repo"
     else:
@@ -1669,12 +1833,26 @@ def cmd_factory_start(args) -> int:
     number = args.work_order.split("-")[-1]
     branch = "gul-%s-%s" % (number, slugify(work_order.get("title", "")))
 
-    existing = load_json_document(api, work_order["id"], "ledger")
-    if existing and existing.get("stages"):
+    if not recut and existing and existing.get("stages"):
         emit(True, "start", ["work order already started; nothing created"],
              {"workOrder": args.work_order, "created": 0,
               "stages": existing.get("stages")})
         return 0
+
+    # A re-cut writes the old ledger down before it touches the board or the tree,
+    # and carries that path into the new one so the mis-cut is auditable from the
+    # work order alone (GUL-1455).
+    recut_note = None
+    if recut:
+        old = existing if isinstance(existing, dict) else {}
+        recut_note = {
+            "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "archive": os.path.join(_var_dir(), "%s-ledger-%s.json"
+                                    % (args.work_order, _utc_stamp())),
+            "previousCwd": old.get("cwd"),
+            "previousBranch": old.get("branch"),
+            "previousBaseSha": old.get("baseSha"),
+        }
 
     if args.dry_run:
         base_sha = _resolve_base(cwd, base)
@@ -1715,9 +1893,16 @@ def cmd_factory_start(args) -> int:
         "outcome": None,
         "escalated": None,
     }
+    if recut_note:
+        ledger["recut"] = recut_note
 
     plan = plan_stages(cfg, spec, ledger, work_order, 1, "")
     if args.dry_run:
+        extra = {}
+        if recut_note:
+            extra = {"recut": True, "archive": recut_note["archive"],
+                     "superseded": [{"stage": key, "issue": (row or {}).get("identifier")}
+                                    for key, row in sorted(((existing or {}).get("stages") or {}).items())]}
         emit(True, "start", ["dry run: nothing created"], {
             "workOrder": args.work_order,
             "dryRun": True,
@@ -1729,8 +1914,30 @@ def cmd_factory_start(args) -> int:
                          "status": "todo" if i == 0 else "blocked",
                          "blockedBy": None if i == 0 else plan[i - 1]["stage"]}
                         for i, p in enumerate(plan)],
+            **extra,
         })
         return 0
+
+    if recut_note:
+        # Archive first, then cancel, then mint: the old ledger is on disk before
+        # the board changes, so a failure between any two steps leaves the work
+        # order recoverable and re-runnable (GUL-1455).
+        archive_ledger(existing_doc or {}, existing or {}, recut_note["archive"], cwd)
+        recut_note["superseded"] = cancel_superseded_stages(
+            api, existing or {}, args.work_order, cwd, recut_note["archive"])
+        if recut_note["superseded"] and not any(
+                item.get("live") for item in recut_note["superseded"]):
+            # Every stage this ledger holds is already cancelled or gone: the chain
+            # was superseded by an earlier re-cut (or cleaned up by hand). Minting
+            # again would fill the board with a second dead generation.
+            emit(False, "start",
+                 ["every stage this ledger holds is already cancelled: nothing left to "
+                  "supersede, so this work order was re-cut already (or its chain was "
+                  "cleaned up). The old ledger is archived at %s" % recut_note["archive"]],
+                 {"workOrder": args.work_order, "recut": True,
+                  "archive": recut_note["archive"],
+                  "superseded": recut_note["superseded"]})
+            return 1
 
     created = create_stages(api, work_order["id"], plan, cfg)
     for item in created:
@@ -1741,22 +1948,40 @@ def cmd_factory_start(args) -> int:
             "attempts": 0,
             "sha": None,
         }
-    save_ledger(api, work_order["id"], ledger, "start %s" % args.work_order)
+    save_ledger(api, work_order["id"], ledger,
+                ("start --recut %s" if recut else "start %s") % args.work_order)
     # GUL-989: the ledger now holds every stage identifier, so render the
     # descriptions that name another stage a second time (verify → review).
     patched = settle_stage_descriptions(api, cfg, spec, ledger, work_order, 1, "",
                                         plan, created)
     review_ref = (ledger["stages"].get(stage_key("review", 1)) or {}).get("identifier")
-    api.comment(work_order["id"],
-                "factory start: 5 stage issues created, chained %s. Checkout `%s`, branch `%s`."
-                % (" → ".join(i["issue"].get("identifier", "?") for i in created), cwd, ledger["branch"])
-                + (" Verify names the review issue `%s`." % review_ref if review_ref else ""))
-    emit(True, "start", ["5 stage issues created"], {
+    if recut_note:
+        superseded = ", ".join(item["issue"] for item in recut_note["superseded"]) or "none"
+        api.comment(work_order["id"],
+                    "factory start --recut: re-cut against `%s` (was `%s`). 5 stage issues "
+                    "created, chained %s. Branch `%s`. Superseded: %s. Old ledger archived "
+                    "at `%s`."
+                    % (cwd, recut_note.get("previousCwd") or "?",
+                       " → ".join(i["issue"].get("identifier", "?") for i in created),
+                       ledger["branch"], superseded, recut_note["archive"])
+                    + (" Verify names the review issue `%s`." % review_ref if review_ref else ""))
+    else:
+        api.comment(work_order["id"],
+                    "factory start: 5 stage issues created, chained %s. Checkout `%s`, branch `%s`."
+                    % (" → ".join(i["issue"].get("identifier", "?") for i in created), cwd, ledger["branch"])
+                    + (" Verify names the review issue `%s`." % review_ref if review_ref else ""))
+    emit(True, "start",
+         (["5 stage issues re-cut into %s" % cwd, "superseded: %s"
+           % ", ".join(item["issue"] for item in recut_note["superseded"])]
+          if recut_note else ["5 stage issues created"]), {
         "workOrder": args.work_order,
         "created": len(created),
         "cwd": cwd,
         "branch": ledger["branch"],
         "stages": [{"stage": i["stage"], "issue": i["issue"].get("identifier")} for i in created],
+        **({"recut": True, "archive": recut_note["archive"],
+            "previousCwd": recut_note.get("previousCwd"),
+            "superseded": recut_note["superseded"]} if recut_note else {}),
     })
     return 0
 
@@ -2660,6 +2885,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("work_order", help="work order identifier, e.g. GUL-439")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--repo", help="override the checkout directory")
+    s.add_argument("--recut", action="store_true",
+                   help="re-cut a work order whose stages were cut against the wrong "
+                        "checkout: archive the old ledger, cancel the superseded stage "
+                        "issues, mint five fresh stages. Refuses when any stage has a "
+                        "sha or the ledger has a pr/merge (GUL-1455)")
     s.set_defaults(fn=cmd_factory_start)
 
     s = sub.add_parser("settle", parents=[common])

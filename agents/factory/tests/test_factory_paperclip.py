@@ -375,6 +375,8 @@ def run(stub, args, extra_env=None, with_key=True):
     env["PAPERCLIP_COMPANY_ID"] = COMPANY
     env["FACTORY_STOP"] = os.path.join(WORKDIR, "STOP")
     env["FACTORY_LEDGER_JSONL"] = os.path.join(WORKDIR, "ledger.jsonl")
+    # durable scratch (recut ledger archives) — never the real one in ~/paperclip-agents
+    env["FACTORY_VAR"] = os.path.join(WORKDIR, "var")
     env["FACTORY_REPO"] = os.path.join(WORKDIR, "repo")
     if extra_env:
         env.update(extra_env)
@@ -687,6 +689,158 @@ def case_start_creates_chain(stub, base_sha, repo):
     after = [i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]
     check("start twice: creates no duplicates", code2 == 0 and len(after) == 5
           and (out2 or {}).get("created") == 0, raw2[-300:])
+
+
+def forget_projects(stub, *pids):
+    """Drop the projects a case invented, so the next case's `--repo` resolution
+    does not see a second checkout claiming the same repo (GUL-1455)."""
+    for pid in pids:
+        stub.state.projects.pop(pid, None)
+        stub.state.workspaces.pop(pid, None)
+
+
+def misfiled_work_order(stub, identifier, wrong, right, right_sha, stage_shas=None, pr=None):
+    """A work order whose project checks out `wrong` while its spec names
+    homelab-2nd, with five stages already cut there (GUL-1340 shape, GUL-1455):
+    the old ledger was cut in `wrong` before the repo decided the checkout."""
+    misfiled = stub.state.add_project("Misfiled " + identifier)
+    holder = stub.state.add_project("Holds homelab-2nd " + identifier)
+    stub.state.add_workspace(misfiled, "ideogram4-local", wrong,
+                            repo_url="gulasz101/ideogram4-local")
+    stub.state.add_workspace(holder, "homelab-2nd", right, repo_url="gulasz101/homelab-2nd")
+    wo = base_work_order(stub, right_sha, wrong, identifier=identifier, project_id=misfiled)
+    rows = {}
+    for stage_name in ("red", "green", "review", "verify", "gate"):
+        stage = pending_review_stage(stub, wo, "[%s] Add the fixture" % stage_name)
+        rows[stage_name] = {"issueId": stage["id"], "identifier": stage["identifier"],
+                            "round": 1, "attempts": 0,
+                            "sha": (stage_shas or {}).get(stage_name)}
+    ledger = {
+        "version": 1, "workOrder": identifier, "workOrderId": wo["id"],
+        "title": "Add the fixture", "repo": "gulasz101/homelab-2nd", "base": "main",
+        "baseSha": right_sha, "cwd": wrong, "branch": "gul-%s-add-the-fixture"
+        % identifier.split("-")[-1], "projectId": misfiled, "stages": rows,
+        "fixRounds": 0, "pr": pr, "outcome": None, "escalated": None,
+    }
+    body = "# Factory ledger\n\n```json\n%s\n```\n" % json.dumps(ledger)
+    write_ledger(stub, wo, ledger)
+    return wo, rows, body, (misfiled, holder)
+
+
+def case_start_recut_moves_a_misfiled_work_order(stub):
+    """GUL-1455: `start --recut` re-cuts a work order whose stages were cut against
+    the wrong checkout — old ledger archived verbatim, superseded stages cancelled
+    without re-arming their agents, five fresh stages minted in the spec's repo."""
+    contract = open(os.path.join(HERE, "..", "CONTRACT.md")).read()
+    check("AC-1: CONTRACT.md documents --recut and the ledger's recut field",
+          "start GUL-N --recut" in contract and "recut: {at, archive" in contract,
+          "CONTRACT.md not updated")
+    wrong, _ = make_repo("repo-recut-wrong")
+    right, right_sha = make_repo("repo-recut-right")
+    wo, rows, _, pids = misfiled_work_order(stub, "GUL-916", wrong, right, right_sha)
+    old_body = stub.state.documents[(wo["id"], "ledger")]["body"]
+
+    code, out, raw = run(stub, ["start", "GUL-916", "--recut"])
+    check("AC-6: recut exits 0 and reports the re-cut", code == 0
+          and (out or {}).get("created") == 5 and (out or {}).get("recut") is True, raw[-600:])
+    children = [i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]
+    fresh = [c for c in children if c["id"] not in {r["issueId"] for r in rows.values()}]
+    stale = [c for c in children if c["id"] in {r["issueId"] for r in rows.values()}]
+    check("AC-5: recut mints five fresh stages beside the five superseded ones",
+          len(children) == 10 and len(fresh) == 5 and len(stale) == 5,
+          str([c["title"] for c in children]))
+    check("AC-5: the fresh chain is the whole red→gate chain",
+          [c["title"].split("]")[0] + "]" for c in sorted(fresh, key=lambda c: c["title"])]
+          == ["[gate]", "[green]", "[red]", "[review]", "[verify]"],
+          str([c["title"] for c in fresh]))
+    check("AC-4: every superseded stage is cancelled",
+          all(c["status"] == "cancelled" for c in stale), str([c["status"] for c in stale]))
+
+    cancels = [p["body"] for p in stub.state.patches
+               if p["body"].get("status") == "cancelled"]
+    check("AC-4: each cancel carries the policy with the stage ids stripped",
+          len(cancels) == 5 and all(
+              (b.get("executionPolicy") or {}).get("stages")
+              and not any("id" in s for s in b["executionPolicy"]["stages"])
+              for b in cancels), str(cancels[:1]))
+    check("AC-4: no cancel went out as a bare status write",
+          len(cancels) == len([b for b in cancels if b.get("executionPolicy")]), str(len(cancels)))
+
+    ledger_body = stub.state.documents[(wo["id"], "ledger")]["body"]
+    new = json.loads(ledger_body.split("```json")[1].split("```")[0])
+    archive = (new.get("recut") or {}).get("archive")
+    check("AC-5: the new ledger runs in the repo the spec names",
+          os.path.realpath(new["cwd"]) == os.path.realpath(right)
+          and new["baseSha"] == branch_sha(right, "main"),
+          "%s %s vs main %s" % (new["cwd"], new["baseSha"], branch_sha(right, "main")))
+    check("AC-5: the ledger records where the old one was cut",
+          os.path.realpath(((new.get("recut") or {}).get("previousCwd") or ""))
+          == os.path.realpath(wrong), str(new.get("recut")))
+    check("AC-3: the old ledger is archived verbatim under var/",
+          bool(archive) and os.path.exists(archive)
+          and json.load(open(archive))["document"]["body"] == old_body, str(archive))
+    check("AC-5: the branch is cut in the right checkout, not the wrong one",
+          branch_sha(right, new["branch"]) == right_sha
+          and branch_sha(wrong, new["branch"]) == "",
+          "%s %s" % (branch_sha(right, new["branch"]), branch_sha(wrong, new["branch"])))
+    check("AC-5: the work order is told what moved",
+          any("re-cut" in c for c in comments_on(stub, wo["id"])),
+          str(comments_on(stub, wo["id"]))[:300])
+
+    code2, out2, raw2 = run(stub, ["start", "GUL-916", "--recut"])
+    after = [i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]
+    check("AC-2: recut twice refuses and mints no third generation",
+          code2 == 1 and len(after) == 10
+          and any("already a re-cut" in r for r in (out2 or {}).get("reasons", [])),
+          raw2[-400:])
+    forget_projects(stub, *pids)
+
+
+def case_start_recut_refuses_pushed_work(stub):
+    """GUL-1455: a re-cut must never throw away pushed work. A stage `sha`, a `pr`
+    or a `merge` in the ledger refuses the re-cut and changes nothing."""
+    wrong, _ = make_repo("repo-recut-refuse-wrong")
+    right, right_sha = make_repo("repo-recut-refuse-right")
+    var_dir = os.path.join(WORKDIR, "var")
+    before = sorted(os.listdir(var_dir)) if os.path.isdir(var_dir) else []
+    wo, rows, _, pids = misfiled_work_order(stub, "GUL-917", wrong, right, right_sha,
+                                           stage_shas={"green": "0f1e2d3c4b5a"})
+
+    code, out, raw = run(stub, ["start", "GUL-917", "--recut"])
+    reasons = (out or {}).get("reasons", [])
+    check("AC-2: a committed stage refuses the re-cut",
+          code == 1 and any("pushed work" in r for r in reasons), raw[-400:])
+    check("AC-2: the refusal names the stage that committed",
+          any(rows["green"]["identifier"] in r for r in reasons), str(reasons))
+    check("AC-2: a refused re-cut cancels nothing",
+          not [p for p in stub.state.patches
+               if p["body"].get("status") == "cancelled"
+               and "GUL-917" in str(p["body"].get("comment"))],
+          "a cancel went out for GUL-917")
+    check("AC-2: a refused re-cut mints no stages",
+          len([i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]) == 5)
+    check("AC-2: a refused re-cut keeps the old ledger and writes no archive",
+          ledger_of(stub, wo).get("recut") is None
+          and (sorted(os.listdir(var_dir)) if os.path.isdir(var_dir) else []) == before,
+          "archive written for GUL-917")
+
+    pr_wo, _, _, pr_pids = misfiled_work_order(stub, "GUL-918", wrong, right, right_sha,
+                                              pr={"number": 41, "url": "https://example.invalid/41"})
+    code2, out2, raw2 = run(stub, ["start", "GUL-918", "--recut"])
+    check("AC-2: a ledger with a PR refuses the re-cut",
+          code2 == 1 and any("#41" in r for r in (out2 or {}).get("reasons", [])), raw2[-400:])
+    check("AC-2: the PR refusal names the repo",
+          any("gulasz101/homelab-2nd#41" in r for r in (out2 or {}).get("reasons", [])),
+          str((out2 or {}).get("reasons")))
+
+    plain = stub.state.add_issue(identifier="GUL-919", title="Never started",
+                                 assigneeAgentId=MAJSTER, projectId=PROJECT, status="in_progress")
+    stub.state.doc(plain["id"], "spec", SPEC_BODY)
+    code3, out3, raw3 = run(stub, ["start", "GUL-919", "--recut"])
+    check("AC-2: a work order with no ledger is told to start instead",
+          code3 == 1 and any("factory start GUL-919" in r
+                             for r in (out3 or {}).get("reasons", [])), raw3[-400:])
+    forget_projects(stub, *(pids + pr_pids))
 
 
 def case_settle_repairs(stub, base_sha, repo):
@@ -1998,6 +2152,8 @@ def main():
             case_start_ignores_a_parked_blocker(stub)
             case_repo_decides_the_checkout(stub)
             case_start_creates_chain(stub, base_sha, repo)
+            case_start_recut_moves_a_misfiled_work_order(stub)
+            case_start_recut_refuses_pushed_work(stub)
             case_settle_repairs(stub, base_sha, repo)
             case_stop_blocks(stub, base_sha, repo)
             case_missing_key(stub)
