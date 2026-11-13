@@ -49,6 +49,11 @@ curl -s -X POST "$PAPERCLIP_API_URL/api/agents/<agentId>/wakeup" \
 `202` with a queue receipt; then watch `heartbeat_runs` for the new run. Pass `failedRunId` — caller
 markers and fresh-session overrides do not authorise a replay of another principal's run.
 
+**An agent key cannot wake a different agent**: the route answers `403 {"error":"Agent can only
+invoke itself"}`. If the latch belongs to another agent you do not own, the retry has to come from a
+board actor (Wojtek, one click on the failed run) — or wait for the PM's next assignment, because
+`error` does not block invocation.
+
 ## Preventing the repeat
 
 Two overlapping sessions on one subscription token (`heartbeat.maxConcurrentRuns: 2`) from one IP is
