@@ -80,7 +80,9 @@ Two traps recorded on the way, both of which cost a run:
 On 2026-11-12 five chat profiles were moved wholesale to `deepseek-v4.1-flash-1017-ds` after three
 free routes hit their walls. The owner reverted it the same night: a profile that answers a question
 and stops belongs on the free pool while it lasts, and paying for that turn is waste. So
-`beam-free-go` (root, `florian`, `matejko`, `szarik`) and `glm-5.3-ollama` (`zdzislaw`) stay primary,
+`beam-free-go` (root, `florian`, `matejko`, `szarik`) stay primary, `zdzislaw` comes onto
+`beam-free-go` as well because its old `glm-5.3-ollama` route is weekly-walled and the profile has
+`fallback_providers: []` — restoring it literally would have left it unable to answer anything,
 `-ds` remains the last resort in `fallback_providers`, and the config comments say so — a stale
 "moved to -ds" comment above a `beam-free-go` pin is worse than no comment at all.
 
