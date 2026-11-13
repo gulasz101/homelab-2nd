@@ -209,7 +209,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 | `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only). A second run on a clean tree whose HEAD is already `factory(GUL-N): <stage>` is not an error: it passes and returns that HEAD sha, so a `decide` that died after its commit can be re-run (GUL-497) |
 | `push --repo DIR --issue GUL-N` | pushes the checkout's branch to origin (`git push -u origin <branch>`, never `--force`); refuses (exit 1) on `main`/`master`. JSON adds `"branch"` and `"sha"`. Used by `decide` when the PR already exists, so a later round's commit reaches the PR head (GUL-1267 F-1) |
 | `open-pr --repo DIR --issue GUL-N --title T` | current branch is not `main`/`master` (refuse, exit 1); `git push -u origin <branch>` (never `--force`); `gh pr create` with body linking the work order: `Work order: [GUL-N](https://paperclip.voitech.dev/GUL/issues/GUL-N)`. JSON adds `"url": "<PR url>"`. Repo comes from `git remote get-url origin` |
-| `start GUL-N [--dry-run]` | point 9 below |
+| `start GUL-N [--dry-run\|--recut]` | point 9 below |
 | `decide GUL-M [--apply]` | point 9 below |
 | `tick` | point 9 below |
 
@@ -300,10 +300,39 @@ review stage to hand off to.
    "agentId": Majster}]}]}`.
 6. `start` twice creates nothing the second time (the ledger has the stages).
 
+**`start GUL-N --recut`** (GUL-1455) — moves a misfiled work order: one whose
+stages were cut against a checkout the spec's repo does not resolve to any more
+(GUL-1340's chain was cut in an `ideogram4-local` checkout because that project
+came first; `work_order_cwd` then answered a different cwd for the same spec).
+It re-cuts the chain in the repo the spec names, without ever discarding work:
+
+1. Refuses (exit 1, nothing written) unless every stage in the ledger has
+   `sha: null` and the ledger has neither `pr` nor `merge` — a re-cut must never
+   throw away pushed work. The refusal names the stages that committed.
+2. Refuses when the ledger already carries `recut` and no stage has committed
+   since: the chain on the board *is* the re-cut, so a second run would only
+   supersede it with itself. Recover a half-finished re-cut by starting again
+   from the ledger that has no `recut` note (the archive keeps it).
+3. Archives the old ledger **verbatim** to
+   `var/<WO>-ledger-<UTC stamp>.json` (next to `factory.py`; `FACTORY_VAR`
+   overrides), and records that path in the new ledger.
+4. Cancels the superseded stage issues **before** minting anything, each with the
+   issue's own `executionPolicy` re-sent with its stage `id`s stripped: a bare
+   `{"status": "cancelled"}` is dissolved by the server, which re-arms the stage
+   agent (measured on GUL-1381 — `cancelled` went in, `in_progress` with a fresh
+   run came back). Every cancel is read back; one that is still live stops the
+   re-cut before the new stages exist.
+5. Refuses when every stage it holds is already cancelled or gone: nothing is
+   left to supersede.
+6. Re-mints the five stages from the spec on the same code path `start` uses,
+   cwd and base resolution included, then writes the ledger.
+
 **Ledger** — markdown with one fenced `json` block on the work order:
 `{version, workOrder, workOrderId, title, repo, base, baseSha, cwd, branch,
 projectId, stages: {<stage or stage:rN>: {issueId, identifier, round, attempts,
-sha}}, fixRounds, pr: {number, url} | null, outcome, escalated}`. Only `factory.py`
+sha}}, fixRounds, pr: {number, url} | null, outcome, escalated,
+recut: {at, archive, previousCwd, previousBranch, previousBaseSha,
+superseded: [{stage, issue, status}]} | absent}`. Only `factory.py`
 writes it, and every write carries the document's `latestRevisionId` as
 `baseRevisionId` — Paperclip answers `409 Document update requires
 baseRevisionId` without it (GUL-496). A 409 on the write means a concurrent
