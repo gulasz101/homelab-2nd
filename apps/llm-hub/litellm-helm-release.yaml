@@ -879,9 +879,10 @@ spec:
         # family first, then returns home so the lane comes back to the
         # subscription when the week resets:
         #   1. longcat-2.5-free-go - the other healthy free Go route (5/5 x 200,
-        #      but only 3/5 asked for the tool, so second). It also keeps prompts
-        #      0 days and does not train on them, which is why it is the one to
-        #      reach for if the owner objects to iceman's training terms.
+        #      5.4-7.0 s, 0.6-1.0 s slower than iceman, and the tool call came
+        #      back 4/5, so second). It also keeps prompts 0 days and does not
+        #      train on them, which is why it is the one to reach for if the
+        #      owner objects to iceman's training terms.
         #   2. gpt-oss-120b-ollama - back onto the subscription allowance once
         #      the weekly window clears. Its own hop to the pool still fires
         #      from there, so the ladder ends in the free pool as before.

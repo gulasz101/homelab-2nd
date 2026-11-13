@@ -221,7 +221,7 @@ spec:
         # time, 3.2-5.7 s. The free Go models carry their own "Unlimited" limit
         # (docs/console/go), so this lane cannot starve the agents' allowance.
         # Behind it, in apps/llm-hub/litellm-helm-release.yaml:
-        # `longcat-2.5-free-go` (5/5 x 200, 3/5 tool calls) then back to
+        # `longcat-2.5-free-go` (5/5 x 200, tool call 4/5, 5.4-7.0 s) then back to
         # `gpt-oss-120b-ollama`, so the lane returns home when ollama.com's week
         # resets. Honest caveat, owner's call: iceman's free terms allow the
         # provider to train on prompts, and a reflect prompt carries memory
