@@ -211,16 +211,34 @@ spec:
         # `thinking` is deliberately GONE with the paid route: it is a 400
         # UnsupportedParamsError on every `-ollama` route, so no extra body
         # belongs in this block while these lanes are on gpt-oss.
-        HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b-ollama
+        #
+        # GUL-1446 (2026-11-13): the weekly wall came back on 11-12, so both
+        # lanes move OFF `gpt-oss-120b-ollama` to the free OpenCode Go model
+        # `iceman-contributor-free-go` (owner: free Go, not `beam-free-go` -
+        # that one stays for the agents). Measured 2026-11-13 from this pod with
+        # the real `hindsight-reflect` key, reflect size (16.7k in-tokens, one
+        # forced `search_observations` tool_choice): 5/5 x 200, tool_calls every
+        # time, 3.2-5.7 s. The free Go models carry their own "Unlimited" limit
+        # (docs/console/go), so this lane cannot starve the agents' allowance.
+        # Behind it, in apps/llm-hub/litellm-helm-release.yaml:
+        # `longcat-2.5-free-go` (5/5 x 200, 3/5 tool calls) then back to
+        # `gpt-oss-120b-ollama`, so the lane returns home when ollama.com's week
+        # resets. Honest caveat, owner's call: iceman's free terms allow the
+        # provider to train on prompts, and a reflect prompt carries memory
+        # observations. `longcat-2.5-free-go` keeps 0 days and trains on
+        # nothing - swapping the two ids here is the whole change if that
+        # matters more than the tool-call rate.
+        HINDSIGHT_API_REFLECT_LLM_MODEL: iceman-contributor-free-go
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
         # MAX_RETRIES stays 1 whatever the route (GUL-1045, 2026-11-06).
         # Measured on the wall: 7,350 failed refresh calls in 25 h, ~380/h =
         # 48 hourly models x ~2 calls x 4 attempts. The retry ladder is what
         # spent the allowance, so the app gets one attempt and the router owns
         # the hop.
-        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-ollama
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: iceman-contributor-free-go
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES: "1"
-        # Ollama answers a reflect call in ~2 s. The budgets stay generous on
+        # Ollama answers a reflect call in ~2 s; iceman 3.2-5.7 s at reflect
+        # size (2026-11-13). The budgets stay generous on
         # purpose: a cold start or an upstream queue is cheaper to wait out
         # than to cancel and retry, because a cancelled reflect call becomes a
         # re-queued operation.

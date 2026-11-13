@@ -215,6 +215,33 @@ spec:
           model: openai/iceman-contributor-free
           api_base: https://opencode.ai/zen/go/v1
           api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
+          # GUL-1446 (2026-11-13): Hindsight reflect + mental-model refresh
+          # primary, off the walled `gpt-oss-120b-ollama`. Measured through this
+          # router from the hindsight-api pod, with the real `hindsight-reflect`
+          # key, at reflect size (16.7k in-tokens, forced `search_observations`
+          # tool_choice): 5/5 x 200, tool_calls on all five, 3.2-5.7 s.
+          # Upstream, same payload: 5/5 x 200, 4/5 with the tool call, 3.4-4.5 s.
+          # It is a free Go model with its own "Unlimited" row in
+          # docs/console/go, so it spends none of beam-free-go's allowance.
+          # num_retries 0 and a 60 s cap: the caller gives up at 120 s
+          # (HINDSIGHT_API_REFLECT_LLM_TIMEOUT), so a retry or a hang here would
+          # eat the whole budget and the chain below would never fire.
+          num_retries: 0
+          timeout: 60
+      - model_name: longcat-2.5-free-go
+        litellm_params:
+          model: openai/longcat-2.5-free
+          api_base: https://opencode.ai/zen/go/v1
+          api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
+          # GUL-1446: second hop of the reflect chain, and the one that does not
+          # train on prompts (iceman does; longcat keeps 0 days retention -
+          # docs/zen). Paid for it with tool-call rate: upstream 5/5 x 200 but
+          # only 3/5 asked for the tool, 5.5-11 s. Note the id: ADR-113's
+          # `longcat-2.5-preview-free-go` below points at `longcat-2.5-preview`,
+          # which upstream now answers "Model is unavailable"; the shipped free
+          # model is `longcat-2.5-free`.
+          num_retries: 0
+          timeout: 60
       - model_name: deepseek-v4.1-flash-1017-ds
         litellm_params:
           model: deepseek/deepseek-flash
@@ -846,6 +873,21 @@ spec:
         #   - No paid hop, deliberately: the owner ruled out a metered lane for
         #     these calls on 2026-11-09 (ADR-127 reversed). Adding `-ds` here
         #     would silently reintroduce the bill.
+        # GUL-1446 (2026-11-13): reflect and the mental-model refresh left
+        # `gpt-oss-120b-ollama` for `iceman-contributor-free-go`, because
+        # ollama.com's weekly wall killed both lanes. The chain keeps the free
+        # family first, then returns home so the lane comes back to the
+        # subscription when the week resets:
+        #   1. longcat-2.5-free-go - the other healthy free Go route (5/5 x 200,
+        #      but only 3/5 asked for the tool, so second). It also keeps prompts
+        #      0 days and does not train on them, which is why it is the one to
+        #      reach for if the owner objects to iceman's training terms.
+        #   2. gpt-oss-120b-ollama - back onto the subscription allowance once
+        #      the weekly window clears. Its own hop to the pool still fires
+        #      from there, so the ladder ends in the free pool as before.
+        # Every side of every hop carries num_retries 0: one walled call is one
+        # hop, never a ladder (GUL-1045).
+        - {"iceman-contributor-free-go": ["longcat-2.5-free-go", "gpt-oss-120b-ollama"]}
         - {"gpt-oss-120b-ollama": ["gpt-oss-120b-freellmapi"]}
         # GUL-1431 (2026-11-12, owner ruling): Saluki first, then the Ollama
         # subscription, then the paid DeepSeek API as the last resort. The

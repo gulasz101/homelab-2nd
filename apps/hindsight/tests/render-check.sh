@@ -527,20 +527,25 @@ fi
 
 # 5h-ter. GUL-263 / ADR-094: reflect and the mental-model refresh leave the
 # FreeLLMAPI *key* pool and ride a named route through llm-hub, so the route is
-# chosen in the router, not by the app. Both lanes sit on
-# `gpt-oss-120b-ollama` (owner ruling 2026-11-09: no paid lane; ADR-127 and the
-# paid refresh of GUL-1045 are reversed). What keeps that safe is not the model
-# name but the chain behind it: `gpt-oss-120b-ollama` falls back to
-# `gpt-oss-120b-freellmapi` in apps/llm-hub, so a weekly-limit 429 on ollama.com
-# degrades to the free pool instead of failing the call. This block asserts the
-# two facts that make that true - the pinned primary, and the chain entry with
-# no paid hop in it.
+# chosen in the router, not by the app. Since GUL-1446 (2026-11-13) both lanes
+# sit on the free OpenCode Go model `iceman-contributor-free-go` (owner ruling
+# 2026-11-09 still holds: no paid lane). What keeps that safe is not the model
+# name but the chain behind it in apps/llm-hub: `iceman-contributor-free-go`
+# falls back to `longcat-2.5-free-go`, then back onto `gpt-oss-120b-ollama`, and
+# that one still degrades to `gpt-oss-120b-freellmapi`, so a walled week ends in
+# the free pool instead of a failed call. This block asserts the two facts that
+# make that true - the pinned primary, and the chain entry with no paid hop in
+# it.
 #
-# The pool could not carry a reflect prompt on its own: a real reflect prompt
-# averages 12,001 input tokens (max 55,692) and groq - the one healthy member -
-# allows 8,000 TPM. That is why the primary is still the subscription route and
-# the pool is only the fallback. Retain and consolidation stay on FreeLLMAPI
-# `auto` and are asserted above.
+# Why the free Go model rather than the subscription route: on 2026-11-12 the
+# weekly wall went up again and the free pool answered `429 All models
+# exhausted`, so both lanes were dead. Measured with the real `hindsight-reflect`
+# key at reflect size: 5/5 x 200, tool call every time, 3.2-5.7 s. The free Go
+# models each have their own *Unlimited* limit, so this lane spends none of the
+# agents' allowance. The pool still could not carry a reflect prompt alone: a
+# real reflect prompt averages 12,001 input tokens (max 55,692) and groq allows
+# 8,000 TPM, which is why the pool is only the last hop. Retain and
+# consolidation stay on FreeLLMAPI `auto` and are asserted above.
 #
 # The split needs no chart change: the base URL, model and key are per-operation
 # settings in config.py. What this block protects is the failure mode a future
@@ -548,16 +553,16 @@ fi
 # return of the metered bill, or a credential pasted into this public repo.
 for kv in \
   'HINDSIGHT_API_REFLECT_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
-  'HINDSIGHT_API_REFLECT_LLM_MODEL: gpt-oss-120b-ollama' \
+  'HINDSIGHT_API_REFLECT_LLM_MODEL: iceman-contributor-free-go' \
   'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
-  'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: gpt-oss-120b-ollama'
+  'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: iceman-contributor-free-go'
 do
   key=${kv%%: *}; want=${kv#*: }
   got=$(env_value "$API" "$key")
   if [ "$got" = "$want" ]; then
     ok "$key = $got"
   else
-    bad "$key is '${got:-unset}', expected $want - a lane would fall back to the FreeLLMAPI key pool the model cannot work on (GUL-263), or move off the free route the owner ruled for on 2026-11-09 (GUL-1045)"
+    bad "$key is '${got:-unset}', expected $want - a lane would fall back to the FreeLLMAPI key pool the model cannot work on (GUL-263), or move off the measured free route (GUL-1446) the owner ruled for on 2026-11-09 (no paid lane)"
   fi
 done
 
@@ -566,25 +571,27 @@ done
 # `tool_choice: auto` and no reasoning parameter, so reintroducing one here
 # would be an unmeasured knob on the route both reflect and the refresh ride.
 
-# GUL-1045 (owner ruling 2026-11-09): the refresh rides the free primary and
-# this block makes leaving it a deliberate act. `gpt-oss-120b-ollama` is the
-# route the whole ticket is about - on 2026-11-06 it answered 429 "weekly usage
-# limit" and every refresh failed - so the fix is NOT a different model, it is
-# the chain behind this one (asserted below) plus a retry cap of 1. Any `-ds`
-# here is a FAIL: that is the paid DeepSeek API, which the owner ruled out for
-# these calls. Any other `-ollama` or `-go` tag is a FAIL too: only
-# `gpt-oss-120b-ollama` has a measured fallback, so the others turn a wall into
-# a hard error again.
+# GUL-1045 / GUL-1446: the refresh rides the measured free model and this block
+# makes leaving it a deliberate act. `gpt-oss-120b-ollama` answered 429 "weekly
+# usage limit" on 2026-11-06 and again on 2026-11-12, and every refresh failed,
+# so on 2026-11-13 both lanes moved to the free OpenCode Go model
+# `iceman-contributor-free-go` (measured 5/5 x 200 with the tool call at reflect
+# size, 3.2-5.7 s) with `longcat-2.5-free-go` then `gpt-oss-120b-ollama` behind
+# it - asserted in apps/llm-hub/litellm-helm-release.yaml. Any `-ds` here is a
+# FAIL: that is the paid DeepSeek API, which the owner ruled out for these
+# calls. Any other `-ollama` or `-go` tag is a FAIL too: only the two free Go
+# routes above were probed, so an unmeasured one turns a wall into a hard
+# error again.
 REFRESH_MODEL_NOW=$(env_value "$API" HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL)
 case "$REFRESH_MODEL_NOW" in
-  gpt-oss-120b-ollama)
-    ok "refresh model '$REFRESH_MODEL_NOW' is the measured free primary (GUL-1045)" ;;
+  iceman-contributor-free-go)
+    ok "refresh model '$REFRESH_MODEL_NOW' is the measured free Go primary (GUL-1446)" ;;
   *-ds)
     bad "refresh model '$REFRESH_MODEL_NOW' is the metered DeepSeek API - the owner ruled out a paid lane for the refresh on 2026-11-09; revert to gpt-oss-120b-ollama unless that ruling changes (GUL-1045)" ;;
   *-ollama|*-go)
-    bad "refresh model '$REFRESH_MODEL_NOW' is an unmeasured subscription route - only gpt-oss-120b-ollama carries a fallback chain, so a 429 here is a hard failure (GUL-1045)" ;;
+    bad "refresh model '$REFRESH_MODEL_NOW' is an unmeasured subscription route - only iceman-contributor-free-go carries the measured reflect chain (longcat-2.5-free-go, then gpt-oss-120b-ollama), so a wall here is a hard failure (GUL-1446)" ;;
   *)
-    bad "refresh model '${REFRESH_MODEL_NOW:-unset}' is neither the measured free primary nor a route anyone probed - measure it at refresh size before changing this line (GUL-1045)" ;;
+    bad "refresh model '${REFRESH_MODEL_NOW:-unset}' is neither the measured free Go primary nor a route anyone probed - measure it at refresh size (tool call + 5 calls) and add it to the chain before changing this line (GUL-1446)" ;;
 esac
 
 # GUL-1045: the retry cap is part of the fix, not a detail. The 2026-11-06
@@ -609,23 +616,25 @@ else
   bad "HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT is set: that knob is not part of the measured gpt-oss route (GUL-787 added it, ADR-127 dropped it); re-probe before reintroducing it"
 fi
 
-# GUL-1045 (owner ruling 2026-11-09): reflect rides the same free primary as the
+# GUL-1045 / GUL-1446: reflect rides the same measured free model as the
 # refresh, and any `-ds` here means the paid lane came back through the side
 # door. The route's history still matters: gpt-oss measured 86 % caller success
 # until the weekly allowance ran out, `-1017-ollama` measured 26 % (ADR-120), so
 # a different `-ollama` tag is not a fix - it is the same wall without the chain.
+# `iceman-contributor-free-go` is the 2026-11-13 measurement: 5/5 x 200 through
+# this router with the tool call returned every time at 16.7k in-tokens.
 REFLECT_MODEL_NOW=$(env_value "$API" HINDSIGHT_API_REFLECT_LLM_MODEL)
 case "$REFLECT_MODEL_NOW" in
-  gpt-oss-120b-ollama)
-    ok "reflect model '$REFLECT_MODEL_NOW' is the measured free primary (GUL-1045)" ;;
+  iceman-contributor-free-go)
+    ok "reflect model '$REFLECT_MODEL_NOW' is the measured free Go primary (GUL-1446)" ;;
   *-ds)
     bad "reflect model '$REFLECT_MODEL_NOW' is the metered DeepSeek API - the owner ruled out a paid lane on 2026-11-09 (ADR-127 reversed); revert to gpt-oss-120b-ollama unless that ruling changes"
     ;;
   *-ollama|*-go)
-    bad "reflect model '$REFLECT_MODEL_NOW' is an unmeasured subscription route: the wall is one weekly allowance with several buckets, and only gpt-oss-120b-ollama has a measured free fallback (GUL-1045)"
+    bad "reflect model '$REFLECT_MODEL_NOW' is an unmeasured subscription route: only iceman-contributor-free-go was probed at reflect size (GUL-1446), and an unmeasured model here is the 2026-11-06 wall again"
     ;;
   *)
-    bad "reflect model '$REFLECT_MODEL_NOW' is neither the measured free primary nor a route anyone probed at reflect size; GUL-1045 pins gpt-oss-120b-ollama"
+    bad "reflect model '$REFLECT_MODEL_NOW' is neither the measured free Go primary nor a route anyone probed at reflect size; GUL-1446 pins iceman-contributor-free-go"
     ;;
 esac
 
