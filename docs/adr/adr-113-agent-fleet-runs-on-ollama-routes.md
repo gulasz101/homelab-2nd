@@ -1,6 +1,6 @@
 # ADR-113: The agent fleet runs on Ollama Cloud routes, not on the OpenCode Go allowance
 
-- **Status**: Accepted (amended 2026-11-05 by GUL-971 / GUL-972)
+- **Status**: Accepted (amended 2026-11-05 by GUL-971 / GUL-972; amended 2026-11-13 by GUL-1429)
 - **Date**: 2026-10-29
 - **Issue**: GUL-581
 - **Related**: ADR-085 (LiteLLM carries paid subscriptions only), ADR-094 (Hindsight reflect on a paid Ollama route), ADR-075 (Paperclip org and agent runtimes), GUL-122 / GUL-480 (Pi sends `reasoning_effort`)
@@ -56,7 +56,7 @@ The Ollama Pro weekly allowance ran dry again (`HTTP 429 ... reached your weekly
 |---|---|---|
 | Paperclip runners: Tester, Builder, Reviewer, Verifier, Majster, Pi (`pi_local`) | `llmhub/deepseek-v4.1-flash-1017-ds` | 30–90 minute tool-calling runs |
 | Paperclip OpenCode runner + `~/.config/opencode/opencode.json` (`model`, `small_model`) | `llmhub/deepseek-v4.1-flash-1017-ds` | same work, local CLI |
-| Hermes `andrzej` | `deepseek-v4.1-flash-1017-ds` | ops executor, tool-heavy |
+| Hermes `andrzej` | `qwen3.6-35b-a3b-local` (was `-ds`) | free local lane, superseded 2026-11-13 |
 | Hermes root (Bill Cipher), `florian`, `matejko`, `szarik`, `zdzislaw` | `beam-free-go` | chat-shaped work, does not hold the paid allowance |
 | `claude_local` (Claude Code) | unchanged | bills Anthropic |
 
@@ -74,6 +74,31 @@ Two traps recorded on the way, both of which cost a run:
 - `deepseek-v4.1-flash-1017-ds` rejects a *forced* `tool_choice` (`Thinking mode does not support
   this tool_choice`). `tool_choice: "auto"` works and returns `tool_calls`. A probe that forces the
   tool call will report the paid route as broken when it is fine.
+
+## Amendment 2026-11-13 — the chat profiles stay on the free pool, andrzej on the local lane (GUL-1428 → GUL-1429)
+
+On 2026-11-12 five chat profiles were moved wholesale to `deepseek-v4.1-flash-1017-ds` after three
+free routes hit their walls. The owner reverted it the same night: a profile that answers a question
+and stops belongs on the free pool while it lasts, and paying for that turn is waste. So
+`beam-free-go` (root, `florian`, `matejko`, `szarik`) and `glm-5.3-ollama` (`zdzislaw`) stay primary,
+`-ds` remains the last resort in `fallback_providers`, and the config comments say so — a stale
+"moved to -ds" comment above a `beam-free-go` pin is worse than no comment at all.
+
+The one durable change from that pair of issues: **`andrzej` runs the free local lane on the M1 Max,
+not the paid route.** The owner's words were "andrzej stays on saluki"; Saluki 27B became
+Qwen3.6-35B-A3B the same day (GUL-1431), so the pin is `qwen3.6-35b-a3b-local`. Measured before the
+pin: 10.0 s for a 294-token prompt that answers with a `tool_calls` turn. The route carries its own
+LiteLLM fallback chain (local → `deepseek-v4.1-flash-1017-ollama` →
+`deepseek-v4.1-flash-ollama` → `deepseek-v4.1-flash-1017-ds`), so a local image job holding the GPU
+slot costs a slow turn, not a dead run.
+
+Two things the attempt taught, worth more than the move itself:
+
+- A model pin is a preference, not a fix. The owner reverted it the same night it was applied, which
+  is the strongest argument for editing files instead of pipelines.
+- `~/.hermes/profiles/<own>/config.yaml` is closed to the agent whose profile it is (the tool refuses
+  it as security-sensitive). Own-profile changes go through `hermes -p <profile> config set
+  model.default <route>`, which is the supported path and still lands without a gateway restart.
 
 ## Consequences
 
