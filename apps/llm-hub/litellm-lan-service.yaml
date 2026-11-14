@@ -1,0 +1,39 @@
+---
+# ============================================================
+# LAN NodePort for LiteLLM (GUL-1431).
+#
+# Why this file exists: Pi agents on the Air reach LiteLLM through
+# https://llm.voitech.dev, which is the Cloudflare tunnel. Cloudflare drops a
+# call that sends no byte for 120 s (HTTP 524). The local model on the M1 Max
+# can need longer than that just to read a long prompt, so the Majster trial
+# on Saluki 27B failed 7 times with 524 on 2026-11-12/13. Agents that use the local
+# model call this LAN port instead, with no Cloudflare in the path.
+#
+# Reachable at (LAN) http://<any node>:30400/v1, e.g. 192.168.1.179:30400.
+#
+# NOT published: no Ingress, no tunnel change. llm.voitech.dev stays as it is.
+# Auth is unchanged: LiteLLM still requires a virtual key on every call.
+#
+# Selector copied from the live chart Service `litellm` (kubectl get svc
+# litellm -o jsonpath='{.spec.selector}'), not from memory.
+#
+# Port choice, read from the live list in this repo:
+#   30030 30069 30076 30078 30080 30089 30096 30114 30180 30181 30188 30195
+#   30239 30240 30250 30260 30270 30274 30300 30301 30432 30530 30810
+#   -> 30400 is free.
+# ============================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-lan
+  namespace: llm-hub
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/instance: litellm
+    app.kubernetes.io/name: litellm
+  ports:
+    - name: http
+      port: 4000
+      targetPort: http
+      nodePort: 30400
