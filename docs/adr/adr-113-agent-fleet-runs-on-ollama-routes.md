@@ -110,6 +110,20 @@ Two traps recorded on the way, both of which cost a run:
   swallow genuinely unsupported params on every route, including future ones, and GUL-480 already
   chose per-route declarations for exactly that reason.
 
+## Amendment 2026-11-14 — Andrzej fallback to Kimi K2.7 (GUL-1515 / GUL-1517)
+
+The owner ruled that Andrzej must run on DeepSeek or Kimi K2.7 only, replacing the
+`glm-5.3-ollama` fallback with `kimi-k2.7-code`. The primary (`deepseek-v4.1-flash-1017-ds`)
+is unchanged; only the headroom model changed. This is an owner rule (GUL-1515) that
+supersedes the fleet-wide pinning decisions in this ADR for Andrzej's profile alone.
+
+| surface | route | fallback | why |
+|---|---|---|---|
+| Hermes `andrzej` | `deepseek-v4.1-flash-1017-ds` | `kimi-k2.7-code` (via Ollama Cloud / LiteLLM) | owner rule: DeepSeek primary, Kimi fallback only |
+
+The `kimi-k2.7-code` route goes through the same Ollama Cloud weekly quota as the rest of
+the fleet — it is only the fallback, so the quota impact is negligible.
+
 ## When to revisit
 
 - Ollama Pro's weekly allowance starts failing runs the way Go did — then it is time to split the
