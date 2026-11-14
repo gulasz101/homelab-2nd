@@ -1,7 +1,7 @@
 # ADR-073: Hermes runs on the M1 Air (paperclip); the Max's copy is a retired standby
 
 **Date:** 2026-10-20
-**Status:** Accepted
+**Status:** Accepted; decision 4 (Max standby) superseded by [pending/hermes-air-only-max-copy-retired.md](pending/hermes-air-only-max-copy-retired.md)
 **Deciders:** Wojtek Gula; implemented by Claude Code (H2-327)
 **Project:** agent platform
 **Related:** H2-327 (migration), H2-118 (webhook target), ADR-017 (Itsaplan → Hermes webhook)
@@ -36,7 +36,8 @@ Two facts shaped the move:
 3. **Services that stay on the Max are reached over the LAN** (192.168.1.119): Camofox `:9377`
    (configs repointed from `localhost`), Star Office backend `:19000`, Kokoro TTS `:8880`. Heavy
    local image work (`sd.cpp-models`, `ideogram4-local`, `~/.venvs/sou-flux`) stays on the Max.
-4. **The Max's `~/.hermes` is a cold standby for 14 days**, its gateway, watchdog and backup
+4. *(Superseded on 2026-11-09 by [pending/hermes-air-only-max-copy-retired.md](pending/hermes-air-only-max-copy-retired.md): the Max copy is retired, never a standby. The booted-out
+   plists came back on a reboot and double-posted.)* **The Max's `~/.hermes` is a cold standby for 14 days**, its gateway, watchdog and backup
    LaunchAgents booted out. Rollback: bootout on the Air, bootstrap on the Max.
 
 ## Consequences
