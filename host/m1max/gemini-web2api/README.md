@@ -220,4 +220,55 @@ version of the same upstream failure: the image lane is broken account-side, not
 It fails with `firefox_fingerprint` on and off, and with `web_channel` on and off, so neither the
 fingerprint nor the protocol is the cause.
 
+## Rotation model — who owns `__Secure-1PSIDTS`
+
+Measured 2026-11-11 on `4.28.0` (digest `sha256:9aaab38e…`) from the container log and from
+`internal/app/rotate.go`. This is the section that answers "why does the session die at ~90 min".
+
+**The proxy rotates by itself, unconditionally.** `rotateAllAccounts` walks every `enabled`
+account on a ~10-minute timer. There is **no config switch to turn rotation off**: `Config` has
+`gemini_bl_auto`, `firefox_fingerprint`, `web_channel` and no rotate field at all. "Disable proxy
+rotation" therefore means patching and rebuilding the image — a fork, not a setting.
+
+Each round does two independent things:
+
+| path | request | renews |
+| --- | --- | --- |
+| sentinel | `POST accounts.google.com/RotateCookies` with `[000,"-0000000000000000000"]` | `__Secure-1PSIDTS`, `__Secure-3PSIDTS` — the ~30-minute ticket (the success line also lists `__Secure-1PSIDCC`) |
+| iframe | `GET RotateCookiesPage` → `init('<id>',658,…,600)` → `POST [658,"<id>"]` | the `SIDCC` family |
+
+Only the first one keeps the login alive. Live evidence, account `#12370`, imported
+2026-11-10 23:00:31:
+
+- sentinel path: succeeded on **every** round for 8 h+ (`刷新了 __Secure-1PSIDTS, __Secure-3PSIDTS, __Secure-1PSIDCC`), tier stayed `4 Argon`;
+- iframe path: **HTTP 429 on every round** since 23:08, still 429 eight hours later, and the account never degraded.
+
+So a 429 on the `SIDCC` path is **noise, not the death rattle**. GUL-1313's timeline read the
+11:38 `RotateCookies → 429` as the start of the death; the log says that path 429s permanently and
+the account is fine anyway. The real signature is the *sentinel* path returning **HTTP 401
+(device-bound)** — that is what happened to `#12368` at 13:18 and `#12369` at 22:45 on 2026-11-10,
+with the downgrade following inside the hour.
+
+**The rule that follows: one owner of the pair.** The proxy is the owner — it is the component that
+survives, and rotation is exactly what it is designed to do. The Firefox profile is a *login
+source*, not a co-owner: it is opened to sign in, the guard imports its current pair, and from that
+moment the proxy's rotated copy is the live one. A second live Google session on the same pair (the
+profile sitting on `gemini.google.com`, or any Google property that rotates the same cookies)
+creates the divergence, and Google punishes divergence with 401 and then a downgrade.
+
+Open, and being measured: whether a running-but-idle Firefox profile still rotates. The 2026-11-10
+23:06 → 2026-11-11 07:14 window (8 h, Firefox running, `entitlement: ok`, `degraded_accum_s: 0`)
+suggests it does not. 24 h of that window is the acceptance test for GUL-1315.
+
+Two supporting facts, both cheap:
+
+- the guard's cookie fingerprint excludes `__Secure-1PSIDTS` and `__Secure-1PSIDCC` on purpose — a
+  rotation changes them without meaning "a fresh session is available", so hashing the whole string
+  re-imports on every tick and burns a `/check`;
+- `gemini_bl_auto: true` lets the BL token follow Google's build. The BL auto-update at
+  2026-11-10 11:34:52 sits four minutes before that day's tier drop. Unexcluded suspect, not proof;
+  pinning it (`false`, BL `…20261007.01_p0`) removes the variable at the cost of a stale-client
+  failure if Google retires that build.
+
+
 
