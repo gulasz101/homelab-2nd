@@ -124,6 +124,11 @@ data:
         # crouton-alpha-free-go, hy4-go) and clef-27b-ollama above.
         # iceman-contributor-free-go stays: main added its route (PR #172).
         "iceman-contributor-free-go",
+        # GUL-1446: second hop of the reflect chain in
+        # apps/hindsight/hindsight-helm-release.yaml; route added in
+        # litellm-helm-release.yaml, so the reflect key must be able to call it
+        # or the fallback dies at the key check instead of hopping.
+        "longcat-2.5-free-go",
     ]
 
     def expand_models(models):
