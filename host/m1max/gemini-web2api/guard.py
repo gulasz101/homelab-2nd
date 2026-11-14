@@ -32,6 +32,12 @@ SKIP_COOKIES = os.environ.get("GUARD_SKIP_COOKIES") == "1"
 
 WANT = ["SID", "HSID", "SSID", "APISID", "SAPISID",
         "__Secure-1PSID", "__Secure-1PSIDTS", "__Secure-1PAPISID", "__Secure-1PSIDCC"]
+# Which of those identify a SESSION. This is the fingerprint's allowed list and it must stay
+# rotating-cookie-free (GUL-1280): Firefox refreshes __Secure-1PSIDTS and __Secure-1PSIDCC every
+# time it touches google.com, so hashing the whole harvested string meant every tick that used the
+# browser looked like a brand-new login — one wasted Google /check round-trip and one pool churn
+# per tick, on an account that has already been served /sorry twice (GUL-1243/1244).
+STABLE = ["SID", "HSID", "SSID", "APISID", "SAPISID", "__Secure-1PSID", "__Secure-1PAPISID"]
 CANARY_MODEL = "gemini-4-argon"
 PAID = ("4 Argon", "3.1 Pro", "3.8 Flash")
 
@@ -572,6 +578,23 @@ def harvest_firefox():
     return "; ".join("%s=%s" % (w, rows[w]) for w in WANT if rows.get(w))
 
 
+def fingerprint(ck):
+    """What makes two harvests the SAME login: the STABLE cookies only, in WANT order.
+
+    Deliberately not the whole string. __Secure-1PSIDTS/__Secure-1PSIDCC rotate on their own, so
+    hashing them turns "Firefox touched google.com" into "the user logged in again". A real
+    re-login changes SID/HSID/SSID/APISID/SAPISID/__Secure-1PSID, so it is still caught.
+
+    The full `ck` string is what gets uploaded — this is only the identity used for the decision.
+    """
+    got = {}
+    for part in ck.split("; "):
+        k, _, v = part.partition("=")
+        if k:
+            got[k] = v
+    return "; ".join("%s=%s" % (w, got[w]) for w in STABLE if w in got)
+
+
 def main():
     # Credentials are NOT allowed to be a precondition for the availability checks: a broken
     # env file used to abort the whole run (210 consecutive failures once), which is the same
@@ -623,7 +646,7 @@ def main():
         print("\n".join(m for m in msgs if m))
         return
 
-    h = hashlib.sha256(ck.encode()).hexdigest()[:16]
+    h = hashlib.sha256(fingerprint(ck).encode()).hexdigest()[:16]
 
     # A rate-limited account must not be re-imported on a schedule: each import costs a Google
     # auth round-trip (the validity check), and while the account answers 429 that check fails and
