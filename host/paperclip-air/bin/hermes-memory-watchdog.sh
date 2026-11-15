@@ -443,12 +443,13 @@ fi
 # 'processing' forever, blocking whole banks for days. Fixed upstream with a stable worker
 # id + Recreate strategy; this is the tripwire if it regresses. Read-only over SSH.
 STUCK_HOURS="${STUCK_HOURS:-3}"
-HINDSIGHT_DB_HOST="${HINDSIGHT_DB_HOST:-homelab-2nd}"
+# The k3s server (mimir since the 2026-11-12 node move; homelab-2nd was retired).
+HINDSIGHT_DB_HOST="${HINDSIGHT_DB_HOST:-mimir}"
 # No `timeout` binary guaranteed on macOS (that one is homebrew coreutils); ssh keepalives
 # bound a hung session instead. One retry first: an mDNS/wifi blip must not page anyone.
 read_stuck_ops() {
     ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 "${HINDSIGHT_DB_HOST}" \
-        'sudo k3s kubectl -n hindsight exec -i hindsight-db-1 -c postgres -- psql -U postgres -d hindsight -tA' \
+        'sudo k3s kubectl -n hindsight exec -i "$(sudo k3s kubectl -n hindsight get pod -l cnpg.io/cluster=hindsight-db,cnpg.io/instanceRole=primary -o name)" -c postgres -- psql -U postgres -d hindsight -tA' \
         <<SQL 2>/dev/null || true
 select count(*) from async_operations where status='processing' and updated_at < now() - interval '${STUCK_HOURS} hours';
 SQL
@@ -547,7 +548,7 @@ fi
 # profile and every Paperclip runner now runs on DeepSeek's own API, so DeepSeek's
 # prepaid balance is the one to guard. OpenRouter is kept as a second provider that
 # auto-skips when no key is present, so re-adding the credential arms it again.
-BALANCE_SSH_HOST="${BALANCE_SSH_HOST:-${HINDSIGHT_DB_HOST:-homelab-2nd}}"
+BALANCE_SSH_HOST="${BALANCE_SSH_HOST:-${HINDSIGHT_DB_HOST:-mimir}}"
 BALANCE_SECRET_NS="${BALANCE_SECRET_NS:-llm-hub}"
 BALANCE_SECRET_NAME="${BALANCE_SECRET_NAME:-litellm-provider-keys}"
 DEEPSEEK_FLOOR_USD="${DEEPSEEK_FLOOR_USD:-5}"
