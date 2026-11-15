@@ -41,7 +41,7 @@ spec:
           restartPolicy: OnFailure
           # The PVC is node-local; homelab-2nd is the only node that can mount it.
           nodeSelector:
-            kubernetes.io/hostname: homelab-2nd
+            kubernetes.io/hostname: mimir
           containers:
             - name: backup
               image: python:3.13-alpine

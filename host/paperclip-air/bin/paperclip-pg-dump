@@ -35,7 +35,7 @@ Phases:
   C. decompress the local archive to stdout for Paperclip, requiring the completion marker.
 
 Env knobs: PAPERCLIP_PG_DUMP_NAMESPACE (default paperclip), PAPERCLIP_PG_DUMP_POD
-(default paperclip-db-1), PAPERCLIP_PG_DUMP_CONTAINER (default postgres),
+(default: the CNPG primary, looked up by label), PAPERCLIP_PG_DUMP_CONTAINER (default postgres),
 PAPERCLIP_PG_DUMP_USER (default postgres), PAPERCLIP_PG_DUMP_FILE (pod-side temp file),
 KUBECTL_BIN, KUBECONFIG, PAPERCLIP_PG_DUMP_GZIP (pod-side gzip level, default -1).
 Read-only on the database: pg_dump only SELECTs.
@@ -52,7 +52,23 @@ import zlib
 KUBECTL = os.environ.get("KUBECTL_BIN", "/Users/paperclip/.local/bin/kubectl")
 KUBECONFIG = os.environ.get("KUBECONFIG", "/Users/paperclip/.kube/config")
 NAMESPACE = os.environ.get("PAPERCLIP_PG_DUMP_NAMESPACE", "paperclip")
-POD = os.environ.get("PAPERCLIP_PG_DUMP_POD", "paperclip-db-1")
+def _cnpg_primary(namespace, cluster="paperclip-db"):
+    """The CNPG primary pod, looked up by label. The instance name is not stable:
+    it was paperclip-db-1 until the 2026-11-12 node move switched over to -2."""
+    try:
+        out = subprocess.run(
+            [KUBECTL, "--kubeconfig", KUBECONFIG, "-n", namespace, "get", "pod",
+             "-l", "cnpg.io/cluster=%s,cnpg.io/instanceRole=primary" % cluster,
+             "-o", "jsonpath={.items[0].metadata.name}"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return "paperclip-db-1"
+
+
+POD = os.environ.get("PAPERCLIP_PG_DUMP_POD") or _cnpg_primary(NAMESPACE)
 CONTAINER = os.environ.get("PAPERCLIP_PG_DUMP_CONTAINER", "postgres")
 POD_FILE = os.environ.get("PAPERCLIP_PG_DUMP_FILE",
                           "/var/lib/postgresql/data/.paperclip-auto-backup.sql.gz")

@@ -125,3 +125,19 @@ The owner was offered three options and chose the third: split the routes —
 - Reflect's prompt size changes materially (consolidation batching, mental-model
   redesign): the 12k figure is the input to this decision and should be re-taken
   before trusting it again.
+
+## Amendment 2026-11-13 (GUL-1446)
+
+- **2026-11-13: reflect and the mental-model refresh moved** from `gpt-oss-120b-ollama`
+  to the free OpenCode Go model `iceman-contributor-free-go`, with
+  `longcat-2.5-free-go` and then `gpt-oss-120b-ollama` behind it in
+  `apps/llm-hub/litellm-helm-release.yaml`.
+- **What it overrides:** the "shared weekly bucket" objection above. Go bills per
+  model and the free models each sit on their own *Unlimited* row
+  (`opencode.ai/docs/console/go`), so reflect spends none of the agents' allowance.
+  Measured with the real `hindsight-reflect` key at reflect size (16.7k in-tokens,
+  forced `search_observations` tool call): 5/5 x 200, tool call every time, 3.2-5.7 s.
+- **Why now:** ollama.com's weekly wall was up again on 2026-11-12, the free pool
+  answered `429 All models exhausted` the same day, and both lanes were dead - a free
+  route that answers beats a subscription route that does not. `beam-free-go` stays
+  with the agents (owner).

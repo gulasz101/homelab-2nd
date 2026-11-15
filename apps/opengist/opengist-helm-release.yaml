@@ -36,7 +36,7 @@ spec:
     # The OMV NFS export for opengist-data is only exported to homelab-2nd,
     # so pin the pod to that node or the NFS mount fails with access denied.
     nodeSelector:
-      kubernetes.io/hostname: homelab-2nd
+      kubernetes.io/hostname: mimir
 
     # Use upstream service ports (HTTP 6157, SSH disabled)
     service:

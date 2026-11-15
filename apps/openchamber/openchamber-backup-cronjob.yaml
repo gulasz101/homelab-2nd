@@ -33,7 +33,7 @@ spec:
           restartPolicy: OnFailure
           # openchamber-storage is a local-path PVC bound to t460.
           nodeSelector:
-            kubernetes.io/hostname: t460
+            kubernetes.io/hostname: loki
           containers:
             - name: backup
               image: python:3.13-alpine

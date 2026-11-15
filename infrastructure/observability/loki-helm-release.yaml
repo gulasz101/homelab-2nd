@@ -67,8 +67,6 @@ spec:
             store: inmemory
         external_labels:
           cluster: homelab-2nd
-          namespace: honcho
-          alertname: HonchoUnexpectedErrors
     singleBinary:
       replicas: 1
       extraArgs:

@@ -12,6 +12,13 @@ metadata:
   # the cnpg.io/skipEmptyWalArchiveCheck annotation is no longer needed.
 spec:
   instances: 1
+  # Switchover (not restart) on any primary pod-spec change: moving node = new replica +
+  # promote, never an in-place restart that a node-bound local-path PV can't follow.
+  primaryUpdateMethod: switchover
+  # local-path PVs are node-bound for life: pin explicitly (H2-306 lesson), node move 2026-11-11.
+  affinity:
+    nodeSelector:
+      kubernetes.io/hostname: loki
   imageName: ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie
 
   # Recovery bootstrap: if this cluster is ever recreated, restore the latest
