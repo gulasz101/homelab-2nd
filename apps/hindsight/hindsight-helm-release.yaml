@@ -235,7 +235,18 @@ spec:
         # 48 hourly models x ~2 calls x 4 attempts. The retry ladder is what
         # spent the allowance, so the app gets one attempt and the router owns
         # the hop.
-        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: iceman-contributor-free-go
+        # GUL-1446 follow-up (2026-11-15): the REFRESH lane goes to
+        # `longcat-2.5-free-go`, one rung down, because a mental-model refresh
+        # asks for structured output (`json_schema`) and iceman refuses it -
+        # measured post-merge on 2026-11-15 with the real refresh key:
+        # `iceman-contributor-free-go` -> 400 "Model iceman-contributor-free
+        # does not support structured output" on every delta-ops call, and the
+        # router then hopped to longcat anyway. longcat, same payload shape,
+        # same key: 5/5 x 200 with schema-valid JSON, 4.7-8.0 s. So the old
+        # pairing spent one failed hop (~60 s slow-call tail) per refresh to
+        # land on the model that answers. Reflect keeps iceman - it asks for
+        # prose, not a schema, and it is the faster one there.
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: longcat-2.5-free-go
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES: "1"
         # Ollama answers a reflect call in ~2 s; iceman 3.2-5.7 s at reflect
         # size (2026-11-13). The budgets stay generous on

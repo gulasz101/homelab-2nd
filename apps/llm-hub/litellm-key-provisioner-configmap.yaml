@@ -124,10 +124,12 @@ data:
         # crouton-alpha-free-go, hy4-go) and clef-27b-ollama above.
         # iceman-contributor-free-go stays: main added its route (PR #172).
         "iceman-contributor-free-go",
-        # GUL-1446: second hop of the reflect chain in
-        # apps/hindsight/hindsight-helm-release.yaml; route added in
-        # litellm-helm-release.yaml, so the reflect key must be able to call it
-        # or the fallback dies at the key check instead of hopping.
+        # GUL-1446: second hop of the reflect chain and, since the 2026-11-15
+        # follow-up, the PRIMARY of the mental-model refresh lane in
+        # apps/hindsight/hindsight-helm-release.yaml (iceman cannot serve the
+        # `json_schema` a refresh asks for). Route added in
+        # litellm-helm-release.yaml, so the key must be able to call it or the
+        # lane dies at the key check.
         "longcat-2.5-free-go",
     ]
 
