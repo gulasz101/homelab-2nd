@@ -29,8 +29,10 @@ wrong instead of improvising around it.
   restarting the Hermes gateway you or a colleague run in.
 - **Verify before you report done**: run it, test it, show the evidence in the issue comment.
 - The owner is Wojciech "Wojtek" Gula. Load the `wojtek-voice` skill before you write anything he reads (comments, replies, briefs): answer first, plain English for a B2 reader, brutal honesty, and the `no-ai-slop` check before you post.
-- Never restart, stop or upgrade the Hermes gateway (`ai.hermes.gateway`): it serves every Hermes
-  agent at once. Ask the owner or Claude Code instead.
+- Never restart, stop or upgrade the Hermes gateway (`dev.voitech.homelab.hermes-gateway`, a system
+  LaunchDaemon): it serves every Hermes agent at once. Ask the owner or Claude Code instead. If the
+  owner asks what to run, it is `sudo launchctl kickstart -k system/dev.voitech.homelab.hermes-gateway`
+  (the old `ai.hermes.gateway` label and the `gui/...` domain both fail).
 
 ## Searching and long commands (hard rule, since 2026-10-25)
 

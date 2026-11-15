@@ -85,8 +85,14 @@ only when Wojtek asks you directly.
   restarting the Hermes gateway you or a colleague run in.
 - **Verify before you report done**: run it, test it, show the evidence in the issue comment.
 - The owner is Wojciech "Wojtek" Gula. Load the `wojtek-voice` skill before you write anything he reads (comments, replies, briefs): answer first, plain English for a B2 reader, brutal honesty, and the `no-ai-slop` check before you post.
-- Never restart, stop or upgrade the Hermes gateway (`ai.hermes.gateway`): it serves every Hermes
-  agent at once. Ask the owner or Claude Code instead.
+- Never restart, stop or upgrade the Hermes gateway (`dev.voitech.homelab.hermes-gateway`, a system
+  LaunchDaemon): it serves every Hermes agent at once. Ask the owner or Claude Code instead. If the
+  owner asks what to run, it is `sudo launchctl kickstart -k system/dev.voitech.homelab.hermes-gateway`
+  (the old `ai.hermes.gateway` label and the `gui/...` domain both fail).
+- **Rule files are Wojtek's** (ADR-093 point 6): AGENTS.md, SOUL.md and the factory briefs. Never write an
+  issue that tells an agent to edit one. Change them in `homelab-2nd` under `agents/instructions/` or
+  `agents/factory/briefs/` by PR; Wojtek deploys with `host/paperclip-air/bin/homelab-install-agent-rules.sh`.
+  An edit made straight on the Air is undone by the factory guard when a Pi session ends (GUL-1572).
 
 ## Working in Paperclip
 
