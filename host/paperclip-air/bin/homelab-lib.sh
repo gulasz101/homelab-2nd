@@ -649,3 +649,30 @@ hermes_backup_missing() {
   done
   return 0
 }
+
+# ---- vault restic backup freshness (GUL-1577) -------------------------------
+# vault-backup.sh writes ~/.config/vault-backup/last-run ("<ISO-8601Z> ok <snaps>")
+# ONLY after a successful run, so its age is the whole signal: a failed run, a
+# job that never ran, and a cache it cannot read all leave it stale. It failed
+# three nights in a row (2026-11-13..15) with nothing watching it.
+# vault_backup_state STATUS_FILE NOW_EPOCH [MAX_AGE_H=26]
+#   -> "ok <age_h>" | "stale <age_h> <ts>" | "missing" | "unreadable <first line>"
+vault_backup_state() {
+  local f="$1" now="$2" max_h="${3:-26}" line ts state epoch age_h
+  [ -f "$f" ] || { printf 'missing\n'; return 0; }
+  line=$(head -1 "$f" 2>/dev/null)
+  ts=${line%% *}
+  state=$(printf '%s' "$line" | awk '{print $2}')
+  epoch=$(python3 -c 'import sys,datetime; print(int(datetime.datetime.strptime(sys.argv[1],"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()))' "$ts" 2>/dev/null)
+  if [ -z "$epoch" ] || [ "$state" != "ok" ]; then
+    printf 'unreadable %s\n' "$line"
+    return 0
+  fi
+  age_h=$(( (now - epoch) / 3600 ))
+  if [ "$age_h" -ge "$max_h" ]; then
+    printf 'stale %s %s\n' "$age_h" "$ts"
+  else
+    printf 'ok %s\n' "$age_h"
+  fi
+  return 0
+}

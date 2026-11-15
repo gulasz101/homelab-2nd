@@ -395,6 +395,22 @@ PY
     fi
 fi
 
+# ---- 5c. the vault restic backup succeeded in the last 26 h (GUL-1577) ------
+# vault-backup.sh failed three nights running (2026-11-13..15: a root-owned
+# restic cache from a sudo'd verify run) and nothing noticed. Its status file is
+# written only on success, so its age is the whole check.
+VAULT_STATUS="${VAULT_BACKUP_STATUS:-${HOME}/.config/vault-backup/last-run}"
+if declare -F vault_backup_state >/dev/null; then
+    vault_state="$(vault_backup_state "${VAULT_STATUS}" "$(date +%s)")"
+    log "check5c vault_backup=${vault_state}"
+    case "${vault_state}" in
+        ok\ *) ;;
+        *) maybe_alert "vault-backup-stale" "Hermes memory watchdog: the vault restic backup has not succeeded in the last 26 h (${vault_state}). Read ~/Library/Logs/homelab/vault-backup.log on the Air." ;;
+    esac
+else
+    log "check5c skipped: homelab-lib.sh has no vault_backup_state"
+fi
+
 # ---- 6. no Hindsight operation stuck in 'processing' for more than 3 h --------
 # Until 2026-10-19 every API restart orphaned in-flight consolidations and left them
 # 'processing' forever, blocking whole banks for days. Fixed upstream with a stable worker
