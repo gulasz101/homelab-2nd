@@ -20,6 +20,7 @@ Examples:
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -277,6 +278,11 @@ def service_pvc_stat(
 ) -> Panel:
     """PVC used / capacity stat panel for a single service."""
     label = friendly_name(pod_prefix, aliases)
+    # A CNPG instance PVC ("<cluster>-<n>") changes name on every switchover (paperclip-db-1 ->
+    # paperclip-db-2 in the 2026-11-12 node move), so match any instance number, not the one
+    # that happened to exist when the dashboard was rendered.
+    m = re.fullmatch(r"(.+)-\d+", pvc_name)
+    pvc_sel = f'persistentvolumeclaim=~"{m.group(1)}-[0-9]+"' if m else f'persistentvolumeclaim="{pvc_name}"'
     return Panel(
         panel_id=panel_id,
         title=f"{label} PVC",
@@ -285,13 +291,13 @@ def service_pvc_stat(
         targets=[
             {
                 "refId": "A",
-                "expr": f'kubelet_volume_stats_used_bytes{{namespace="{namespace}",persistentvolumeclaim="{pvc_name}"}}',
+                "expr": f'kubelet_volume_stats_used_bytes{{namespace="{namespace}",{pvc_sel}}}',
                 "legendFormat": "used",
                 "instant": True,
             },
             {
                 "refId": "B",
-                "expr": f'kubelet_volume_stats_capacity_bytes{{namespace="{namespace}",persistentvolumeclaim="{pvc_name}"}}',
+                "expr": f'kubelet_volume_stats_capacity_bytes{{namespace="{namespace}",{pvc_sel}}}',
                 "legendFormat": "capacity",
                 "instant": True,
             },
@@ -791,7 +797,7 @@ def main() -> int:
         "--pvcs",
         type=parse_pvc_map,
         default={},
-        help='Service:pvc mappings for per-service PVC stat panels, e.g. "hindsight-db:hindsight-db-1"',
+        help='Service:pvc mappings for per-service PVC stat panels, e.g. "hindsight-db:hindsight-db-1"',  # cnpg-name-ok: example input; the instance suffix is rendered as -[0-9]+
     )
     parser.add_argument(
         "--aliases",

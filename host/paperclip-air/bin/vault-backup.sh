@@ -41,6 +41,19 @@ for arg in "$@"; do
 done
 
 die() { printf 'FATAL: %s\n' "$*" >&2; exit 1; }
+# GUL-1577: never as root. A sudo'd run keeps HOME=/Users/paperclip on macOS, so
+# restic writes root-owned files into paperclip's cache, and every later nightly
+# run (as paperclip) fails on them. That happened 2026-11-12, and the job then failed 3 nights.
+if [ "$(id -u)" = "0" ]; then
+  printf 'FATAL: do not run vault-backup.sh as root; use: sudo -u paperclip %s %s\n' "$0" "$*" >&2
+  exit 2
+fi
+# GUL-1572: the agent-rules snapshot takes its file list from homelab-lib.sh, which is
+# installed next to this script (/usr/local/libexec/homelab) and sits next to it in the repo.
+LIB="$(cd "$(dirname "$0")" && pwd)/homelab-lib.sh"
+[ -r "$LIB" ] || { printf 'FATAL: %s not found (agent_rules_files)\n' "$LIB" >&2; exit 1; }
+# shellcheck source=homelab-lib.sh
+. "$LIB"
 
 [ -r "$ENV_FILE" ] || die "missing credentials file $ENV_FILE"
 # shellcheck disable=SC1090
@@ -86,6 +99,16 @@ if [ "$MODE" != "dry-run" ]; then
     --exclude "$STUDIO_DIR/cache" \
     --exclude "$STUDIO_DIR/tmp" \
     "$STUDIO_DIR" || die "image-studio backup failed"
+  # 3. the agents' rule files (GUL-1572): the Hermes SOUL.md personas are personal
+  #    and stay out of the public repo, so these snapshots ARE their history. The
+  #    Paperclip AGENTS.md bundles are in git too; this copy is what actually ran.
+  rules=()
+  while IFS= read -r f; do rules+=("$f"); done < <(agent_rules_files "$HOME")
+  if [ "${#rules[@]}" -gt 0 ]; then
+    restic backup --tag agent-rules --host paperclip "${rules[@]}" || die "agent-rules backup failed"
+  else
+    say "WARN no agent rule files found under $HOME"
+  fi
 fi
 
 # 3. retention: 7 daily + 4 weekly, prune only on Sunday so the nightly run stays
