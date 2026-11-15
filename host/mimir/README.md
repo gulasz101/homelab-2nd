@@ -30,7 +30,14 @@ sudo k3s etcd-snapshot save --name manual # uploads too
 routes `1.1.1.1/32` and `1.0.0.1/32` via `src 192.168.1.179` (OPNsense lets only .179 send DNS to the
 internet; Pi-hole runs hostNetwork here).
 
+## k3s config note
+
+`/etc/rancher/k3s/config.yaml` still carries `server: https://192.168.1.179:6443` from the join;
+`.179` is now mimir itself. Restarts work (existing etcd data wins), but drop the line the next time
+the config is touched on purpose, and never copy it to a fresh single server.
+
 ## NetBird
 
 `DisableFirewall: true` (ADR-013): `sudo netbird down && sudo netbird up --disable-firewall`.
-Never `netbird up` without the flag on a k3s node.
+Never `netbird up` without the flag on a k3s node. Swap is off (fstab line commented, 2026-11-15).
+Check everything with `host/k3s-node/verify.sh`.
