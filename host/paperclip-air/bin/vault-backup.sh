@@ -41,6 +41,13 @@ for arg in "$@"; do
 done
 
 die() { printf 'FATAL: %s\n' "$*" >&2; exit 1; }
+# GUL-1577: never as root. A sudo'd run keeps HOME=/Users/paperclip on macOS, so
+# restic writes root-owned files into paperclip's cache, and every later nightly
+# run (as paperclip) fails on them. That happened 2026-11-12, and the job then failed 3 nights.
+if [ "$(id -u)" = "0" ]; then
+  printf 'FATAL: do not run vault-backup.sh as root; use: sudo -u paperclip %s %s\n' "$0" "$*" >&2
+  exit 2
+fi
 
 [ -r "$ENV_FILE" ] || die "missing credentials file $ENV_FILE"
 # shellcheck disable=SC1090
