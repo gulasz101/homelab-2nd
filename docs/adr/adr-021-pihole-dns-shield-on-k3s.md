@@ -60,6 +60,8 @@ Negative:
 - Browsers with DoH, Android Private DNS, and iCloud Private Relay must be disabled per device
   (client hygiene checklist in H2-76); OPNsense blocks DoT :853 + known DoH IPs + Relay canaries.
 
+- **Moving or restarting Pi-hole is an outage for the whole house** (DHCP hands out only `192.168.1.179`, and OPNsense lets only that address send DNS out). Follow `docs/runbooks/service-cutover.md` (added 2026-11-15 after the 6.5 h outage of 2026-11-12).
+
 ## Alternatives considered
 
 - **AdGuard Home instead of Pi-hole:** nicer per-client UI, but the homelab convention, docs
