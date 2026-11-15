@@ -247,23 +247,33 @@ else
     maybe_alert "hindsight-key-missing" "Hermes memory watchdog: HINDSIGHT_API_KEY not found in ${ENV_FILE}"
 fi
 
-# ---- 5. the backup log must show success for all 5 profiles ------------------
+# ---- 5. the backup log must show success for every profile -----------------
+# GUL-1573: "every profile" is read from disk (homelab-lib.sh hermes_profiles), the
+# same definition the backup uses. The old fixed five never noticed that billcipher
+# and matejko were not backed up. Words are matched exactly, not as substrings.
 missing_backup=0
+missing_list=""
 if [[ ! -f "${BACKUP_LOG}" ]]; then
     missing_backup=1
+    missing_list="<no backup log>"
+elif declare -F hermes_backup_missing >/dev/null; then
+    missing_list="$(hermes_backup_missing "${BACKUP_LOG}" "${BASE_DIR}" | tr '\n' ' ' | sed 's/ *$//')"
+    [[ -n "${missing_list}" ]] && missing_backup=1
 else
+    # homelab-lib.sh not installed next to this script: keep the historical check.
     last_success="$(grep 'SUCCESS profiles=' "${BACKUP_LOG}" 2>/dev/null | tail -1 || true)"
     if [[ -z "${last_success}" ]]; then
         missing_backup=1
+        missing_list="<no SUCCESS line>"
     else
         for p in default andrzej florian szarik zdzislaw; do
-            grep -q "${p}" <<<"${last_success}" || missing_backup=1
+            grep -q "${p}" <<<"${last_success}" || { missing_backup=1; missing_list="${missing_list} ${p}"; }
         done
     fi
 fi
 if [[ "${missing_backup}" -eq 1 ]]; then
     last_line="$(grep 'SUCCESS profiles=' "${BACKUP_LOG}" 2>/dev/null | tail -1 || echo none)"
-    maybe_alert "backup-missing" "Hermes memory watchdog: the state.db backup log does not show all 5 profiles succeeding (last SUCCESS line: ${last_line})"
+    maybe_alert "backup-missing" "Hermes memory watchdog: the state.db backup log does not show every profile succeeding (missing: ${missing_list# }; last SUCCESS line: ${last_line})"
 fi
 
 # ---- 5b. the backup JOB, not just the backup LOG ---------------------------

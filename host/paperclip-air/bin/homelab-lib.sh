@@ -601,3 +601,51 @@ claude_token_alert_message() { # $1 = verdict
       ;;
   esac
 }
+
+# ---- Hermes profiles the nightly state.db backup must cover (GUL-1573) ----
+# The backup and the watchdog used to share a hard-coded list
+# (default andrzej florian szarik zdzislaw). billcipher and matejko were added
+# later and silently never got backed up. One definition, read from disk:
+#   * "default" is the Hermes root ($HOME itself) when it has a config.yaml;
+#   * a named profile is any profiles/<name>/ that has a config.yaml.
+# An empty profiles/<name>/ dir (careerpa) is not a profile. A real profile
+# whose state.db is missing still counts: the backup reports it as a failure.
+# Bash 3.2 (macOS): no mapfile, no nullglob reliance.
+hermes_profiles() {
+  local home="$1" d
+  [ -f "$home/config.yaml" ] && printf 'default\n'
+  for d in "$home"/profiles/*/; do
+    [ -f "${d}config.yaml" ] && basename "$d"
+  done | LC_ALL=C sort
+  return 0
+}
+
+# hermes_state_db HOME PROFILE -> path of that profile's state.db
+hermes_state_db() {
+  if [ "$2" = "default" ]; then
+    printf '%s/state.db\n' "$1"
+  else
+    printf '%s/profiles/%s/state.db\n' "$1" "$2"
+  fi
+}
+
+# hermes_backup_missing LOG HOME -> one line per expected profile that is NOT
+# in the last "SUCCESS profiles=[...]" line of the backup log; the single line
+# "<no SUCCESS line>" when there is none. Empty output = every profile is backed up.
+hermes_backup_missing() {
+  local log="$1" home="$2" last p
+  last=$(grep 'SUCCESS profiles=' "$log" 2>/dev/null | tail -1)
+  if [ -z "$last" ]; then
+    printf '%s\n' '<no SUCCESS line>'
+    return 0
+  fi
+  last=${last#*profiles=[}
+  last=${last%%]*}
+  for p in $(hermes_profiles "$home"); do
+    case " $last " in
+      *" $p "*) ;;
+      *) printf '%s\n' "$p" ;;
+    esac
+  done
+  return 0
+}
