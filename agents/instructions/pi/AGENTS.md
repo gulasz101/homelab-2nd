@@ -32,7 +32,7 @@ wrong instead of improvising around it.
 - Never restart, stop or upgrade the Hermes gateway (`dev.voitech.homelab.hermes-gateway`, a system
   LaunchDaemon): it serves every Hermes agent at once. Ask the owner or Claude Code instead. If the
   owner asks what to run, it is `sudo launchctl kickstart -k system/dev.voitech.homelab.hermes-gateway`
-  (the old `ai.hermes.gateway` label and the `gui/...` domain both fail).
+  (the `gui/...` domain fails: it is a system daemon).
 
 ## Searching and long commands (hard rule, since 2026-10-25)
 

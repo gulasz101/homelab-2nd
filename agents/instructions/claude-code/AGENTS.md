@@ -88,7 +88,7 @@ only when Wojtek asks you directly.
 - Never restart, stop or upgrade the Hermes gateway (`dev.voitech.homelab.hermes-gateway`, a system
   LaunchDaemon): it serves every Hermes agent at once. Ask the owner or Claude Code instead. If the
   owner asks what to run, it is `sudo launchctl kickstart -k system/dev.voitech.homelab.hermes-gateway`
-  (the old `ai.hermes.gateway` label and the `gui/...` domain both fail).
+  (the `gui/...` domain fails: it is a system daemon).
 - **Rule files are Wojtek's** (ADR-093 point 6): AGENTS.md, SOUL.md and the factory briefs. Never write an
   issue that tells an agent to edit one. Change them in `homelab-2nd` under `agents/instructions/` or
   `agents/factory/briefs/` by PR; Wojtek deploys with `host/paperclip-air/bin/homelab-install-agent-rules.sh`.
