@@ -94,7 +94,7 @@ spec:
               LOG_LEVEL: "info"
               WORKERS_PORT: "3001"
               WORKERS_HOST: "0.0.0.0"
-              OTEL_EXPORTER_OTLP_ENDPOINT: "http://opentelemetry-collector.monitoring.svc.cluster.local:4318"
+              OTEL_EXPORTER_OTLP_ENDPOINT: "http://opentelemetry-collector.observability.svc.cluster.local:4318"
               OTEL_LOGS_EXPORTER: "otlp"
               OTEL_RESOURCE_ATTRIBUTES: "service.name=karakeep,service.namespace=karakeep"
 

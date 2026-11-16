@@ -50,7 +50,18 @@ spec:
         replicas: 1
         retention: 10d
         retentionSize: "8GB"
-        enableRemoteWriteReceiver: true
+        # Native OTLP ingestion for the OpenTelemetry Collector (Prometheus
+        # >= 2.55, ADR: GUL-1593 WO-1). The collector's otlphttp exporter writes
+        # to /api/v1/otlp/v1/metrics on this Service instead of remote write, so
+        # the remote-write receiver is no longer enabled anywhere.
+        enableOTLPReceiver: true
+        otlp:
+          # Without promotion, every OTLP series lands with only the default
+          # labels and Grafana cannot group by service or namespace.
+          promoteResourceAttributes:
+            - service.name
+            - service.namespace
+            - k8s.namespace.name
         # Attach a host label to all metrics scraped by this Prometheus instance
         # so dashboard legends group cleanly alongside OMV's static-config host label.
         externalLabels:
