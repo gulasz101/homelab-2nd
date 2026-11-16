@@ -26,9 +26,24 @@ sudo k3s etcd-snapshot save --name manual # uploads too
 
 ## Front-door address
 
-`/etc/systemd/system/homelab-frontdoor-ip.service` adds `192.168.1.179/24` to `enp1s0` and source
-routes `1.1.1.1/32` and `1.0.0.1/32` via `src 192.168.1.179` (OPNsense lets only .179 send DNS to the
-internet; Pi-hole runs hostNetwork here).
+`homelab-frontdoor-ip.service` + `homelab-frontdoor-ip.sh` (this directory) add `192.168.1.179/24`
+to `enp1s0` and source routes `1.1.1.1/32` and `1.0.0.1/32` via `src 192.168.1.179` (OPNsense lets
+only .179 send DNS to the internet; Pi-hole runs hostNetwork here). The script waits for the DHCP
+default route and verifies the routes; on 2026-11-16 the old inline unit raced DHCP, failed with
+`Nexthop has invalid gateway`, hid it behind `|| true`, and the house had no DNS after a reboot.
+
+```sh
+sudo install -m 755 homelab-frontdoor-ip.sh /usr/local/sbin/homelab-frontdoor-ip.sh
+sudo install -m 644 homelab-frontdoor-ip.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable homelab-frontdoor-ip
+ip route | grep -E '^1\.[01]\.'   # both routes must show src 192.168.1.179
+```
+
+## Boot: disk is LUKS-encrypted
+
+mimir waits at the LUKS passphrase prompt after any reboot (unlock over JetKVM). That is what made
+the 2026-11-16 reset look like a dead box for 16 h. MAC `04:7b:cb:45:f9:00` (WoL only helps when it's
+powered off). Unattended unlock: pending ADR `lan-dns-fails-over-off-mimir-keepalived-vip`.
 
 ## k3s config note
 
