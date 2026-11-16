@@ -601,3 +601,117 @@ claude_token_alert_message() { # $1 = verdict
       ;;
   esac
 }
+
+# ---- Hermes profiles the nightly state.db backup must cover (GUL-1573) ----
+# The backup and the watchdog used to share a hard-coded list
+# (default andrzej florian szarik zdzislaw). billcipher and matejko were added
+# later and silently never got backed up. One definition, read from disk:
+#   * "default" is the Hermes root ($HOME itself) when it has a config.yaml;
+#   * a named profile is any profiles/<name>/ that has a config.yaml.
+# An empty profiles/<name>/ dir (careerpa) is not a profile. A real profile
+# whose state.db is missing still counts: the backup reports it as a failure.
+# Bash 3.2 (macOS): no mapfile, no nullglob reliance.
+hermes_profiles() {
+  local home="$1" d
+  [ -f "$home/config.yaml" ] && printf 'default\n'
+  for d in "$home"/profiles/*/; do
+    [ -f "${d}config.yaml" ] && basename "$d"
+  done | LC_ALL=C sort
+  return 0
+}
+
+# hermes_state_db HOME PROFILE -> path of that profile's state.db
+hermes_state_db() {
+  if [ "$2" = "default" ]; then
+    printf '%s/state.db\n' "$1"
+  else
+    printf '%s/profiles/%s/state.db\n' "$1" "$2"
+  fi
+}
+
+# hermes_backup_missing LOG HOME -> one line per expected profile that is NOT
+# in the last "SUCCESS profiles=[...]" line of the backup log; the single line
+# "<no SUCCESS line>" when there is none. Empty output = every profile is backed up.
+hermes_backup_missing() {
+  local log="$1" home="$2" last p
+  last=$(grep 'SUCCESS profiles=' "$log" 2>/dev/null | tail -1)
+  if [ -z "$last" ]; then
+    printf '%s\n' '<no SUCCESS line>'
+    return 0
+  fi
+  last=${last#*profiles=[}
+  last=${last%%]*}
+  for p in $(hermes_profiles "$home"); do
+    case " $last " in
+      *" $p "*) ;;
+      *) printf '%s\n' "$p" ;;
+    esac
+  done
+  return 0
+}
+
+# ---- vault restic backup freshness (GUL-1577) -------------------------------
+# vault-backup.sh writes ~/.config/vault-backup/last-run ("<ISO-8601Z> ok <snaps>")
+# ONLY after a successful run, so its age is the whole signal: a failed run, a
+# job that never ran, and a cache it cannot read all leave it stale. It failed
+# three nights in a row (2026-11-13..15) with nothing watching it.
+# vault_backup_state STATUS_FILE NOW_EPOCH [MAX_AGE_H=26]
+#   -> "ok <age_h>" | "stale <age_h> <ts>" | "missing" | "unreadable <first line>"
+vault_backup_state() {
+  local f="$1" now="$2" max_h="${3:-26}" line ts state epoch age_h
+  [ -f "$f" ] || { printf 'missing\n'; return 0; }
+  line=$(head -1 "$f" 2>/dev/null)
+  ts=${line%% *}
+  state=$(printf '%s' "$line" | awk '{print $2}')
+  epoch=$(python3 -c 'import sys,datetime; print(int(datetime.datetime.strptime(sys.argv[1],"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()))' "$ts" 2>/dev/null)
+  if [ -z "$epoch" ] || [ "$state" != "ok" ]; then
+    printf 'unreadable %s\n' "$line"
+    return 0
+  fi
+  age_h=$(( (now - epoch) / 3600 ))
+  if [ "$age_h" -ge "$max_h" ]; then
+    printf 'stale %s %s\n' "$age_h" "$ts"
+  else
+    printf 'ok %s\n' "$age_h"
+  fi
+  return 0
+}
+
+# ---- agent rule files (GUL-1572, pending ADR "agent rule files ... owned by Wojtek") ----
+# Every file that steers an agent on the Air: the Hermes personas, the Paperclip
+# external bundles, and the Paperclip-managed bundles. Shared by the nightly
+# restic "agent-rules" snapshot (vault-backup.sh) and watchdog check 10. The
+# Hermes instruction gate exempts all of ~/.hermes, so a SOUL.md edit can only
+# be detected, not prevented.
+agent_rules_files() {
+  local home="$1" f
+  for f in "$home/.hermes/SOUL.md" "$home"/.hermes/profiles/*/SOUL.md \
+           "$home"/paperclip-agents/*/AGENTS.md \
+           "$home"/.paperclip/instances/default/companies/*/agents/*/instructions/AGENTS.md; do
+    [ -f "$f" ] && printf '%s\n' "$f"
+  done
+  return 0
+}
+
+# sha256 of each file, "<sha>  <path>" (shasum on macOS, sha256sum on Linux CI)
+homelab_sha256() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi
+}
+
+# agent_rules_hashes HOME -> "<sha>  <path>" per rule file, sorted by path
+agent_rules_hashes() {
+  local f
+  agent_rules_files "$1" | while IFS= read -r f; do homelab_sha256 "$f"; done | LC_ALL=C sort -k2
+  return 0
+}
+
+# agent_rules_changed OLD NEW (two agent_rules_hashes outputs, as files)
+#   -> "added|changed|removed <path>" lines, sorted; empty when nothing moved
+agent_rules_changed() {
+  awk 'NR==FNR { old[$2] = $1; next }
+       { seen[$2] = 1
+         if (!($2 in old)) print "added " $2
+         else if (old[$2] != $1) print "changed " $2 }
+       END { for (p in old) if (!(p in seen)) print "removed " p }' "$1" "$2" | LC_ALL=C sort
+  return 0
+}
