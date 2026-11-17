@@ -52,9 +52,20 @@ spec:
         retentionSize: "8GB"
         # Native OTLP ingestion for the OpenTelemetry Collector (Prometheus
         # >= 2.55, ADR: GUL-1593 WO-1). The collector's otlphttp exporter writes
-        # to /api/v1/otlp/v1/metrics on this Service instead of remote write, so
-        # the remote-write receiver is no longer enabled anywhere.
+        # to /api/v1/otlp/v1/metrics on this Service instead of remote write.
         enableOTLPReceiver: true
+        # The remote-write receiver is on for one sender only: Tempo's
+        # metrics-generator, which derives service-graph and span metrics from
+        # traces and pushes them to /api/v1/write. Without it Prometheus answers
+        # 404 and the service graph and trace->metrics links stay empty
+        # (GUL-1596 AC-5). The collector still uses OTLP above.
+        enableRemoteWriteReceiver: true
+        # Exemplars are the trace id that rides along with a sample. Prometheus
+        # only keeps them in its circular buffer with this feature enabled, and
+        # without them Grafana has nothing to link a graph spike to a trace with
+        # (GUL-1596 AC-4).
+        enableFeatures:
+          - exemplar-storage
         otlp:
           # Without promotion, every OTLP series lands with only the default
           # labels and Grafana cannot group by service or namespace.
