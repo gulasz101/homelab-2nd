@@ -2366,7 +2366,18 @@ def cmd_factory_decide(args) -> int:
         reasons = ["a third fix round would start; confirmed blocking: %s" % ", ".join(blocking)]
 
     attempts = int((ledger["stages"].get(key) or {}).get("attempts", 0))
-    if decision == "request_changes":
+    if decision == "request_changes" and stage == "gate":
+        # The gate has no fix round and its agent has nothing to change: the
+        # PR is the whole diff, and the fix would be a new work order. Counting
+        # to three on it handed the stage back to an agent that could only
+        # re-run the same check, so the work order sat `in_progress` with no
+        # card, no blocker edge and nobody woken until Paperclip raised a
+        # `deliberate_wait_without_target` repair on it (GUL-1706). One failed
+        # gate is Wojtek's call, exactly as the stage template says.
+        decision = "escalate"
+        reasons = list(reasons) + [
+            "the gate has no fix round: a failed gate goes to Wojtek, never back to the stage"]
+    elif decision == "request_changes":
         attempts += 1
         ledger["stages"].setdefault(key, {})["attempts"] = attempts
         if attempts >= 3:

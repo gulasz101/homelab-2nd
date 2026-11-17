@@ -392,6 +392,15 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   makes `in_review` a real wait; the old `request_confirmation` card merged
   nothing and only looked like a button. Wojtek merges on GitHub, `tick --apply`
   notices it.
+- **A failed gate escalates at once** (GUL-1706). The gate has no fix round and
+  its agent can change nothing: the PR already exists, and re-running the same
+  check on the same head yields the same verdict. So one `request_changes` on the
+  `gate` stage goes straight to **Escalate** (below) with the check's own reasons
+  plus "the gate has no fix round: a failed gate goes to Wojtek, never back to the
+  stage". Counting to three handed the stage to an agent that could only repeat
+  itself and left the work order `in_progress` with no card, no blocker edge and
+  nobody woken. The `attempts` counter therefore stays at 0 for a gate row; three
+  rounds still applies to `red`, `green`, `review` and `verify`.
 - **Escalate** on a third request-changes for one stage, or when a third fix round
   would start: work order `blocked` with `"executionPolicy": null` in the same
   PATCH (otherwise Paperclip reads `blocked` as request-changes), one sentence

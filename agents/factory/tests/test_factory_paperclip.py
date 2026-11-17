@@ -1749,12 +1749,68 @@ def case_gate_conflicting_pr_is_judged(stub):
     reasons = (out or {}).get("reasons") or []
     row = ((ledger_of(stub, wo).get("stages") or {}).get("gate") or {})
     check("gate decide: a PR GitHub cannot build is judged, not a setup error",
-          code == 1 and (out or {}).get("decision") == "request_changes", raw[-500:])
+          code == 1 and (out or {}).get("decision") == "escalate", raw[-500:])
     check("gate decide: the reason names the missing check and the conflict",
           any("no check run named 'check'" in r for r in reasons)
           and any("CONFLICTING" in r and "rebase" in r for r in reasons), reasons)
-    check("gate decide: the judgeable failure does spend a round",
-          int(row.get("attempts", 0)) == 1, row)
+    # GUL-1706: the gate has no fix round and its agent can change nothing, so a
+    # `request_changes` here handed the stage back to an agent that could only
+    # re-run the same check and left the work order ownerless. One fail is Wojtek's.
+    check("gate decide: the judgeable failure escalates instead of spending a round (GUL-1706)",
+          (out or {}).get("decision") == "escalate" and int(row.get("attempts", 0)) == 0
+          and stub.state.issues[wo["id"]]["status"] == "blocked", row)
+
+
+def case_gate_fail_escalates(stub):
+    """GUL-1706: a diff too big fails the gate and goes to Wojtek, not back to the stage."""
+    repo, base = make_repo("gate-big-diff")
+    wo = base_work_order(stub, base, repo, identifier="GUL-914")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 95, "url": "https://github.com/gulasz101/homelab-2nd/pull/95"}
+    write_ledger(stub, wo, ledger)
+    gate = stage_issue(stub, wo, "[gate] GUL-914 - Merge")
+    big = dict(GATE_VIEW, additions=728, deletions=0,
+               files=[{"path": "tests/big-check.sh", "changeType": "ADDED"}])
+    comments_before = len(stub.state.comments)
+
+    code0, out0, raw0 = run(stub, ["decide", gate["identifier"]],
+                            extra_env=merge_env("bigdiff-dry", big))
+    check("gate fail: a dry decide reports escalate and writes nothing",
+          code0 == 1 and (out0 or {}).get("decision") == "escalate"
+          and stub.state.issues[wo["id"]]["status"] == "in_progress"
+          and len(stub.state.comments) == comments_before, raw0[-500:])
+
+    code, out, raw = run(stub, ["decide", gate["identifier"], "--apply"],
+                         extra_env=merge_env("bigdiff", big))
+    reasons = (out or {}).get("reasons") or []
+    row = ((ledger_of(stub, wo).get("stages") or {}).get("gate") or {})
+    issue = stub.state.issues[wo["id"]]
+    parked = stub.state.issues[gate["id"]]
+
+    check("gate fail: --apply exits 1 with decision escalate, applied",
+          code == 1 and (out or {}).get("decision") == "escalate"
+          and (out or {}).get("applied") is True, raw[-500:])
+    check("gate fail: the reason is the check's own verdict, plus why it is not a round",
+          any("diff too big" in r for r in reasons)
+          and any("no fix round" in r for r in reasons), reasons)
+    check("gate fail: the work order is blocked with executionPolicy cleared",
+          issue["status"] == "blocked" and issue["executionPolicy"] is None, issue)
+    check("gate fail: the block is a self-owned descriptor that says what to decide (GUL-898)",
+          (issue.get("unblockDescriptor") or {}).get("owner", {}).get("agentId") == MAJSTER
+          and bool(((issue.get("unblockDescriptor") or {}).get("action") or "").strip()),
+          issue.get("unblockDescriptor"))
+    check("gate fail: the stage issue is parked blocked, not handed back in_progress (GUL-889)",
+          parked["status"] == "blocked" and parked["executionState"] is None
+          and parked["assigneeAgentId"] == MAJSTER,
+          {k: parked.get(k) for k in ("status", "executionState", "assigneeAgentId")})
+    check("gate fail: no round is spent on a stage that cannot fix anything",
+          int(row.get("attempts", 0)) == 0, row)
+    body = stub.state.documents[(wo["id"], "ledger")]["body"]
+    check("gate fail: the ledger records the escalation and its reason",
+          '"outcome": "escalate"' in body and "diff too big" in body, body[-400:])
+    said = comments_on(stub, wo["id"])
+    check("gate fail: the work order comment says Wojtek decides",
+          any("diff too big" in c and "Wojtek decides" in c for c in said), said[-1:])
 
 
 def case_setup_error_spends_no_round(stub):
@@ -2173,6 +2229,7 @@ def main():
             case_green_approve_opens_one_pr(stub)
             case_gate_leaves_no_card(stub)
             case_gate_conflicting_pr_is_judged(stub)
+            case_gate_fail_escalates(stub)
             case_setup_error_spends_no_round(stub)
             case_tick_notices_the_merge(stub)
             case_tick_waits_on_an_open_pr(stub)
