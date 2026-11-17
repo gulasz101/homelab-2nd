@@ -379,9 +379,19 @@ write_view '[{"path":"apps/foo/enc.yaml","changeType":"MODIFIED","additions":1,"
 run env FACTORY_GH="$GHSTUB/gh" GH_STUB_DIR="$GHSTUB/data" $PY "$FACTORY" check-gate --pr "gulasz101/homelab-2nd#7" --spec "$TMP/gate-spec.md"
 expect_rc "gate: sops-encrypted content rule -> fail" 1 "$LAST_RC"
 
-write_view '[{"path":"src/app.yaml","changeType":"MODIFIED","additions":60,"deletions":60}]' 60 60
+# GUL-1730: 1x-3x maxDiffLines warns with one size note, it does not block. A green,
+# reviewed, verified PR lost over 59 lines (GUL-1597: 559 against 500) and the PM
+# raised the spec by hand; the merge decision sees the number instead.
+write_view '[{"path":"src/app.yaml","changeType":"MODIFIED","additions":75,"deletions":75}]' 75 75
 run env FACTORY_GH="$GHSTUB/gh" GH_STUB_DIR="$GHSTUB/data" $PY "$FACTORY" check-gate --pr "gulasz101/homelab-2nd#7" --spec "$TMP/gate-spec.md"
-expect_rc "gate: diff over maxDiffLines -> fail" 1 "$LAST_RC"
+expect_rc "gate: 1.5x maxDiffLines -> pass" 0 "$LAST_RC"
+grep -q 'size note: 150 lines > maxDiffLines 100' "$LAST_OUT" && ok "gate: 1.5x carries the size note" || bad "gate 1.5x size note"
+
+# 3x is the hard stop: nobody reviews that in one sitting.
+write_view '[{"path":"src/app.yaml","changeType":"MODIFIED","additions":175,"deletions":175}]' 175 175
+run env FACTORY_GH="$GHSTUB/gh" GH_STUB_DIR="$GHSTUB/data" $PY "$FACTORY" check-gate --pr "gulasz101/homelab-2nd#7" --spec "$TMP/gate-spec.md"
+expect_rc "gate: diff over 3x maxDiffLines -> fail" 1 "$LAST_RC"
+grep -q '3 \* maxDiffLines' "$LAST_OUT" && ok "gate: the hard stop names 3x" || bad "gate 3x reason"
 
 write_view '[{"path":"src/app.yaml","changeType":"MODIFIED","additions":3,"deletions":1}]' 3 1
 rm -f "$GHSTUB/data/contents-app.yaml.json"
