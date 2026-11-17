@@ -42,6 +42,33 @@ spec:
           wal:
             path: /var/tempo/wal
       retention: 168h  # 7 days
+      # Derive service-graph and span metrics from the traces Tempo ingests and
+      # remote-write them to Prometheus, which accepts them because
+      # prometheusSpec.enableRemoteWriteReceiver is on (GUL-1596 AC-5). Grafana
+      # reads those series for the service map and the trace->metrics links.
+      metricsGenerator:
+        enabled: true
+        remoteWriteUrl: http://prometheus-stack-kube-prom-prometheus.observability.svc.cluster.local:9090/api/v1/write
+        # Both processors on. The series they emit are
+        # traces_service_graph_* and traces_spanmetrics_*.
+        processor:
+          service_graphs: {}
+          span_metrics: {}
+        storage:
+          # The traces PVC is mounted at /var/tempo, so keep the generator's
+          # WAL there instead of the chart's /tmp default: a restart then does
+          # not throw away unflushed metrics.
+          path: /var/tempo/metrics
+        traces_storage:
+          path: /var/tempo/traces-wal
+      # Tempo's standard overrides also have to activate the processors per
+      # tenant - the processor config above alone generates nothing.
+      overrides:
+        defaults:
+          metrics_generator:
+            processors:
+              - service-graphs
+              - span-metrics
       # Tempo single-binary with WAL replay and all default receivers needs more
       # than 512Mi on startup. Keep request low but raise the limit.
       resources:
