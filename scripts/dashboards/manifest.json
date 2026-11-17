@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "note": "Every Grafana dashboard in apps/*/ and infrastructure/auth/ is rendered from this file by scripts/render_namespace_dashboard.py. See docs/dashboards.md. `services` are pod-name prefixes in that namespace; a `pvc` ending in -* is a CNPG cluster whose instance number changes on switchover.",
+  "dashboards": [
+    {
+      "output": "apps/arr-stack/arr-stack-dashboard-configmap.yaml",
+      "namespace": "arr-stack",
+      "title": "arr-stack — Sonarr / Radarr / Prowlarr / Bazarr / Jellyfin",
+      "uid": "arr-stack-dashboard",
+      "services": [
+        {"pod": "gluetun", "label": "gluetun", "pvc": "gluetun-config"},
+        {"pod": "sonarr", "label": "sonarr", "pvc": "sonarr-config"},
+        {"pod": "radarr", "label": "radarr", "pvc": "radarr-config"},
+        {"pod": "prowlarr", "label": "prowlarr", "pvc": "prowlarr-config"},
+        {"pod": "bazarr", "label": "bazarr", "pvc": "bazarr-config"},
+        {"pod": "jellyfin", "label": "jellyfin", "pvc": "jellyfin-config"},
+        {"pod": "homepage", "label": "homepage", "pvc": "homepage-config"}
+      ]
+    },
+    {
+      "output": "apps/docs-mcp/docs-mcp-dashboard-configmap.yaml",
+      "namespace": "docs-mcp",
+      "title": "docs-mcp — Docs Embedding Server",
+      "uid": "docs-mcp-overview",
+      "services": [
+        {"pod": "docs-mcp-server", "label": "docs-mcp", "pvc": "docs-mcp-data"}
+      ]
+    },
+    {
+      "output": "apps/firecrawl/firecrawl-dashboard-configmap.yaml",
+      "namespace": "firecrawl",
+      "title": "firecrawl — Crawl and Scrape API",
+      "uid": "firecrawl-dashboard",
+      "services": [
+        {"pod": "firecrawl-api", "label": "api"},
+        {"pod": "playwright-service", "label": "playwright"},
+        {"pod": "rabbitmq", "label": "rabbitmq", "pvc": "rabbitmq-data"},
+        {"pod": "redis", "label": "redis", "pvc": "redis-data"},
+        {"pod": "nuq-postgres", "label": "postgres"},
+        {"pod": "cloudflared-firecrawl", "label": "tunnel"}
+      ]
+    },
+    {
+      "output": "apps/fitness/fitness-dashboard-configmap.yaml",
+      "namespace": "fitness",
+      "title": "fitness — openGym",
+      "uid": "fitness-overview",
+      "services": [
+        {"pod": "opengym", "label": "openGym", "pvc": "opengym-data"}
+      ]
+    },
+    {
+      "output": "apps/freellmapi/freellmapi-dashboard-configmap.yaml",
+      "namespace": "freellmapi",
+      "title": "freellmapi — free-tier LLM aggregator",
+      "uid": "freellmapi-overview",
+      "services": [
+        {"pod": "freellmapi", "label": "freellmapi", "pvc": "freellmapi-data"}
+      ]
+    },
+    {
+      "output": "apps/gpu-embedding/gpu-embedding-dashboard-configmap.yaml",
+      "namespace": "gpu-embedding",
+      "title": "gpu-embedding — Ollama Embedding Service",
+      "uid": "gpu-embedding-ollama",
+      "withGpu": true,
+      "services": [
+        {"pod": "ollama-embeddings", "label": "ollama", "pvc": "ollama-models"}
+      ]
+    },
+    {
+      "output": "apps/hindsight/hindsight-dashboard-configmap.yaml",
+      "namespace": "hindsight",
+      "configmapName": "hindsight-dashboards",
+      "folder": "hindsight",
+      "dashboards": [
+        {
+          "key": "hindsight-operations.json",
+          "title": "hindsight — Operations",
+          "uid": "hindsight-operations",
+          "services": [
+            {"pod": "hindsight-api", "label": "api"},
+            {"pod": "hindsight-control-plane", "label": "control-plane"},
+            {"pod": "hindsight-oauth2-proxy", "label": "oauth2-proxy"},
+            {"pod": "hindsight-db", "label": "db", "pvc": "hindsight-db-*"},
+            {"pod": "cloudflared-hindsight", "label": "tunnel"}
+          ]
+        },
+        {
+          "key": "hindsight-api-service.json",
+          "title": "hindsight — API service",
+          "uid": "hindsight-api-service",
+          "services": [
+            {"pod": "hindsight-api", "label": "api"},
+            {"pod": "hindsight-oauth2-proxy", "label": "oauth2-proxy"},
+            {"pod": "cloudflared-hindsight", "label": "tunnel"}
+          ]
+        },
+        {
+          "key": "hindsight-llm.json",
+          "title": "hindsight — LLM extraction",
+          "uid": "hindsight-llm",
+          "services": [
+            {"pod": "hindsight-api", "label": "api (internal worker)"}
+          ]
+        }
+      ]
+    },
+    {
+      "output": "apps/itsaplan/itsaplan-dashboard-configmap.yaml",
+      "namespace": "itsaplan",
+      "title": "itsaplan — Hermes agent runners",
+      "uid": "itsaplan-dashboard",
+      "services": [
+        {"pod": "itsaplan-andrzej-runner", "label": "andrzej-runner"},
+        {"pod": "itsaplan-szarik-runner", "label": "szarik-runner"},
+        {"pod": "cloudflared-plan", "label": "tunnel"}
+      ]
+    },
+    {
+      "output": "apps/llm-hub/llm-hub-dashboard-configmap.yaml",
+      "namespace": "llm-hub",
+      "title": "llm-hub — LiteLLM + Open WebUI",
+      "uid": "llm-hub-overview",
+      "services": [
+        {"pod": "litellm", "label": "litellm"},
+        {"pod": "litellm-db", "label": "litellm-db", "pvc": "litellm-db-*"},
+        {"pod": "open-webui", "label": "open-webui"},
+        {"pod": "openwebui-db", "label": "openwebui-db", "pvc": "openwebui-db-*"},
+        {"pod": "open-webui-redis", "label": "webui-redis", "pvc": "redis-data"},
+        {"pod": "cloudflared-litellm", "label": "litellm-tunnel"},
+        {"pod": "cloudflared-openwebui", "label": "webui-tunnel"}
+      ]
+    },
+    {
+      "output": "apps/mail-archiver/mailarchiver-dashboard-configmap.yaml",
+      "namespace": "mail-archiver",
+      "title": "mail-archiver — Mail Archive",
+      "uid": "mail-archiver-overview",
+      "services": [
+        {"pod": "mail-archiver", "label": "mail-archiver"},
+        {"pod": "cloudflared-mail-archive", "label": "tunnel"}
+      ]
+    },
+    {
+      "output": "apps/mattermost/mattermost-dashboard-configmap.yaml",
+      "namespace": "mattermost",
+      "title": "mattermost — Team Chat",
+      "uid": "mattermost-overview",
+      "services": [
+        {"pod": "mattermost-mattermost-team-edition", "label": "mattermost"},
+        {"pod": "mattermost-db", "label": "mattermost-db", "pvc": "mattermost-db-*"},
+        {"pod": "cloudflared-chat", "label": "tunnel"}
+      ]
+    },
+    {
+      "output": "apps/nextcloud/nextcloud-dashboard-configmap.yaml",
+      "namespace": "nextcloud",
+      "title": "nextcloud — Photos + Files",
+      "uid": "nextcloud-overview",
+      "services": [
+        {"pod": "nextcloud-", "label": "nextcloud", "pvc": "nextcloud-data"},
+        {"pod": "nextcloud-db", "label": "nextcloud-db", "pvc": "nextcloud-db-*"},
+        {"pod": "nextcloud-redis-master", "label": "redis"},
+        {"pod": "nextcloud-metrics", "label": "metrics"},
+        {"pod": "nextcloud-cloudflared", "label": "tunnel"}
+      ]
+    },
+    {
+      "output": "apps/opengist/opengist-dashboard-configmap.yaml",
+      "namespace": "opengist",
+      "title": "opengist — Git Gist Server",
+      "uid": "opengist-overview",
+      "services": [
+        {"pod": "opengist", "label": "opengist", "pvc": "opengist-data"},
+        {"pod": "cloudflared-opengist", "label": "tunnel"}
+      ]
+    },
+    {
+      "output": "apps/pihole/pihole-dashboard-configmap.yaml",
+      "namespace": "pihole",
+      "title": "pihole — DNS Shield",
+      "uid": "pihole-overview",
+      "services": [
+        {"pod": "pihole", "label": "pihole"},
+        {"pod": "pihole-oauth2-proxy", "label": "oauth2-proxy"}
+      ]
+    },
+    {
+      "output": "apps/shlink/shlink-dashboard-configmap.yaml",
+      "namespace": "shlink",
+      "title": "shlink — URL Shortener",
+      "uid": "shlink-overview",
+      "services": [
+        {"pod": "shlink-backend", "label": "backend"},
+        {"pod": "shlink-web", "label": "web"},
+        {"pod": "cloudflared-shlink", "label": "tunnel"}
+      ]
+    },
+    {
+      "output": "apps/star-office/star-office-dashboard-configmap.yaml",
+      "namespace": "star-office",
+      "title": "star-office — Star Office UI",
+      "uid": "star-office-overview",
+      "services": [
+        {"pod": "sou-ingest", "label": "ingest"},
+        {"pod": "sou-public", "label": "public"},
+        {"pod": "cloudflared-star-office", "label": "tunnel"}
+      ]
+    },
+    {
+      "output": "apps/voice/voice-dashboard-configmap.yaml",
+      "namespace": "voice",
+      "title": "voice — Speaches STT",
+      "uid": "voice-speaches",
+      "services": [
+        {"pod": "speaches", "label": "speaches", "pvc": "speaches-model-cache"}
+      ]
+    },
+    {
+      "output": "apps/whiteboard/whiteboard-dashboard-configmap.yaml",
+      "namespace": "whiteboard",
+      "k8sNamespace": "apps-whiteboard",
+      "title": "whiteboard — Excalidraw",
+      "uid": "whiteboard-overview",
+      "services": [
+        {"pod": "excalidraw", "label": "excalidraw"},
+        {"pod": "cloudflared-whiteboard", "label": "tunnel"}
+      ]
+    },
+    {
+      "output": "apps/zigbee/zigbee-dashboard-configmap.yaml",
+      "namespace": "zigbee",
+      "title": "zigbee — Home Automation",
+      "uid": "zigbee-overview",
+      "services": [
+        {"pod": "zigbee2mqtt", "label": "zigbee2mqtt"},
+        {"pod": "mosquitto", "label": "mosquitto"},
+        {"pod": "node-red", "label": "node-red", "pvc": "node-red-data"},
+        {"pod": "influxdb", "label": "influxdb", "pvc": "influxdb"}
+      ]
+    },
+    {
+      "output": "infrastructure/auth/auth-dashboard-configmap.yaml",
+      "namespace": "auth",
+      "title": "auth — Authentik Identity",
+      "uid": "auth-overview",
+      "services": [
+        {"pod": "authentik-server", "label": "authentik-server"},
+        {"pod": "authentik-worker", "label": "authentik-worker"},
+        {"pod": "authentik-db", "label": "authentik-db", "pvc": "authentik-db-*"},
+        {"pod": "redis", "label": "redis", "pvc": "redis-data"},
+        {"pod": "cloudflared-auth", "label": "tunnel"}
+      ]
+    }
+  ]
+}
