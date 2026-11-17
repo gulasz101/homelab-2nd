@@ -302,8 +302,13 @@ def make_handler(state):
                 refused_descriptor = isinstance(descriptor, dict) and projected != "blocked"
                 if refused_descriptor:
                     return self._send(422, {"error": "unblockDescriptor requires blocked status"})
+                # `blockedByIssueIds` is stored too: a refused `start` parks the work
+                # order on the checkout it waits for (GUL-1730), and the blocker edge
+                # is what the server turns into `issue_blockers_resolved_wake_emitted`
+                # later. Without the copy the stub would pass the entering-blocked
+                # check and then forget which issue it is waiting on.
                 for key in ("status", "executionPolicy", "assigneeAgentId", "unblockDescriptor",
-                            "description"):
+                            "description", "blockedByIssueIds"):
                     if key in body:
                         issue[key] = body[key]
                 if dissolve:
@@ -610,6 +615,14 @@ def case_repo_decides_the_checkout(stub):
           code != 0 and any("GUL-920" in r for r in (out or {}).get("reasons", [])), raw[-400:])
     check("repo lookup: the blocked work order cuts no branch",
           branch_sha(wanted, "gul-921-add-the-fixture") == "", "branch exists")
+    parked_sib = stub.state.issues[sib["id"]]
+    check("repo lookup: the refused start parks the work order on the checkout holder (GUL-1730)",
+          parked_sib["status"] == "blocked"
+          and parked_sib.get("blockedByIssueIds") == [wo["id"]],
+          json.dumps({k: parked_sib.get(k) for k in ("status", "blockedByIssueIds")}))
+    check("repo lookup: the park names the holder and what wakes it — no hand step",
+          any("GUL-920" in c and "wake" in c for c in comments_on(stub, sib["id"])),
+          json.dumps(comments_on(stub, sib["id"])[-1:]))
 
     # two checkouts of one repo: refused, never guessed
     riff_a, _ = make_repo("repo-riff-a")
@@ -1809,8 +1822,158 @@ def case_gate_fail_escalates(stub):
     check("gate fail: the ledger records the escalation and its reason",
           '"outcome": "escalate"' in body and "diff too big" in body, body[-400:])
     said = comments_on(stub, wo["id"])
-    check("gate fail: the work order comment says Wojtek decides",
-          any("diff too big" in c and "Wojtek decides" in c for c in said), said[-1:])
+    check("gate fail: the work order comment says the PM decides (GUL-1730)",
+          any("diff too big" in c and "pm decides in the 05:30 review" in c.lower()
+              for c in said), said[-1:])
+    check("gate fail: a diff-size failure names no owner at all",
+          not any("Wojtek" in c for c in said), said[-1:])
+
+
+def case_gate_size_warns_not_blocks(stub):
+    """GUL-1730: 1.5x maxDiffLines passes with one size note instead of an escalation.
+
+    GUL-1597 was green, reviewed and verified and died on `559 lines > maxDiffLines
+    500`; the PM raised the spec by hand and the factory waited a morning. The gate
+    now only stops a PR nobody could review in one sitting (3x), and says the number
+    out loud on the gate comment and on the work order.
+    """
+    repo, base = make_repo("gate-size-note")
+    wo = base_work_order(stub, base, repo, identifier="GUL-940")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 240, "url": "https://github.com/gulasz101/homelab-2nd/pull/240"}
+    write_ledger(stub, wo, ledger)
+    gate = stage_issue(stub, wo, "[gate] GUL-940 - Merge")
+    # maxDiffLines is 100 in SPEC_BODY: 150 is the 1.5x band, and every path is
+    # ordinary (never-path hits are case_gate_never_path_still_names_wojtek).
+    sizey = dict(GATE_VIEW, additions=150, deletions=0,
+                 files=[{"path": "tests/big-check.sh", "changeType": "ADDED"}])
+
+    code, out, raw = run(stub, ["decide", gate["identifier"], "--apply"],
+                         extra_env=merge_env("sizenote", sizey))
+    issue = stub.state.issues[wo["id"]]
+    note = "size note: 150 lines > maxDiffLines 100"
+
+    check("size note: 1.5x the cap approves the gate",
+          code == 0 and (out or {}).get("decision") == "approve", raw[-500:])
+    check("size note: the gate comment carries exactly one size note line",
+          sum(1 for c in comments_on(stub, gate["id"]) if note in c) == 1,
+          comments_on(stub, gate["id"])[-1:])
+    check("size note: the work order comment carries it too, where the merge is read",
+          any(note in c for c in comments_on(stub, wo["id"])), comments_on(stub, wo["id"])[-1:])
+    check("size note: the work order goes in_review, not blocked",
+          issue["status"] == "in_review", issue.get("status"))
+    check("size note: no round is spent and nothing escalates",
+          int(((ledger_of(stub, wo).get("stages") or {}).get("gate") or {})
+              .get("attempts", 0)) == 0
+          and (ledger_of(stub, wo).get("outcome") != "escalate"), ledger_of(stub, wo).get("outcome"))
+
+    # 3.5x is the hard stop: nobody reviews a 350-line change against a 100-line spec.
+    beyond = dict(GATE_VIEW, additions=350, deletions=0,
+                  files=[{"path": "tests/big-check.sh", "changeType": "ADDED"}])
+    repo2, base2 = make_repo("gate-size-hard-stop")
+    wo2 = base_work_order(stub, base2, repo2, identifier="GUL-941")
+    ledger2 = ledger_of(stub, wo2)
+    ledger2["pr"] = {"number": 241, "url": "https://github.com/gulasz101/homelab-2nd/pull/241"}
+    write_ledger(stub, wo2, ledger2)
+    gate2 = stage_issue(stub, wo2, "[gate] GUL-941 - Merge")
+    code2, out2, raw2 = run(stub, ["decide", gate2["identifier"], "--apply"],
+                            extra_env=merge_env("sizebeyond", beyond))
+    check("size note: 3.5x the cap still fails the gate (hard stop)",
+          code2 == 1 and any("3 * maxDiffLines" in r for r in ((out2 or {}).get("reasons") or [])),
+          raw2[-500:])
+
+
+def case_gate_never_path_still_names_wojtek(stub):
+    """GUL-1730: a never-path hit is the one escalation that still names Wojtek.
+
+    ADR-093 point 6 makes `agents/factory/**`, `clusters/`, the SOPS keys and public
+    exposure his, so those stay his decision — everything else goes to the PM.
+    """
+    repo, base = make_repo("gate-never-path")
+    wo = base_work_order(stub, base, repo, identifier="GUL-942")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 242, "url": "https://github.com/gulasz101/homelab-2nd/pull/242"}
+    write_ledger(stub, wo, ledger)
+    gate = stage_issue(stub, wo, "[gate] GUL-942 - Merge")
+    hit = dict(GATE_VIEW, additions=2, deletions=0,
+               files=[{"path": "agents/factory/factory.py", "changeType": "MODIFIED"}])
+
+    code, out, raw = run(stub, ["decide", gate["identifier"], "--apply"],
+                         extra_env=merge_env("neverpath", hit))
+    reasons = (out or {}).get("reasons") or []
+    said = comments_on(stub, wo["id"])
+
+    check("never path: the gate fails on the never-path hit, before any size check",
+          code == 1 and any("never path" in r for r in reasons), reasons)
+    check("never path: the escalation still names Wojtek (ADR-093 point 6)",
+          any("Wojtek decides" in c and "never path" in c for c in said), said[-1:])
+    check("never path: it does not hand a never path to the PM",
+          not any("the PM decides" in c for c in said), said[-1:])
+
+
+def case_start_parks_on_a_busy_checkout(stub):
+    """GUL-1730: a refused `start` parks the work order itself, and only when it has
+    not started yet.
+
+    GUL-1597 was refused twice in one morning because another work order held the
+    shared checkout; each time Majster set `blockedByIssueIds` by hand, and the first
+    time the work order had no wake path at all. Now the refusal writes the edge, so
+    `issue_blockers_resolved` wakes it when the checkout frees. The write is guarded:
+    a dry run writes nothing, and an already-started work order (ledger has `stages`)
+    is never re-parked — that would hide a half-cut ledger behind a block.
+    """
+    repo, base = make_repo("busy-checkout")
+    project = stub.state.add_project("Homelab")
+    stub.state.add_workspace(project, "homelab-2nd", repo,
+                             repo_url="https://github.com/gulasz101/homelab-2nd")
+    holder = stub.state.add_issue(identifier="GUL-930", title="Add the fixture",
+                                  assigneeAgentId=MAJSTER, projectId=project,
+                                  status="in_progress")
+    stub.state.doc(holder["id"], "spec", SPEC_BODY)
+    code, out, raw = run(stub, ["start", "GUL-930"])
+    check("busy checkout: the first work order takes the checkout", code == 0, raw[-400:])
+
+    def fresh(identifier):
+        issue = stub.state.add_issue(identifier=identifier, title="Add the fixture",
+                                     assigneeAgentId=MAJSTER, projectId=project,
+                                     status="in_progress")
+        stub.state.doc(issue["id"], "spec", SPEC_BODY)
+        return issue
+
+    # the dry run reports the refusal and writes nothing — same issue, two runs
+    waiter = fresh("GUL-931")
+    code, out, raw = run(stub, ["start", "GUL-931", "--dry-run"])
+    check("busy checkout: a dry run refuses and writes nothing",
+          code == 1 and stub.state.issues[waiter["id"]]["status"] == "in_progress"
+          and not stub.state.issues[waiter["id"]].get("blockedByIssueIds"),
+          json.dumps({k: stub.state.issues[waiter["id"]].get(k) for k in ("status", "blockedByIssueIds")}))
+
+    # the real thing: parked, with the edge and a comment
+    code, out, raw = run(stub, ["start", "GUL-931"])
+    parked = stub.state.issues[waiter["id"]]
+    check("busy checkout: the refusal keeps exit 1 and the JSON line",
+          code == 1 and any("another factory work order is open" in r
+                            for r in (out or {}).get("reasons", [])), raw[-400:])
+    check("busy checkout: the refused work order is parked blocked, by itself",
+          parked["status"] == "blocked", parked.get("status"))
+    check("busy checkout: it is blocked by the work order holding the checkout",
+          parked.get("blockedByIssueIds") == [holder["id"]], parked.get("blockedByIssueIds"))
+    check("busy checkout: one comment names the holder and the wake",
+          any("GUL-930" in c and "issue_blockers_resolved" in c
+              for c in comments_on(stub, waiter["id"])), json.dumps(comments_on(stub, waiter["id"])[-1:]))
+
+    # an already-started work order is not re-parked by a refusal
+    started = fresh("GUL-932")
+    body = json.loads(json.dumps(ledger_of(stub, holder)))
+    body.update({"workOrder": "GUL-932", "workOrderId": started["id"],
+                 "branch": "gul-932-add-the-fixture"})
+    stub.state.doc(started["id"], "ledger",
+                   "# Factory ledger\n\n```json\n%s\n```\n" % json.dumps(body))
+    code, out, raw = run(stub, ["start", "GUL-932"])
+    now = stub.state.issues[started["id"]]
+    check("busy checkout: an already-started work order is not re-parked",
+          code == 1 and now["status"] == "in_progress" and not now.get("blockedByIssueIds"),
+          json.dumps({k: now.get(k) for k in ("status", "blockedByIssueIds")}))
 
 
 def case_setup_error_spends_no_round(stub):
@@ -2230,6 +2393,9 @@ def main():
             case_gate_leaves_no_card(stub)
             case_gate_conflicting_pr_is_judged(stub)
             case_gate_fail_escalates(stub)
+            case_gate_size_warns_not_blocks(stub)
+            case_gate_never_path_still_names_wojtek(stub)
+            case_start_parks_on_a_busy_checkout(stub)
             case_setup_error_spends_no_round(stub)
             case_tick_notices_the_merge(stub)
             case_tick_waits_on_an_open_pr(stub)

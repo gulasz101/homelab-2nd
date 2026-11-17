@@ -205,7 +205,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 | `check-green --repo DIR --red SHA --spec FILE` | every test path is byte-identical to the red commit (worktree contents; a new untracked test path is a violation); every changed path is inside `allowedPaths`; every AC reports `PASS`; if the repo has `scripts/check.sh`, it runs (`bash scripts/check.sh`, repo root) and must exit 0 |
 | `check-findings --repo DIR --base SHA --findings FILE` | findings follow point 3; every `file` is in the diff SHA→worktree; every `line` exists in the new version (file readable, ≥ `line` lines) |
 | `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed` |
-| `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ maxDiffLines`; every HelmRelease the PR changes pins a chart version at or above the one the cluster runs (ADR-097, below) |
+| `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ 3 × maxDiffLines` (between 1× and 3× the gate still passes and the JSON carries `"sizeNote": "size note: N lines > maxDiffLines M"`; only above 3× is it a failure, GUL-1730); every HelmRelease the PR changes pins a chart version at or above the one the cluster runs (ADR-097, below) |
 | `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only). A second run on a clean tree whose HEAD is already `factory(GUL-N): <stage>` is not an error: it passes and returns that HEAD sha, so a `decide` that died after its commit can be re-run (GUL-497) |
 | `push --repo DIR --issue GUL-N` | pushes the checkout's branch to origin (`git push -u origin <branch>`, never `--force`); refuses (exit 1) on `main`/`master`. JSON adds `"branch"` and `"sha"`. Used by `decide` when the PR already exists, so a later round's commit reaches the PR head (GUL-1267 F-1) |
 | `open-pr --repo DIR --issue GUL-N --title T` | current branch is not `main`/`master` (refuse, exit 1); `git push -u origin <branch>` (never `--force`); `gh pr create` with body linking the work order: `Work order: [GUL-N](https://paperclip.voitech.dev/GUL/issues/GUL-N)`. JSON adds `"url": "<PR url>"`. Repo comes from `git remote get-url origin` |
@@ -214,6 +214,13 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 | `tick` | point 9 below |
 
 `--pr OWNER/REPO#N` splits on the last `#`.
+
+A PR between 1× and 3× `maxDiffLines` passes with one line of honesty instead of a
+block (GUL-1730): `decide` prepends that `size note: N lines > maxDiffLines M` to
+the gate stage comment **and** to the work order's `in_review` comment, where the
+merge is decided. A cap that stopped a green, reviewed, verified PR over 59 lines
+(GUL-1597: 559 against 500, the PM raised the spec by hand) bought nothing and
+cost a morning; a PR nobody could review in one sitting is still a hard stop.
 
 ### `check-gate` gh calls (exact, so a stub can serve them)
 
@@ -286,6 +293,17 @@ review stage to hand off to.
    one that already carries a `ledger` does, because its diff may be the one in
    the checkout (GUL-951). Without that split, a work order waiting on another
    deadlocks the project for good. `--dry-run` plans and creates nothing.
+   Before the refusal returns, the work order is **parked itself** (GUL-1730):
+   one PATCH sets `status: blocked` with `blockedByIssueIds` = the open work
+   orders that actually hold the checkout, plus one comment naming them. That
+   blocker edge is the whole mechanism — Paperclip emits
+   `issue.blockers_resolved` when the last one closes and Majster wakes, so
+   nobody sets the edge by hand (GUL-1597 needed it twice in one morning, and the
+   first time had no wake path at all). Exit 1 and the `start` JSON line stay.
+   Two cases are never parked that way: `--dry-run` (writes nothing at all) and a
+   work order whose ledger already has `stages` (it has started, so its diff may
+   be the one in the checkout — parking it would hide a half-cut ledger behind a
+   block).
 3. Cuts the work order's own branch, which is what `open-pr` needs: runs
    `git fetch origin`, refuses (exit 1) when `git status --porcelain` is not empty,
    resolves `baseSha` = `origin/<spec.base>` and runs
@@ -396,15 +414,22 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   its agent can change nothing: the PR already exists, and re-running the same
   check on the same head yields the same verdict. So one `request_changes` on the
   `gate` stage goes straight to **Escalate** (below) with the check's own reasons
-  plus "the gate has no fix round: a failed gate goes to Wojtek, never back to the
-  stage". Counting to three handed the stage to an agent that could only repeat
+  plus "the gate has no fix round: a failed gate goes to the PM's 05:30 review,
+  never back to the stage" (GUL-1730: a never-path hit still says Wojtek). Counting to three handed the stage to an agent that could only repeat
   itself and left the work order `in_progress` with no card, no blocker edge and
   nobody woken. The `attempts` counter therefore stays at 0 for a gate row; three
   rounds still applies to `red`, `green`, `review` and `verify`.
 - **Escalate** on a third request-changes for one stage, or when a third fix round
   would start: work order `blocked` with `"executionPolicy": null` in the same
   PATCH (otherwise Paperclip reads `blocked` as request-changes), one sentence
-  why, recorded in the ledger, no more retries. The **stage issue** is parked a
+  why, recorded in the ledger, no more retries. Since GUL-1730 that sentence
+  names **the PM** ("the PM decides in the 05:30 review"), not Wojtek: a failed
+  gate, a third request-changes or a missing stage document is a factory call he
+  reads in the morning brief. The one exception is a **never-path hit** (ADR-093
+  point 6 — `agents/factory/**`, `clusters/`, SOPS keys, public exposure): that
+  reason starts with `never path` and the sentence names Wojtek, because it is
+  his call. Only the name changes — the blocked state, the ledger write and the
+  no-retry rule are untouched. The **stage issue** is parked a
   different way (GUL-889, GUL-1128): `blocked`, a self-owned `unblockDescriptor`,
   the comment, and `executionPolicy` **left off the PATCH entirely** unless one of
   the stages it would carry has participants. Never `"executionPolicy": null`, and
