@@ -139,6 +139,23 @@ spec:
     datasources:
       datasources.yaml:
         apiVersion: 1
+        # Grafana deletes the datasources listed here *before* it adds or
+        # updates the ones under `datasources` (provisioning spec), which is
+        # what makes the pinned uids below safe. Provisioning refuses a
+        # datasource whose pinned uid already exists in the database
+        # ("datasource with same uid already exists") and aborts the whole
+        # file, taking Grafana down with it. The four names are exactly the
+        # datasources this file re-creates, so a delete always pairs with a
+        # re-create and nothing disappears.
+        deleteDatasources:
+          - name: Prometheus
+            orgId: 1
+          - name: Loki
+            orgId: 1
+          - name: Tempo
+            orgId: 1
+          - name: InfluxDB
+            orgId: 1
         datasources:
           - name: Prometheus
             type: prometheus
