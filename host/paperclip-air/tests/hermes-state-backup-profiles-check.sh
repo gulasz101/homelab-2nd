@@ -29,8 +29,16 @@ RC=0
 fail() { printf 'FAIL: %s\n' "$*"; RC=1; }
 ok()   { printf 'ok:   %s\n' "$*"; }
 
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/gul1573.XXXXXX")
-trap 'rm -rf "$WORK"' EXIT
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/gul1573.XXXXXX") || { printf 'FAIL: mktemp failed\n'; exit 1; }
+# macOS sets TMPDIR WITH a trailing slash ("/var/folders/…/T/"), so the template
+# above yields "…/T//gul1573.XXXX". hermes-state-backup.sh canonicalises HERMES_HOME
+# with `cd … && pwd`, which collapses the "//", so its SKIP line names the
+# single-slash path while an assertion built from an uncanonicalised "$H" keeps the
+# double slash: the check went red on the Air and green on Linux CI, where TMPDIR is
+# /tmp (GUL-1640). Canonicalise once here, so every path in this test has the shape
+# the scripts themselves print.
+WORK=$(cd "$WORK" && pwd)
+trap 'rm -rf "${WORK:?}"' EXIT
 
 # ---- fixture: a Hermes home --------------------------------------------------
 H="$WORK/hermes"
