@@ -103,6 +103,14 @@ Exactly one JSON object on stdout:
 Exit codes: `0` nothing needs a model, `10` `actionable` is true, `2` setup
 error.
 
+Every board read sends `User-Agent: majster-sweep/1 (sweep.py)`. That is not
+cosmetic: with no UA, urllib sends `Python-urllib/<ver>`, and Cloudflare's
+Browser Integrity Check in front of `paperclip.voitech.dev` answers 403
+`Error 1010` to it on the same token and the same second that any explicit UA
+gets 200 (GUL-785, GUL-1638). Against `http://127.0.0.1:3100` the UA changes
+nothing; against the public hostname it is the difference between a brief and
+exit 2. `tests/user-agent-check.sh` fails if a read ever goes out without one.
+
 The script never writes to Paperclip: no `POST`, `PATCH`, `PUT` or `DELETE`
 anywhere in it. Posting the brief, nudging and hold releases stay with Majster or
 the launchd wrapper.
@@ -120,4 +128,5 @@ bash agents/majster-sweep/tests/no-model-kinds-check.sh
 bash agents/majster-sweep/tests/stop-and-tick-check.sh
 bash agents/majster-sweep/tests/size-cap-check.sh
 bash agents/majster-sweep/tests/read-only-check.sh
+bash agents/majster-sweep/tests/user-agent-check.sh
 ```
