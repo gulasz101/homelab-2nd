@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  voicebox-server — root LaunchDaemon (ADR-098 model A, ADR-134).
+
+  The Voicebox TTS backend behind the billcipher Hermes profile (port 17493,
+  loopback only: it is a local synthesis service, never a public endpoint).
+
+  System domain on purpose, like every other service in this tree: this Mac is
+  headless most days, so there is no gui/<uid> domain to own a LaunchAgent.
+  A LaunchAgent here is invisible until somebody logs in at the console.
+
+  --data-dir is pinned in the command (services.env) because the server defaults
+  to ./data relative to its cwd. Under the profile that default landed in
+  cache/scratch/data, which Hermes reaps once the subtree is idle for a day:
+  the service would come back up with an empty database. Durable home is
+  ~/.hermes/profiles/billcipher/voicebox.
+
+  The command itself is host state: /Users/paperclip/.config/homelab/services.env
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.voitech.homelab.voicebox-server</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>/usr/local/libexec/homelab/homelab-service-run.sh</string>
+		<string>voicebox-server</string>
+	</array>
+
+	<key>UserName</key>
+	<string>paperclip</string>
+	<key>GroupName</key>
+	<string>staff</string>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>ExitTimeOut</key>
+	<integer>20</integer>
+
+	<key>WorkingDirectory</key>
+	<string>/Users/paperclip</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>/Users/paperclip</string>
+		<key>LANG</key>
+		<string>en_GB.UTF-8</string>
+	</dict>
+
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>/Users/paperclip/Library/Logs/homelab/voicebox-server.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/paperclip/Library/Logs/homelab/voicebox-server.err.log</string>
+</dict>
+</plist>
