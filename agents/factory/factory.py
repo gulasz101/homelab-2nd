@@ -882,8 +882,19 @@ def cmd_check_gate(args) -> int:
         states = sorted({str(c.get("state")) for c in named})
         reasons.append("check run is not SUCCESS (states: %s)" % ",".join(states))
     total = additions + deletions
-    if total > spec["maxDiffLines"]:
-        reasons.append("diff too big: %d lines > maxDiffLines %d" % (total, spec["maxDiffLines"]))
+    # GUL-1730: diff size warns, it does not block. The cap was measured against
+    # the whole PR and killed work that was otherwise green (GUL-1597: 559 lines
+    # against 500, GUL-1693: 728 against 240), escalating to the owner for a
+    # number the PM raised by hand the same morning. Wojtek sees the PR at merge
+    # anyway, so between 1x and 3x the gate passes and carries a size note; the
+    # 3x hard stop stays for a PR nobody could review in one sitting.
+    size_note = None
+    cap = spec["maxDiffLines"]
+    if total > 3 * cap:
+        reasons.append("diff too big: %d lines > 3 * maxDiffLines %d (hard stop)"
+                       % (total, cap))
+    elif total > cap:
+        size_note = "size note: %d lines > maxDiffLines %d" % (total, cap)
     cfg = load_never_paths()
     content_cache: dict = {}
 
@@ -926,7 +937,8 @@ def cmd_check_gate(args) -> int:
     gate_repo = os.environ.get("FACTORY_GATE_REPO") or REPO_ROOT
     if touches_helmrelease(files, head_oid, pr_content_text, cfg["globs"]):
         reasons.extend(pin_reasons(gate_repo, num, base_oid, head_oid))
-    emit(len(reasons) == 0, "check-gate", reasons)
+    emit(len(reasons) == 0, "check-gate", reasons,
+         {"sizeNote": size_note} if size_note else None)
     return 0 if not reasons else 1
 
 
@@ -1758,6 +1770,41 @@ def cancel_superseded_stages(api, ledger: dict, identifier: str, cwd: str, archi
     return cancelled
 
 
+def _park_on_the_checkout(api, work_order: dict, busy: list) -> list:
+    """GUL-1730: park a work order that cannot have the shared checkout.
+
+    `start` refuses while another work order occupies the checkout (ADR-095), and
+    that refusal used to be a JSON line and nothing else: the work order stayed
+    open with no blocker edge, so nothing woke anybody when the checkout freed
+    and the PM set `blockedByIssueIds` by hand (GUL-1597, twice in one morning —
+    the first time with no wake path at all).
+
+    A first-class blocker edge is the whole mechanism: the server validates it
+    against the unresolved issues in the same request (routes/issues.ts,
+    `enteringBlocked`), stores it, and emits `issue_blockers_resolved_wake_emitted`
+    when the last one closes. No `unblockDescriptor`, no card, no hand step.
+
+    Returns extra reasons for the caller's JSON line — empty when the park landed.
+    """
+    _sys_path_for_modules()
+    import pc
+
+    names = ", ".join("%s (%s)" % (b.get("identifier"), b.get("status")) for b in busy)
+    try:
+        api.patch_issue(work_order["id"], {
+            "status": "blocked",
+            "blockedByIssueIds": [b["id"] for b in busy],
+            "comment": (
+                "factory start: waiting for the shared checkout — blocked by %s. One "
+                "checkout per work order: it cannot hold two diffs (ADR-095). No hand "
+                "step: `issue_blockers_resolved` wakes this work order when the "
+                "checkout frees." % names),
+        })
+    except pc.ApiError as exc:
+        return ["could not park the work order on the checkout: %s" % exc]
+    return []
+
+
 def cmd_factory_start(args) -> int:
     _sys_path_for_modules()
     import pc
@@ -1821,12 +1868,22 @@ def cmd_factory_start(args) -> int:
     project_id = work_order.get("projectId")
     busy = open_work_orders(api, company, cfg, work_order["id"], project_id, cwd)
     if busy:
-        emit(False, "start", [
+        reasons = [
             "another factory work order is open: %s (%s)" % (b["identifier"], b.get("status"))
             for b in busy] + [
             "one checkout per work order: the shared checkout cannot hold two diffs "
-            "(project worktrees are unavailable on this instance, see ADR-095)"],
-            {"workOrder": args.work_order})
+            "(project worktrees are unavailable on this instance, see ADR-095)"]
+        # GUL-1730: a busy checkout parks the work order with a wake, by itself.
+        # The refusal used to be this JSON line and nothing else: the work order
+        # stayed `in_progress` with no blocker edge, so nothing woke anybody when
+        # the checkout freed and the PM set `blockedByIssueIds` by hand (GUL-1597
+        # did it twice in one morning, the first time with no wake path at all).
+        # A first-class blocker edge is the whole mechanism: the server emits
+        # `issue.blockers_resolved_wake_emitted` and wakes this issue when the
+        # last blocker closes. No descriptor, no card, no hand step.
+        if not args.dry_run and not (existing and existing.get("stages")):
+            reasons += _park_on_the_checkout(api, work_order, busy)
+        emit(False, "start", reasons, {"workOrder": args.work_order})
         return 1
 
     base = spec["base"]
@@ -2014,7 +2071,33 @@ def _unblock_descriptor(api, action: str) -> dict:
     return {"owner": {"agentId": api.self_agent_id()}, "action": action}
 
 
-def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: str) -> None:
+def _escalation_owner(reasons) -> str:
+    """Who an escalation names: `owner` for a never-path hit, else `pm` (GUL-1730).
+
+    A failed gate, a third request-changes or a missing stage document are factory
+    calls — "not all decisions need me" — so they name the PM, who reads them in the
+    05:30 review. A never path is the exception ADR-093 point 6 makes for itself:
+    `agents/factory/**`, `clusters/`, SOPS keys and public exposure stay Wojtek's.
+    """
+    for reason in reasons or []:
+        if str(reason).startswith("never path"):
+            return "owner"
+    return "pm"
+
+
+def _escalation_words(owner: str) -> tuple:
+    """(what the reader does, the same thing as a noun) for one escalation."""
+    if owner == "owner":
+        return ("Wojtek decides — never path, ADR-093 point 6",
+                "Wojtek's decision (never path: ADR-093 point 6)")
+    return ("the PM decides in the 05:30 review",
+            "the PM's decision in the 05:30 review")
+
+
+def _escalate(api, work_order_id: str, ledger: dict, reason, identifier: str,
+              reasons=None) -> None:
+    owner = _escalation_owner(reasons if reasons is not None else [reason])
+    decides, _decision_noun = _escalation_words(owner)
     ledger["outcome"] = "escalate"
     ledger["escalated"] = reason
     save_ledger(api, work_order_id, ledger, "escalate %s" % identifier)
@@ -2022,9 +2105,11 @@ def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: st
         "status": "blocked",
         "executionPolicy": None,
         "unblockDescriptor": _unblock_descriptor(
-            api, "Wojtek decides on the escalated stage %s; then clear this block (or re-run "
-                 "`factory decide %s --apply`) so the work order can move." % (identifier, identifier)),
-        "comment": "factory escalate: %s — no more retries. Wojtek decides." % reason,
+            api, "%s on the escalated stage %s; then clear this block (or re-run "
+                 "`factory decide %s --apply`) so the work order can move."
+                 % (decides, identifier, identifier)),
+        "comment": "factory escalate: %s — no more retries. %s." % (
+            reason, decides[0].upper() + decides[1:]),
     })
 
 
@@ -2150,13 +2235,14 @@ def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: di
         # then the park. When the park died on the 422 the engine was left
         # half-applied: escalate recorded, stage still `in_review`. Re-running it
         # must finish the missing write only; re-escalating would post a second
-        # "Wojtek decides" comment and clear the work order's executionState.
+        # "who decides" comment and clear the work order's executionState.
         if ledger.get("outcome") != "escalate":
             _escalate(api, work_order["id"], ledger, reason, identifier)
         _block_stage_issue(api, stage_issue,
                            "escalated: %s — the stage produced no artefact, so there is nothing to "
                            "decide. This stage is parked, not returned to its agent: the work order "
-                           "is blocked on Wojtek's decision. Re-arm it only after that." % reason)
+                           "is blocked on %s. Re-arm it only after that."
+                           % (reason, _escalation_words(_escalation_owner([reason]))[1]))
 
     emit(False, "decide", [reason], result)
     return 1
@@ -2351,6 +2437,12 @@ def cmd_factory_decide(args) -> int:
         emit(False, "decide", [reason], result)
         return 2
     comment = check_comment(parsed, combined)
+    # GUL-1730: a diff between 1x and 3x its cap passes, and the number still gets
+    # said out loud — on the stage comment and on the work order, where the merge
+    # decision is read.
+    size_note = (parsed or {}).get("sizeNote") if stage == "gate" else None
+    if size_note:
+        comment = "%s\n\n%s" % (size_note, comment)
     passed = code == 0
     blocking = (parsed or {}).get("blockingConfirmed") or []
 
@@ -2373,10 +2465,15 @@ def cmd_factory_decide(args) -> int:
         # re-run the same check, so the work order sat `in_progress` with no
         # card, no blocker edge and nobody woken until Paperclip raised a
         # `deliberate_wait_without_target` repair on it (GUL-1706). One failed
-        # gate is Wojtek's call, exactly as the stage template says.
+        # gate is a decision, exactly as the stage template says — and since
+        # GUL-1730 it goes to the PM's 05:30 review, not to the owner, unless the
+        # failure is a never-path hit (ADR-093 point 6).
         decision = "escalate"
+        gate_owner = _escalation_owner(reasons)
         reasons = list(reasons) + [
-            "the gate has no fix round: a failed gate goes to Wojtek, never back to the stage"]
+            "the gate has no fix round: a failed gate goes to %s, never back to the stage"
+            % ("Wojtek (never path, ADR-093 point 6)" if gate_owner == "owner"
+               else "the PM's 05:30 review")]
     elif decision == "request_changes":
         attempts += 1
         ledger["stages"].setdefault(key, {})["attempts"] = attempts
@@ -2399,11 +2496,12 @@ def cmd_factory_decide(args) -> int:
         if args.apply:
             reason = reasons[0] if reasons else "escalated"
             _escalate(api, work_order["id"], ledger, reason,
-                      stage_issue.get("identifier", "?"))
+                      stage_issue.get("identifier", "?"), reasons=reasons)
             _block_stage_issue(api, stage_issue,
                                "escalated: %s — this stage is parked, not returned to its agent, "
                                "and it will not be decided again. The work order is blocked on "
-                               "Wojtek's decision." % reason)
+                               "%s." % (reason, _escalation_words(
+                                   _escalation_owner(reasons))[1]))
         emit(False, "decide", reasons, result)
         return 1
 
@@ -2529,10 +2627,11 @@ def cmd_factory_decide(args) -> int:
             api.patch_issue(_wo, {
                 "status": "in_review",
                 "executionPolicy": {"monitor": monitor_payload(_pr)},
-                "comment": ("gate passed. Merge PR #%s on GitHub: %s\n\n"
+                "comment": ("%sgate passed. Merge PR #%s on GitHub: %s\n\n"
                             "There is no card to accept: `factory tick` reads the PR "
                             "and moves this work order on by itself."
-                            % (_pr.get("number"), _pr.get("url") or "(no url recorded)")),
+                            % ("%s\n\n" % size_note if size_note else "",
+                               _pr.get("number"), _pr.get("url") or "(no url recorded)")),
             })
 
         after_ledger.append(_watch_merge)
