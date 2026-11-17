@@ -10,10 +10,12 @@ again: the review and verify stages already did that.
    from the PR head. It fails on: a `check` run that is missing or not SUCCESS,
    a never path (`agents/factory/never-paths.json`), or a diff bigger than
    {{maxDiffLines}} lines.
-2. Nothing to fix here. If the gate fails, the factory escalates the work order
-   to Wojtek — do not retry by hand.
-3. On a pass the factory raises a `request_confirmation` card on the work order:
-   "Merge PR {{prRef}}?". **Wojtek merges.** You never merge, never force-push.
+2. Nothing to fix here. If the gate fails, the factory blocks the work order and
+   escalates it to Wojtek — do not retry by hand and do not open a fix round.
+3. On a pass the factory PATCHes this stage `done`, sets the work order `in_review`
+   and leaves it waiting on a GitHub monitor: **Wojtek merges**. No "Merge PR"
+   card is raised and there is nothing for you to accept (GUL-553). You never
+   merge, never force-push.
 
 The gate has no review stage, so there is nothing to hand off and no comment to
 post: you run the gate yourself and stop. Your whole job is one command, with `M`
