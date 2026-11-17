@@ -54,7 +54,8 @@ KUBECONFIG = os.environ.get("KUBECONFIG", "/Users/paperclip/.kube/config")
 NAMESPACE = os.environ.get("PAPERCLIP_PG_DUMP_NAMESPACE", "paperclip")
 def _cnpg_primary(namespace, cluster="paperclip-db"):
     """The CNPG primary pod, looked up by label. The instance name is not stable:
-    it was paperclip-db-1 until the 2026-11-12 node move switched over to -2."""
+    it moved from instance 1 to instance 2 in the 2026-11-12 node move. No fallback name:
+    a wrong pod would dump nothing useful, so fail loudly instead."""
     try:
         out = subprocess.run(
             [KUBECTL, "--kubeconfig", KUBECONFIG, "-n", namespace, "get", "pod",
@@ -63,9 +64,10 @@ def _cnpg_primary(namespace, cluster="paperclip-db"):
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()
-    except Exception:
-        pass
-    return "paperclip-db-1"
+    except Exception as exc:
+        sys.stderr.write("paperclip-pg-dump: CNPG primary lookup failed: %s\n" % exc)
+    sys.stderr.write("paperclip-pg-dump: no primary pod for %s; set PAPERCLIP_PG_DUMP_POD\n" % cluster)
+    sys.exit(2)
 
 
 POD = os.environ.get("PAPERCLIP_PG_DUMP_POD") or _cnpg_primary(NAMESPACE)

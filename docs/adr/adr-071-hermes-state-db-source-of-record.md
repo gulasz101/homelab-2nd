@@ -2,6 +2,7 @@
 
 **Date:** 2026-10-19
 **Status:** Accepted (amended by ADR-080: the watchdog reads the backup job's exit status, not just its log)
+**Amended 2026-11-15 (GUL-1573):** "all five profiles" is now "every profile on disk". The fixed list missed `billcipher` and `matejko`, so their `state.db` was never backed up. The backup and the watchdog now share `hermes_profiles` in `host/paperclip-air/bin/homelab-lib.sh`: the root (as `default`) plus every `profiles/<name>/` that has a `config.yaml`.
 **Deciders:** Wojtek Gula; implemented by Andrzej (Hermes agent)
 **Project:** hermes / agent memory (epic H2-232)
 **Related:** H2-306 (findings), H2-308 (this work), ADR-052/053/054 (Hindsight), ADR-030 (nightly config backups), ADR-080 (the watchdog also watches the backup job)

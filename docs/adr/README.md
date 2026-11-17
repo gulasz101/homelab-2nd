@@ -94,7 +94,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-091 | The FreeLLMAPI gpt-oss-120b pool is also a LiteLLM route | Accepted | 2026-10-26 |
 | ADR-092 | Pin cloudflared image tags and ship tunnel upgrades as explicit tag bumps | Accepted | 2026-10-26 |
 | ADR-093 | Pi-only code factory with scripted gates; Wojtek keeps the merge button | Accepted | 2026-10-27 |
-| ADR-094 | Hindsight reflect rides the paid `gpt-oss-120b-ollama` route; retain stays free | Accepted | 2026-10-27 |
+| ADR-094 | Hindsight reflect rides the paid `gpt-oss-120b-ollama` route; retain stays free (amended 2026-11-13: both lanes on free Go `iceman-contributor-free-go`) | Accepted | 2026-10-27 |
 | ADR-095 | One factory work order per checkout until Paperclip's isolated workspaces are switched on | Accepted | 2026-10-28 |
 | ADR-096 | The factory runs its own code from a checkout of main, never from the work order's checkout | Accepted | 2026-10-28 |
 | ADR-097 | A Helm chart pin names one exact version and never sits below the deployed one | Accepted | 2026-10-28 |

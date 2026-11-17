@@ -21,6 +21,7 @@ import {
   type RoleProfile,
   type RolesConfig,
   turnCapReason,
+  withDefaultBashTimeout,
 } from "./policy.ts";
 
 const HOME = os.homedir();
@@ -104,6 +105,13 @@ export default function (pi: ExtensionAPI): void {
     headAtStart: null as string | null,
     /** committed-violation paths already logged this process (settle can fire twice). */
     committedLogged: new Set<string>(),
+    /**
+     * GUL-1537: out-of-scope paths that were ALREADY dirty when the run started, with the
+     * content hash they had then. A shared checkout can carry foreign work (an owner-authored,
+     * still-untracked .github/workflows/check.yml); the settle diff guard must not quarantine
+     * it, or every run eats the file. Same principle as GUL-424: blame this run, not the branch.
+     */
+    foreignDirtyAtStart: new Map<string, string | null>(),
   };
 
   function roleProfile(): RoleProfile | undefined {
@@ -154,6 +162,25 @@ export default function (pi: ExtensionAPI): void {
       const h = git(state.workspaceRoot, ["rev-parse", "HEAD"]);
       const sha = h.ok ? h.stdout.trim() : "";
       if (/^[0-9a-f]{7,40}$/.test(sha)) state.headAtStart = sha;
+    }
+
+    // GUL-1537: record out-of-scope dirty paths as they are now, so settle can tell
+    // foreign work from this run's writes.
+    state.foreignDirtyAtStart.clear();
+    const startRole = roleProfile();
+    if (state.workspaceRoot && startRole) {
+      const st0 = git(state.workspaceRoot, ["status", "--porcelain", "--untracked-files=all"]);
+      if (st0.ok) {
+        for (const line of st0.stdout.split("\n")) {
+          if (!line.trim()) continue;
+          let rel0 = line.slice(3).trim();
+          if (rel0.includes(" -> ")) rel0 = rel0.split(" -> ").pop()!.replace(/^"|"$/g, "");
+          const abs0 = path.resolve(state.workspaceRoot, rel0);
+          if (decideToolCallSafe(startRole, "write", { path: abs0 }, guardState(ctx.cwd), HOME)) {
+            state.foreignDirtyAtStart.set(rel0, sha256(abs0));
+          }
+        }
+      }
     }
 
     const files: string[] = [];
@@ -229,6 +256,9 @@ export default function (pi: ExtensionAPI): void {
         appendBlockLog(entry);
         return { block: true, reason: decision.reason };
       }
+      // Allowed — but never unbounded: Pi's bash tool has no default timeout, so
+      // without one a hung command eats the whole run (GUL-1537).
+      withDefaultBashTimeout(event.toolName, event.input);
       return undefined;
     } catch {
       appendBlockLog({ role: roleName(), tool: event.toolName ?? "?", rule: "internal-error-fail-closed" });
@@ -285,6 +315,11 @@ export default function (pi: ExtensionAPI): void {
             const abs = path.resolve(repoRoot, rel);
             const d = decideToolCallSafe(role, "write", { path: abs }, gs, HOME);
             if (!d) continue; // in scope
+            // GUL-1537: already dirty with the same content at session_start -> foreign work.
+            if (state.foreignDirtyAtStart.has(rel) && state.foreignDirtyAtStart.get(rel) === sha256(abs)) {
+              appendBlockLog({ role: roleName(), tool: "diff-guard", rule: "kept-foreign-" + d.ruleId, path: rel });
+              continue;
+            }
             if (xy === "??") {
               // quarantine untracked violation (never delete)
               const qdir = path.join(

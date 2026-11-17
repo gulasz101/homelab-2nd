@@ -3,7 +3,10 @@
 # - Collects Kubernetes container logs via the filelog receiver and sends them
 #   to Loki using the Loki exporter.
 # - Receives OTLP metrics/traces/logs from applications and forwards them to
-#   Prometheus (remote_write), Tempo (OTLP) and Loki (OTLP/loki exporter).
+#   Prometheus (native OTLP receiver), Tempo (OTLP) and Loki (OTLP/loki).
+# - Every pipeline runs memory_limiter -> k8sattributes -> batch, so a busy node
+#   sheds telemetry instead of being OOM-killed by it, and every exporter has a
+#   sending queue plus retries, so a backend restart loses nothing.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -67,39 +70,61 @@ spec:
             http:
               endpoint: ${env:MY_POD_IP}:4318
 
+      processors:
+        # First in every pipeline: refuse/shed data before it is queued when the
+        # process is near its memory limit, rather than growing until the kubelet
+        # OOM-kills the collector and takes the node's log pipeline with it.
+        memory_limiter:
+          check_interval: 1s
+          limit_percentage: 80
+          spike_limit_percentage: 20
+
       exporters:
         otlphttp/loki:
           endpoint: http://loki-gateway.observability.svc.cluster.local:80/otlp
           tls:
             insecure: true
+          sending_queue:
+            enabled: true
+          retry_on_failure:
+            enabled: true
 
         otlp/tempo:
           endpoint: tempo.observability.svc.cluster.local:4317
           tls:
             insecure: true
+          sending_queue:
+            enabled: true
+          retry_on_failure:
+            enabled: true
 
-        prometheusremotewrite:
-          endpoint: http://prometheus-stack-prometheus.observability.svc.cluster.local:9090/api/v1/write
+        # Prometheus 2.55+ native OTLP receiver (Service
+        # prometheus-stack-kube-prom-prometheus in this namespace). The otlphttp
+        # exporter appends /v1/metrics to the endpoint, so the full path is
+        # /api/v1/otlp/v1/metrics.
+        otlphttp/prometheus:
+          endpoint: http://prometheus-stack-kube-prom-prometheus.observability.svc.cluster.local:9090/api/v1/otlp
           tls:
             insecure: true
-
-        debug:
-          verbosity: basic
+          sending_queue:
+            enabled: true
+          retry_on_failure:
+            enabled: true
 
       service:
         pipelines:
           logs:
             receivers: [otlp, filelog]
-            processors: [batch, k8sattributes]
-            exporters: [otlphttp/loki, debug]
+            processors: [memory_limiter, k8sattributes, batch]
+            exporters: [otlphttp/loki]
           traces:
             receivers: [otlp]
-            processors: [batch, k8sattributes]
-            exporters: [otlp/tempo, debug]
+            processors: [memory_limiter, k8sattributes, batch]
+            exporters: [otlp/tempo]
           metrics:
             receivers: [otlp]
-            processors: [batch, k8sattributes]
-            exporters: [prometheusremotewrite, debug]
+            processors: [memory_limiter, k8sattributes, batch]
+            exporters: [otlphttp/prometheus]
 
     # Loki 3.x supports native OTLP log ingestion at /otlp on port 3100.
     # The schemaConfig in the Loki HelmRelease already uses v13, which
@@ -112,10 +137,25 @@ spec:
         memory: 512Mi
 
     service:
-      # The DaemonSet still exposes OTLP via a headless service per node; apps
-      # inside the cluster can use the DNS A-record for the collector service.
+      # Apps inside the cluster send OTLP to this Service; every node runs a
+      # collector pod, so keep the traffic node-local instead of letting a
+      # connection cross nodes to a collector that shares no logs with it.
       enabled: true
       type: ClusterIP
+      internalTrafficPolicy: Local
+
+    # Self-metrics: the chart serves the collector's internal telemetry
+    # (otelcol_*) on ${env:MY_POD_IP}:8888, and the PodMonitor below scrapes it
+    # with `release: prometheus-stack`, the label this cluster's Prometheus
+    # selects PodMonitors on. Without the label the target silently never loads.
+    ports:
+      metrics:
+        enabled: true
+
+    podMonitor:
+      enabled: true
+      extraLabels:
+        release: prometheus-stack
 
     # The logsCollection preset already mounts /var/log/pods and
     # /var/lib/docker/containers, so we do not add them again as extra volumes.
