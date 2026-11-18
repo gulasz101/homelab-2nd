@@ -64,7 +64,11 @@ signals), what is it consuming (resources), what is it saying (logs).
   `pod=~"<prefix>.*"`), `label` is what the legend shows, and `pvc` names the volume to
   chart. A `pvc` ending in `-*` is a CNPG cluster (`hindsight-db-*`): the generator emits
   an instance regex, because the instance number changes on switchover and a hardcoded one
-  goes stale (`scripts/tests/cnpg-instance-name-check.sh`).
+  goes stale (`scripts/tests/cnpg-instance-name-check.sh`). A service may also carry
+  `k8sNamespace` (whiteboard's tunnel runs in `apps-tldraw`, not `apps-whiteboard`) and
+  `exclude`, a list of sibling pod prefixes to subtract from the selector — `nextcloud-`
+  also matches `nextcloud-db` and `nextcloud-redis-master`, and summing those into the
+  app panel double-counts them.
 
 Optional per entry:
 
@@ -75,6 +79,17 @@ Optional per entry:
 - `dashboards` — render several dashboards into one ConfigMap. Hindsight uses this to ship
   `hindsight-operations.json`, `hindsight-api-service.json` and `hindsight-llm.json` in the
   `hindsight-dashboards` ConfigMap, folder `hindsight`.
+- `panels` — the app's own panels, appended to one of the standard rows. Each item is
+  `row` (`Golden signals` or `Resources`), `type` (`stat` or `timeseries`), `title`,
+  `description`, `unit`, `targets` (`[{"expr": …, "legend": …}]`) plus optional
+  `thresholds`, `datasource: "loki"`, `min`, `max`, `w`, `h`. They exist so an app with
+  its own metrics (Hindsight's consolidation backlog, the whiteboard tunnel) keeps the
+  signal the dashboard was built for; they are rendered by the same primitives, so they
+  obey the datasource, description and unit rules, and the generator stays the only
+  writer.
+- `variables` — extra Grafana template variables as ready-made variable objects, merged
+  after the two required datasource variables. Hindsight adds a `tenant` query variable,
+  which every one of its queries filters on.
 
 ## Adding or changing a dashboard
 
