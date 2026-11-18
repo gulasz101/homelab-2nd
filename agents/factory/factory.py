@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import json
 import os
 import re
@@ -100,6 +101,69 @@ def diff_touched(repo: str, sha: str) -> dict:
     for p in [p for p in others.split("\0") if p]:
         touched.setdefault(p, "A")
     return touched
+
+
+# --------------------------------------------------------------------------
+# main's own work vs the stage's (GUL-1801)
+# --------------------------------------------------------------------------
+
+def _blob_at(repo: str, rev: str, path: str):
+    """The bytes of `path` at `rev`, or None when the path is not there."""
+    proc = subprocess.run(["git", "-C", repo, "cat-file", "-p", "%s:%s" % (rev, path)],
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _worktree_bytes(repo: str, path: str):
+    """The bytes of `path` in the worktree, untracked files included."""
+    full = os.path.join(repo, path)
+    try:
+        if os.path.islink(full):
+            return os.fsencode(os.readlink(full))
+        if not os.path.isfile(full):
+            return None
+        with open(full, "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def main_ref(repo: str) -> str:
+    """The commit that holds main's own work: `origin/main`, else a local `main`."""
+    for ref in ("refs/remotes/origin/main", "refs/heads/main"):
+        proc = subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "--quiet",
+                               ref + "^{commit}"],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if proc.returncode == 0:
+            return proc.stdout.decode().strip()
+    return ""
+
+
+def from_main(repo: str, red: str, path: str, base: str) -> bool:
+    """True when this path's change against `red` is main's work, not the stage's.
+
+    GUL-1801: an update-branch merge brings main's commits into the work order's
+    branch, and every one of them used to be counted as a stage change. A merged
+    test change can never match the red commit byte for byte, so the green stage
+    failed on work nobody in the stage did (GUL-1598: six reasons, not one of them
+    the stage's). The comparison is status *and* content: main moved the path away
+    from `red`, and the worktree holds exactly what main holds.
+    """
+    if not base:
+        return False
+    main_state = _blob_at(repo, base, path)
+    if main_state == _blob_at(repo, red, path):
+        return False  # main never touched this path: whatever changed it, the stage did
+    return _worktree_bytes(repo, path) == main_state
+
+
+def stage_changes(repo: str, red: str, touched: dict, base: str = "") -> dict:
+    """`touched` minus the paths whose change came from main (GUL-1801)."""
+    if not base:
+        base = main_ref(repo)
+    if not base:
+        return touched
+    return {p: s for p, s in touched.items() if not from_main(repo, red, p, base)}
 
 
 # --------------------------------------------------------------------------
@@ -542,18 +606,165 @@ def withdraw_merge_cards(api, work_order_id: str) -> int:
     return withdrawn
 
 
+def branch_head_sha(repo: str, ledger: dict) -> str:
+    """The sha the work order's branch head should be: its newest green commit.
+
+    GUL-1801: the round that a merge strands is always in a `green` row — a Builder
+    commits locally, and the merge lands the older head. The ledger row is the
+    record; the PR's own head and the local branch are the fallbacks for a ledger
+    written before this check existed.
+    """
+    best = None
+    for key, row in (ledger.get("stages") or {}).items():
+        if not isinstance(row, dict):
+            continue
+        if key != "green" and not key.startswith("green:"):
+            continue
+        try:
+            round_no = int(row.get("round") or (int(key.split(":r")[1]) if ":r" in key else 1))
+        except (TypeError, ValueError):
+            round_no = 1
+        sha = str(row.get("sha") or "").strip()
+        if sha and (best is None or round_no >= best[0]):
+            best = (round_no, sha)
+    if best:
+        return best[1]
+    pr = ledger.get("pr") or {}
+    if pr.get("head"):
+        return str(pr["head"]).strip()
+    branch = ledger.get("branch")
+    if repo and branch:
+        return git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch,
+                   allow_fail=True).strip()
+    return ""
+
+
+def merge_contains(repo: str, head, merge):
+    """Is `head` in `merge`'s history? True / False / None when it cannot be settled.
+
+    GUL-1801: the merge commit is the proof that the round landed, and a merged PR
+    whose merge commit does not contain the branch head is a work order that must
+    say so instead of "already settled" (GUL-1598 lost its whole round-2 diff to
+    that sentence). `None` means the objects are neither in the checkout nor
+    fetchable, so the caller keeps the answer it already had instead of guessing.
+    """
+    if not (repo and head and merge):
+        return None
+
+    def present(sha: str) -> bool:
+        return subprocess.run(["git", "-C", repo, "cat-file", "-e", sha + "^{commit}"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+
+    if not (present(head) and present(merge)):
+        git(repo, "fetch", "--quiet", "origin", allow_fail=True)
+        for sha in (head, merge):
+            if not present(sha):
+                git(repo, "fetch", "--quiet", "origin", sha, allow_fail=True)
+    if not (present(head) and present(merge)):
+        return None
+    rc = subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", head, merge],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+    if rc == 0:
+        return True
+    if rc != 1:
+        return None
+    # A squash or rebase merge leaves the branch head out of main's history even
+    # though the content landed. Equal trees are the honest test for that; a
+    # different tree means this head's work is still not on main.
+    same_tree = subprocess.run(["git", "-C", repo, "diff", "--quiet", head, merge],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL).returncode
+    return same_tree == 0
+
+
+def unlanded_reason(number, head, merge_sha) -> str:
+    return ("PR #%s is merged in %s, but the work order's branch head %s is not in that "
+            "merge: land %s on main, then re-run (the round that commit carries never "
+            "reached main)" % (number, merge_sha or "?", head, head))
+
+
+def _park_unlanded(api, work_order, ledger, pr, head,
+                   merge_sha, merged_at, reason) -> None:
+    """Block an unlanded merge with the one action that fixes it (GUL-1801)."""
+    ledger["merge"] = {"state": "unlanded", "sha": merge_sha, "head": head,
+                       "at": merged_at, "reason": reason}
+    ledger["outcome"] = "unlanded"
+    save_ledger(api, work_order["id"], ledger, "unlanded merge for PR #%s" % pr.get("number"))
+    api.patch_issue(work_order["id"], {
+        "status": "blocked",
+        "executionPolicy": None,
+        "unblockDescriptor": _unblock_descriptor(
+            api, "land %s on main (merge the work order's branch again, or push that "
+                 "commit), then re-run `factory decide` / `factory tick` so PR #%s "
+                 "settles." % (head, pr.get("number"))),
+        "comment": ("factory stop: %s. Nothing is lost: the commit is on the branch; "
+                    "the merge did not take it." % reason),
+    })
+
+
+def _park_unlanded_once(api, work_order, ledger, pr, head, merge_sha, merged_at,
+                        reason, apply) -> None:
+    """Park an unlanded merge, but do not nag: one comment per distinct reason.
+
+    The sweep runs hourly and the park does not change, so re-blocking an already
+    blocked work order with the same sentence would only bury the board.
+    """
+    if not apply or not head:
+        return
+    if (work_order.get("status") == "blocked"
+            and (ledger.get("merge") or {}).get("reason") == reason):
+        return
+    _park_unlanded(api, work_order, ledger, pr, head, merge_sha, merged_at, reason)
+
+
+def landed_on(repo, head) -> bool:
+    """Is `head` on main now? The one question an unlanded park has to answer.
+
+    GUL-1801: when a merge landed an older head, the stranded round gets onto main
+    some other way entirely (a later merge, a cherry-pick, a rebase). The merge
+    commit that stranded it will never contain it, so recovery cannot go through
+    that commit — it goes through main.
+    """
+    if not (repo and head):
+        return False
+    for ref in ("refs/remotes/origin/main", "refs/heads/main", "main"):
+        if merge_contains(repo, head, ref) is True:
+            return True
+    return False
+
+
+def settled_view(head, merged_at) -> dict:
+    """The PR view a landed strand deserves: it is on main, at `head`."""
+    return {"state": "MERGED", "mergedAt": merged_at or "",
+            "mergeCommit": {"oid": head}}
+
+
 def settle_merge(api, work_order: dict, ledger: dict, pr: dict, view: dict,
-                 apply: bool) -> str:
-    """Move a work order on after a merge, or say why it cannot. Returns the
-    merge state it saw: `merged`, `closed` or `open`."""
+                 apply: bool) -> dict:
+    """Move a work order on after a merge, or say why it cannot.
+
+    Returns `{"state": merged|closed|open|unlanded, "reason": str|None, "sha": …}`.
+    """
     number = pr.get("number")
     state = str(view.get("state") or "").upper()
     merged_at = view.get("mergedAt")
     commit = ((view.get("mergeCommit") or {}) or {}).get("oid")
 
     if state == "MERGED":
+        # GUL-1801: merged is not landed. The PR can be merged while a fix round's
+        # commit is still local (GUL-1598: PR #252 took round 1 while round 2's
+        # 5a4b779 was never pushed), and settling that as "merged" throws the round
+        # away. The merge commit must contain the work order's branch head.
+        head = branch_head_sha(ledger.get("cwd") or "", ledger)
+        contained = merge_contains(ledger.get("cwd") or "", head, commit)
+        if contained is False:
+            reason = unlanded_reason(number, head, commit)
+            if apply:
+                _park_unlanded(api, work_order, ledger, pr, head, commit, merged_at, reason)
+            return {"state": "unlanded", "reason": reason, "sha": commit}
         if not apply:
-            return "merged"
+            return {"state": "merged", "reason": None, "sha": commit}
         withdrawn = withdraw_merge_cards(api, work_order["id"])
         ledger["merge"] = {"state": "merged", "sha": commit, "at": merged_at}
         ledger["outcome"] = "merged"
@@ -567,11 +778,13 @@ def settle_merge(api, work_order: dict, ledger: dict, pr: dict, view: dict,
                         "the merge on GitHub and moved this work order on.%s"
                         % (number, commit or "?", merged_at or "?", note)),
         })
-        return "merged"
+        return {"state": "merged", "reason": None, "sha": commit}
 
     if state == "CLOSED":
+        reason = ("PR #%s was closed without a merge, so nothing shipped. Reopen it "
+                  "or start a new work order." % number)
         if not apply:
-            return "closed"
+            return {"state": "closed", "reason": reason, "sha": None}
         ledger["merge"] = {"state": "closed", "sha": None, "at": None}
         ledger["outcome"] = "closed"
         save_ledger(api, work_order["id"], ledger, "PR #%s closed without a merge" % number)
@@ -580,15 +793,14 @@ def settle_merge(api, work_order: dict, ledger: dict, pr: dict, view: dict,
             "unblockDescriptor": _unblock_descriptor(
                 api, "PR #%s was closed unmerged: reopen it or start a new work order, then "
                      "clear this block; the factory owns this park." % number),
-            "comment": ("PR #%s was closed without a merge, so nothing shipped. "
-                        "Reopen it or start a new work order." % number),
+            "comment": reason,
         })
-        return "closed"
+        return {"state": "closed", "reason": reason, "sha": None}
 
     if apply:
         # still open: keep the wait a real path by re-arming the monitor
         api.patch_issue(work_order["id"], {"executionPolicy": {"monitor": monitor_payload(pr)}})
-    return "open"
+    return {"state": "open", "reason": None, "sha": None}
 
 
 # --------------------------------------------------------------------------
@@ -632,8 +844,17 @@ def cmd_check_red(args) -> int:
 def cmd_check_green(args) -> int:
     spec = load_spec(args.spec)
     touched = diff_touched(args.repo, args.red)
+    # GUL-1801: main's own commits reach this branch through an update-branch
+    # merge, and they are not stage work. A path whose state here is exactly what
+    # main holds — and which main moved away from the red commit — is dropped
+    # before the test-path comparison and the allowedPaths check. A path the stage
+    # really changed still fails, including a test path main changed and the stage
+    # changed again on top of it.
+    base = main_ref(args.repo)
+    stage_touched = stage_changes(args.repo, args.red, touched, base)
+    dropped = sorted(set(touched) - set(stage_touched))
     reasons: list = []
-    for path, status in sorted(touched.items()):
+    for path, status in sorted(stage_touched.items()):
         if looks_like_test_path(path):
             reasons.append("test path differs from the red commit: %s (%s)" % (path, status))
         if not glob_match(spec["allowedPaths"], path):
@@ -650,7 +871,8 @@ def cmd_check_green(args) -> int:
         sys.stderr.write(proc.stdout)
         if proc.returncode != 0:
             reasons.append("scripts/check.sh exited %d" % proc.returncode)
-    emit(len(reasons) == 0, "check-green", reasons)
+    emit(len(reasons) == 0, "check-green", reasons,
+         {"fromMain": dropped} if dropped else None)
     return 0 if not reasons else 1
 
 
@@ -846,11 +1068,28 @@ def touches_helmrelease(files: list, head_oid: str, text_for_path, globs: list) 
     return False
 
 
+def mark_pr_ready(repo: str, number) -> str:
+    """`gh pr ready` on a draft PR. Returns "" on success, the failure reason.
+
+    GUL-1801: `open-pr` opens the PR as a draft so a merge cannot land a round the
+    factory has not passed. The gate is what ends that: when the PR passes, the
+    human must find a mergeable PR, not one still marked draft.
+    """
+    last = ""
+    for _ in range(2):  # one transient gh hiccup should not fail a passing gate
+        proc = subprocess.run([gh_bin(), "pr", "ready", str(number), "--repo", repo],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode == 0:
+            return ""
+        last = (proc.stderr or proc.stdout).strip()[:200]
+    return last or "gh pr ready exited non-zero"
+
+
 def cmd_check_gate(args) -> int:
     spec = load_spec(args.spec)
     repo, num = parse_pr_ref(args.pr)
     view = gh_json(["pr", "view", num, "--repo", repo, "--json",
-                    "headRefOid,baseRefOid,additions,deletions,files"])
+                    "headRefOid,baseRefOid,additions,deletions,files,mergeable,isDraft"])
     reasons: list = []
     try:
         head_oid = view["headRefOid"]
@@ -860,16 +1099,40 @@ def cmd_check_gate(args) -> int:
         files = view["files"]
     except (KeyError, TypeError, ValueError) as e:
         raise SetupError("gh pr view json missing field: %r" % e)
-    checks = gh_json(["pr", "checks", num, "--repo", repo, "--json", "name,state"])
+    try:
+        checks = gh_json(["pr", "checks", num, "--repo", repo, "--json", "name,state"])
+    except SetupError as e:
+        # `gh pr checks` exits 1 with "no checks reported" when the branch has no
+        # run yet (a fresh PR, or a CONFLICTING one GitHub never built a merge ref
+        # for). That is a state of the PR the gate judges, not a broken tool
+        # (GUL-1155): judge it as "no green check" so the stage gets a real answer
+        # instead of a protocol error.
+        if "no checks reported" not in str(e):
+            raise
+        checks = []
     named = [c for c in checks if isinstance(c, dict) and c.get("name") == "check"]
     if not named:
         reasons.append("no check run named 'check' on this PR")
+        if isinstance(view, dict) and str(view.get("mergeable") or "").upper() == "CONFLICTING":
+            reasons.append("PR is CONFLICTING with its base, so GitHub never builds the "
+                           "merge ref and the check workflow cannot start: rebase the branch")
     elif not any(str(c.get("state", "")).upper() == "SUCCESS" for c in named):
         states = sorted({str(c.get("state")) for c in named})
         reasons.append("check run is not SUCCESS (states: %s)" % ",".join(states))
     total = additions + deletions
-    if total > spec["maxDiffLines"]:
-        reasons.append("diff too big: %d lines > maxDiffLines %d" % (total, spec["maxDiffLines"]))
+    # GUL-1730: diff size warns, it does not block. The cap was measured against
+    # the whole PR and killed work that was otherwise green (GUL-1597: 559 lines
+    # against 500, GUL-1693: 728 against 240), escalating to the owner for a
+    # number the PM raised by hand the same morning. Wojtek sees the PR at merge
+    # anyway, so between 1x and 3x the gate passes and carries a size note; the
+    # 3x hard stop stays for a PR nobody could review in one sitting.
+    size_note = None
+    cap = spec["maxDiffLines"]
+    if total > 3 * cap:
+        reasons.append("diff too big: %d lines > 3 * maxDiffLines %d (hard stop)"
+                       % (total, cap))
+    elif total > cap:
+        size_note = "size note: %d lines > maxDiffLines %d" % (total, cap)
     cfg = load_never_paths()
     content_cache: dict = {}
 
@@ -912,7 +1175,17 @@ def cmd_check_gate(args) -> int:
     gate_repo = os.environ.get("FACTORY_GATE_REPO") or REPO_ROOT
     if touches_helmrelease(files, head_oid, pr_content_text, cfg["globs"]):
         reasons.extend(pin_reasons(gate_repo, num, base_oid, head_oid))
-    emit(len(reasons) == 0, "check-gate", reasons)
+    # GUL-1801: a passing gate is the end of the draft. `open-pr` opened it as a
+    # draft so no merge could land an unpassed round; if it is still a draft here,
+    # mark it ready — a gate that passes and leaves the PR a draft leaves the human
+    # with a merge button GitHub refuses, which reads as a broken factory.
+    if not reasons and isinstance(view, dict) and bool(view.get("isDraft")):
+        failed = mark_pr_ready(repo, num)
+        if failed:
+            reasons.append("PR #%s is still a draft and `gh pr ready` failed: %s"
+                           % (num, failed))
+    emit(len(reasons) == 0, "check-gate", reasons,
+         {"sizeNote": size_note} if size_note else None)
     return 0 if not reasons else 1
 
 
@@ -958,6 +1231,26 @@ def cmd_commit(args) -> int:
     return 0
 
 
+def cmd_push(args) -> int:
+    """Push the checkout's branch to origin (GUL-1267 F-1).
+
+    A fix round commits on the same branch the first green stage opened its PR
+    from, so the PR head is only the round's work once that commit is pushed.
+    Round 1 opened the PR *and* pushed; a later round reuses the PR and must
+    still push, or the gate reads the round-1 head and offers to merge it.
+    """
+    if not re.match(r"^GUL-[0-9]+$", args.issue):
+        raise SetupError("--issue must be GUL-<n>, got %r" % args.issue)
+    branch = git(args.repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    if branch in ("main", "master"):
+        emit(False, "push", ["refusing to push %s" % branch])
+        return 1
+    git(args.repo, "push", "-u", "origin", branch)
+    emit(True, "push", [], {"branch": branch,
+                            "sha": git(args.repo, "rev-parse", "HEAD").strip()})
+    return 0
+
+
 def cmd_open_pr(args) -> int:
     if not re.match(r"^GUL-[0-9]+$", args.issue):
         raise SetupError("--issue must be GUL-<n>, got %r" % args.issue)
@@ -975,11 +1268,20 @@ def cmd_open_pr(args) -> int:
     owner_repo = "%s/%s" % (m.group(1), m.group(2))
     git(args.repo, "push", "-u", "origin", branch)
     body = "Work order: [%s](https://paperclip.voitech.dev/GUL/issues/%s)\n" % (args.issue, args.issue)
-    url = gh_text(["pr", "create", "--repo", owner_repo, "--title", args.title,
-                   "--body", body, "--head", branch]).strip()
+    # GUL-1801: the gate cannot stop a human clicking merge, so the PR itself is
+    # the guard. `open-pr` runs inside the green stage, which means the round it
+    # belongs to is never finished at this moment — review, verify and the gate
+    # still have to pass, and a fix round can still rewrite the head. So the PR is
+    # opened as a draft, which GitHub refuses to merge, and `check-gate` marks it
+    # ready when it passes. `--ready` is for a caller that knows the round is over.
+    create_args = ["pr", "create", "--repo", owner_repo, "--title", args.title,
+                   "--body", body, "--head", branch]
+    if not args.ready:
+        create_args.append("--draft")
+    url = gh_text(create_args).strip()
     if not url.startswith("http"):
         raise SetupError("gh pr create did not print a URL: %r" % url[:200])
-    emit(True, "open-pr", [], {"url": url})
+    emit(True, "open-pr", [], {"url": url, "draft": not args.ready})
     return 0
 
 
@@ -1018,6 +1320,21 @@ def _stop_file() -> str:
 def _ledger_jsonl() -> str:
     return os.environ.get("FACTORY_LEDGER_JSONL") or os.path.expanduser(
         "~/paperclip-agents/majster/factory/ledger.jsonl")
+
+
+def _var_dir() -> str:
+    """Durable factory scratch outside the repo: ledger archives land here.
+
+    Same neighbourhood as the STOP flag and the jsonl ledger, and for the same
+    reason — the repo is public and a work order's ledger is operational state,
+    not documentation. FACTORY_VAR points it at a sandbox in the tests.
+    """
+    return os.environ.get("FACTORY_VAR") or os.path.expanduser(
+        "~/paperclip-agents/majster/factory/var")
+
+
+def _utc_stamp() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 def load_agent_config() -> dict:
@@ -1063,12 +1380,13 @@ def slugify(text: str, limit: int = 40) -> str:
     return (slug[:limit].rstrip("-") or "work")
 
 
-def load_json_document(api, issue_id: str, key: str):
-    """Read a document and parse its one fenced json block. Returns None when
-    the document does not exist, an empty dict when it has no block."""
-    doc = api.document(issue_id, key)
-    if not doc:
-        return None
+def parse_json_document(doc, key: str):
+    """Parse the one fenced json block out of an already-fetched document.
+
+    Split out of `load_json_document` for `start --recut`, which needs the raw
+    body as well as the parsed ledger: the archive it writes must hold the
+    document byte for byte, not a re-rendering of what this version parses.
+    """
     body = doc.get("body") if isinstance(doc, dict) else None
     if not isinstance(body, str):
         return None
@@ -1076,6 +1394,12 @@ def load_json_document(api, issue_id: str, key: str):
         return {}
     value, _reasons = extract_json_block(body, key)
     return value
+
+
+def load_json_document(api, issue_id: str, key: str):
+    """Read a document and parse its one fenced json block. Returns None when
+    the document does not exist, an empty dict when it has no block."""
+    return parse_json_document(api.document(issue_id, key), key)
 
 
 def fence_json_document(title: str, prose: str, payload) -> str:
@@ -1124,25 +1448,133 @@ def resolve_issue(api, company_id: str, identifier: str):
     return issue
 
 
-def work_order_cwd(api, issue: dict) -> str:
-    workspace = issue.get("currentExecutionWorkspace")
-    if isinstance(workspace, dict) and workspace.get("cwd"):
-        return workspace["cwd"]
-    project_id = issue.get("projectId")
-    if project_id:
-        try:
-            for ws in api.project_workspaces(project_id) or []:
-                if ws.get("isPrimary") and ws.get("cwd"):
-                    return ws["cwd"]
-        except Exception:  # noqa: BLE001 - a missing project must not hide FACTORY_REPO
-            pass
-    return os.environ.get("FACTORY_REPO") or os.path.abspath(os.path.join(FACTORY_DIR, "..", ".."))
+def repo_slug(value) -> str:
+    """`gulasz101/homelab-2nd` from a spec's repo field or any clone URL."""
+    text = str(value or "").strip().rstrip("/")
+    if text.endswith(".git"):
+        text = text[:-4]
+    for marker in ("github.com/", "github.com:"):
+        if marker in text:
+            text = text.split(marker, 1)[1]
+    parts = [part for part in text.strip("/").split("/") if part]
+    return "/".join(parts[-2:]).lower() if len(parts) >= 2 else ""
 
 
-def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_id) -> list:
-    """Every other open issue in the same project that is assigned to Majster and
-    carries a `spec` document. Document check is per issue: the company list does
-    not include document summaries.
+def _workspace_slug(workspace) -> str:
+    return repo_slug(workspace.get("repoUrl") or workspace.get("repo") or "") if isinstance(workspace, dict) else ""
+
+
+def _workspace_cwd(workspace) -> str:
+    return (workspace.get("cwd") or "") if isinstance(workspace, dict) else ""
+
+
+def _project_workspaces(api, project_id) -> list:
+    if not project_id:
+        return []
+    try:
+        return [ws for ws in (api.project_workspaces(project_id) or []) if isinstance(ws, dict)]
+    except Exception:  # noqa: BLE001 - a missing project must not hide the fallback
+        return []
+
+
+def _company_workspaces(api, company_id) -> list:
+    """Every workspace in the company, flattened. One API call per project, so
+    only the repo-lookup path pays for it."""
+    found = []
+    try:
+        projects = api.projects(company_id) or []
+    except Exception:  # noqa: BLE001 - no project list means no cross-project lookup
+        return found
+    if isinstance(projects, dict):
+        projects = projects.get("projects") or []
+    for project in projects:
+        if isinstance(project, dict):
+            found.extend(_project_workspaces(api, project.get("id")))
+    return found
+
+
+def work_order_cwd(api, issue: dict, repo: str = "", company_id: str = "") -> tuple:
+    """`(cwd, note)`: the checkout this work order runs in.
+
+    The spec names the repo the work order changes. The issue's project names a
+    checkout. They can disagree: three Image Studio work orders asked for
+    `gulasz101/homelab-2nd`, their project checks out `ideogram4-local`, and the
+    factory cut branches in the wrong tree (GUL-1389). So the repo decides.
+
+    - A workspace whose own repo (or, with no `repoUrl`, whose name) is the spec's
+      repo is the answer, project first.
+    - Otherwise the checkout is looked up across the company's workspaces, because
+      a repo can be checked out by another project.
+    - A project checkout that provably holds a *different* repo is not used, and
+      the answer is refused rather than guessed: a wrong tree produces an empty
+      `red` stage and a fake pass, which is what GUL-1340 did.
+    - Two checkouts of the same repo are refused too. One checkout, one diff
+      (ADR-095), and two work orders must not cut branches in one tree.
+    """
+    want = repo_slug(repo)
+    own = _project_workspaces(api, issue.get("projectId"))
+    execution = issue.get("currentExecutionWorkspace")
+    ordered = ([execution] if isinstance(execution, dict) else []) + own
+
+    def holds(workspace) -> bool:
+        slug = _workspace_slug(workspace)
+        if slug:
+            return slug == want
+        return bool(want) and repo_slug(workspace.get("name")) == want
+
+    for workspace in ordered:
+        if _workspace_cwd(workspace) and holds(workspace):
+            return _workspace_cwd(workspace), "issue workspace holds %s" % want
+
+    if not want:
+        for workspace in ordered:
+            if _workspace_cwd(workspace) and workspace.get("isPrimary"):
+                return _workspace_cwd(workspace), "project workspace (spec names no repo)"
+        return (os.environ.get("FACTORY_REPO")
+                or os.path.abspath(os.path.join(FACTORY_DIR, "..", ".."))), "FACTORY_REPO"
+
+    factory_root = os.path.realpath(os.path.abspath(os.path.join(FACTORY_DIR, "..", "..")))
+    checkouts, seen = [], set()
+    for workspace in own + _company_workspaces(api, company_id):
+        cwd = _workspace_cwd(workspace)
+        if not cwd or not holds(workspace):
+            continue
+        real = os.path.realpath(cwd)
+        if real in seen or real == factory_root:
+            continue
+        seen.add(real)
+        checkouts.append(real)
+    if len(checkouts) == 1:
+        return checkouts[0], "company workspace holds %s" % want
+    if len(checkouts) > 1:
+        raise SetupError(
+            "%s spec names repo %s and %d checkouts hold it (%s); pass --repo to pick one, "
+            "because two work orders in one checkout cut branches in the same tree"
+            % (issue.get("identifier") or issue.get("id"), want, len(checkouts), ", ".join(checkouts)))
+
+    known_wrong = sorted({_workspace_slug(ws) or _workspace_cwd(ws) for ws in own
+                          if _workspace_cwd(ws) and _workspace_slug(ws)})
+    if known_wrong:
+        raise SetupError(
+            "%s spec names repo %s but its project checks out %s and no workspace in this "
+            "company holds %s: move the issue to the project that checks it out, or pass --repo"
+            % (issue.get("identifier") or issue.get("id"), want, ", ".join(known_wrong), want))
+
+    for workspace in own:
+        if _workspace_cwd(workspace):
+            return _workspace_cwd(workspace), "project workspace (repo %s unverified)" % want
+    return (os.environ.get("FACTORY_REPO")
+            or os.path.abspath(os.path.join(FACTORY_DIR, "..", ".."))), "FACTORY_REPO"
+
+
+def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_id,
+                     cwd: str = "") -> list:
+    """Every other open issue assigned to Majster that carries a `spec` document and
+    would fight this one for a checkout: same project, or another project pointed at
+    the same `cwd` (`cwd` is what the ledger records, so it is what is compared).
+
+    Document check is per issue: the company list does not include document
+    summaries.
 
     A work order parked as `blocked` before it ever started holds no branch and no
     checkout: the shared checkout is only taken by `start`, and `start` is what
@@ -1151,6 +1583,7 @@ def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_i
     "open", and 948 cannot start because 875 is not done. A blocked work order that
     has already started still counts: its diff may be the one in the checkout.
     """
+    wanted_cwd = os.path.realpath(cwd) if cwd else ""
     found = []
     for item in api.issues(company_id):
         if item.get("id") == exclude_id:
@@ -1159,10 +1592,16 @@ def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_i
             continue
         if item.get("assigneeAgentId") != cfg["majster"]:
             continue
-        if project_id and item.get("projectId") != project_id:
+        same_project = bool(project_id) and item.get("projectId") == project_id
+        if not same_project and not wanted_cwd:
             continue
         if item.get("status") == "blocked" and not api.document(item["id"], "ledger"):
             continue
+        if not same_project:
+            ledger = load_json_document(api, item["id"], "ledger") or {}
+            other = ledger.get("cwd") if isinstance(ledger, dict) else ""
+            if not other or os.path.realpath(other) != wanted_cwd:
+                continue
         if api.document(item["id"], "spec"):
             found.append(item)
     return found
@@ -1209,8 +1648,12 @@ def template_values(spec: dict, ledger: dict, cfg: dict, stage: str, round_no: i
 
 def plan_stages(cfg: dict, spec: dict, ledger: dict, work_order: dict, round_no: int,
                 findings_block: str) -> list:
+    # GUL-1267 G2: a fix round ends in a gate of its own. Without one, a clean
+    # verify r2 approved the chain on the *round-1* gate, which had already
+    # decided the head the fix round rewrote — nobody re-ran `check-gate`.
     plan = []
-    for stage in STAGE_ORDER if round_no == 1 else ("green", "review", "verify"):
+    order = STAGE_ORDER if round_no == 1 else ("green", "review", "verify", "gate")
+    for stage in order:
         agent = stage_agent(cfg, stage)
         extra = {"findingsBlock": findings_block if stage == "green" else ""}
         plan.append({
@@ -1454,6 +1897,170 @@ def cmd_factory_settle(args) -> int:
     return 0
 
 
+def recut_refusals(ledger, identifier: str) -> list:
+    """Why this work order cannot be re-cut (empty list = it can) (GUL-1455).
+
+    A re-cut mints five new stage issues and cuts a new branch; whatever the old
+    attempt pushed would be orphaned by that. One recorded stage `sha` means a
+    commit exists, `pr` means it is on the forge, `merge` means it landed — all
+    three are work a human already reviewed, so the factory refuses and says
+    which. Only a work order whose stages all still read `sha: null` and whose
+    ledger never reached a PR is a misfiling the factory may undo itself.
+    """
+    if not isinstance(ledger, dict) or not ledger.get("stages"):
+        return ["%s has no factory ledger with stages: nothing to re-cut, run "
+                "`factory start %s` instead" % (identifier, identifier)]
+    reasons = []
+    pr = ledger.get("pr")
+    if pr:
+        number = pr.get("number") if isinstance(pr, dict) else pr
+        reasons.append("the ledger already has a PR (%s#%s): a re-cut would abandon "
+                       "reviewed work instead of moving it"
+                       % (ledger.get("repo") or "?", number))
+    merge = ledger.get("merge")
+    if merge:
+        sha = merge.get("sha") if isinstance(merge, dict) else merge
+        reasons.append("the ledger records a merge (%s): that work is on `%s` already "
+                       "and re-cutting it would re-cut landed code"
+                       % (str(sha)[:12], ledger.get("base") or "the base branch"))
+    pushed = ["%s (%s)" % ((row or {}).get("identifier") or key, str((row or {}).get("sha"))[:12])
+              for key, row in sorted((ledger.get("stages") or {}).items())
+              if (row or {}).get("sha")]
+    if pushed:
+        reasons.append("stages have committed already: %s — a re-cut must never throw "
+                       "away pushed work" % ", ".join(pushed))
+    if ledger.get("recut") and not pushed:
+        reasons.append("this ledger is already a re-cut (%s) and no stage has committed "
+                       "since: the chain on the board is the re-cut, so running it again "
+                       "would only supersede it with itself. Check the board first"
+                       % ((ledger.get("recut") or {}).get("archive") or "no archive recorded"))
+    return reasons
+
+
+def archive_ledger(doc: dict, ledger, path: str, cwd: str) -> None:
+    """Write the ledger a re-cut replaces, outside the repo, before anything moves.
+
+    The body goes in byte for byte (`document.body`) next to what this version
+    parses out of it: a re-cut exists because the old ledger was cut against the
+    wrong checkout, so the audit trail has to survive even if the parse rules
+    change afterwards. Written before any board write — a failed archive means
+    `start --recut` stops with the old ledger still on the work order.
+    """
+    body = (doc or {}).get("body") if isinstance(doc, dict) else None
+    if not isinstance(body, str) or not body.strip():
+        raise SetupError("the old ledger document has no body: refusing to re-cut "
+                         "without an archive of it")
+    payload = {
+        "workOrder": (ledger or {}).get("workOrder"),
+        "workOrderId": (ledger or {}).get("workOrderId"),
+        "archivedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "archivedFor": {"cwd": cwd, "repo": (ledger or {}).get("repo")},
+        "document": {"revisionId": (doc or {}).get("latestRevisionId"), "body": body},
+        "parsed": ledger,
+    }
+    folder = os.path.dirname(path)
+    try:
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=1, ensure_ascii=False)
+            fh.write("\n")
+    except OSError as exc:
+        raise SetupError("cannot archive the old ledger to %s: %s" % (path, exc))
+
+
+def cancel_superseded_stages(api, ledger: dict, identifier: str, cwd: str, archive: str) -> list:
+    """Cancel the stage issues the old ledger holds, without re-arming their agents.
+
+    A bare `{"status": "cancelled"}` does not survive the trip: a stage issue
+    carries an `executionPolicy`, and the server routes the write through that
+    policy's live review stage — which re-arms the stage agent instead of
+    cancelling it (measured on GUL-1381: `cancelled` went in, the issue came back
+    `in_progress` with a fresh run). Sending the same policy with its stage ids
+    stripped (`_park_policy`) leaves the issue's `executionState` pointing at a
+    stage that is no longer in the list, and that is the branch that clears the
+    state and keeps the status asked for.
+
+    Every cancel is read back. A stage that is still live after the PATCH raises
+    a setup error rather than letting the re-cut mint a second set of stages on
+    top of a running one — re-running `start --recut` picks up where this stopped,
+    the refusals still pass because nothing was committed.
+    """
+    import pc
+    cancelled = []
+    for key in sorted(ledger.get("stages") or {}):
+        row = ledger["stages"].get(key) or {}
+        issue_id = row.get("issueId")
+        if not issue_id:
+            continue
+        label = row.get("identifier") or key
+        try:
+            issue = api.issue(issue_id)
+        except pc.ApiError as exc:
+            if exc.status != 404:
+                raise
+            cancelled.append({"stage": key, "issue": label, "status": "gone", "live": False})
+            continue
+        if (issue or {}).get("status") in ("done", "cancelled"):
+            cancelled.append({"stage": key, "issue": label,
+                              "status": issue.get("status"), "live": False})
+            continue
+        body: dict = {
+            "status": "cancelled",
+            "comment": ("superseded: %s is being re-cut. This stage was cut against `%s`; "
+                        "the re-cut runs in `%s`. Nothing here decides the work order any "
+                        "more, and the old ledger is archived at `%s`."
+                        % (identifier, ledger.get("cwd") or "?", cwd, archive)),
+        }
+        policy = _park_policy(issue)
+        if policy["stages"]:
+            body["executionPolicy"] = policy
+        api.patch_issue(issue_id, body)
+        after = api.issue(issue_id) or {}
+        if after.get("status") != "cancelled":
+            raise SetupError(
+                "stage %s did not cancel (came back %r): refusing to mint new stages on top "
+                "of a live one; the old ledger is untouched and archived at %s"
+                % (label, after.get("status"), archive))
+        cancelled.append({"stage": key, "issue": label, "status": "cancelled", "live": True})
+    return cancelled
+
+
+def _park_on_the_checkout(api, work_order: dict, busy: list) -> list:
+    """GUL-1730: park a work order that cannot have the shared checkout.
+
+    `start` refuses while another work order occupies the checkout (ADR-095), and
+    that refusal used to be a JSON line and nothing else: the work order stayed
+    open with no blocker edge, so nothing woke anybody when the checkout freed
+    and the PM set `blockedByIssueIds` by hand (GUL-1597, twice in one morning —
+    the first time with no wake path at all).
+
+    A first-class blocker edge is the whole mechanism: the server validates it
+    against the unresolved issues in the same request (routes/issues.ts,
+    `enteringBlocked`), stores it, and emits `issue_blockers_resolved_wake_emitted`
+    when the last one closes. No `unblockDescriptor`, no card, no hand step.
+
+    Returns extra reasons for the caller's JSON line — empty when the park landed.
+    """
+    _sys_path_for_modules()
+    import pc
+
+    names = ", ".join("%s (%s)" % (b.get("identifier"), b.get("status")) for b in busy)
+    try:
+        api.patch_issue(work_order["id"], {
+            "status": "blocked",
+            "blockedByIssueIds": [b["id"] for b in busy],
+            "comment": (
+                "factory start: waiting for the shared checkout — blocked by %s. One "
+                "checkout per work order: it cannot hold two diffs (ADR-095). No hand "
+                "step: `issue_blockers_resolved` wakes this work order when the "
+                "checkout frees." % names),
+        })
+    except pc.ApiError as exc:
+        return ["could not park the work order on the checkout: %s" % exc]
+    return []
+
+
 def cmd_factory_start(args) -> int:
     _sys_path_for_modules()
     import pc
@@ -1470,6 +2077,8 @@ def cmd_factory_start(args) -> int:
     cfg = load_agent_config()
 
     work_order = resolve_issue(api, company, args.work_order)
+    if not isinstance(work_order, dict):
+        raise SetupError("%s did not resolve to an issue" % args.work_order)
     spec_doc = api.document(work_order["id"], "spec")
     if not spec_doc or not spec_doc.get("body"):
         raise SetupError("%s has no `spec` document" % args.work_order)
@@ -1487,7 +2096,22 @@ def cmd_factory_start(args) -> int:
     if spec is None:
         raise SetupError("spec document does not parse: %s" % "; ".join(spec_reasons))
 
-    cwd = args.repo or work_order_cwd(api, work_order)
+    # The ledger is read before the checkout is resolved: a re-cut refuses on
+    # pushed work before it touches a tree, and a plain start still refuses on an
+    # existing one below (GUL-1455).
+    existing_doc = api.document(work_order["id"], "ledger")
+    existing = parse_json_document(existing_doc, "ledger") if existing_doc else None
+    recut = bool(getattr(args, "recut", False))
+    if recut:
+        reasons = recut_refusals(existing, args.work_order)
+        if reasons:
+            emit(False, "start", reasons, {"workOrder": args.work_order, "recut": True})
+            return 1
+
+    if args.repo:
+        cwd, cwd_note = args.repo, "--repo"
+    else:
+        cwd, cwd_note = work_order_cwd(api, work_order, spec.get("repo") or "", company)
     # The factory's own code now runs from a checkout of main (GUL-502, ADR-096).
     # That checkout must never be a work order's workspace: `start` would cut the
     # work order branch in it and the next invocation would move it back to main,
@@ -1498,26 +2122,50 @@ def cmd_factory_start(args) -> int:
             "that copy must stay on main. The work order runs in its own workspace — "
             "check the project workspace, or pass --repo" % cwd)
     project_id = work_order.get("projectId")
-    busy = open_work_orders(api, company, cfg, work_order["id"], project_id)
+    busy = open_work_orders(api, company, cfg, work_order["id"], project_id, cwd)
     if busy:
-        emit(False, "start", [
+        reasons = [
             "another factory work order is open: %s (%s)" % (b["identifier"], b.get("status"))
             for b in busy] + [
             "one checkout per work order: the shared checkout cannot hold two diffs "
-            "(project worktrees are unavailable on this instance, see ADR-095)"],
-            {"workOrder": args.work_order})
+            "(project worktrees are unavailable on this instance, see ADR-095)"]
+        # GUL-1730: a busy checkout parks the work order with a wake, by itself.
+        # The refusal used to be this JSON line and nothing else: the work order
+        # stayed `in_progress` with no blocker edge, so nothing woke anybody when
+        # the checkout freed and the PM set `blockedByIssueIds` by hand (GUL-1597
+        # did it twice in one morning, the first time with no wake path at all).
+        # A first-class blocker edge is the whole mechanism: the server emits
+        # `issue.blockers_resolved_wake_emitted` and wakes this issue when the
+        # last blocker closes. No descriptor, no card, no hand step.
+        if not args.dry_run and not (existing and existing.get("stages")):
+            reasons += _park_on_the_checkout(api, work_order, busy)
+        emit(False, "start", reasons, {"workOrder": args.work_order})
         return 1
 
     base = spec["base"]
     number = args.work_order.split("-")[-1]
     branch = "gul-%s-%s" % (number, slugify(work_order.get("title", "")))
 
-    existing = load_json_document(api, work_order["id"], "ledger")
-    if existing and existing.get("stages"):
+    if not recut and existing and existing.get("stages"):
         emit(True, "start", ["work order already started; nothing created"],
              {"workOrder": args.work_order, "created": 0,
               "stages": existing.get("stages")})
         return 0
+
+    # A re-cut writes the old ledger down before it touches the board or the tree,
+    # and carries that path into the new one so the mis-cut is auditable from the
+    # work order alone (GUL-1455).
+    recut_note = None
+    if recut:
+        old = existing if isinstance(existing, dict) else {}
+        recut_note = {
+            "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "archive": os.path.join(_var_dir(), "%s-ledger-%s.json"
+                                    % (args.work_order, _utc_stamp())),
+            "previousCwd": old.get("cwd"),
+            "previousBranch": old.get("branch"),
+            "previousBaseSha": old.get("baseSha"),
+        }
 
     if args.dry_run:
         base_sha = _resolve_base(cwd, base)
@@ -1549,6 +2197,7 @@ def cmd_factory_start(args) -> int:
         "base": base,
         "baseSha": base_sha,
         "cwd": cwd,
+        "cwdSource": cwd_note,
         "branch": branch,
         "projectId": project_id,
         "stages": {},
@@ -1557,9 +2206,16 @@ def cmd_factory_start(args) -> int:
         "outcome": None,
         "escalated": None,
     }
+    if recut_note:
+        ledger["recut"] = recut_note
 
     plan = plan_stages(cfg, spec, ledger, work_order, 1, "")
     if args.dry_run:
+        extra = {}
+        if recut_note:
+            extra = {"recut": True, "archive": recut_note["archive"],
+                     "superseded": [{"stage": key, "issue": (row or {}).get("identifier")}
+                                    for key, row in sorted(((existing or {}).get("stages") or {}).items())]}
         emit(True, "start", ["dry run: nothing created"], {
             "workOrder": args.work_order,
             "dryRun": True,
@@ -1571,8 +2227,30 @@ def cmd_factory_start(args) -> int:
                          "status": "todo" if i == 0 else "blocked",
                          "blockedBy": None if i == 0 else plan[i - 1]["stage"]}
                         for i, p in enumerate(plan)],
+            **extra,
         })
         return 0
+
+    if recut_note:
+        # Archive first, then cancel, then mint: the old ledger is on disk before
+        # the board changes, so a failure between any two steps leaves the work
+        # order recoverable and re-runnable (GUL-1455).
+        archive_ledger(existing_doc or {}, existing or {}, recut_note["archive"], cwd)
+        recut_note["superseded"] = cancel_superseded_stages(
+            api, existing or {}, args.work_order, cwd, recut_note["archive"])
+        if recut_note["superseded"] and not any(
+                item.get("live") for item in recut_note["superseded"]):
+            # Every stage this ledger holds is already cancelled or gone: the chain
+            # was superseded by an earlier re-cut (or cleaned up by hand). Minting
+            # again would fill the board with a second dead generation.
+            emit(False, "start",
+                 ["every stage this ledger holds is already cancelled: nothing left to "
+                  "supersede, so this work order was re-cut already (or its chain was "
+                  "cleaned up). The old ledger is archived at %s" % recut_note["archive"]],
+                 {"workOrder": args.work_order, "recut": True,
+                  "archive": recut_note["archive"],
+                  "superseded": recut_note["superseded"]})
+            return 1
 
     created = create_stages(api, work_order["id"], plan, cfg)
     for item in created:
@@ -1583,22 +2261,40 @@ def cmd_factory_start(args) -> int:
             "attempts": 0,
             "sha": None,
         }
-    save_ledger(api, work_order["id"], ledger, "start %s" % args.work_order)
+    save_ledger(api, work_order["id"], ledger,
+                ("start --recut %s" if recut else "start %s") % args.work_order)
     # GUL-989: the ledger now holds every stage identifier, so render the
     # descriptions that name another stage a second time (verify → review).
     patched = settle_stage_descriptions(api, cfg, spec, ledger, work_order, 1, "",
                                         plan, created)
     review_ref = (ledger["stages"].get(stage_key("review", 1)) or {}).get("identifier")
-    api.comment(work_order["id"],
-                "factory start: 5 stage issues created, chained %s. Checkout `%s`, branch `%s`."
-                % (" → ".join(i["issue"].get("identifier", "?") for i in created), cwd, ledger["branch"])
-                + (" Verify names the review issue `%s`." % review_ref if review_ref else ""))
-    emit(True, "start", ["5 stage issues created"], {
+    if recut_note:
+        superseded = ", ".join(item["issue"] for item in recut_note["superseded"]) or "none"
+        api.comment(work_order["id"],
+                    "factory start --recut: re-cut against `%s` (was `%s`). 5 stage issues "
+                    "created, chained %s. Branch `%s`. Superseded: %s. Old ledger archived "
+                    "at `%s`."
+                    % (cwd, recut_note.get("previousCwd") or "?",
+                       " → ".join(i["issue"].get("identifier", "?") for i in created),
+                       ledger["branch"], superseded, recut_note["archive"])
+                    + (" Verify names the review issue `%s`." % review_ref if review_ref else ""))
+    else:
+        api.comment(work_order["id"],
+                    "factory start: 5 stage issues created, chained %s. Checkout `%s`, branch `%s`."
+                    % (" → ".join(i["issue"].get("identifier", "?") for i in created), cwd, ledger["branch"])
+                    + (" Verify names the review issue `%s`." % review_ref if review_ref else ""))
+    emit(True, "start",
+         (["5 stage issues re-cut into %s" % cwd, "superseded: %s"
+           % ", ".join(item["issue"] for item in recut_note["superseded"])]
+          if recut_note else ["5 stage issues created"]), {
         "workOrder": args.work_order,
         "created": len(created),
         "cwd": cwd,
         "branch": ledger["branch"],
         "stages": [{"stage": i["stage"], "issue": i["issue"].get("identifier")} for i in created],
+        **({"recut": True, "archive": recut_note["archive"],
+            "previousCwd": recut_note.get("previousCwd"),
+            "superseded": recut_note["superseded"]} if recut_note else {}),
     })
     return 0
 
@@ -1631,7 +2327,33 @@ def _unblock_descriptor(api, action: str) -> dict:
     return {"owner": {"agentId": api.self_agent_id()}, "action": action}
 
 
-def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: str) -> None:
+def _escalation_owner(reasons) -> str:
+    """Who an escalation names: `owner` for a never-path hit, else `pm` (GUL-1730).
+
+    A failed gate, a third request-changes or a missing stage document are factory
+    calls — "not all decisions need me" — so they name the PM, who reads them in the
+    05:30 review. A never path is the exception ADR-093 point 6 makes for itself:
+    `agents/factory/**`, `clusters/`, SOPS keys and public exposure stay Wojtek's.
+    """
+    for reason in reasons or []:
+        if str(reason).startswith("never path"):
+            return "owner"
+    return "pm"
+
+
+def _escalation_words(owner: str) -> tuple:
+    """(what the reader does, the same thing as a noun) for one escalation."""
+    if owner == "owner":
+        return ("Wojtek decides — never path, ADR-093 point 6",
+                "Wojtek's decision (never path: ADR-093 point 6)")
+    return ("the PM decides in the 05:30 review",
+            "the PM's decision in the 05:30 review")
+
+
+def _escalate(api, work_order_id: str, ledger: dict, reason, identifier: str,
+              reasons=None) -> None:
+    owner = _escalation_owner(reasons if reasons is not None else [reason])
+    decides, _decision_noun = _escalation_words(owner)
     ledger["outcome"] = "escalate"
     ledger["escalated"] = reason
     save_ledger(api, work_order_id, ledger, "escalate %s" % identifier)
@@ -1639,9 +2361,11 @@ def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: st
         "status": "blocked",
         "executionPolicy": None,
         "unblockDescriptor": _unblock_descriptor(
-            api, "Wojtek decides on the escalated stage %s; then clear this block (or re-run "
-                 "`factory decide %s --apply`) so the work order can move." % (identifier, identifier)),
-        "comment": "factory escalate: %s — no more retries. Wojtek decides." % reason,
+            api, "%s on the escalated stage %s; then clear this block (or re-run "
+                 "`factory decide %s --apply`) so the work order can move."
+                 % (decides, identifier, identifier)),
+        "comment": "factory escalate: %s — no more retries. %s." % (
+            reason, decides[0].upper() + decides[1:]),
     })
 
 
@@ -1679,6 +2403,33 @@ def _escalate(api, work_order_id: str, ledger: dict, reason: str, identifier: st
 # re-arm starts from the same review rather than a redefined one.
 
 
+def _park_participants(stage_issue: dict) -> list:
+    """A participant the park can name when the policy carries no review stage (GUL-1760).
+
+    Any participant will do: the park needs a stage whose id cannot resolve, not a
+    live review. The order is most-specific first — the reviewer holding the stage,
+    the agent the review returns to, then whoever the issue is assigned to.
+    """
+    state = stage_issue.get("executionState") or {}
+    named = []
+    for candidate in (state.get("currentParticipant"), state.get("returnAssignee")):
+        if isinstance(candidate, dict) and (candidate.get("agentId") or candidate.get("userId")):
+            named.append(candidate)
+    if stage_issue.get("assigneeAgentId"):
+        named.append({"type": "agent", "agentId": stage_issue["assigneeAgentId"]})
+    if stage_issue.get("assigneeUserId"):
+        named.append({"type": "user", "userId": stage_issue["assigneeUserId"]})
+    if not named:
+        return []
+    first = named[0]
+    kept = {"type": first.get("type") or ("user" if first.get("userId") else "agent")}
+    if first.get("agentId"):
+        kept["agentId"] = first["agentId"]
+    if first.get("userId"):
+        kept["userId"] = first["userId"]
+    return [kept]
+
+
 def _park_policy(stage_issue: dict) -> dict:
     """The park's policy: this stage issue's own stages, re-identified (GUL-969).
 
@@ -1686,6 +2437,11 @@ def _park_policy(stage_issue: dict) -> dict:
     `executionState` point at a stage that no longer exists, which is the branch
     that clears the state and keeps `blocked`. Participants and `approvalsNeeded`
     are kept so the stage still describes the review it came from.
+
+    GUL-1760: a policy with no participant-bearing stage is not a park. The server
+    resolves a stage-less policy against the stored one, finds the live stage and
+    refuses the write, so a stage that lost its definition still gets a stage here —
+    built from whoever the issue still names (`_park_participants`).
     """
     policy = stage_issue.get("executionPolicy") or {}
     stages = []
@@ -1699,9 +2455,29 @@ def _park_policy(stage_issue: dict) -> dict:
         if stage.get("name"):
             kept["name"] = stage["name"]
         stages.append(kept)
+    if not stages:
+        fallback = _park_participants(stage_issue)
+        if fallback:
+            stages.append({"type": "review", "participants": fallback, "approvalsNeeded": 1})
     return {"mode": policy.get("mode") or "normal",
             "commentRequired": bool(policy.get("commentRequired", True)),
             "stages": stages}
+
+
+def _fresh_issue(api, stage_issue: dict) -> dict:
+    """The stage issue as `GET /issues/{id}` returns it (GUL-1760).
+
+    The company issue list masks `executionPolicy` and `executionState` to null, so
+    a stage resolved through `resolve_issue` → `by_identifier` looks like a stage
+    that never named a reviewer. Parking on that copy is what put no policy on the
+    wire and let the server resolve the write against the stored stage.
+    """
+    issue_id = stage_issue.get("id")
+    if not issue_id:
+        return stage_issue
+    full = api.issue(issue_id)
+    return full if isinstance(full, dict) and full.get("id") else stage_issue
+
 
 
 def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
@@ -1714,16 +2490,38 @@ def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
     blocker edge on a stage issue and raises no card here, so the park carries
     a self-owned descriptor: the agent running `factory decide` owns reopening
     it once the work order is decided.
+
+    GUL-1128 / GUL-1760: `executionPolicy` on the wire is what makes the park a
+    park. Paperclip 2026.1012.0 applies the *stored* policy when the PATCH carries
+    none, so against a stage that still names a reviewer — or that has an
+    `executionState` — omitting the key changes nothing and the server resolves the
+    write against the live stage: `422 Only the escalated reviewer can advance the
+    current execution stage` on an escalated hold, or a request-changes that lands
+    `in_review` and then `422 unblockDescriptor requires blocked status`. Sending the
+    policy with the stage ids dropped is the branch that clears the state and keeps
+    `blocked`; sending a policy that normalises to null (no stage, no monitor) is a
+    policy removal and dissolves the review instead.
+
+    So the park reads the stage issue with `GET /issues/{id}` first (`_fresh_issue`):
+    the company issue list masks `executionPolicy` and `executionState`, and a stage
+    resolved through `resolve_issue` carries neither. `_park_policy` then falls back
+    to whoever the issue still names, so the body carries a stage that cannot
+    resolve. The key is omitted only when the issue names nobody at all.
     """
     identifier = stage_issue.get("identifier", "?")
-    api.patch_issue(stage_issue["id"], {
+    current = _fresh_issue(api, stage_issue)
+    identifier = current.get("identifier") or identifier
+    body = {
         "status": "blocked",
-        "executionPolicy": _park_policy(stage_issue),
         "unblockDescriptor": _unblock_descriptor(
             api, "Re-run `factory decide %s --apply` once the factory tooling can park this "
                  "stage; that agent owns clearing this block." % identifier),
         "comment": comment,
-    })
+    }
+    policy = _park_policy(current)
+    if policy["stages"]:
+        body["executionPolicy"] = policy
+    api.patch_issue(current.get("id") or stage_issue["id"], body)
 
 
 def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: dict,
@@ -1751,13 +2549,14 @@ def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: di
         # then the park. When the park died on the 422 the engine was left
         # half-applied: escalate recorded, stage still `in_review`. Re-running it
         # must finish the missing write only; re-escalating would post a second
-        # "Wojtek decides" comment and clear the work order's executionState.
+        # "who decides" comment and clear the work order's executionState.
         if ledger.get("outcome") != "escalate":
             _escalate(api, work_order["id"], ledger, reason, identifier)
         _block_stage_issue(api, stage_issue,
                            "escalated: %s — the stage produced no artefact, so there is nothing to "
                            "decide. This stage is parked, not returned to its agent: the work order "
-                           "is blocked on Wojtek's decision. Re-arm it only after that." % reason)
+                           "is blocked on %s. Re-arm it only after that."
+                           % (reason, _escalation_words(_escalation_owner([reason]))[1]))
 
     emit(False, "decide", [reason], result)
     return 1
@@ -1812,16 +2611,63 @@ def cmd_factory_decide(args) -> int:
     # call `settle_merge()` uses, and a merged or closed PR goes straight to
     # that settlement path instead of being decided again.
     pr = ledger.get("pr") or {}
-    if pr.get("number"):
-        settled = ledger.get("merge") or {}
-        if settled.get("state"):
-            reason = "already settled: PR #%s %s" % (pr["number"], settled["state"])
-            emit(False, "decide", [reason], {
-                "ok": False, "check": "decide", "reasons": [reason], "stage": stage,
-                "round": round_no, "decision": settled["state"], "applied": False,
+    settled = ledger.get("merge") or {}
+    if pr.get("number") and settled.get("state") == "unlanded":
+        # GUL-1801: an unlanded park is not a terminal state. If the head is on main
+        # now, the work landed (however it got there) and settles; if not, the PR read
+        # below parks it again with the same reason.
+        if landed_on(cwd, branch_head_sha(cwd, ledger)):
+            settlement = settle_merge(api, work_order, ledger, pr, settled_view(
+                branch_head_sha(cwd, ledger), settled.get("at")), args.apply)
+            result = {"ok": settlement["state"] == "merged", "check": "decide",
+                      "decision": settlement["state"], "applied": bool(args.apply),
+                      "reasons": [settlement["reason"]] if settlement.get("reason") else [],
+                      "stage": stage, "round": round_no,
+                      "workOrder": work_order.get("identifier")}
+            emit(settlement["state"] == "merged", "decide",
+                 [settlement["reason"]] if settlement.get("reason") else [], result)
+            return 0 if settlement["state"] == "merged" else 1
+        ledger["merge"] = {}
+    elif pr.get("number") and settled.get("state"):
+        # "already settled" is a claim that the work is on main, and the merge commit
+        # is the only proof of it. A merged PR whose merge commit does not contain the
+        # work order's branch head gets the one action that fixes it (GUL-1598: round 2
+        # was stranded behind exactly this sentence), never "already settled".
+        head = branch_head_sha(cwd, ledger)
+        contained = merge_contains(cwd, head, settled.get("sha"))
+        if contained is False:
+            reason = (unlanded_reason(pr["number"], head, settled.get("sha"))
+                      if head else
+                      "PR #%s is merged in %s, but its round never landed: land the "
+                      "branch's head on main, then re-run"
+                      % (pr["number"], settled.get("sha") or "?"))
+            if args.apply and head:
+                _park_unlanded_once(api, work_order, ledger, pr, head,
+                                    settled.get("sha"), settled.get("at"), reason,
+                                    work_order.get("status") != "blocked"
+                                    or (settled.get("reason") != reason))
+            result = {
+                "ok": False,
+                "check": "decide",
+                "reasons": [reason],
+                "stage": stage,
+                "round": round_no,
+                "decision": "unlanded",
+                "applied": bool(args.apply),
+                "merge": settled.get("sha"),
+                "head": head,
                 "workOrder": work_order.get("identifier"),
-            })
+            }
+            emit(False, "decide", [reason], result)
             return 1
+        reason = "already settled: PR #%s %s" % (pr["number"], settled["state"])
+        emit(False, "decide", [reason], {
+            "ok": False, "check": "decide", "reasons": [reason], "stage": stage,
+            "round": round_no, "decision": settled["state"], "applied": False,
+            "workOrder": work_order.get("identifier"),
+        })
+        return 1
+    if pr.get("number"):
         try:
             view = pr_merge_view(ledger.get("repo") or "", pr["number"])
         except SetupError as exc:
@@ -1830,9 +2676,11 @@ def cmd_factory_decide(args) -> int:
             raise SetupError("cannot read PR #%s state, refusing to decide: %s"
                              % (pr["number"], str(exc)[:200]))
         if str(view.get("state") or "").upper() in ("MERGED", "CLOSED"):
-            merge_state = settle_merge(api, work_order, ledger, pr, view, bool(args.apply))
-            reason = "PR #%s is %s: settled, no stage opened" % (pr["number"], merge_state)
-            if args.apply:
+            settlement = settle_merge(api, work_order, ledger, pr, view, bool(args.apply))
+            merge_state = settlement["state"]
+            reason = settlement.get("reason") or \
+                "PR #%s is %s: settled, no stage opened" % (pr["number"], merge_state)
+            if args.apply and merge_state != "unlanded":
                 api.patch_issue(stage_issue["id"], {
                     "status": "cancelled",
                     "comment": ("cancelled: PR #%s is %s, so the work order moved on "
@@ -1852,6 +2700,24 @@ def cmd_factory_decide(args) -> int:
             }
             emit(merge_state == "merged", "decide", [reason], result)
             return 0 if merge_state == "merged" else 1
+
+    if stage == "gate":
+        # GUL-1267 G1: a gate decides the whole chain, so it is superseded the
+        # moment a later round opens — the head it would judge is the one the
+        # fix round is rewriting. GUL-1199 merged PR #189 thirty-seven seconds
+        # after verify round 1 opened round 2. Refuse as a setup error and write
+        # nothing: this is not a verdict on the diff, and booking it as a failed
+        # check would spend one of the three attempts the gate never got
+        # (GUL-1155).
+        later = open_later_round_stages(api, ledger, work_order, round_no)
+        if later:
+            rounds = ", ".join(str(r) for r in sorted({r for r, _k, _i in later}))
+            opened = ", ".join("%s (%s) is %s" % (k, i.get("identifier") or "?", i.get("status"))
+                               for _r, k, i in later)
+            raise SetupError(
+                "superseded: round %s is open (%s), so the gate for round %d decides no "
+                "head; it decides once every stage of round %s is done or cancelled"
+                % (rounds, opened, round_no, rounds))
 
     spec_doc = api.document(work_order["id"], "spec")
     if not spec_doc or not spec_doc.get("body"):
@@ -1913,7 +2779,33 @@ def cmd_factory_decide(args) -> int:
                       "--spec", spec_path]
 
     code, parsed, combined = _run_self(check_args)
+    if code not in (0, 1):
+        # Exit 2 is this CLI's own protocol for "the check could not judge"
+        # (SetupError). It is not a failed check: booking it as one spends a
+        # round the stage never got, and three of them escalate the work order
+        # with the wrong reason on a diff nobody has read (GUL-1155). Leave the
+        # ledger and the stage exactly as they are and let the caller retry.
+        reason = ((parsed or {}).get("reasons")
+                  or ["%s exited %d without a decision" % (check_args[0], code)])[0]
+        result = {
+            "ok": False,
+            "check": "decide",
+            "reasons": [reason],
+            "stage": stage,
+            "round": round_no,
+            "decision": "setup_error",
+            "applied": False,
+            "workOrder": work_order.get("identifier"),
+        }
+        emit(False, "decide", [reason], result)
+        return 2
     comment = check_comment(parsed, combined)
+    # GUL-1730: a diff between 1x and 3x its cap passes, and the number still gets
+    # said out loud — on the stage comment and on the work order, where the merge
+    # decision is read.
+    size_note = (parsed or {}).get("sizeNote") if stage == "gate" else None
+    if size_note:
+        comment = "%s\n\n%s" % (size_note, comment)
     passed = code == 0
     blocking = (parsed or {}).get("blockingConfirmed") or []
 
@@ -1929,7 +2821,23 @@ def cmd_factory_decide(args) -> int:
         reasons = ["a third fix round would start; confirmed blocking: %s" % ", ".join(blocking)]
 
     attempts = int((ledger["stages"].get(key) or {}).get("attempts", 0))
-    if decision == "request_changes":
+    if decision == "request_changes" and stage == "gate":
+        # The gate has no fix round and its agent has nothing to change: the
+        # PR is the whole diff, and the fix would be a new work order. Counting
+        # to three on it handed the stage back to an agent that could only
+        # re-run the same check, so the work order sat `in_progress` with no
+        # card, no blocker edge and nobody woken until Paperclip raised a
+        # `deliberate_wait_without_target` repair on it (GUL-1706). One failed
+        # gate is a decision, exactly as the stage template says — and since
+        # GUL-1730 it goes to the PM's 05:30 review, not to the owner, unless the
+        # failure is a never-path hit (ADR-093 point 6).
+        decision = "escalate"
+        gate_owner = _escalation_owner(reasons)
+        reasons = list(reasons) + [
+            "the gate has no fix round: a failed gate goes to %s, never back to the stage"
+            % ("Wojtek (never path, ADR-093 point 6)" if gate_owner == "owner"
+               else "the PM's 05:30 review")]
+    elif decision == "request_changes":
         attempts += 1
         ledger["stages"].setdefault(key, {})["attempts"] = attempts
         if attempts >= 3:
@@ -1951,11 +2859,12 @@ def cmd_factory_decide(args) -> int:
         if args.apply:
             reason = reasons[0] if reasons else "escalated"
             _escalate(api, work_order["id"], ledger, reason,
-                      stage_issue.get("identifier", "?"))
+                      stage_issue.get("identifier", "?"), reasons=reasons)
             _block_stage_issue(api, stage_issue,
                                "escalated: %s — this stage is parked, not returned to its agent, "
                                "and it will not be decided again. The work order is blocked on "
-                               "Wojtek's decision." % reason)
+                               "%s." % (reason, _escalation_words(
+                                   _escalation_owner(reasons))[1]))
         emit(False, "decide", reasons, result)
         return 1
 
@@ -2001,8 +2910,17 @@ def cmd_factory_decide(args) -> int:
         ledger["stages"][key]["sha"] = (cparsed or {}).get("sha")
         existing_pr = ledger.get("pr") or {}
         if existing_pr.get("number"):
-            # a decide re-run must not open a second PR for the same branch
-            pass
+            # a decide re-run must not open a second PR for the same branch, but
+            # the commit still has to reach that PR's head (GUL-1267 F-1): a
+            # green r2 that never pushed left the round-1 head on the PR, so
+            # the gate passed round-1 code and re-armed its merge monitor.
+            hcode, hparsed, hout = _run_self(["push", "--repo", cwd,
+                                              "--issue", work_order["identifier"]])
+            if hcode != 0:
+                raise SetupError("push refused: %s" % ((hparsed or {}).get("reasons")))
+            # `pr.head` is the sha the PR head carries; a reader (the gate) can
+            # compare it with the latest green row instead of trusting the round.
+            ledger["pr"]["head"] = (hparsed or {}).get("sha") or ledger["stages"][key].get("sha")
         else:
             pcode, pparsed, pout = _run_self(["open-pr", "--repo", cwd,
                                               "--issue", work_order["identifier"],
@@ -2015,7 +2933,8 @@ def cmd_factory_decide(args) -> int:
             match = re.search(r"/pull/([0-9]+)", url or "")
             if match:
                 number = int(match.group(1))
-            ledger["pr"] = {"number": number, "url": url}
+            ledger["pr"] = {"number": number, "url": url,
+                            "head": ledger["stages"][key].get("sha")}
             # the work product links the PR to the board; it is not the record
             # the next stage reads, so it lands after the ledger is durable. A
             # re-run reuses ledger["pr"] and leaves the link to be re-added by
@@ -2032,6 +2951,8 @@ def cmd_factory_decide(args) -> int:
         pass
     elif stage == "verify":
         if open_fix_round:
+            new_round = round_no + 1
+            superseded = latest_gate_row(ledger, round_no)
             ledger["fixRounds"] = int(ledger.get("fixRounds", 0)) + 1
             findings_block = ("\n**Confirmed blocking findings from verify (fix these, round %d):**\n%s\n"
                               % (round_no + 1, "\n".join("- %s" % b for b in blocking)))
@@ -2047,10 +2968,17 @@ def cmd_factory_decide(args) -> int:
                 }
             # GUL-989: the round's stage ids exist now, so the verify description
             # can name its own review stage instead of a `?`.
-            settle_stage_descriptions(api, cfg, spec, ledger, work_order, round_no + 1,
+            settle_stage_descriptions(api, cfg, spec, ledger, work_order, new_round,
                                       findings_block, plan, created)
+            # GUL-1267 G3: the round that just closed left a gate behind. Side
+            # effects, not the record: they run after the ledger write, like the
+            # gate's own monitor (GUL-497).
+            after_ledger.append(
+                lambda _row=superseded, _n=new_round: supersede_gate(
+                    api, _row, _n, work_order["id"]))
             api.comment(work_order["id"], "fix round %d opened: %s"
-                        % (round_no + 1, ", ".join(i["issue"].get("identifier", "?") for i in created)))
+                        % (new_round, ", ".join(i["issue"].get("identifier", "?")
+                                                 for i in created)))
     else:  # gate
         pr = ledger.get("pr") or {}
 
@@ -2062,10 +2990,11 @@ def cmd_factory_decide(args) -> int:
             api.patch_issue(_wo, {
                 "status": "in_review",
                 "executionPolicy": {"monitor": monitor_payload(_pr)},
-                "comment": ("gate passed. Merge PR #%s on GitHub: %s\n\n"
+                "comment": ("%sgate passed. Merge PR #%s on GitHub: %s\n\n"
                             "There is no card to accept: `factory tick` reads the PR "
                             "and moves this work order on by itself."
-                            % (_pr.get("number"), _pr.get("url") or "(no url recorded)")),
+                            % ("%s\n\n" % size_note if size_note else "",
+                               _pr.get("number"), _pr.get("url") or "(no url recorded)")),
             })
 
         after_ledger.append(_watch_merge)
@@ -2119,6 +3048,85 @@ def _stage_issue(api, entry, flags, work_order, label):
         sys.stderr.write("factory tick: %s: stage issue %s (%s) is gone: %s\n"
                          % (work_order, issue_id, label, exc))
         return None
+
+
+def latest_gate_row(ledger: dict, upto_round: int | None = None):
+    """The newest gate row in the ledger, as `(round, key, row)` or None (GUL-1267).
+
+    A fix round carries a gate of its own, so "the gate stage" is no longer one
+    key: `upto_round` picks the newest gate at or before that round — the one a
+    new fix round supersedes — and no bound picks the newest overall, which is the
+    one that settles the merge in `tick`.
+    """
+    rows = []
+    for key, row in (ledger.get("stages") or {}).items():
+        if not isinstance(row, dict) or not (key == "gate" or key.startswith("gate:r")):
+            continue
+        row_round = int(row.get("round") or 1)
+        if upto_round is not None and row_round > upto_round:
+            continue
+        rows.append((row_round, key, row))
+    rows.sort(key=lambda item: (item[0], item[1]))
+    return rows[-1] if rows else None
+
+
+def open_later_round_stages(api, ledger: dict, work_order: dict, round_no: int) -> list:
+    """Later-round stage issues that are still open: `[(round, key, issue)]`.
+
+    GUL-1267 G1: a gate for round N is superseded by round N+1. The guard reads
+    the live stage issues, not the ledger alone, because a row stays in the
+    ledger after its issue is cancelled or done. A row whose issue is gone (404)
+    counts as closed: a deleted stage must not block the gate forever.
+    """
+    flags: list = []
+    open_rows = []
+    for key, row in sorted((ledger.get("stages") or {}).items()):
+        if not isinstance(row, dict):
+            continue
+        row_round = int(row.get("round") or 1)
+        if row_round <= round_no:
+            continue
+        issue = _stage_issue(api, row, flags, work_order.get("identifier", "?"), key)
+        if issue is None or issue.get("status") in ("done", "cancelled"):
+            continue
+        open_rows.append((row_round, key, issue))
+    return open_rows
+
+
+def supersede_gate(api, gate_row, new_round: int, work_order_id: str) -> None:
+    """Cancel the gate a fix round supersedes and stop its merge watch (GUL-1267 G3).
+
+    GUL-1199: verify round 1 opened round 2 thirty-seven seconds after the round-1
+    gate had put PR #189 `in_review` with a merge monitor — a live offer to merge
+    a head the fix round was about to rewrite. So opening a round cancels the gate
+    it supersedes, with a comment that names the new round, and clears the work
+    order's monitor. The monitor clear is a policy-only PATCH: the work order's
+    status is not the factory's to change here (GUL-1128).
+    """
+    import pc
+    if gate_row is not None:
+        _round, key, row = gate_row
+        issue_id = row.get("issueId")
+        if issue_id:
+            try:
+                issue = api.issue(issue_id)
+            except pc.ApiError as exc:
+                if exc.status != 404:
+                    raise
+                issue = None
+            if issue and issue.get("status") not in ("done", "cancelled"):
+                api.patch_issue(issue_id, {
+                    "status": "cancelled",
+                    "comment": ("superseded: fix round %d opened, so this gate (%s) no "
+                                "longer decides this work order; the round-%d gate does."
+                                % (new_round, key, new_round)),
+                })
+    try:
+        order = api.issue(work_order_id)
+    except pc.ApiError:
+        order = None
+    if (order or {}).get("executionPolicy"):
+        api.patch_issue(work_order_id, {"executionPolicy": None})
 
 
 def cmd_factory_tick(args) -> int:
@@ -2195,12 +3203,42 @@ def cmd_factory_tick(args) -> int:
         if stop:
             flags.append("STOP")
         # the merge watch (GUL-553): a gate-passed work order waits `in_review`
-        # for a merge on GitHub, and this is what notices it.
+        # for a merge on GitHub, and this is what notices it. GUL-1267 G4: the
+        # gate that matters is the newest round's, not the round-1 `gate` row —
+        # opening a fix round cancels that one.
         merge_state = None
         pr = ledger.get("pr") or {}
-        gate_entry = stages.get("gate") or {}
+        settled = ledger.get("merge") or {}
+        cwd_repo = ledger.get("cwd") or ""
+        # GUL-1801: a merge only settles a work order when its commit contains the
+        # branch head. Whatever the remote says, a merged-but-not-landed PR stays
+        # blocked (GUL-1598 lost a whole fix round to "already merged"), and a park
+        # that was unlanded is re-checked every pass until the sha lands.
+        if pr.get("number") and settled.get("state") and item.get("status") != "done":
+            head = branch_head_sha(cwd_repo, ledger)
+            if settled.get("state") == "unlanded":
+                if landed_on(cwd_repo, head):
+                    # the head reached main some other way: that is the landing
+                    settlement = settle_merge(api, item, ledger, pr, settled_view(
+                        head, settled.get("at")), apply)
+                    merge_state = settlement["state"]
+                    flags.append("pr-%s" % merge_state)
+                else:
+                    flags.append("unlanded")
+                    _park_unlanded_once(api, item, ledger, pr, head,
+                                        settled.get("sha"), settled.get("at"),
+                                        unlanded_reason(pr["number"], head,
+                                                        settled.get("sha")), apply)
+            elif merge_contains(cwd_repo, head, settled.get("sha")) is False:
+                flags.append("unlanded")
+                _park_unlanded_once(api, item, ledger, pr, head, settled.get("sha"),
+                                    settled.get("at"),
+                                    unlanded_reason(pr["number"], head,
+                                                    settled.get("sha")), apply)
+        newest_gate = latest_gate_row(ledger)
+        gate_entry = newest_gate[2] if newest_gate else {}
         if pr.get("number") and not ledger.get("merge") and gate_entry.get("issueId"):
-            gate_issue = stage_issue(gate_entry, "gate")
+            gate_issue = stage_issue(gate_entry, newest_gate[1])
             if gate_issue and gate_issue.get("status") == "done":
                 try:
                     view = pr_merge_view(ledger.get("repo") or "", pr["number"])
@@ -2209,7 +3247,8 @@ def cmd_factory_tick(args) -> int:
                     sys.stderr.write("factory tick: %s: %s\n"
                                      % (item.get("identifier"), str(exc)[:200]))
                 else:
-                    merge_state = settle_merge(api, item, ledger, pr, view, apply)
+                    settlement = settle_merge(api, item, ledger, pr, view, apply)
+                    merge_state = settlement["state"]
                     flags.append("pr-%s" % merge_state)
         attempts = 0
         if current_key and stages.get(current_key):
@@ -2328,10 +3367,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--issue", required=True)
     s.set_defaults(fn=cmd_commit)
 
+    s = sub.add_parser("push")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--issue", required=True)
+    s.set_defaults(fn=cmd_push)
+
     s = sub.add_parser("open-pr")
     s.add_argument("--repo", required=True)
     s.add_argument("--issue", required=True)
     s.add_argument("--title", required=True)
+    # GUL-1801: draft by default; the gate marks it ready when it passes.
+    s.add_argument("--ready", action="store_true")
     s.set_defaults(fn=cmd_open_pr)
 
     common = argparse.ArgumentParser(add_help=False)
@@ -2342,6 +3388,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("work_order", help="work order identifier, e.g. GUL-439")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--repo", help="override the checkout directory")
+    s.add_argument("--recut", action="store_true",
+                   help="re-cut a work order whose stages were cut against the wrong "
+                        "checkout: archive the old ledger, cancel the superseded stage "
+                        "issues, mint five fresh stages. Refuses when any stage has a "
+                        "sha or the ledger has a pr/merge (GUL-1455)")
     s.set_defaults(fn=cmd_factory_start)
 
     s = sub.add_parser("settle", parents=[common])

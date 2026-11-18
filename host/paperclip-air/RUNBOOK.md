@@ -37,7 +37,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://paperclip.voitech.dev  # what t
 sudo ./bin/homelab-install-daemons.sh --status
 ```
 
-Five system daemons (`hermes-gateway`, `paperclip`, `minio-lan-proxy`, `gemini-tunnel`, `syncthing`),
+Six system daemons (`hermes-gateway`, `paperclip`, `minio-lan-proxy`, `gemini-tunnel`, `syncthing`, `hermes-dashboard`),
 **no** matching user agents, and the heartbeat sender as a system daemon too (ADR-126 — it used to be
 a user agent, which on a headless host meant it never ran). If a service shows both `loaded` and
 `YES` (agent present) you have two owners: run the installer, which fixes it.
@@ -92,6 +92,22 @@ Killing `hermes-gateway` ends any Hermes agent run in flight, including the one 
 Do it from a detached script (`python3 -c 'os.setsid()'`-style double fork) or with a person at the
 Mac; a run is not a supervisor and its unposted work dies with it.
 
+### 2b. `hermes-dashboard` (GUL-1111)
+
+Not part of the 2026-10-30 cutover: it was never an agent, so the installer uses its documented
+default command (README, section `hermes-dashboard`) when `services.env` has no
+`SVC_HERMES_DASHBOARD_CMD`. No secrets in that line.
+
+- Install: `sudo ./bin/homelab-install-daemons.sh` (re-run is safe). Check with `--status`, then
+  `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9119/api/health` (expect 200).
+- Restart: `sudo launchctl kickstart -k system/dev.voitech.homelab.hermes-dashboard`.
+- **Before exposing it:** `dashboard.public_url: https://hermes.voitech.dev` must be set in
+  `config.yaml`. On a loopback bind Hermes v0.22.7 enables its auth gate only for a non-loopback
+  `public_url` (`hermes_cli/web_server_boundary.py`, `public_hosts_engage_gate`). Without it, tunnel
+  traffic arrives from loopback and gets in with no password.
+- `HostWatchComponentDown` for `hermes-dashboard` means the heartbeat could not get an answer from
+  `/api/health` for 5 minutes. Look at `~/Library/Logs/homelab/hermes-dashboard.err.log` first.
+
 ## 3. Boot resilience (attended only)
 
 A MacBook Air has **no IPMI and no PDU**. There is no out-of-band power control: every recovery
@@ -137,6 +153,7 @@ the truth.
 | `minio-lan-proxy` | 9000 | 30 s | **1 s** (2026-10-30) | *pending drill* | none needed (stateless relay) |
 | `gemini-tunnel` | 8083 | 30 s | **1 s** (2026-10-30) | *pending drill* | none needed (stateless ssh forward) |
 | `syncthing` | 8384 | 30 s | **1 s** (2026-10-30) | *pending drill* | ≤ minutes (peer-to-peer; the vault lives on the other side too) |
+| `hermes-dashboard` | 9119 | 30 s | *not measured* | *pending drill* | none needed (stateless UI over `~/.hermes`, which has its own backup) |
 | whole platform after a logout | — | 300 s | — | *pending drill* | — |
 
 Measurements are the crash drill (`--kill <service>`): the service is SIGKILLed and the clock starts
@@ -172,7 +189,7 @@ and `gui_session` is 0 — the 2026-10-29 WindowServer logout — while silence 
 On the Air `gui_expected` stays 0 on purpose: nobody is supposed to be logged in.
 
 The heartbeat also carries per-component health (`hermes-gateway`, `paperclip`, `minio-lan-proxy`,
-`gemini-tunnel`, `syncthing`), which is how the Hermes API gets watched at all: it binds
+`gemini-tunnel`, `syncthing`, `hermes-dashboard`), which is how the Hermes API gets watched at all: it binds
 `127.0.0.1:8642` on the Air and only a process on the Air can see it.
 
 ### 5a. Claude Code auth is dead (GUL-641, signal corrected in GUL-661)
@@ -318,6 +335,59 @@ printf '%s' '<that value>' > ~/.config/homelab/heartbeat-token && chmod 600 ~/.c
   schedule that fires.
 - **After a macOS major upgrade,** re-run `--status` and one drill: system-domain launchd semantics
   and `UserName` daemons' access to the user's home are the things that break.
+
+### 6a. The Paperclip server's own hourly database backup (GUL-1331)
+
+`paperclipai` backs the DB up itself, **hourly at :05**, into `~/.paperclip/instances/default/data/backups`.
+With engine `auto` it tries `pg_dump` first and, on any error, silently drops to a JavaScript dump
+that reads every table with `SELECT * FROM <table>` and writes one `INSERT` per row. There is no
+`pg_dump` on this Mac, so every hour spent ~5 minutes escaping 2.4 GB (2.1 GB of it `heartbeat_runs`
+JSONB) and held the board's pool connection while it did it.
+
+The fix on this host: a shim that ignores the host in the connection string and runs the `pg_dump`
+that ships **inside** the CNPG primary pod (looked up by label; `paperclip-db-2` since 2026-11-12) — same 17.11 build as the server, no Homebrew, nothing new on
+the host. Source of truth: `bin/paperclip-pg-dump`, installed to `/usr/local/bin/paperclip-pg-dump`
+(root:wheel 0755). It emits **plain SQL on stdout**; the server does the gzip itself.
+
+Two delivery levers, deliberately redundant:
+
+1. `pg_dump` symlinks to the shim, on the paths the daemon actually searches:
+   `/usr/local/bin/pg_dump` (live today — the running daemon's `PATH` is
+   `/opt/homebrew/Cellar/node@24/24.22.0/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:...`,
+   **no `~/.local/bin`**) and `~/.local/bin/pg_dump` (for the on-disk plist `PATH`, which leads with
+   it — that one only applies after a restart). `spawn(process.env.PAPERCLIP_PG_DUMP_PATH ||
+   "pg_dump")` resolves the bare name through `PATH` **on every run**, not at process start — so
+   this lever needs **no restart**. Check with
+   `ps -Eww -p $(pgrep -f "paperclipai run --instance default") | tr ' ' '\n' | grep ^PATH=` and
+   `launchctl print system/dev.voitech.homelab.paperclip | sed -n '/environment = {/,/}/p'`.
+2. `PAPERCLIP_PG_DUMP_PATH=/usr/local/bin/paperclip-pg-dump` on the `SVC_PAPERCLIP_CMD` line in
+   `/Users/paperclip/.config/homelab/services.env` (0600, host state, not in git). That file is
+   `eval`ed by `/usr/local/libexec/homelab/homelab-service-run.sh`, so it is read at daemon start —
+   this is the one that survives a restart or reboot. **Do not** use `~/.paperclip/.env` for this:
+   the server's dotenv loader there is wired to the agent JWT only, not to general settings.
+
+Caveat: `runDatabaseBackup` picks the native path only when
+`backupEngine === "pg_dump" || (backupEngine === "auto" && !hasBackupTransforms(opts))`. If Instance
+Settings ever get `excludeTables` / `nullifyColumns` transforms, the JavaScript engine is chosen on
+purpose and this shim is bypassed, whatever the env says.
+
+```sh
+# how long the last three took and where they landed (JS engine ~290 s, pg_dump <90 s)
+grep -a "Automatic database backup complete" ~/Library/Logs/homelab/paperclip.log | tail -3
+# a pg_dump dump is all COPY; a JavaScript dump has zero COPY lines and thousands of INSERTs
+/usr/bin/gzip -dc ~/.paperclip/instances/default/data/backups/<newest>.sql.gz \
+  | grep -c '^COPY public\.'                                  # expect ~201
+/usr/bin/gzip -dc ~/.paperclip/instances/default/data/backups/<newest>.sql.gz \
+  | grep -c '^INSERT INTO'                                   # expect 0
+
+# rollback (either lever alone does nothing; remove both and you are back on the slow JS engine)
+sudo /bin/rm -f /usr/local/bin/pg_dump /Users/paperclip/.local/bin/pg_dump
+#   and strip PAPERCLIP_PG_DUMP_PATH from SVC_PAPERCLIP_CMD in ~/.config/homelab/services.env, then
+sudo /bin/launchctl kickstart -k system/dev.voitech.homelab.paperclip
+```
+
+Restart only when the board is idle: `launchctl kickstart` kills in-flight runs and `Heartbeat` rows
+left in `running` block agents. Removing the symlink alone is enough to fall back at the next hour.
 
 ## 7. Moving the whole fleet between models (GUL-769)
 

@@ -48,11 +48,13 @@ data:
         # Studio models; free tiers live in FreeLLMAPI (apps/freellmapi/).
         # ADR-091: one named free route into FreeLLMAPI's gpt-oss-120b pool.
         "gpt-oss-120b-freellmapi",
-        # Local LM Studio model on Hermes host
-        "gemma-4-12b-uncensored",
-        "qwen3.8-9b-heretic-uncensored",
-        "qwen3.8-27b-mlx",
-        # Honcho deriver/summary/dream/dialectic models
+        # Local LM Studio on the M1 Max: Qwen3.6-35B-A3B is the only model there
+        # (GUL-1431; Gemma and the local Qwens were deleted on 2026-11-12).
+        "qwen3.6-35b-a3b-local",
+        "qwen3.6-35b-a3b-local-nothink",
+        # Local Ollama models formerly used by the Honcho deriver (Honcho
+        # retired, GUL-355/GUL-402); kept routed for Hindsight experiments and
+        # the OpenChamber agents.
         "nemotron-3-nano-30b-ollama",
         "openai/nemotron-3-nano-30b-ollama",
         "nemotron-3-super-ollama",
@@ -69,10 +71,8 @@ data:
         "minimax-m3.1-flash-ollama",
         "mistral-large-4-ollama",
         "muse-spark-open-ollama",
-        "clef-27b-ollama",
         "mimo-v2.6-flash-ollama",
         "mimo-v2.6-pro-ollama",
-        "kimi-k3.1-pro-ollama",
         # OpenCode Go subscription models (2026-10-02: 29 verified live
         # + deepseek-v4.1-flash OpenChamber native route; 7 endpoint ids
         # excluded - chat-completions 400s, see litellm-helm-release.yaml)
@@ -110,21 +110,27 @@ data:
         "deepseek-v4.1-flash",
         "beam-free-go",
         "step-5-preview-go",
-        "claude-haiku-5-5-go",
-        "gemini-4-argon-contributor-go",
-        "gpt-5.6-luna-go",
-        "gpt-6-luna-go",
-        "grok-4.6-go",
-        "grok-4.7-go",
-        "minimax-m2.7-go",
         "minimax-m3.1-flash-go",
-        "muse-spark-1.2-contributor-go",
-        "muse-spark-1.3-contributor-go",
-        "gemini-4-argon-go",
+        # GUL-1096: every id here grants all service keys permission to one model,
+        # so the list is route-backed only - an id earns a place when
+        # litellm-helm-release.yaml routes it, not merely because upstream lists
+        # it. weekly-model-sync.py:compute_provisioner_desired keeps it that way.
+        # Dropped the strays that had no model_name route: failed/400ing probes
+        # (gpt-6-luna-go, gpt-5.6-luna-go, grok-4.6-go, grok-4.7-go,
+        # minimax-m2.7-go), ids not enabled or not on the endpoint
+        # (muse-spark-1.2-contributor-go, muse-spark-1.3-contributor-go,
+        # claude-haiku-5-5-go, gemini-4-argon-go,
+        # gemini-4-argon-contributor-go, kimi-k3.1-pro-go, kimi-k3.1-pro-ollama,
+        # crouton-alpha-free-go, hy4-go) and clef-27b-ollama above.
+        # iceman-contributor-free-go stays: main added its route (PR #172).
         "iceman-contributor-free-go",
-        "kimi-k3.1-pro-go",
-        "crouton-alpha-free-go",
-        "hy4-go",
+        # GUL-1446: second hop of the reflect chain and, since the 2026-11-15
+        # follow-up, the PRIMARY of the mental-model refresh lane in
+        # apps/hindsight/hindsight-helm-release.yaml (iceman cannot serve the
+        # `json_schema` a refresh asks for). Route added in
+        # litellm-helm-release.yaml, so the key must be able to call it or the
+        # lane dies at the key check.
+        "longcat-2.5-free-go",
     ]
 
     def expand_models(models):
@@ -145,9 +151,7 @@ data:
         "WIFE_KEY",
         "WOJTEK_KEY",
         "HERMES_ANDRZEJ_KEY",
-        "MEMORY_HONCHO_KEY",
         "HERMES_BILL_CIPHER_KEY",
-        "OPENVIKING_KEY",
         # Pi + OpenCode engineers in Paperclip on the M1 Air (ADR-075)
         "PAPERCLIP_CODERS_KEY",
         # Hindsight reflect + mental-model refresh through llm-hub (GUL-263 /

@@ -1,108 +1,126 @@
 #!/usr/bin/env python3
 """
-Generate a provisioned Grafana dashboard ConfigMap for a homelab service namespace.
+Render the homelab Grafana dashboard set — the one generator.
 
-Output is a Kubernetes ConfigMap JSON with the dashboard under .data.<name>.json,
-suitable for Flux + the Grafana sidecar (label grafana_dashboard: "1").
+The standard it enforces is written down in `docs/dashboards.md`; the machine
+readable half lives in `scripts/dashboards/manifest.json`. Every dashboard in
+`apps/*/` and `infrastructure/auth/` is an output of this file: re-rendering the
+manifest reproduces each ConfigMap byte for byte (no hand edits, no drift).
 
-Examples:
+    scripts/render_dashboards.sh                      # rewrite the tree in place
+    scripts/render_dashboards.sh --output-dir /tmp/x  # render somewhere else
 
-    # gpu-embedding (single GPU service)
-    python3 scripts/render_namespace_dashboard.py \
-        --namespace gpu-embedding \
-        --title "gpu-embedding — Ollama Embedding Service" \
-        --uid gpu-embedding-ollama \
-        --with-gpu \
-        --services ollama-embeddings \
-        --pvcs "ollama-embeddings:ollama-models" \
-        > apps/gpu-embedding/gpu-embedding-dashboard-configmap.yaml
+Standard, in one paragraph: title `<namespace> — <What>`, tags `homelab` plus
+the namespace, refresh `30s`, one SCHEMA_VERSION for the whole set, two
+datasource template variables (`datasource` for Prometheus, `loki` for Loki)
+that every panel points at instead of a hardcoded uid, the homelab dashboards
+dropdown link, three rows in the order Golden signals / Resources / Logs, and
+every data panel carrying a description and a unit.
 
-    # honcho (multi-service, no GPU)
-    python3 scripts/render_namespace_dashboard.py \
-        --namespace honcho \
-        --title "honcho — Memory & Dialectic" \
-        --uid honcho-overview \
-        --services honcho-api,honcho-deriver,honcho-db,honcho-redis \
-        --pvcs "honcho-db:honcho-db-1,honcho-redis:redis-data" \
-        > apps/honcho/honcho-dashboard-configmap.yaml
+Output is a Kubernetes ConfigMap in JSON (valid YAML), with the dashboard under
+`.data.<key>.json`, labelled for the Grafana sidecar (`grafana_dashboard: "1"`)
+and annotated with its folder (`grafana.folder`).
+
+Standard library only: the Air and CI have no PyYAML.
 """
 
 import argparse
 import json
+import os
 import sys
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
 
-PROM_UID = "PBFA97CFB590B2093"
-LOKI_UID = "P8E80F9AEF21F6940"
+# One schema version for every dashboard in the set (GUL-1598). Bumping this is
+# a deliberate, set-wide change: every dashboard is re-rendered in the same PR.
+SCHEMA_VERSION = 41
+
+MANIFEST_DEFAULT = "scripts/dashboards/manifest.json"
+
+# Panels never name a datasource uid. Both uids Grafana mints are pinned in the
+# provisioning file and reachable through these variables, so a re-provisioned
+# datasource cannot blind a dashboard (GUL-1693 is exactly that failure).
+PROM = {"type": "prometheus", "uid": "${datasource}"}
+LOKI = {"type": "loki", "uid": "${loki}"}
+
+ROW_ORDER = ("Golden signals", "Resources", "Logs")
+
+HOMELAB_LINK = {
+    "asDropdown": True,
+    "icon": "external link",
+    "includeVars": False,
+    "keepTime": True,
+    "tags": ["homelab"],
+    "targetBlank": False,
+    "title": "Homelab dashboards",
+    "tooltip": "Every homelab dashboard",
+    "type": "dashboards",
+    "url": "",
+}
+
+THRESHOLDS_80_90 = [
+    {"color": "green", "value": None},
+    {"color": "yellow", "value": 80},
+    {"color": "red", "value": 90},
+]
+
+THRESHOLDS_75_90 = [
+    {"color": "green", "value": None},
+    {"color": "yellow", "value": 75},
+    {"color": "red", "value": 90},
+]
+
+# --- SLO dashboards (GUL-1599) --------------------------------------------
+# The SLOs `infrastructure/observability/slo/slo-prometheus-rules.yaml` records:
+# three services, two SLIs, one error budget per service (1 - target). Panels
+# read the recorded ERROR ratio and divide by that same budget, so the dashboard
+# and the burn-rate alerts cannot disagree about what a burn rate means.
+SLO_SERVICES = (
+    {"service": "open-webui", "label": "Open WebUI", "target": 99.5, "budget": "0.005"},
+    {"service": "hindsight-api", "label": "Hindsight API", "target": 99.5, "budget": "0.005"},
+    {"service": "grafana", "label": "Grafana", "target": 95, "budget": "0.05"},
+)
+SLO_SLIS = ("availability", "latency")
+SLO_BURN_WINDOWS = ("1h", "6h")
+
+LOG_OPTIONS = {
+    "dedupStrategy": "none",
+    "enableLogDetails": True,
+    "prettifyLogMessage": True,
+    "showCommonLabels": True,
+    "showControls": True,
+    "showFieldSelector": True,
+    "showLabels": True,
+    "showLogContextToggle": True,
+    "showTime": True,
+    "sortOrder": "Descending",
+    "syntaxHighlighting": True,
+    "wrapLogMessage": True,
+}
 
 
-@dataclass
-class Panel:
-    panel_id: int
-    title: str
-    panel_type: str = "timeseries"
-    datasource: Optional[dict] = None
-    targets: List[dict] = field(default_factory=list)
-    field_config: dict = field(default_factory=dict)
-    options: dict = field(default_factory=dict)
-    grid_pos: dict = field(default_factory=lambda: {"h": 7, "w": 12, "x": 0, "y": 0})
-
-    def to_dict(self) -> dict:
-        panel = {
-            "id": self.panel_id,
-            "title": self.title,
-            "type": self.panel_type,
-            "datasource": self.datasource,
-            "targets": self.targets,
-            "fieldConfig": self.field_config,
-            "options": self.options,
-            "gridPos": self.grid_pos,
-        }
-        # Row and text panels don't need the timeseries-only structures.
-        if self.panel_type in ("row", "text"):
-            panel.pop("targets", None)
-            panel.pop("fieldConfig", None)
-        if self.panel_type == "row":
-            panel.pop("options", None)
-        return panel
-
-
-def prom_ds() -> dict:
-    return {"type": "prometheus", "uid": PROM_UID}
-
-
-def loki_ds() -> dict:
-    return {"type": "loki", "uid": LOKI_UID}
-
-
-def timeseries_defaults(
-    unit: str,
-    min_val: Optional[float] = 0,
-    max_val: Optional[float] = None,
-    thresholds: Optional[List[Tuple[Optional[float], str]]] = None,
-) -> dict:
-    """Build fieldConfig.defaults for a timeseries panel."""
-    defaults: dict[str, Any] = {
+# ---------------------------------------------------------------------------
+# panel fieldConfig / options builders
+# ---------------------------------------------------------------------------
+def timeseries_defaults(unit, min_val=None, max_val=None, thresholds=None):
+    defaults = {
         "unit": unit,
         "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "axisCenteredZero": False,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
             "barAlignment": 0,
-            "lineWidth": 1,
+            "drawStyle": "line",
             "fillOpacity": 20,
             "gradientMode": "opacity",
-            "spanNulls": False,
+            "hideFrom": {"legend": False, "tooltip": False, "viz": False},
             "insertNulls": False,
-            "showPoints": "never",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
             "pointSize": 5,
-            "stacking": {"mode": "none", "group": "A"},
-            "axisPlacement": "auto",
-            "axisLabel": "",
-            "axisColorMode": "text",
             "scaleDistribution": {"type": "linear"},
-            "axisCenteredZero": False,
-            "hideFrom": {"tooltip": False, "viz": False, "legend": False},
+            "showPoints": "never",
+            "spanNulls": False,
+            "stacking": {"group": "A", "mode": "none"},
             "thresholdsStyle": {"mode": "off"},
         },
     }
@@ -111,711 +129,913 @@ def timeseries_defaults(
     if max_val is not None:
         defaults["max"] = max_val
     if thresholds:
-        defaults["thresholds"] = {
-            "mode": "absolute",
-            "steps": [
-                {"color": color, "value": value}
-                for value, color in thresholds
-            ],
-        }
+        defaults["thresholds"] = {"mode": "absolute", "steps": thresholds}
     return defaults
 
 
-def stat_panel_defaults(unit: str) -> dict:
-    """Defaults for a stat panel showing current value."""
+def stat_defaults(unit, thresholds=None):
     return {
         "unit": unit,
         "custom": {},
         "min": None,
         "max": None,
-        "thresholds": {
-            "mode": "absolute",
-            "steps": [
-                {"color": "green", "value": None},
-                {"color": "yellow", "value": 80},
-                {"color": "red", "value": 90},
-            ],
-        },
+        "thresholds": {"mode": "absolute", "steps": thresholds or THRESHOLDS_80_90},
     }
 
 
-def timeseries_options() -> dict:
+def timeseries_options():
     return {
         "legend": {
+            "calcs": ["lastNotNull", "max"],
             "displayMode": "table",
             "placement": "right",
-            "calcs": ["lastNotNull", "max"],
+            "showLegend": True,
         },
         "tooltip": {"mode": "multi", "sort": "none"},
     }
 
 
-def stat_options() -> dict:
+def stat_options():
     return {
-        "graphMode": "area",
         "colorMode": "value",
+        "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
         "textMode": "auto",
     }
 
 
-def row_panel(panel_id: int, title: str, y: int, datasource: Optional[dict] = None) -> Panel:
-    return Panel(
-        panel_id=panel_id,
-        title=title,
-        panel_type="row",
-        datasource=datasource or prom_ds(),
-        grid_pos={"h": 1, "w": 24, "x": 0, "y": y},
-    )
+# ---------------------------------------------------------------------------
+# PromQL / LogQL
+# ---------------------------------------------------------------------------
+def pod_selector(namespace, prefix, exclude=()):
+    """A pod-name prefix as a selector, optionally minus sibling workloads.
 
-
-def text_panel(panel_id: int, title: str, content: str, y: int, h: int = 2) -> Panel:
-    return Panel(
-        panel_id=panel_id,
-        title=title,
-        panel_type="text",
-        datasource=prom_ds(),
-        grid_pos={"h": h, "w": 24, "x": 0, "y": y},
-        options={"mode": "markdown", "content": content},
-    )
-
-
-def friendly_name(pod_prefix: str, aliases: Optional[Dict[str, str]] = None) -> str:
-    """Return a human-friendly service label from a pod prefix.
-
-    Explicit aliases (service prefix -> display label) win. Otherwise strip a
-    leading namespace segment if present, else fall back to the last segment.
-
-    Examples:
-        'honcho-api' -> 'api'
-        'mattermost-mattermost-team-edition' -> 'mattermost' (last segment is confusing)
-        'cloudflared-chat' with alias -> 'tunnel'
+    `exclude` exists because a prefix is a substring match: `nextcloud-` also
+    matches `nextcloud-db` and `nextcloud-redis-master`, and summing those into
+    the app panel double-counts them. RE2 has no lookahead, so the exclusions
+    are a second `pod!~` matcher.
     """
-    if aliases and pod_prefix in aliases:
-        return aliases[pod_prefix]
-    # Strip leading namespace if present (namespace-service-...)
-    # e.g. 'mattermost-mattermost-team-edition' has segments ['mattermost', 'mattermost', 'team', 'edition']
-    # We can't always auto-detect, so if the prefix contains the namespace twice, prefer
-    # the part after the first namespace segment.
-    segments = pod_prefix.split("-")
-    # Heuristic: if first segment looks like a namespace and the rest starts with a known service word,
-    # use the last meaningful segment minus trailing common noise.
-    label = segments[-1]
-    # Remove common trailing noise from deployment names.
-    for noise in ("team", "edition", "deployment", "service"):
-        if label.lower() == noise and len(segments) > 1:
-            label = segments[-2]
-    return label
+    selector = 'namespace="%s",pod=~"%s.*"' % (namespace, prefix)
+    if exclude:
+        if isinstance(exclude, str):
+            exclude = [exclude]
+        selector += ',pod!~"%s"' % "|".join("%s.*" % item for item in exclude)
+    return selector
 
 
-def service_cpu_stat(
-    namespace: str, pod_prefix: str, panel_id: int, x: int, y: int, aliases: Optional[Dict[str, str]] = None
-) -> Panel:
-    """CPU usage / request / limit stat panel for a single service."""
-    label = friendly_name(pod_prefix, aliases)
-    return Panel(
-        panel_id=panel_id,
-        title=f"{label} CPU",
-        panel_type="stat",
-        datasource=prom_ds(),
-        targets=[
-            {
-                "refId": "A",
-                "expr": f'sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}}[5m]))',
-                "legendFormat": "usage",
-                "instant": True,
+def pvc_selector(pvc):
+    """A PVC name as a selector. `name-*` means "<name>, any instance number".
+
+    A CNPG instance PVC ("<cluster>-<n>") changes name on every switchover, so
+    the manifest names the cluster and this renders the instance regex.
+    """
+    if pvc.endswith("-*"):
+        return 'persistentvolumeclaim=~"%s-[0-9]+"' % pvc[:-2]
+    return 'persistentvolumeclaim="%s"' % pvc
+
+
+# ---------------------------------------------------------------------------
+# dashboard builder
+# ---------------------------------------------------------------------------
+class Dashboard:
+    """Accumulates panels with stable ids and a running grid cursor."""
+
+    def __init__(self, spec):
+        self.spec = spec
+        self.namespace = spec["k8sNamespace"]
+        self.panels = []
+        self.next_id = 1
+        self.y = 0
+
+    # -- primitives ---------------------------------------------------------
+    def _add(self, panel, x, y, w, h):
+        panel["id"] = self.next_id
+        panel["gridPos"] = {"h": h, "w": w, "x": x, "y": y}
+        self.next_id += 1
+        self.panels.append(panel)
+        return panel
+
+    def row(self, title):
+        panel = {
+            "collapsed": False,
+            "panels": [],
+            "title": title,
+            "type": "row",
+        }
+        self._add(panel, 0, self.y, 24, 1)
+        self.y += 1
+
+    def text(self, title, content, h=2):
+        panel = {
+            "options": {"content": content, "mode": "markdown"},
+            "title": title,
+            "type": "text",
+            "datasource": dict(PROM),
+        }
+        self._add(panel, 0, self.y, 24, h)
+        self.y += h
+
+    def timeseries(self, title, description, unit, targets, x, y, w=12, h=7,
+                   min_val=None, max_val=None, thresholds=None, datasource=None):
+        panel = {
+            "datasource": dict(datasource or PROM),
+            "description": description,
+            "fieldConfig": {
+                "defaults": timeseries_defaults(unit, min_val, max_val, thresholds),
+                "overrides": [],
             },
-            {
-                "refId": "B",
-                "expr": f'sum(kube_pod_container_resource_requests{{namespace="{namespace}",pod=~"{pod_prefix}.*",resource="cpu",container!=""}})',
-                "legendFormat": "request",
-                "instant": True,
-            },
-            {
-                "refId": "C",
-                "expr": f'sum(kube_pod_container_resource_limits{{namespace="{namespace}",pod=~"{pod_prefix}.*",resource="cpu",container!=""}})',
-                "legendFormat": "limit",
-                "instant": True,
-            },
-        ],
-        field_config={"defaults": stat_panel_defaults("cores"), "overrides": []},
-        options=stat_options(),
-        grid_pos={"h": 4, "w": 8, "x": x, "y": y},
-    )
+            "options": timeseries_options(),
+            "targets": targets,
+            "title": title,
+            "type": "timeseries",
+        }
+        return self._add(panel, x, y, w, h)
 
+    def stat(self, title, description, unit, targets, x, y, w=8, h=4,
+             thresholds=None, datasource=None):
+        panel = {
+            "datasource": dict(datasource or PROM),
+            "description": description,
+            "fieldConfig": {"defaults": stat_defaults(unit, thresholds), "overrides": []},
+            "options": stat_options(),
+            "targets": targets,
+            "title": title,
+            "type": "stat",
+        }
+        return self._add(panel, x, y, w, h)
 
-def service_memory_stat(
-    namespace: str, pod_prefix: str, panel_id: int, x: int, y: int, aliases: Optional[Dict[str, str]] = None
-) -> Panel:
-    """Memory usage / request / limit stat panel for a single service."""
-    label = friendly_name(pod_prefix, aliases)
-    return Panel(
-        panel_id=panel_id,
-        title=f"{label} memory",
-        panel_type="stat",
-        datasource=prom_ds(),
-        targets=[
-            {
-                "refId": "A",
-                "expr": f'sum(container_memory_working_set_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})',
-                "legendFormat": "usage",
-                "instant": True,
-            },
-            {
-                "refId": "B",
-                "expr": f'sum(kube_pod_container_resource_requests{{namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory",container!=""}})',
-                "legendFormat": "request",
-                "instant": True,
-            },
-            {
-                "refId": "C",
-                "expr": f'sum(kube_pod_container_resource_limits{{namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory",container!=""}})',
-                "legendFormat": "limit",
-                "instant": True,
-            },
-        ],
-        field_config={"defaults": stat_panel_defaults("bytes"), "overrides": []},
-        options=stat_options(),
-        grid_pos={"h": 4, "w": 8, "x": x, "y": y},
-    )
-
-
-def service_pvc_stat(
-    namespace: str, pod_prefix: str, pvc_name: str, panel_id: int, x: int, y: int, aliases: Optional[Dict[str, str]] = None
-) -> Panel:
-    """PVC used / capacity stat panel for a single service."""
-    label = friendly_name(pod_prefix, aliases)
-    return Panel(
-        panel_id=panel_id,
-        title=f"{label} PVC",
-        panel_type="stat",
-        datasource=prom_ds(),
-        targets=[
-            {
-                "refId": "A",
-                "expr": f'kubelet_volume_stats_used_bytes{{namespace="{namespace}",persistentvolumeclaim="{pvc_name}"}}',
-                "legendFormat": "used",
-                "instant": True,
-            },
-            {
-                "refId": "B",
-                "expr": f'kubelet_volume_stats_capacity_bytes{{namespace="{namespace}",persistentvolumeclaim="{pvc_name}"}}',
-                "legendFormat": "capacity",
-                "instant": True,
-            },
-        ],
-        field_config={"defaults": stat_panel_defaults("bytes"), "overrides": []},
-        options=stat_options(),
-        grid_pos={"h": 4, "w": 8, "x": x, "y": y},
-    )
-
-
-def per_service_row(
-    namespace: str,
-    services: List[str],
-    pvcs: Dict[str, str],
-    start_y: int,
-    start_id: int,
-    aliases: Optional[Dict[str, str]] = None,
-) -> Tuple[List[Panel], int]:
-    """Return panels and the next free panel id. Layout: one row per service."""
-    panels: List[Panel] = []
-    y = start_y
-    next_id = start_id
-
-    panels.append(row_panel(next_id, "Per-service resources", y, datasource=prom_ds()))
-    next_id += 1
-    y += 1
-
-    for pod_prefix in services:
-        has_pvc = pod_prefix in pvcs
-        # If the service has a PVC we use three 8-wide stat panels in one row.
-        # Otherwise CPU + memory share the row (two 8-wide panels, 8 unused).
-        panels.append(service_cpu_stat(namespace, pod_prefix, next_id, 0, y, aliases))
-        next_id += 1
-        panels.append(service_memory_stat(namespace, pod_prefix, next_id, 8, y, aliases))
-        next_id += 1
-        if has_pvc:
-            panels.append(service_pvc_stat(namespace, pod_prefix, pvcs[pod_prefix], next_id, 16, y, aliases))
-            next_id += 1
-        y += 4
-
-    return panels, next_id
-
-
-def cpu_panels(namespace: str, start_y: int, first_id: int = 1) -> Tuple[List[Panel], int]:
-    y = start_y
-    panels = [
-        row_panel(first_id, "CPU", y),
-        Panel(
-            panel_id=first_id + 1,
-            title="CPU usage vs request vs limit per pod",
-            datasource=prom_ds(),
-            targets=[
+    def logs(self, title, description):
+        namespace = self.namespace
+        base = '{k8s_namespace_name="%s"}' % namespace
+        panel = {
+            "datasource": dict(LOKI),
+            "description": description,
+            "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+            "options": dict(LOG_OPTIONS),
+            "targets": [
                 {
+                    "editorMode": "code",
+                    "expr": base,
+                    "queryType": "range",
                     "refId": "A",
-                    "expr": f'sum by (pod, container) (rate(container_cpu_usage_seconds_total{{namespace="{namespace}",container!=""}}[5m]))',
-                    "legendFormat": "{{pod}}/{{container}} usage",
                 },
                 {
+                    "editorMode": "code",
+                    "expr": '%s |~ "(?i)error|warn|fatal|panic"' % base,
+                    "queryType": "range",
                     "refId": "B",
-                    "expr": f'sum by (pod, container) (container_spec_cpu_quota{{namespace="{namespace}",container!=""}} / container_spec_cpu_period{{namespace="{namespace}",container!=""}})',
-                    "legendFormat": "{{pod}}/{{container}} limit",
                 },
                 {
+                    "editorMode": "code",
+                    "expr": '%s |~ "(?i)metric|telemetry|otel|export"' % base,
+                    "queryType": "range",
                     "refId": "C",
-                    "expr": f'sum by (pod, container) (kube_pod_container_resource_requests{{namespace="{namespace}",resource="cpu",container!=""}})',
-                    "legendFormat": "{{pod}}/{{container}} request",
                 },
             ],
-            field_config={"defaults": timeseries_defaults("cores"), "overrides": []},
-            options=timeseries_options(),
-            grid_pos={"h": 8, "w": 24, "x": 0, "y": y + 1},
-        ),
-        Panel(
-            panel_id=first_id + 2,
-            title="CPU utilisation % of limit per container",
-            datasource=prom_ds(),
-            targets=[
+            "title": title,
+            "type": "logs",
+        }
+        return self._add(panel, 0, self.y, 24, 12)
+
+    # -- the three standard rows -------------------------------------------
+    def golden_signals(self):
+        self.row(ROW_ORDER[0])
+        ns = self.namespace
+        y = self.y
+
+        self.timeseries(
+            "CPU saturation — % of limit",
+            "CPU used by every container in the namespace as a percentage of its "
+            "Kubernetes CPU limit. Above 80% the workload is throttling before it "
+            "is unhealthy.",
+            "percent",
+            [
                 {
+                    "expr": '100 * sum(rate(container_cpu_usage_seconds_total{namespace="%s",container!=""}[5m]))'
+                            ' / sum(container_spec_cpu_quota{namespace="%s",container!=""}'
+                            ' / container_spec_cpu_period{namespace="%s",container!=""})' % (ns, ns, ns),
+                    "legendFormat": "used of limit",
                     "refId": "A",
-                    "expr": f'100 * sum by (pod, container) (rate(container_cpu_usage_seconds_total{{namespace="{namespace}",container!=""}}[5m])) / sum by (pod, container) (container_spec_cpu_quota{{namespace="{namespace}",container!=""}} / container_spec_cpu_period{{namespace="{namespace}",container!=""}})',
+                },
+            ],
+            0, y, w=12, h=7, max_val=100, thresholds=THRESHOLDS_80_90,
+        )
+        self.timeseries(
+            "Memory saturation — % of limit",
+            "Working-set memory of every container in the namespace as a percentage "
+            "of its Kubernetes memory limit. Rising to the limit ends in OOMKill.",
+            "percent",
+            [
+                {
+                    "expr": '100 * sum(container_memory_working_set_bytes{namespace="%s",container!=""})'
+                            ' / sum(kube_pod_container_resource_limits{namespace="%s",resource="memory",container!=""})'
+                            % (ns, ns),
+                    "legendFormat": "used of limit",
+                    "refId": "A",
+                },
+            ],
+            12, y, w=12, h=7, max_val=100, thresholds=THRESHOLDS_80_90,
+        )
+        y += 7
+
+        self.timeseries(
+            "Pod network throughput",
+            "Bytes per second received and transmitted by each pod in the namespace "
+            "(interface names may add a little loopback traffic).",
+            "Bps",
+            [
+                {
+                    "expr": 'sum by (pod) (rate(container_network_receive_bytes_total{namespace="%s"}[5m]))' % ns,
+                    "legendFormat": "{{pod}} receive",
+                    "refId": "A",
+                },
+                {
+                    "expr": 'sum by (pod) (rate(container_network_transmit_bytes_total{namespace="%s"}[5m]))' % ns,
+                    "legendFormat": "{{pod}} transmit",
+                    "refId": "B",
+                },
+            ],
+            0, y, w=12, h=7,
+        )
+        self.timeseries(
+            "Container restarts",
+            "Container restarts in the namespace over the last 5 minutes. Any "
+            "non-zero value is a crash loop or a probe killing a slow start.",
+            "short",
+            [
+                {
+                    "expr": 'sum by (pod, container) (increase(kube_pod_container_status_restarts_total{namespace="%s"}[5m]))' % ns,
                     "legendFormat": "{{pod}}/{{container}}",
+                    "refId": "A",
                 },
             ],
-            field_config={
-                "defaults": timeseries_defaults(
-                    "percent",
-                    max_val=100,
-                    thresholds=[
-                        (None, "green"),
-                        (80, "yellow"),
-                        (90, "red"),
-                    ],
-                ),
-                "overrides": [],
-            },
-            options=timeseries_options(),
-            grid_pos={"h": 7, "w": 12, "x": 0, "y": y + 9},
-        ),
-    ]
-    return panels, first_id + 3
+            12, y, w=12, h=7, min_val=0,
+        )
+        y += 7
 
+        self.timeseries(
+            "Error log lines per minute",
+            "Loki lines in the namespace matching error/warn/fatal/panic, per "
+            "minute. The log-side half of the error signal when a service exposes "
+            "no request metrics.",
+            "short",
+            [
+                {
+                    "expr": 'sum(count_over_time({k8s_namespace_name="%s"} |~ "(?i)error|warn|fatal|panic" [1m]))' % ns,
+                    "legendFormat": "matching lines",
+                    "refId": "A",
+                },
+            ],
+            # A count_over_time is LogQL, so the panel must point at Loki: on the
+            # Prometheus datasource every one of these dashboards query-errors.
+            0, y, w=24, h=6, min_val=0, datasource=LOKI,
+        )
+        y += 6
+        self.y = y
+        self.custom_panels(ROW_ORDER[0])
 
-def memory_panels(namespace: str, start_y: int, first_id: int = 4) -> Tuple[List[Panel], int]:
-    y = start_y
-    panels = [
-        row_panel(first_id, "Memory", y),
-        Panel(
-            panel_id=first_id + 1,
-            title="Memory usage vs request vs limit per pod",
-            datasource=prom_ds(),
-            targets=[
-                {
-                    "refId": "A",
-                    "expr": f'sum by (pod, container) (container_memory_working_set_bytes{{namespace="{namespace}",container!=""}})',
-                    "legendFormat": "{{pod}}/{{container}} usage",
-                },
-                {
-                    "refId": "B",
-                    "expr": f'sum by (pod, container) (kube_pod_container_resource_limits{{namespace="{namespace}",resource="memory",container!=""}})',
-                    "legendFormat": "{{pod}}/{{container}} limit",
-                },
-                {
-                    "refId": "C",
-                    "expr": f'sum by (pod, container) (kube_pod_container_resource_requests{{namespace="{namespace}",resource="memory",container!=""}})',
-                    "legendFormat": "{{pod}}/{{container}} request",
-                },
-            ],
-            field_config={"defaults": timeseries_defaults("bytes"), "overrides": []},
-            options=timeseries_options(),
-            grid_pos={"h": 8, "w": 24, "x": 0, "y": y + 1},
-        ),
-        Panel(
-            panel_id=first_id + 2,
-            title="Memory utilisation % of limit per container",
-            datasource=prom_ds(),
-            targets=[
-                {
-                    "refId": "A",
-                    "expr": f'100 * sum by (pod, container) (container_memory_working_set_bytes{{namespace="{namespace}",container!=""}}) / sum by (pod, container) (kube_pod_container_resource_limits{{namespace="{namespace}",resource="memory",container!=""}})',
-                    "legendFormat": "{{pod}}/{{container}}",
-                },
-            ],
-            field_config={
-                "defaults": timeseries_defaults(
-                    "percent",
-                    max_val=100,
-                    thresholds=[
-                        (None, "green"),
-                        (80, "yellow"),
-                        (90, "red"),
-                    ],
-                ),
-                "overrides": [],
-            },
-            options=timeseries_options(),
-            grid_pos={"h": 7, "w": 12, "x": 0, "y": y + 9},
-        ),
-    ]
-    return panels, first_id + 3
+    def service_namespace(self, service):
+        """The namespace a workload actually runs in.
 
+        A dashboard is usually one namespace, but whiteboard's tunnel lives in
+        `apps-tldraw` (the Cloudflare route is pinned to a service there), so a
+        service may name its own namespace instead of the dashboard's.
+        """
+        return service.get("k8sNamespace") or self.namespace
 
-def disk_panels(namespace: str, start_y: int, first_id: int = 7) -> Tuple[List[Panel], int]:
-    y = start_y
-    threshold_steps = [
-        (None, "green"),
-        (75, "yellow"),
-        (90, "red"),
-    ]
-    panels = [
-        row_panel(first_id, "Disk / PVC", y),
-        Panel(
-            panel_id=first_id + 1,
-            title=f"PVC utilisation ({namespace})",
-            datasource=prom_ds(),
-            targets=[
-                {
-                    "refId": "A",
-                    "expr": f'100 * kubelet_volume_stats_used_bytes{{namespace="{namespace}"}} / kubelet_volume_stats_capacity_bytes{{namespace="{namespace}"}}',
-                    "legendFormat": "{{persistentvolumeclaim}}",
-                },
-            ],
-            field_config={
-                "defaults": timeseries_defaults("percent", max_val=100, thresholds=threshold_steps),
-                "overrides": [],
-            },
-            options=timeseries_options(),
-            grid_pos={"h": 7, "w": 12, "x": 0, "y": y + 1},
-        ),
-        Panel(
-            panel_id=first_id + 2,
-            title="Node disk utilisation (homelab-2nd)",
-            datasource=prom_ds(),
-            targets=[
-                {
-                    "refId": "A",
-                    "expr": '100 - ((node_filesystem_avail_bytes{host="homelab-2nd",fstype!="tmpfs",fstype!="overlay"} * 100) / node_filesystem_size_bytes{host="homelab-2nd",fstype!="tmpfs",fstype!="overlay"})',
-                    "legendFormat": "{{mountpoint}}",
-                },
-            ],
-            field_config={
-                "defaults": timeseries_defaults("percent", max_val=100, thresholds=threshold_steps),
-                "overrides": [],
-            },
-            options=timeseries_options(),
-            grid_pos={"h": 7, "w": 12, "x": 12, "y": y + 1},
-        ),
-    ]
-    return panels, first_id + 3
+    def resources(self):
+        self.row(ROW_ORDER[1])
+        ns = self.namespace
+        y = self.y
 
+        for service in self.spec.get("services") or []:
+            pod = service["pod"]
+            label = service.get("label") or pod
+            pvc = service.get("pvc")
+            pod_ns = self.service_namespace(service)
+            excluded = service.get("exclude") or ()
+            selector = pod_selector(pod_ns, pod, excluded)
 
-def gpu_panels(start_y: int, first_id: int = 10) -> Tuple[List[Panel], int]:
-    y = start_y
-    threshold_steps = [
-        (None, "green"),
-        (75, "yellow"),
-        (90, "red"),
-    ]
-    panels = [
-        row_panel(first_id, "GPU (single-GPU node)", y),
-        Panel(
-            panel_id=first_id + 1,
-            title="GPU utilization %",
-            datasource=prom_ds(),
-            targets=[
-                {
-                    "refId": "A",
-                    "expr": "nvidia_smi_utilization_gpu_ratio * 100",
-                    "legendFormat": "{{name}}",
-                },
-            ],
-            field_config={
-                "defaults": timeseries_defaults("percent", max_val=100, thresholds=threshold_steps),
-                "overrides": [],
-            },
-            options=timeseries_options(),
-            grid_pos={"h": 7, "w": 8, "x": 0, "y": y + 1},
-        ),
-        Panel(
-            panel_id=first_id + 2,
-            title="GPU memory used",
-            datasource=prom_ds(),
-            targets=[
-                {
-                    "refId": "A",
-                    "expr": "nvidia_smi_memory_used_bytes",
-                    "legendFormat": "{{name}} used",
-                },
-                {
-                    "refId": "B",
-                    "expr": "nvidia_smi_memory_total_bytes",
-                    "legendFormat": "{{name}} total",
-                },
-            ],
-            field_config={"defaults": timeseries_defaults("bytes"), "overrides": []},
-            options=timeseries_options(),
-            grid_pos={"h": 7, "w": 8, "x": 8, "y": y + 1},
-        ),
-        Panel(
-            panel_id=first_id + 3,
-            title="GPU temperature & power draw",
-            datasource=prom_ds(),
-            targets=[
-                {
-                    "refId": "A",
-                    "expr": "nvidia_smi_temperature_gpu",
-                    "legendFormat": "{{name}} temp °C",
-                },
-                {
-                    "refId": "B",
-                    "expr": "nvidia_smi_power_draw_watts",
-                    "legendFormat": "{{name}} power W",
-                },
-            ],
-            field_config={
-                "defaults": timeseries_defaults("celsius", min_val=0),
-                "overrides": [
+            self.stat(
+                "%s CPU" % label,
+                "CPU used by %s pods next to their request and limit, in cores." % label,
+                "cores",
+                [
                     {
-                        "matcher": {"id": "byName", "options": "/.*power W/"},
-                        "properties": [
-                            {
-                                "id": "unit",
-                                "value": "watt",
-                            },
-                            {
-                                "id": "custom.axisPlacement",
-                                "value": "right",
-                            },
-                        ],
+                        "expr": 'sum(rate(container_cpu_usage_seconds_total{%s,container!=""}[5m]))'
+                                % selector,
+                        "instant": True,
+                        "legendFormat": "usage",
+                        "refId": "A",
+                    },
+                    {
+                        "expr": 'sum(kube_pod_container_resource_requests{%s,resource="cpu",container!=""})'
+                                % selector,
+                        "instant": True,
+                        "legendFormat": "request",
+                        "refId": "B",
+                    },
+                    {
+                        "expr": 'sum(kube_pod_container_resource_limits{%s,resource="cpu",container!=""})'
+                                % selector,
+                        "instant": True,
+                        "legendFormat": "limit",
+                        "refId": "C",
                     },
                 ],
-            },
-            options=timeseries_options(),
-            grid_pos={"h": 7, "w": 8, "x": 16, "y": y + 1},
-        ),
-    ]
-    return panels, first_id + 4
+                0, y,
+            )
+            self.stat(
+                "%s memory" % label,
+                "Working-set memory of %s pods next to their request and limit, in bytes." % label,
+                "bytes",
+                [
+                    {
+                        "expr": 'sum(container_memory_working_set_bytes{%s,container!=""})'
+                                % selector,
+                        "instant": True,
+                        "legendFormat": "usage",
+                        "refId": "A",
+                    },
+                    {
+                        "expr": 'sum(kube_pod_container_resource_requests{%s,resource="memory",container!=""})'
+                                % selector,
+                        "instant": True,
+                        "legendFormat": "request",
+                        "refId": "B",
+                    },
+                    {
+                        "expr": 'sum(kube_pod_container_resource_limits{%s,resource="memory",container!=""})'
+                                % selector,
+                        "instant": True,
+                        "legendFormat": "limit",
+                        "refId": "C",
+                    },
+                ],
+                8, y,
+            )
+            if pvc:
+                self.stat(
+                    "%s PVC" % label,
+                    "Used and capacity bytes of the %s persistent volume claim." % pvc,
+                    "bytes",
+                    [
+                        {
+                            "expr": 'kubelet_volume_stats_used_bytes{namespace="%s",%s}'
+                                    % (pod_ns, pvc_selector(pvc)),
+                            "instant": True,
+                            "legendFormat": "used",
+                            "refId": "A",
+                        },
+                        {
+                            "expr": 'kubelet_volume_stats_capacity_bytes{namespace="%s",%s}'
+                                    % (pod_ns, pvc_selector(pvc)),
+                            "instant": True,
+                            "legendFormat": "capacity",
+                            "refId": "B",
+                        },
+                    ],
+                    16, y,
+                )
+            y += 4
 
-
-def logs_panel(namespace: str, start_y: int, first_id: int = 14) -> Tuple[List[Panel], int]:
-    y = start_y
-    base_expr = f'{{k8s_namespace_name="{namespace}"}}'
-    panels = [
-        row_panel(first_id, "Logs", y, datasource=loki_ds()),
-        Panel(
-            panel_id=first_id + 1,
-            title=f"{namespace} logs",
-            panel_type="logs",
-            datasource=loki_ds(),
-            targets=[
+        self.timeseries(
+            "CPU usage vs request vs limit per pod",
+            "CPU per pod and container next to its Kubernetes request and limit, in "
+            "cores. A usage line flattening onto the limit is throttling.",
+            "cores",
+            [
                 {
+                    "expr": 'sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace="%s",container!=""}[5m]))' % ns,
+                    "legendFormat": "{{pod}}/{{container}} usage",
                     "refId": "A",
-                    "expr": base_expr,
-                    "editorMode": "builder",
-                    "queryType": "range",
-                    "legendFormat": "",
                 },
                 {
+                    "expr": 'sum by (pod, container) (container_spec_cpu_quota{namespace="%s",container!=""}'
+                            ' / container_spec_cpu_period{namespace="%s",container!=""})' % (ns, ns),
+                    "legendFormat": "{{pod}}/{{container}} limit",
                     "refId": "B",
-                    "expr": f'{base_expr} |=~ "(?i)error|warn|fatal|panic"',
-                    "editorMode": "builder",
-                    "queryType": "range",
-                    "legendFormat": "",
-                    "hide": False,
                 },
                 {
+                    "expr": 'sum by (pod, container) (kube_pod_container_resource_requests{namespace="%s",resource="cpu",container!=""})' % ns,
+                    "legendFormat": "{{pod}}/{{container}} request",
                     "refId": "C",
-                    "expr": f'{base_expr} |~ "\\[GIN\\].*\\|\\s+(?:[3-9]\\d{{2}}|[1-9]\\d{{3}})\\s+\\|"',
-                    "editorMode": "code",
-                    "queryType": "range",
-                    "legendFormat": "",
-                    "hide": True,
-                },
-                {
-                    "refId": "D",
-                    "expr": f'{base_expr} |=~ "(?i)pulling|loading model|load model"',
-                    "editorMode": "builder",
-                    "queryType": "range",
-                    "legendFormat": "",
-                    "hide": True,
-                },
-                {
-                    "refId": "E",
-                    "expr": f'{base_expr} |=~ "(?i)cuda|nvidia|gpu"',
-                    "editorMode": "builder",
-                    "queryType": "range",
-                    "legendFormat": "",
-                    "hide": True,
                 },
             ],
-            options={
-                "showTime": True,
-                "showLabels": True,
-                "showCommonLabels": True,
-                "showLogContextToggle": True,
-                "wrapLogMessage": True,
-                "prettifyLogMessage": True,
-                "sortOrder": "Descending",
-                "enableLogDetails": True,
-                "dedupStrategy": "none",
-                "showControls": True,
-                "showFieldSelector": True,
-                "syntaxHighlighting": True,
-            },
-            grid_pos={"h": 12, "w": 24, "x": 0, "y": y + 1},
-        ),
-    ]
-    return panels, first_id + 2
-
-
-def build_dashboard(
-    namespace: str,
-    title: str,
-    uid: str,
-    with_gpu: bool = False,
-    services: Optional[List[str]] = None,
-    pvcs: Optional[Dict[str, str]] = None,
-    aliases: Optional[Dict[str, str]] = None,
-) -> dict:
-    panels: List[Panel] = []
-    y = 0
-    next_id = 1000
-
-    panels.append(
-        text_panel(
-            next_id,
-            "Overview",
-            f"""Per-namespace dashboard for **{namespace}**.
-
-CPU and memory panels show usage alongside Kubernetes requests and limits with human-readable units (cores, bytes, percent).
-Logs panel ships multiple pre-built LogQL filters — toggle them on/off from the query row above the panel.
-{f"GPU metrics are included because this namespace runs GPU workloads; the full GPU dashboard is in the **Homelab** folder." if with_gpu else ""}""",
-            y,
-            h=2,
+            0, y, w=24, h=8,
         )
-    )
-    next_id += 1
-    y += 2
-
-    if services:
-        service_panels, next_id = per_service_row(
-            namespace, services, pvcs or {}, y, next_id, aliases
-        )
-        panels.extend(service_panels)
-        y += 1 + len(services) * 4  # row(1) + 4 per service
-
-    cpu_ps, next_id = cpu_panels(namespace, y, next_id)
-    panels.extend(cpu_ps)
-    y += 16  # row(1) + cpu usage(8) + cpu util(7)
-
-    mem_ps, next_id = memory_panels(namespace, y, next_id)
-    panels.extend(mem_ps)
-    y += 16
-
-    disk_ps, next_id = disk_panels(namespace, y, next_id)
-    panels.extend(disk_ps)
-    y += 8
-
-    if with_gpu:
-        gpu_ps, next_id = gpu_panels(y, next_id)
-        panels.extend(gpu_ps)
         y += 8
 
-    log_ps, next_id = logs_panel(namespace, y, next_id)
-    panels.extend(log_ps)
+        self.timeseries(
+            "Memory usage vs request vs limit per pod",
+            "Working-set memory per pod and container next to its Kubernetes request "
+            "and limit, in bytes.",
+            "bytes",
+            [
+                {
+                    "expr": 'sum by (pod, container) (container_memory_working_set_bytes{namespace="%s",container!=""})' % ns,
+                    "legendFormat": "{{pod}}/{{container}} usage",
+                    "refId": "A",
+                },
+                {
+                    "expr": 'sum by (pod, container) (kube_pod_container_resource_limits{namespace="%s",resource="memory",container!=""})' % ns,
+                    "legendFormat": "{{pod}}/{{container}} limit",
+                    "refId": "B",
+                },
+                {
+                    "expr": 'sum by (pod, container) (kube_pod_container_resource_requests{namespace="%s",resource="memory",container!=""})' % ns,
+                    "legendFormat": "{{pod}}/{{container}} request",
+                    "refId": "C",
+                },
+            ],
+            0, y, w=24, h=8,
+        )
+        y += 8
 
-    return {
-        "annotations": {"list": []},
-        "editable": True,
-        "fiscalYearStartMonth": 0,
-        "graphTooltip": 0,
-        "id": None,
-        "links": [],
-        "liveNow": True,
-        "panels": [p.to_dict() for p in panels],
-        "refresh": "30s",
-        "schemaVersion": 39,
-        "tags": ["homelab", namespace],
-        "templating": {"list": []},
-        "time": {"from": "now-30m", "to": "now"},
-        "timepicker": {},
-        "timezone": "browser",
-        "title": title,
-        "uid": uid,
-        "version": 1,
-    }
+        if self.spec.get("services"):
+            self.timeseries(
+                "PVC utilisation",
+                "Used space of every persistent volume claim in the namespace as a "
+                "percentage of its capacity.",
+                "percent",
+                [
+                    {
+                        "expr": '100 * kubelet_volume_stats_used_bytes{namespace="%s"}'
+                                ' / kubelet_volume_stats_capacity_bytes{namespace="%s"}' % (ns, ns),
+                        "legendFormat": "{{persistentvolumeclaim}}",
+                        "refId": "A",
+                    },
+                ],
+                0, y, w=12, h=7, max_val=100, thresholds=THRESHOLDS_75_90,
+            )
+        self.timeseries(
+            "Node disk utilisation (homelab-2nd)",
+            "Used space of the node filesystems holding the k3s data directory and "
+            "the PVC backing store, as a percentage of capacity.",
+            "percent",
+            [
+                {
+                    "expr": '100 - ((node_filesystem_avail_bytes{host="homelab-2nd",fstype!="tmpfs",fstype!="overlay"} * 100)'
+                            ' / node_filesystem_size_bytes{host="homelab-2nd",fstype!="tmpfs",fstype!="overlay"})',
+                    "legendFormat": "{{mountpoint}}",
+                    "refId": "A",
+                },
+            ],
+            12, y, w=12, h=7, max_val=100, thresholds=THRESHOLDS_75_90,
+        )
+        y += 7
+
+        if self.spec.get("withGpu"):
+            self.timeseries(
+                "GPU utilization",
+                "Utilisation of the single GPU on this node. Every GPU workload in "
+                "the homelab shares it, so a second tenant is visible here.",
+                "percent",
+                [
+                    {
+                        "expr": "nvidia_smi_utilization_gpu_ratio * 100",
+                        "legendFormat": "{{name}}",
+                        "refId": "A",
+                    },
+                ],
+                0, y, w=8, h=7, max_val=100, thresholds=THRESHOLDS_80_90,
+            )
+            self.timeseries(
+                "GPU memory used",
+                "Framebuffer memory used and total on the GPU, in bytes. A model "
+                "that does not fit is unloaded and reloaded on every request.",
+                "bytes",
+                [
+                    {
+                        "expr": "nvidia_smi_memory_used_bytes",
+                        "legendFormat": "{{name}} used",
+                        "refId": "A",
+                    },
+                    {
+                        "expr": "nvidia_smi_memory_total_bytes",
+                        "legendFormat": "{{name}} total",
+                        "refId": "B",
+                    },
+                ],
+                8, y, w=8, h=7,
+            )
+            self.timeseries(
+                "GPU temperature",
+                "GPU core temperature in degrees Celsius. The card throttles above "
+                "the vendor limit, which shows up as latency first.",
+                "celsius",
+                [
+                    {
+                        "expr": "nvidia_smi_temperature_gpu",
+                        "legendFormat": "{{name}}",
+                        "refId": "A",
+                    },
+                ],
+                16, y, w=8, h=7, min_val=0,
+            )
+            y += 7
+
+        self.y = y
+        self.custom_panels(ROW_ORDER[1])
+
+    def slo_golden_signals(self):
+        """Golden signals row of an SLO dashboard: the SLI, the budget, the burn.
+
+        Every query is over the recording rules in
+        `infrastructure/observability/slo/slo-prometheus-rules.yaml`; none reads
+        a raw span metric, so a change to an SLI definition lands in one file.
+        The 30-day SLI is not one of the seven recorded windows (the alerts need
+        seven, not eight), so it is the mean of the 1d error ratios over [30d]:
+        the 30-day error ratio when traffic is steady, and the same series the
+        burn rates are computed from. `[30d]` is in the query rather than in a
+        hidden recording rule.
+        """
+        self.row(ROW_ORDER[0])
+        y = self.y
+        for slo in SLO_SERVICES:
+            service = slo["service"]
+            label = slo["label"]
+            budget = slo["budget"]
+            target = slo["target"]
+            for index, sli in enumerate(SLO_SLIS):
+                self.stat(
+                    "%s %s — 30d" % (label, sli),
+                    "Share of %s requests in the last 30 days that met the %s SLO "
+                    "(target %s %%). The SLI is the error ratio recorded by the "
+                    "slo:sli_error rules, inverted; it is the number the error "
+                    "budget and the burn rates are built from."
+                    % (label, sli, ("%.1f" % target).rstrip("0").rstrip(".")),
+                    "percent",
+                    [
+                        {
+                            "expr": '100 * (1 - avg_over_time(slo:sli_error:ratio_rate1d'
+                                    '{service="%s",slo="%s"}[30d]))' % (service, sli),
+                            "instant": True,
+                            "legendFormat": sli,
+                            "refId": "A",
+                        },
+                    ],
+                    8 * index, y, w=8, h=4,
+                    thresholds=[
+                        {"color": "red", "value": None},
+                        {"color": "green", "value": target},
+                    ],
+                )
+            self.stat(
+                "%s error budget left — 30d" % label,
+                "How much of %s's 30-day error budget is unspent, in percent. "
+                "100 %% means nothing spent, 0 %% means the %s %% target has been "
+                "missed; the budget is %s (1 - target). Under 25 %% the service "
+                "pages at the fast burn rate within hours, under 50 %% the ticket "
+                "alerts start." % (label, target, budget),
+                "percent",
+                [
+                    {
+                        "expr": '100 * (1 - (avg_over_time(slo:sli_error:ratio_rate1d'
+                                '{service="%s"}[30d]) / %s))' % (service, budget),
+                        "instant": True,
+                        "legendFormat": "{{slo}}",
+                        "refId": "A",
+                    },
+                ],
+                16, y, w=8, h=4,
+                thresholds=[
+                    {"color": "red", "value": None},
+                    {"color": "yellow", "value": 25},
+                    {"color": "green", "value": 50},
+                ],
+            )
+            y += 4
+
+            targets = []
+            for ref, window in zip(("A", "B"), SLO_BURN_WINDOWS):
+                targets.append({
+                    "expr": 'slo:sli_error:ratio_rate%s{service="%s"} / %s' % (window, service, budget),
+                    "legendFormat": "{{slo}} %s burn rate" % window,
+                    "refId": ref,
+                })
+            self.timeseries(
+                "%s burn rate — how fast the error budget is going" % label,
+                "Error ratio over the last %s divided by the %s error budget, per "
+                "SLI. 1 is spending exactly the budget, so the budget is gone within "
+                "the 30-day window; the page threshold is 14.4 over 1h (2 %% of the "
+                "budget in an hour) and 6 over 6h. A latency-only burn is "
+                "saturation, an availability burn is errors."
+                % (" and ".join(SLO_BURN_WINDOWS), budget),
+                "short",
+                targets,
+                0, y, w=24, h=7,
+            )
+            y += 7
+        self.y = y
+
+    def logs_row(self):
+        self.row(ROW_ORDER[2])
+        self.logs(
+            "%s logs" % self.namespace,
+            "Every log line the namespace ships to Loki, with toggles for the "
+            "error/warn and telemetry/export subsets.",
+        )
+        self.y += 12
+
+    # -- app-specific panels ------------------------------------------------
+    def custom_panels(self, row):
+        """The panels the manifest adds to one standard row.
+
+        A namespace dashboard for an app with its own metrics is useless without
+        them — Hindsight's consolidation backlog, the whiteboard tunnel — and
+        deleting them to fit the standard loses the signal the dashboard existed
+        for. They live in the manifest so the generator stays the only writer and
+        the panels obey the same datasource, description and unit rules as the
+        generated ones.
+        """
+        extras = [panel for panel in (self.spec.get("panels") or [])
+                  if (panel.get("row") or ROW_ORDER[0]) == row]
+        if not extras:
+            return
+        x = 0
+        line_height = 0
+        y = self.y
+        for extra in extras:
+            kind = extra.get("type") or "stat"
+            if kind not in ("stat", "timeseries"):
+                raise ValueError("manifest panel %r has unsupported type %r"
+                                 % (extra.get("title"), kind))
+            title = extra.get("title")
+            description = extra.get("description")
+            unit = extra.get("unit")
+            if not isinstance(title, str) or not title.strip():
+                raise ValueError("manifest panel has no title: %r" % (extra,))
+            if not isinstance(description, str) or not description.strip():
+                raise ValueError("manifest panel %r has no description" % title)
+            if not isinstance(unit, str) or not unit.strip():
+                raise ValueError("manifest panel %r has no unit" % title)
+            if extra.get("row") not in (None, ROW_ORDER[0], ROW_ORDER[1]):
+                raise ValueError("manifest panel %r targets row %r; app panels "
+                                 "may join %r or %r only"
+                                 % (title, extra.get("row"), ROW_ORDER[0], ROW_ORDER[1]))
+            targets = []
+            for ref, target in zip("ABCDEFGH", extra.get("targets") or []):
+                expr = target.get("expr")
+                if not isinstance(expr, str) or not expr.strip():
+                    raise ValueError("manifest panel %r has a target without an expr" % title)
+                rendered = {"editorMode": "code", "expr": expr, "refId": ref}
+                legend = target.get("legend")
+                if legend:
+                    rendered["legendFormat"] = legend
+                if kind == "stat" or target.get("instant"):
+                    rendered["instant"] = True
+                targets.append(rendered)
+            if not targets:
+                raise ValueError("manifest panel %r has no targets" % title)
+            datasource = LOKI if extra.get("datasource") == "loki" else PROM
+            thresholds = extra.get("thresholds")
+            if kind == "stat":
+                width, height = extra.get("w", 8), extra.get("h", 4)
+                self.stat(title, description, unit, targets, x, y, w=width, h=height,
+                          thresholds=thresholds, datasource=datasource)
+            else:
+                width, height = extra.get("w", 12), extra.get("h", 7)
+                self.timeseries(title, description, unit, targets, x, y,
+                                w=width, h=height, min_val=extra.get("min"),
+                                max_val=extra.get("max"), thresholds=thresholds,
+                                datasource=datasource)
+            x += width
+            line_height = max(line_height, height)
+            if x >= 24:
+                x = 0
+                y += line_height
+                line_height = 0
+        if x:
+            y += line_height
+        self.y = y
+
+    # -- assembly -----------------------------------------------------------
+    def overview(self):
+        footer = ("\n\nRe-rendered from `scripts/dashboards/manifest.json` — edit the "
+                  "manifest or `scripts/render_namespace_dashboard.py`, never this JSON.")
+        if not self.spec.get("slo"):
+            return ("Standard dashboard for **%s**. Rows follow the homelab order: golden "
+                    "signals (saturation, traffic, restarts, errors), then resources "
+                    "(per-service requests against limits, storage, GPU), then logs."
+                    % self.spec["k8sNamespace"]) + footer
+        services = ", ".join("%s %s %%" % (slo["label"], slo["target"])
+                             for slo in SLO_SERVICES)
+        return ("The **SLOs** of the three services that answer a request: %s. Two SLIs "
+                "each — availability and latency — recorded as an error ratio for the "
+                "seven alerting windows, with one error budget per service (1 - target).\n\n"
+                "Rows follow the homelab order: golden signals (the 30-day SLI, the error "
+                "budget left, the burn rate), resources (the observability namespace "
+                "itself), then logs. The alarms that read these series are in "
+                "`infrastructure/observability/slo/slo-prometheus-rules.yaml`; the design "
+                "is `docs/adr/adr-135-observability-design.md`."
+                % services) + footer
+
+    def render(self):
+        spec = self.spec
+        self.text("Overview", self.overview(), h=3)
+        if spec.get("slo"):
+            self.slo_golden_signals()
+        else:
+            self.golden_signals()
+        self.resources()
+        self.logs_row()
+
+        dashboard = {
+            "annotations": {"list": []},
+            "description": spec.get("description", "Standard homelab dashboard for the %s namespace."
+                                                   % spec["k8sNamespace"]),
+            "editable": True,
+            "fiscalYearStartMonth": 0,
+            "graphTooltip": 0,
+            "id": None,
+            "links": [dict(HOMELAB_LINK)],
+            "liveNow": True,
+            "panels": self.panels,
+            "refresh": "30s",
+            "schemaVersion": SCHEMA_VERSION,
+            "tags": ["homelab", spec["namespace"]],
+            "templating": {"list": template_variables(spec)},
+            "time": {"from": "now-6h", "to": "now"},
+            "timepicker": {},
+            "timezone": "browser",
+            "title": spec["title"],
+            "uid": spec["uid"],
+            "version": 1,
+        }
+        return dashboard
 
 
-def build_configmap(
-    namespace: str,
-    title: str,
-    uid: str,
-    with_gpu: bool = False,
-    services: Optional[List[str]] = None,
-    pvcs: Optional[Dict[str, str]] = None,
-    aliases: Optional[Dict[str, str]] = None,
-) -> dict:
-    dashboard = build_dashboard(namespace, title, uid, with_gpu, services, pvcs, aliases)
-    filename = f"{namespace}-dashboard.json"
+def template_variables(spec=None):
+    variables = [
+        {
+            "current": {"selected": True, "text": "Prometheus", "value": "Prometheus"},
+            "hide": 0,
+            "includeAll": False,
+            "label": "Prometheus",
+            "multi": False,
+            "name": "datasource",
+            "options": [],
+            "query": "prometheus",
+            "refresh": 1,
+            "regex": "",
+            "skipUrlSync": False,
+            "type": "datasource",
+        },
+        {
+            "current": {"selected": True, "text": "Loki", "value": "Loki"},
+            "hide": 0,
+            "includeAll": False,
+            "label": "Loki",
+            "multi": False,
+            "name": "loki",
+            "options": [],
+            "query": "loki",
+            "refresh": 1,
+            "regex": "",
+            "skipUrlSync": False,
+            "type": "datasource",
+        },
+    ]
+    # A dashboard may need one more variable (Hindsight filters every query by
+    # `tenant`). The manifest carries it as a ready Grafana variable object, so
+    # the generator does not grow a variable language of its own.
+    for extra in (spec or {}).get("variables") or []:
+        if not isinstance(extra, dict) or not isinstance(extra.get("name"), str):
+            raise ValueError("manifest variable is not an object with a name: %r" % (extra,))
+        variables.append(dict(extra))
+    return variables
+
+
+# ---------------------------------------------------------------------------
+# manifest
+# ---------------------------------------------------------------------------
+def load_manifest(path):
+    with open(path, encoding="utf-8") as handle:
+        raw = json.load(handle)
+    entries = raw.get("dashboards") if isinstance(raw, dict) else raw
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("%s carries no dashboards list" % path)
+    return entries
+
+
+def normalise(path):
+    path = path.strip()
+    while path.startswith("./"):
+        path = path[2:]
+    return os.path.normpath(path).replace(os.sep, "/")
+
+
+def entry_output(entry):
+    for key in ("output", "path", "file"):
+        value = entry.get(key)
+        if isinstance(value, str) and value:
+            return value
+    raise ValueError("manifest entry has no output path: %r" % (entry,))
+
+
+def entry_identity(entry):
+    """The dashboard identity: (namespace, configmap name, folder)."""
+    namespace = entry.get("namespace") or entry.get("ns")
+    if not namespace:
+        path = normalise(entry_output(entry))
+        if path.startswith("apps/"):
+            namespace = path.split("/")[1]
+        elif path.startswith("infrastructure/auth/"):
+            namespace = "auth"
+        else:
+            raise ValueError("manifest entry %r names no namespace" % path)
+    return (
+        namespace,
+        entry.get("configmapName") or "%s-dashboard" % namespace,
+        entry.get("folder") or namespace,
+    )
+
+
+def entry_dashboards(entry, namespace):
+    """The dashboard specs one entry renders (a ConfigMap may hold several).
+
+    A single-dashboard entry carries its title/uid/services at the top level; a
+    multi-dashboard entry (hindsight ships three) carries a `dashboards` list and
+    the entry-level fields act as defaults.
+    """
+    defaults = {key: value for key, value in entry.items() if key != "dashboards"}
+    listed = entry.get("dashboards", [entry])
+    if not isinstance(listed, list) or not listed:
+        raise ValueError("manifest entry %r lists no dashboards" % (entry,))
+    specs = []
+    for item in listed:
+        if not isinstance(item, dict):
+            raise ValueError("manifest dashboard %r is not an object" % (item,))
+        merged = dict(defaults)
+        merged.update(item)
+        merged["namespace"] = namespace
+        merged["k8sNamespace"] = merged.get("k8sNamespace") or namespace
+        merged["title"] = merged.get("title") or "%s — %s" % (namespace, namespace)
+        merged["uid"] = merged.get("uid") or "%s-dashboard" % namespace
+        merged["key"] = merged.get("key") or "%s-dashboard.json" % namespace
+        merged["services"] = merged.get("services") or []
+        merged["withGpu"] = bool(merged.get("withGpu"))
+        specs.append(merged)
+    return specs
+
+
+def build_configmap(entry):
+    namespace, name, folder = entry_identity(entry)
+    data = {}
+    for spec in entry_dashboards(entry, namespace):
+        data[spec["key"]] = json.dumps(Dashboard(spec).render(), separators=(",", ":"))
     return {
         "apiVersion": "v1",
         "kind": "ConfigMap",
         "metadata": {
-            "name": f"{namespace}-dashboard",
+            "name": name,
             "namespace": "observability",
             "labels": {"grafana_dashboard": "1"},
-            "annotations": {"grafana.folder": namespace},
+            "annotations": {"grafana.folder": folder},
         },
-        "data": {filename: json.dumps(dashboard, separators=(",", ":"))},
+        "data": data,
     }
 
 
-def parse_pvc_map(raw: Optional[str]) -> Dict[str, str]:
-    if not raw:
-        return {}
-    result: Dict[str, str] = {}
-    for pair in raw.split(","):
-        if ":" not in pair:
-            continue
-        service, pvc = pair.split(":", 1)
-        result[service.strip()] = pvc.strip()
-    return result
+def render_all(manifest_path, output_dir):
+    entries = load_manifest(manifest_path)
+    written = []
+    for entry in entries:
+        relative = normalise(entry_output(entry))
+        document = json.dumps(build_configmap(entry), indent=2, separators=(",", ": ")) + "\n"
+        target = os.path.join(output_dir, relative) if output_dir else relative
+        parent = os.path.dirname(target)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write(document)
+        written.append(relative)
+    return written
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Render a namespace observability dashboard ConfigMap")
-    parser.add_argument("--namespace", required=True, help="Kubernetes namespace to monitor")
-    parser.add_argument("--title", required=True, help="Dashboard title")
-    parser.add_argument("--uid", required=True, help="Dashboard UID")
-    parser.add_argument("--with-gpu", action="store_true", help="Include GPU metric panels")
-    parser.add_argument(
-        "--services",
-        type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
-        default=None,
-        help="Comma-separated pod prefixes to render per-service stat panels (e.g. honcho-api,honcho-deriver,honcho-db,honcho-redis)",
-    )
-    parser.add_argument(
-        "--pvcs",
-        type=parse_pvc_map,
-        default={},
-        help='Service:pvc mappings for per-service PVC stat panels, e.g. "honcho-db:honcho-db-1,honcho-redis:redis-data"',
-    )
-    parser.add_argument(
-        "--aliases",
-        type=lambda s: dict(part.split(":", 1) for part in s.split(",") if ":" in part),
-        default={},
-        help='Display aliases for service labels, e.g. "mattermost-mattermost-team-edition:mattermost,cloudflared-chat:tunnel"',
-    )
-    parser.add_argument("--indent", type=int, default=None, help="Pretty-print JSON with this indent (default compact)")
-    args = parser.parse_args()
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Render every homelab Grafana dashboard ConfigMap from one manifest")
+    parser.add_argument("--manifest", default=MANIFEST_DEFAULT,
+                        help="dashboard manifest (default %s)" % MANIFEST_DEFAULT)
+    parser.add_argument("--output-dir", default=None,
+                        help="write the files below this directory instead of the repo root")
+    parser.add_argument("--list", action="store_true", help="print the manifest outputs and exit")
+    args = parser.parse_args(argv)
 
-    cm = build_configmap(args.namespace, args.title, args.uid, args.with_gpu, args.services, args.pvcs, args.aliases)
-    if args.indent is not None:
-        print(json.dumps(cm, indent=args.indent))
-    else:
-        print(json.dumps(cm, separators=(",", ":")))
+    try:
+        if args.list:
+            for entry in load_manifest(args.manifest):
+                print(normalise(entry_output(entry)))
+            return 0
+        written = render_all(args.manifest, args.output_dir)
+    except (OSError, ValueError) as exc:
+        sys.stderr.write("render_namespace_dashboard: %s\n" % exc)
+        return 1
+    sys.stderr.write("render_namespace_dashboard: rendered %d dashboard ConfigMaps\n" % len(written))
     return 0
 
 

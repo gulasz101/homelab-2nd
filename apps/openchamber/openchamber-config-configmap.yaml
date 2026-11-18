@@ -46,6 +46,11 @@
 # openchamber-secrets secret). Convention in both worker prompts: recall bank
 # `hermes-runners` before task work, retain durable facts there with tags
 # ["openchamber"]. Agent episodic banks stay profile-owned.
+#
+# 2026-11-10 (seed-version 9, GUL-355): the `openviking` MCP server is gone. The
+# memory platform is self-hosted Hindsight (apps/hindsight/), which the seed
+# already carries below, so OpenViking was a second, redundant memory source.
+# Both the server block and its bearer-token env var left together.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -58,7 +63,7 @@ data:
   # between bumps survive. Must be moved TOGETHER with the pod-template
   # annotation homelab.voitech.dev/opencode-seed-version on the openchamber
   # Deployment (that annotation is what actually rolls the pod).
-  seed-version: "8"
+  seed-version: "9"
   opencode.json: |
     {
       "$schema": "https://opencode.ai/config.json",
@@ -101,14 +106,6 @@ data:
         }
       },
       "mcp": {
-        "openviking": {
-          "type": "remote",
-          "url": "http://openviking.openviking.svc.cluster.local:1933/mcp",
-          "enabled": true,
-          "headers": {
-            "Authorization": "Bearer {env:OPENVIKING_API_KEY}"
-          }
-        },
         "docs-mcp": {
           "type": "remote",
           "url": "http://docs-mcp-server.docs-mcp.svc.cluster.local:6280/mcp",

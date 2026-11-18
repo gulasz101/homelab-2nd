@@ -6,7 +6,7 @@
 # for bash 3.2 (the Air's /bin/bash) and for Linux, because CI reads these
 # files too: no associative arrays, no mapfile, no ${var,,}.
 #
-# ADR-098 is the contract this file encodes: the five headless services live in
+# ADR-098 is the contract this file encodes: the six headless services live in
 # the system launchd domain under dev.voitech.homelab.<service>, and the
 # heartbeat sender is the only user agent we own on purpose.
 # ---------------------------------------------------------------------------
@@ -28,9 +28,9 @@ HOMELAB_AGENT_DIR="$HOMELAB_HOME/Library/LaunchAgents"
 # it has no business being on the public internet.
 HOMELAB_HEARTBEAT_URL_DEFAULT="http://192.168.1.179:30270/heartbeat"
 
-# The five headless services, in start order. Keep this list and the plists in
+# The seven headless services, in start order. Keep this list and the plists in
 # launchd/daemons/ in step: tests/host-tree-check.sh fails otherwise.
-HOMELAB_SERVICES="hermes-gateway paperclip minio-lan-proxy gemini-tunnel syncthing"
+HOMELAB_SERVICES="hermes-gateway paperclip minio-lan-proxy gemini-tunnel syncthing hermes-dashboard voicebox-server"
 
 svc_label() { printf '%s.%s' "$HOMELAB_DOMAIN" "$1"; }
 
@@ -44,19 +44,31 @@ svc_port() {
     minio-lan-proxy) echo 9000 ;;
     gemini-tunnel)   echo 8083 ;;
     syncthing)       echo 8384 ;;
+    hermes-dashboard) echo 9119 ;;
+    voicebox-server) echo 17493 ;;
     *) return 1 ;;
   esac
 }
 
 # Path probed for a liveness answer. gemini-tunnel is an ssh port-forward, so a
 # TCP connect is the only honest check (http there would reach the far end).
+# The gateway's model route needs an API key: probing that every 60 s only wrote
+# `API server rejected invalid API key` into the gateway log. /health on 8642
+# answers 200 with no key.
 svc_health_path() {
   case "$1" in
-    hermes-gateway)  echo "/v1/models" ;;
+    hermes-gateway)  echo "/health" ;;
     paperclip)       echo "/" ;;
     minio-lan-proxy) echo "/minio/health/live" ;;
     gemini-tunnel)   echo "" ;;
     syncthing)       echo "/rest/noauth/health" ;;
+    # The dashboard runs with its auth gate on (dashboard.public_url is non-loopback),
+    # so almost every route answers 401. /api/health is on the dashboard's own
+    # public allowlist (hermes_cli/dashboard_auth/public_paths.py) and needs no cookie.
+    hermes-dashboard) echo "/api/health" ;;
+    # Voicebox answers /health without a key and without touching a model, so it
+    # is a true liveness probe rather than a "did the process load 5 GB" probe.
+    voicebox-server)  echo "/health" ;;
   esac
 }
 
@@ -78,6 +90,29 @@ svc_rto() {
     minio-lan-proxy) echo 30 ;;
     gemini-tunnel)   echo 30 ;;
     syncthing)       echo 30 ;;
+    hermes-dashboard) echo 30 ;;
+    # Measured 2026-11-17: 48-55 s from launchd start to a 200 on /health
+    # (torch + MLX import before uvicorn binds). Not a slow network, a slow runtime.
+    voicebox-server) echo 60 ;;
+  esac
+}
+
+# A command the installer may use when a service has no old LaunchAgent to derive
+# it from and services.env has none either. Only for services that were never an
+# agent. No secrets, ever: HERMES_HOME points at the profile, which holds the .env.
+# PATH is deliberately the short, version-free list: the pinned tool dirs under
+# ~/.hermes/tools change on every Hermes update, and a dashboard needs none of them.
+# --skip-build is not optional. Without it every start re-runs `npm ci` in the
+# live Hermes checkout (all workspaces, plus an Electron download), and a crash
+# loop rewrites node_modules under the running gateway. Seen on 2026-11-08: a
+# GitHub 503 for Electron turned each start into a failed npm ci (GUL-1111).
+# The web UI is built once by hand after a Hermes update (README).
+svc_default_cmd() {
+  case "$1" in
+    hermes-dashboard)
+      printf '%s' "/usr/bin/env HERMES_HOME=$HOMELAB_HOME/.hermes PATH=$HOMELAB_HOME/.hermes/node/bin:$HOMELAB_HOME/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin $HOMELAB_HOME/.hermes/hermes-agent/.hermes/bin/hermes dashboard --host 127.0.0.1 --port 9119 --no-open --skip-build"
+      ;;
+    *) return 1 ;;
   esac
 }
 
@@ -397,7 +432,14 @@ CLAUDE_TOKEN_SOPS_FILE=${CLAUDE_TOKEN_SOPS_FILE:-$HOMELAB_HOME/claude-code-oauth
 CLAUDE_TOKEN_MINT_FILE=${CLAUDE_TOKEN_MINT_FILE:-$HOMELAB_STATE_DIR/claude-token-mint}
 CLAUDE_TOKEN_COMPANY_ID=${CLAUDE_TOKEN_COMPANY_ID:-0e2eb054-4cb6-4ea1-a2e7-2b1894285d8c}
 CLAUDE_TOKEN_KUBE_NS=${CLAUDE_TOKEN_KUBE_NS:-paperclip}
-CLAUDE_TOKEN_KUBE_DB_POD=${CLAUDE_TOKEN_KUBE_DB_POD:-paperclip-db-1}
+# Empty = look up the CNPG primary by label at use time (the instance name moved
+# from paperclip-db-1 to -2 in the 2026-11-12 node move; never hard-code it).
+CLAUDE_TOKEN_KUBE_DB_POD=${CLAUDE_TOKEN_KUBE_DB_POD:-}
+claude_token_db_pod() { # $1 = kubectl
+  if [ -n "$CLAUDE_TOKEN_KUBE_DB_POD" ]; then printf '%s' "$CLAUDE_TOKEN_KUBE_DB_POD"; return; fi
+  "$1" get pod -n "$CLAUDE_TOKEN_KUBE_NS" -l cnpg.io/cluster=paperclip-db,cnpg.io/instanceRole=primary \
+    -o jsonpath='{.items[0].metadata.name}'
+}
 CLAUDE_TOKEN_SECRET_ID=${CLAUDE_TOKEN_SECRET_ID:-}
 # A setup token lives about a year; alert 30 days out.
 CLAUDE_TOKEN_LIFETIME_DAYS=${CLAUDE_TOKEN_LIFETIME_DAYS:-365}
@@ -431,7 +473,7 @@ claude_token_kubectl() {
 claude_token_vault_digest() {
   local kc
   kc=$(claude_token_kubectl) || return 0
-  "$kc" exec -n "$CLAUDE_TOKEN_KUBE_NS" "$CLAUDE_TOKEN_KUBE_DB_POD" -c postgres -- \
+  "$kc" exec -n "$CLAUDE_TOKEN_KUBE_NS" "$(claude_token_db_pod "$kc")" -c postgres -- \
     psql -U postgres -d paperclip -At -F'|' -c \
     "select v.version, v.value_sha256 from company_secret_versions v
        join company_secrets s on s.id = v.secret_id
@@ -565,4 +607,118 @@ claude_token_alert_message() { # $1 = verdict
       printf '%s' "claude code credential check: ${1} (no action)"
       ;;
   esac
+}
+
+# ---- Hermes profiles the nightly state.db backup must cover (GUL-1573) ----
+# The backup and the watchdog used to share a hard-coded list
+# (default andrzej florian szarik zdzislaw). billcipher and matejko were added
+# later and silently never got backed up. One definition, read from disk:
+#   * "default" is the Hermes root ($HOME itself) when it has a config.yaml;
+#   * a named profile is any profiles/<name>/ that has a config.yaml.
+# An empty profiles/<name>/ dir (careerpa) is not a profile. A real profile
+# whose state.db is missing still counts: the backup reports it as a failure.
+# Bash 3.2 (macOS): no mapfile, no nullglob reliance.
+hermes_profiles() {
+  local home="$1" d
+  [ -f "$home/config.yaml" ] && printf 'default\n'
+  for d in "$home"/profiles/*/; do
+    [ -f "${d}config.yaml" ] && basename "$d"
+  done | LC_ALL=C sort
+  return 0
+}
+
+# hermes_state_db HOME PROFILE -> path of that profile's state.db
+hermes_state_db() {
+  if [ "$2" = "default" ]; then
+    printf '%s/state.db\n' "$1"
+  else
+    printf '%s/profiles/%s/state.db\n' "$1" "$2"
+  fi
+}
+
+# hermes_backup_missing LOG HOME -> one line per expected profile that is NOT
+# in the last "SUCCESS profiles=[...]" line of the backup log; the single line
+# "<no SUCCESS line>" when there is none. Empty output = every profile is backed up.
+hermes_backup_missing() {
+  local log="$1" home="$2" last p
+  last=$(grep 'SUCCESS profiles=' "$log" 2>/dev/null | tail -1)
+  if [ -z "$last" ]; then
+    printf '%s\n' '<no SUCCESS line>'
+    return 0
+  fi
+  last=${last#*profiles=[}
+  last=${last%%]*}
+  for p in $(hermes_profiles "$home"); do
+    case " $last " in
+      *" $p "*) ;;
+      *) printf '%s\n' "$p" ;;
+    esac
+  done
+  return 0
+}
+
+# ---- vault restic backup freshness (GUL-1577) -------------------------------
+# vault-backup.sh writes ~/.config/vault-backup/last-run ("<ISO-8601Z> ok <snaps>")
+# ONLY after a successful run, so its age is the whole signal: a failed run, a
+# job that never ran, and a cache it cannot read all leave it stale. It failed
+# three nights in a row (2026-11-13..15) with nothing watching it.
+# vault_backup_state STATUS_FILE NOW_EPOCH [MAX_AGE_H=26]
+#   -> "ok <age_h>" | "stale <age_h> <ts>" | "missing" | "unreadable <first line>"
+vault_backup_state() {
+  local f="$1" now="$2" max_h="${3:-26}" line ts state epoch age_h
+  [ -f "$f" ] || { printf 'missing\n'; return 0; }
+  line=$(head -1 "$f" 2>/dev/null)
+  ts=${line%% *}
+  state=$(printf '%s' "$line" | awk '{print $2}')
+  epoch=$(python3 -c 'import sys,datetime; print(int(datetime.datetime.strptime(sys.argv[1],"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()))' "$ts" 2>/dev/null)
+  if [ -z "$epoch" ] || [ "$state" != "ok" ]; then
+    printf 'unreadable %s\n' "$line"
+    return 0
+  fi
+  age_h=$(( (now - epoch) / 3600 ))
+  if [ "$age_h" -ge "$max_h" ]; then
+    printf 'stale %s %s\n' "$age_h" "$ts"
+  else
+    printf 'ok %s\n' "$age_h"
+  fi
+  return 0
+}
+
+# ---- agent rule files (GUL-1572, pending ADR "agent rule files ... owned by Wojtek") ----
+# Every file that steers an agent on the Air: the Hermes personas, the Paperclip
+# external bundles, and the Paperclip-managed bundles. Shared by the nightly
+# restic "agent-rules" snapshot (vault-backup.sh) and watchdog check 10. The
+# Hermes instruction gate exempts all of ~/.hermes, so a SOUL.md edit can only
+# be detected, not prevented.
+agent_rules_files() {
+  local home="$1" f
+  for f in "$home/.hermes/SOUL.md" "$home"/.hermes/profiles/*/SOUL.md \
+           "$home"/paperclip-agents/*/AGENTS.md \
+           "$home"/.paperclip/instances/default/companies/*/agents/*/instructions/AGENTS.md; do
+    [ -f "$f" ] && printf '%s\n' "$f"
+  done
+  return 0
+}
+
+# sha256 of each file, "<sha>  <path>" (shasum on macOS, sha256sum on Linux CI)
+homelab_sha256() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi
+}
+
+# agent_rules_hashes HOME -> "<sha>  <path>" per rule file, sorted by path
+agent_rules_hashes() {
+  local f
+  agent_rules_files "$1" | while IFS= read -r f; do homelab_sha256 "$f"; done | LC_ALL=C sort -k2
+  return 0
+}
+
+# agent_rules_changed OLD NEW (two agent_rules_hashes outputs, as files)
+#   -> "added|changed|removed <path>" lines, sorted; empty when nothing moved
+agent_rules_changed() {
+  awk 'NR==FNR { old[$2] = $1; next }
+       { seen[$2] = 1
+         if (!($2 in old)) print "added " $2
+         else if (old[$2] != $1) print "changed " $2 }
+       END { for (p in old) if (!(p in seen)) print "removed " p }' "$1" "$2" | LC_ALL=C sort
+  return 0
 }

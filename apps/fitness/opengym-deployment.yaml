@@ -33,7 +33,7 @@ spec:
       # local-path volumes are node-local; pin so the backup CronJob (same
       # selector) can always mount the data PVC.
       nodeSelector:
-        kubernetes.io/hostname: homelab-2nd
+        kubernetes.io/hostname: mimir
       initContainers:
         # Exercise images and GIFs, one time (~140 MB). Idempotent: only
         # clones when the media dir is empty. © GymVisual, fetched from

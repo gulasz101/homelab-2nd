@@ -51,7 +51,7 @@ SOPS_FILE=${SOPS_FILE:-$HOME/claude-code-oauth.sops.yaml}
 BOARD_TOKEN_SOPS_FILE=${BOARD_TOKEN_SOPS_FILE:-$HOME/paperclip-board-token.sops.yaml}
 AGE_RECIPIENT=${AGE_RECIPIENT:-age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s}
 KUBE_NS=${KUBE_NS:-paperclip}
-KUBE_DB_POD=${KUBE_DB_POD:-paperclip-db-1}
+KUBE_DB_POD=${KUBE_DB_POD:-}   # empty = the CNPG primary, by label (claude_token_db_pod)
 SECRET_ID=${SECRET_ID:-}          # pin it if the lookup is ever ambiguous
 COMPANY_ID=${COMPANY_ID:-$CLAUDE_TOKEN_COMPANY_ID}
 API_URL=${PAPERCLIP_API_URL:-http://127.0.0.1:3100/api}
@@ -66,7 +66,7 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 psql_q() {
   local kc
   kc=$(claude_token_kubectl) || die "kubectl not found (set KUBECTL_BIN)"
-  "$kc" exec -n "$KUBE_NS" "$KUBE_DB_POD" -c postgres -- \
+  "$kc" exec -n "$KUBE_NS" "$(CLAUDE_TOKEN_KUBE_DB_POD=$KUBE_DB_POD claude_token_db_pod "$kc")" -c postgres -- \
     psql -U postgres -d paperclip -At -F'|' -c "$1" 2>/dev/null
 }
 

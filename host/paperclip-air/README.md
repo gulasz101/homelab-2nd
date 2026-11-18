@@ -38,6 +38,8 @@ host/paperclip-air/
 │   │   ├── dev.voitech.homelab.minio-lan-proxy.plist
 │   │   ├── dev.voitech.homelab.gemini-tunnel.plist
 │   │   ├── dev.voitech.homelab.syncthing.plist
+│   │   ├── dev.voitech.homelab.hermes-dashboard.plist   # loopback only; phone reaches it via Cloudflare (GUL-1111)
+│   │   ├── dev.voitech.homelab.voicebox-server.plist    # TTS backend for the billcipher profile, loopback 17493 (GUL-1723)
 │   │   ├── com.gulasz101.hermes-state-backup.plist      # scheduled 03:30 (ADR-107/108)
 │   │   ├── com.gulasz101.hermes-memory-watchdog.plist   # scheduled hourly (ADR-107/108)
 │   │   └── dev.voitech.homelab.heartbeat.plist          # every 60 s, headless (ADR-126)
@@ -177,8 +179,79 @@ environment (nothing secret, but host-specific). The installer **derives it from
 replaces**, so the conversion preserves whatever actually worked instead of guessing. Edit a value
 and `sudo launchctl kickstart -k system/dev.voitech.homelab.<service>`.
 
+`hermes-dashboard` is the one service that was never a LaunchAgent, so there is nothing to derive.
+For it the installer falls back to a documented default (`svc_default_cmd` in
+`bin/homelab-lib.sh`) when `services.env` has no entry. It contains no secrets:
+
+```bash
+SVC_HERMES_DASHBOARD_CMD='/usr/bin/env HERMES_HOME=/Users/paperclip/.hermes PATH=/Users/paperclip/.hermes/node/bin:/Users/paperclip/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /Users/paperclip/.hermes/hermes-agent/.hermes/bin/hermes dashboard --host 127.0.0.1 --port 9119 --no-open --skip-build'
+```
+
+To change it, edit that line in `services.env` (an existing entry always wins; `--force` replaces it
+with the default) and kickstart the daemon.
+
+## `hermes-dashboard` (GUL-1111)
+
+Port 9119, `127.0.0.1` only, label `dev.voitech.homelab.hermes-dashboard`, logs
+`~/Library/Logs/homelab/hermes-dashboard{,.err}.log`. The phone reaches it through the Cloudflare
+tunnel at `https://hermes.voitech.dev`; nothing listens on the LAN.
+
+**Security: `config.yaml` must contain `dashboard.public_url: https://hermes.voitech.dev`.** On a
+loopback bind, Hermes v0.22.7 turns its auth gate on only when `public_url` is a non-loopback host
+(`hermes_cli/web_server_boundary.py`, `public_hosts_engage_gate`). The tunnel's traffic arrives from
+loopback, so without that key it gets in with **no password**. Check it before you open the tunnel
+route, and again after a Hermes update.
+
+**Web UI build: by hand, after every Hermes update.** The daemon runs with `--skip-build`, so it
+serves whatever is in `~/.hermes/hermes-agent/hermes_cli/web_dist`. Without the flag, every start
+runs `npm ci` in the live checkout plus an Electron download. On 2026-11-08 a GitHub 503 for
+Electron turned that into a crash loop that rewrote `node_modules` under the running gateway.
+After `hermes update` (or a tag checkout), rebuild and restart:
+
+```bash
+T=~/.hermes/tools; PATH=$(ls -d $T/node-*/bin | tail -1):$(ls -d $T/npm-*/bin | tail -1):$PATH \
+  bash -c 'cd ~/.hermes/hermes-agent && npm run build -w web'
+sudo launchctl kickstart -k system/dev.voitech.homelab.hermes-dashboard
+```
+
+Use the npm under `~/.hermes/tools`: the one in `~/.hermes/node` has been broken since 2026-09-02
+(`make-fetch-happen/lib/cache/` is missing).
+
+Health probe: `/api/health`. It is on the dashboard's own no-auth allowlist, so the probe works with
+the gate on. The heartbeat reports it as component `hermes-dashboard`, and the existing
+`HostWatchComponentDown` alert (5 minutes down, critical) covers it. That is intended: a dead
+dashboard is a real outage for the phone. Install the daemon before you deploy the updated
+`homelab-lib.sh` that the heartbeat uses, or the alert fires on a service that does not exist yet.
+
 If a service has no derivable command the installer refuses to install its daemon (a `KeepAlive`
 daemon with an unknown command is a crash loop) and tells you which variable to fill in.
+
+## `voicebox-server` (GUL-1723)
+
+The Voicebox TTS backend behind the `billcipher` Hermes profile. Port 17493, `127.0.0.1` only,
+label `dev.voitech.homelab.voicebox-server`, logs `~/Library/Logs/homelab/voicebox-server{,.err}.log`.
+Not published: it is a local synthesis service for an agent, not a web app.
+
+```bash
+SVC_VOICEBOX_SERVER_CMD='/Applications/Voicebox.app/Contents/MacOS/voicebox-server --host 127.0.0.1 --port 17493 --data-dir /Users/paperclip/.hermes/profiles/billcipher/voicebox'
+```
+
+**`--data-dir` is not decoration.** The server defaults to `./data` next to its working directory.
+Started from the profile it landed in `cache/scratch/data`, and Hermes reaps a scratch subtree that
+sits idle for a day — the database (profiles, generations) would vanish under a *running* server,
+which keeps the deleted inode and looks healthy until the next restart finds nothing. The durable
+home is `~/.hermes/profiles/billcipher/voicebox`, and a `backups/` tarball of the old location sits
+beside it from the cutover.
+
+**Startup is slow on purpose:** torch + MLX import before uvicorn binds, measured 48-55 s to a 200
+on `/health`. `svc_rto voicebox-server` is 60 s for that reason; the heartbeat does not treat the
+first minute after a restart as a fault.
+
+Health probe: `/health`, no key, does not load a model. It reports `model_loaded: false` on an idle
+server — that is correct, models load on first synthesis, not at boot.
+
+Break-glass start, for when the daemon is not loaded at all: `~/.hermes/profiles/billcipher/scripts/start-voicebox.sh`
+(no-ops if the port already answers).
 
 ## Rollback
 

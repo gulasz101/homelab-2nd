@@ -58,6 +58,14 @@ if grep -nE '\-adminPassword|\-password [^-]|read -r[[:space:]]+-s' "$TARGET" >/
 else
   pass "no password on a command line, none read by the script"
 fi
+# sysadminctl hands the password to the loginwindow SessionAgent, which only exists in a GUI
+# session: over plain SSH it dies with "SACSetAutoLoginPassword error:22" even when the password
+# is right, so the call has to enter the console user's domain first.
+if grep -q 'launchctl asuser' "$TARGET"; then
+  pass "auto-login runs inside the console user's GUI session (launchctl asuser)"
+else
+  fail "auto-login does not enter the GUI session: over SSH it fails with SACSetAutoLoginPassword error:22"
+fi
 
 # 5. FileVault only ever goes off behind an explicit confirmation or --yes
 if awk '/fdesetup disable/{found=NR} END{exit !found}' "$TARGET"; then

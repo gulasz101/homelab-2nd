@@ -10,7 +10,9 @@ spec:
   chart:
     spec:
       chart: karakeep
-      version: "0.32.0"
+      # Chart 0.34.1 ships Meilisearch v1.55.0 (subchart 0.41.0); 0.32.0
+      # shipped v1.13.0. The version is a decision, not a Flux side effect.
+      version: "0.34.1"
       sourceRef:
         kind: HelmRepository
         name: karakeep-app
@@ -74,13 +76,16 @@ spec:
 
               # ── AI tagging via LiteLLM proxy ─────────────────────────────
               OPENAI_BASE_URL: "http://litellm.llm-hub.svc.cluster.local:4000/v1"
-              INFERENCE_TEXT_MODEL: "gemma-4-12b-uncensored"
-              INFERENCE_IMAGE_MODEL: "gemma-4-12b-uncensored"
+              # GUL-1431: Qwen3.6-35B-A3B on the M1 Max, thinking forced off at the
+              # route (with thinking on, ~1,200 calls a day would fill the GPU).
+              # A local image job unloads it for up to 25 min, hence the job timeout.
+              INFERENCE_TEXT_MODEL: "qwen3.6-35b-a3b-local-nothink"
+              INFERENCE_IMAGE_MODEL: "qwen3.6-35b-a3b-local-nothink"
               INFERENCE_CONTEXT_LENGTH: "8192"
               INFERENCE_ENABLE_AUTO_TAGGING: "true"
               INFERENCE_ENABLE_AUTO_SUMMARIZATION: "true"
               INFERENCE_OUTPUT_SCHEMA: "plain"
-              INFERENCE_JOB_TIMEOUT_SEC: "300"
+              INFERENCE_JOB_TIMEOUT_SEC: "900"
 
               # Chrome sidecar disabled; unset browser URL so crawler uses plain HTTP.
               BROWSER_WEB_URL: ""
@@ -89,7 +94,7 @@ spec:
               LOG_LEVEL: "info"
               WORKERS_PORT: "3001"
               WORKERS_HOST: "0.0.0.0"
-              OTEL_EXPORTER_OTLP_ENDPOINT: "http://opentelemetry-collector.monitoring.svc.cluster.local:4318"
+              OTEL_EXPORTER_OTLP_ENDPOINT: "http://opentelemetry-collector.observability.svc.cluster.local:4318"
               OTEL_LOGS_EXPORTER: "otlp"
               OTEL_RESOURCE_ATTRIBUTES: "service.name=karakeep,service.namespace=karakeep"
 
@@ -163,10 +168,10 @@ spec:
 
     # Prometheus scraping annotations on the karakeep pod
     defaultPodOptions:
-      # The karakeep-data NFS export on OMV is granted only to homelab-2nd
-      # (192.168.1.179), so the karakeep pod must run there to mount it.
+      # The karakeep-data NFS export on OMV is granted per node IP (mimir 192.168.1.145,
+      # loki .190 since the 2026-11-11 node move); pinned to mimir, the data node.
       nodeSelector:
-        kubernetes.io/hostname: homelab-2nd
+        kubernetes.io/hostname: mimir
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "3000"
@@ -175,8 +180,13 @@ spec:
     meilisearch:
       enabled: true
       auth:
+        # Subchart 0.41.0 reads the key as MEILI_MASTER_KEY from this Secret;
+        # `existingMasterKeySecretKey` no longer exists and would be ignored.
         existingMasterKeySecret: karakeep-app-secrets
-        existingMasterKeySecretKey: meili-master-key
+      environment:
+        # The on-disk database was written by v1.13.0. Without this the
+        # v1.55.0 engine refuses to open it and crash-loops.
+        MEILI_UPGRADE_DB: true
       persistence:
         enabled: true
         size: 1Gi

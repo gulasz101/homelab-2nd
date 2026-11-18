@@ -50,21 +50,11 @@ spec:
                     secretKeyRef:
                       name: litellm-user-keys
                       key: hermes-andrzej-key
-                - name: MEMORY_HONCHO_KEY
-                  valueFrom:
-                    secretKeyRef:
-                      name: litellm-user-keys
-                      key: memory-honcho-key
                 - name: HERMES_BILL_CIPHER_KEY
                   valueFrom:
                     secretKeyRef:
                       name: litellm-user-keys
                       key: hermes-bill-cipher-key
-                - name: OPENVIKING_KEY
-                  valueFrom:
-                    secretKeyRef:
-                      name: litellm-user-keys
-                      key: openviking-key
                 - name: PAPERCLIP_CODERS_KEY
                   valueFrom:
                     secretKeyRef:

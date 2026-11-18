@@ -340,9 +340,9 @@ if [ -f "$I" ]; then
   grep -q 'kind: PersistentVolumeClaim' "$I" \
     && bad "the influxdb chart created its own PVC - useExisting is not in effect" \
     || ok "influxdb chart creates no PVC of its own (useExisting honoured)"
-  grep -q 'kubernetes.io/hostname: homelab-2nd' "$I" \
+  grep -q 'kubernetes.io/hostname: mimir' "$I" \
     && ok "influxdb is pinned to the node holding its local-path volume" \
-    || bad "influxdb is not pinned to homelab-2nd"
+    || bad "influxdb is not pinned to mimir"
   grep -q 'name: zigbee-influxdb-credentials' "$I" \
     && ok "influxdb reads admin credentials from the SOPS secret (H2-215 contract)" \
     || bad "influxdb does not reference zigbee-influxdb-credentials"
