@@ -57,6 +57,18 @@ LONG_CHILD_COMMANDS = frozenset(["find", "grep", "sleep", "watch"])
 MAX_ITEMS = 15
 DETAIL_CHARS = 160
 
+# GUL-1761, the wake gate. A needs-model flag is a decision only while it is
+# fresh, or when its reminder slot comes round. Without this every parked flag
+# woke the model every hour: on 2026-11-18 one unowned issue whose blocker had
+# finished (GUL-1754) kept the routine running 24 h a day, and 24 of 24 ticks
+# exited 10 for a week. Items keep reaching brief_md (the wrapper posts that for
+# free); the gate only decides whether a model is worth starting.
+DECISION_WINDOW_MINUTES = 180   # a flag this young is new news
+REMINDER_MINUTES = 360          # older flags come round every 6 h
+REMINDER_SLOT_MINUTES = 60      # ...for one sweep's worth of ticks
+MORNING_BRIEF_UTC_HOUR = 5      # 06:00 CET: always a written brief
+ALWAYS_WAKES_KINDS = frozenset(["agent_error"])   # too costly to sit on
+
 DEFAULT_STOP_FILE = "~/paperclip-agents/majster/factory/STOP"
 DEFAULT_TICK_CMD = "factory tick"
 
@@ -230,14 +242,32 @@ def one_line(text, limit=DETAIL_CHARS):
     return flat
 
 
-def make_item(kind, issue=None, issue_id=None, agent_id=None, detail=""):
+def make_item(kind, issue=None, issue_id=None, agent_id=None, detail="",
+              age=None):
+    """One flagged item. `age` is minutes since the fact that tripped the rule,
+    which the wake gate uses (GUL-1761); None means "cannot tell, wake him"."""
     return {
         "kind": kind,
         "issue": issue,
         "id": issue_id,
         "agent": agent_id,
         "detail": one_line(detail),
+        "age_min": None if age is None else int(round(age)),
     }
+
+
+def wakes_model(item, now):
+    """Does this item justify starting the routine (GUL-1761)?"""
+    if item.get("kind") not in NEEDS_MODEL_KINDS:
+        return False
+    if item.get("kind") in ALWAYS_WAKES_KINDS:
+        return True
+    age = item.get("age_min")
+    if age is None:
+        return True                     # no evidence of age: do not miss it
+    if age <= DECISION_WINDOW_MINUTES:
+        return True
+    return (age % REMINDER_MINUTES) < REMINDER_SLOT_MINUTES
 
 
 def skip_reason(issue, now):
@@ -277,14 +307,15 @@ def issue_rules(issue, now, source):
     agent_id = issue.get("assigneeAgentId")
 
     blocker = issue.get("executionBlocker")
+    updated_age = age_minutes(now, issue.get("updatedAt"))
     if blocker:
         items.append(make_item("hold", identifier, issue_id, agent_id,
-                               blocker_detail(blocker)))
+                               blocker_detail(blocker), age=updated_age))
 
-    updated_age = age_minutes(now, issue.get("updatedAt"))
     if status == "in_progress" and updated_age is not None and updated_age > STALLED_MINUTES:
         items.append(make_item("stalled", identifier, issue_id, agent_id,
-                               "in_progress, no update for %d min" % round(updated_age)))
+                               "in_progress, no update for %d min" % round(updated_age),
+                               age=updated_age))
 
     blocked_by = issue.get("blockedBy") or []
     if status == "blocked":
@@ -294,12 +325,14 @@ def issue_rules(issue, now, source):
             if states and all(state in ("done", "cancelled") for state in states):
                 items.append(make_item(
                     "blocker_cleared", identifier, issue_id, agent_id,
-                    "blocked by %d issue(s), all done or cancelled" % len(states)))
+                    "blocked by %d issue(s), all done or cancelled" % len(states),
+                    age=updated_age))
         else:
             comments = source.comments(issue_id)
             if not comments:
                 items.append(make_item("orphan_blocked", identifier, issue_id, agent_id,
-                                       "blocked with no blocker and no comments"))
+                                       "blocked with no blocker and no comments",
+                                       age=updated_age))
 
     if status == "todo" and agent_id:
         started = issue.get("startedAt")
@@ -307,7 +340,8 @@ def issue_rules(issue, now, source):
                 and updated_age > NEVER_STARTED_MINUTES):
             items.append(make_item(
                 "never_started", identifier, issue_id, agent_id,
-                "todo for %d min, assignee never started" % round(updated_age)))
+                "todo for %d min, assignee never started" % round(updated_age),
+                age=updated_age))
 
     if status == "in_review":
         for interaction in source.interactions(issue_id):
@@ -357,6 +391,7 @@ def agent_items(agents, open_issues_by_agent, now):
         name = entry.get("name") or agent_id
         kind = None
         detail = ""
+        age = None
         if status == "error":
             kind = "agent_error"
             reason = entry.get("errorReason")
@@ -367,18 +402,19 @@ def agent_items(agents, open_issues_by_agent, now):
             heartbeat = age_minutes(now, entry.get("lastHeartbeatAt"))
             if heartbeat is not None and heartbeat > ZOMBIE_MINUTES:
                 kind = "agent_zombie"
+                age = heartbeat
                 detail = ("agent %s says running, last heartbeat %d min ago"
                           % (name, round(heartbeat)))
         if kind is None:
             continue
         assigned = open_issues_by_agent.get(agent_id) or []
         if not assigned:
-            items.append(make_item(kind, None, None, agent_id, detail))
+            items.append(make_item(kind, None, None, agent_id, detail, age=age))
             continue
         for issue in assigned:
             items.append(make_item(kind,
                                    issue.get("identifier") or issue.get("id"),
-                                   issue.get("id"), agent_id, detail))
+                                   issue.get("id"), agent_id, detail, age=age))
     return items
 
 
@@ -433,7 +469,8 @@ def long_child_items(ps_text):
         items.append(make_item(
             "long_child", None, None, None,
             "pid %s %s running %s (over %d min)"
-            % (pid, name, etime, LONG_CHILD_SECONDS // 60)))
+            % (pid, name, etime, LONG_CHILD_SECONDS // 60),
+            age=seconds / 60.0))
     return items
 
 
@@ -447,7 +484,7 @@ def sort_items(items):
     return sorted(items, key=key)
 
 
-def build_brief(now, items, truncated, stop_text, tick_lines):
+def build_brief(now, items, truncated, stop_text, tick_lines, actionable=True):
     lines = ["<!-- sweep:%s -->" % iso_minutes(now),
              "## Sweep %s" % iso_display(now)]
     if stop_text is not None:
@@ -459,6 +496,9 @@ def build_brief(now, items, truncated, stop_text, tick_lines):
                                              item.get("detail") or ""))
     else:
         lines.append("- quiet board, nothing needed")
+    if items and not actionable:
+        lines.append("- no decision this hour; unchanged flags come round "
+                     "every %d h" % (REMINDER_MINUTES // 60))
     if truncated:
         lines.append("- %d more flagged item(s) not listed here" % truncated)
     lines.extend(tick_lines)
@@ -497,16 +537,23 @@ def build_report(source, now, ps_text, stop_text, tick_lines):
     truncated = max(0, len(items) - MAX_ITEMS)
     kept = items[:MAX_ITEMS]
 
-    actionable = any(item.get("kind") in NEEDS_MODEL_KINDS for item in kept)
+    actionable = any(wakes_model(item, now) for item in kept)
+    morning = now.hour == MORNING_BRIEF_UTC_HOUR
+    actionable = actionable or morning
     report = {
         "now": iso_seconds(now),
         "open": len(open_issues),
         "stop": stop_text,
         "actionable": actionable,
+        "morning_brief": morning,
+        "woken_by": ["%s %s" % (item.get("kind"),
+                                item.get("issue") or item.get("agent") or "-")
+                     for item in kept if wakes_model(item, now)],
         "items": kept,
         "truncated": truncated,
         "tick": tick_lines,
-        "brief_md": build_brief(now, kept, truncated, stop_text, tick_lines),
+        "brief_md": build_brief(now, kept, truncated, stop_text, tick_lines,
+                                actionable=actionable),
     }
     return report
 
