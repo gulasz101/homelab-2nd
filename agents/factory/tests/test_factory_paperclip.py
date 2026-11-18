@@ -489,9 +489,11 @@ def pending_review_stage(stub, parent, title, stage_agent="agent-tester-1"):
 
 
 def check(name, condition, detail=""):
+    # one space after `ok` on purpose: a spec's AC check greps `^ok <name>` in this
+    # output (`ok tick escalated …`), so the name is the line that reports the AC.
     if condition:
         PASSES.append(name)
-        print("ok   %s" % name)
+        print("ok %s" % name)
     else:
         FAILURES.append(name)
         print("FAIL %s %s" % (name, detail))
@@ -2501,6 +2503,188 @@ def case_start_ignores_a_parked_blocker(stub):
         stub.state.issues[issue["id"]]["status"] = "done"
 
 
+# --------------------------------------------------------------------------
+# GUL-1812: a person merges the PR of an escalated work order, and a squash
+# merge that carries the round is landed even when the trees differ.
+# --------------------------------------------------------------------------
+
+def escalated_gate_work_order(stub, repo, identifier, pr_number):
+    """A work order the factory escalated at its gate: blocked, PR on the forge.
+
+    The shape is the one `_escalate` writes (GUL-1706/GUL-1730): the work order is
+    `blocked` with `executionPolicy: null` and a self-owned descriptor, its gate
+    stage issue is parked `blocked`, and the ledger says `outcome: escalate`. The
+    PR is still the thing a person merges on GitHub, and nothing in the factory
+    may forget it because the gate failed.
+    """
+    wo = base_work_order(stub, "base-sha", repo, identifier=identifier)
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": pr_number,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/%d" % pr_number}
+    ledger["outcome"] = "escalate"
+    ledger["escalated"] = "diff too big: 728 lines > maxDiffLines 500"
+    gate = stage_issue(stub, wo, "[gate] %s - Merge" % identifier, status="blocked")
+    ledger["stages"] = {"gate": {"issueId": gate["id"], "identifier": gate["identifier"],
+                                 "round": 1, "attempts": 0, "sha": None}}
+    write_ledger(stub, wo, ledger)
+    issue = stub.state.issues[wo["id"]]
+    issue["status"] = "blocked"
+    issue["executionPolicy"] = None
+    issue["unblockDescriptor"] = {"owner": {"type": "agent", "agentId": MAJSTER},
+                                  "action": "the PM decides in the 05:30 review"}
+    return wo, gate, ledger
+
+
+def case_tick_settles_an_escalated_merge(stub):
+    """GUL-1812 AC-1: a person merges the escalated work order's PR.
+
+    The merge watch used to settle only a `done` gate, so an escalated work order
+    (gate parked `blocked`) stayed `blocked` for ever after the human merged the
+    very PR the factory asked about. The next `tick --apply` must read the merge,
+    flag `pr-merged`, write `merge: merged` to the ledger and finish the work order.
+    """
+    repo, _base = make_repo("tick-escalated-repo")
+    wo, _gate, ledger = escalated_gate_work_order(stub, repo, "GUL-960", 160)
+    ident = ["-c", "user.email=t@example.com", "-c", "user.name=T"]
+    branch = ledger["branch"]
+    git(repo, "checkout", "-q", "-b", branch)
+    with open(os.path.join(repo, "tests", "ac.sh"), "a") as fh:
+        fh.write("# the round the gate judged\n")
+    git(repo, *ident, "commit", "-qam", "the round")
+    round_head = git_out(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-q", "main")
+    git(repo, *ident, "merge", "--no-ff", "-q", "-m", "Merge the round", branch)
+    merge_sha = git_out(repo, "rev-parse", "HEAD")
+    ledger["pr"]["head"] = round_head
+    write_ledger(stub, wo, ledger)
+
+    # an open PR on an escalated work order is still just waiting: nothing settles
+    code0, out0, raw0 = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "escalated-open", {"state": "OPEN", "mergedAt": None, "mergeCommit": None}))
+    issue = stub.state.issues[wo["id"]]
+    still = ledger_of(stub, wo)
+    check("escalated wait: an open PR on an escalated work order changes nothing",
+          code0 == 0 and issue["status"] == "blocked" and not still.get("merge")
+          and still.get("outcome") == "escalate", raw0[-400:])
+
+    code, out, raw = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "escalated-merged", {"state": "MERGED", "mergedAt": "2026-11-18T06:10:00Z",
+                             "mergeCommit": {"oid": merge_sha}}))
+    issue = stub.state.issues[wo["id"]]
+    ledger = ledger_of(stub, wo)
+    said = comments_on(stub, wo["id"])
+    lines = (out or {}).get("reasons", []) or []
+    line = next((ln for ln in lines if "GUL-960" in ln), "")
+    check("tick escalated: a merged PR settles the escalated work order "
+          "(pr-merged, done, ledger merged)",
+          code == 0 and issue["status"] == "done"
+          and (ledger.get("merge") or {}).get("state") == "merged"
+          and ledger.get("outcome") == "merged"
+          and "pr-merged" in line
+          and any(merge_sha[:7] in body or "#160" in body for body in said),
+          "status=%s merge=%s line=%r" % (issue["status"], ledger.get("merge"), line))
+
+
+def case_merge_contains_a_squash_merge(stub):
+    """GUL-1812 AC-2: a squash merge is landed when it carries the round's hunks.
+
+    The branch took main in after the squash, so its tree is no longer the squash
+    commit's tree: that is not a reason to call the round unlanded. A merge that
+    never took the round's hunks is still unlanded.
+    """
+    repo, _base = make_repo("squash-repo")
+    ident = ["-c", "user.email=t@example.com", "-c", "user.name=T"]
+    with open(os.path.join(repo, "round.txt"), "w") as fh:
+        fh.write("one\n")
+    git(repo, "add", "-A")
+    git(repo, *ident, "commit", "-qm", "base with round.txt")
+    git(repo, "checkout", "-q", "-b", "round")
+    with open(os.path.join(repo, "round.txt"), "w") as fh:
+        fh.write("one\ntwo\n")
+    git(repo, *ident, "commit", "-qam", "the round: add the second line")
+    git(repo, "checkout", "-q", "main")
+    git(repo, "merge", "--squash", "-q", "round")
+    git(repo, *ident, "commit", "-qm", "the round, squashed by a person")
+    squash = git_out(repo, "rev-parse", "HEAD")
+    with open(os.path.join(repo, "main-only.txt"), "w") as fh:
+        fh.write("main moved on after the squash\n")
+    git(repo, "add", "-A")
+    git(repo, *ident, "commit", "-qm", "main moves on")
+    git(repo, "checkout", "-q", "round")
+    git(repo, *ident, "merge", "--no-edit", "-q", "main")
+    branch_head = git_out(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-q", "main")
+    with open(os.path.join(repo, "round.txt"), "w") as fh:
+        fh.write("one\nthree\n")
+    git(repo, *ident, "commit", "-qam", "a merge that never took the round")
+    other_merge = git_out(repo, "rev-parse", "HEAD")
+
+    differing = git_out(repo, "diff", "--name-only", branch_head, squash)
+    landed = factory.merge_contains(repo, branch_head, squash)
+    missing = factory.merge_contains(repo, branch_head, other_merge)
+    check("merge_contains: the fixture's trees really differ (the point of the case)",
+          bool(branch_head) and bool(squash) and bool(other_merge)
+          and "main-only.txt" in differing, differing)
+    check("merge_contains landed: a squash merge carrying the round is landed even when "
+          "main was merged into the branch afterwards",
+          landed is True, "merge_contains=%r" % (landed,))
+    check("merge_contains unlanded: a merge that never took the round's hunks stays unlanded",
+          missing is False, "merge_contains=%r" % (missing,))
+
+
+def case_tick_settles_a_squash_merge(stub):
+    """GUL-1812 AC-2 end to end: `tick` settles a squash merge, it never parks it.
+
+    Same history as `case_merge_contains_a_squash_merge`, driven through the merge
+    watch: the work order is finished, not parked `unlanded`.
+    """
+    repo, _base = make_repo("tick-squash-repo")
+    wo = base_work_order(stub, "base-sha", repo, identifier="GUL-961")
+    ledger = ledger_of(stub, wo)
+    ident = ["-c", "user.email=t@example.com", "-c", "user.name=T"]
+    branch = ledger["branch"]
+    git(repo, "checkout", "-q", "-b", branch)
+    with open(os.path.join(repo, "tests", "ac.sh"), "a") as fh:
+        fh.write("# the round\n")
+    git(repo, *ident, "commit", "-qam", "the round")
+    round_head = git_out(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-q", "main")
+    git(repo, "merge", "--squash", "-q", branch)
+    git(repo, *ident, "commit", "-qm", "the round, squashed by a person")
+    squash = git_out(repo, "rev-parse", "HEAD")
+    with open(os.path.join(repo, "main-only.txt"), "w") as fh:
+        fh.write("main moved on after the squash\n")
+    git(repo, "add", "-A")
+    git(repo, *ident, "commit", "-qm", "main moves on")
+    git(repo, "checkout", "-q", branch)
+    git(repo, *ident, "merge", "--no-edit", "-q", "main")
+    branch_head = git_out(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-q", "main")
+    assert round_head and squash and branch_head, "fixture did not build the squash history"
+    ledger["pr"] = {"number": 161,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/161",
+                    "head": branch_head}
+    gate = stage_issue(stub, wo, "[gate] GUL-961 - Merge", status="done")
+    ledger["stages"] = {"gate": {"issueId": gate["id"], "identifier": gate["identifier"],
+                                 "round": 1, "attempts": 0, "sha": None}}
+    write_ledger(stub, wo, ledger)
+    stub.state.issues[wo["id"]]["status"] = "in_review"
+
+    code, out, raw = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "tick-squash", {"state": "MERGED", "mergedAt": "2026-11-18T07:00:00Z",
+                        "mergeCommit": {"oid": squash}}))
+    issue = stub.state.issues[wo["id"]]
+    ledger = ledger_of(stub, wo)
+    lines = (out or {}).get("reasons", []) or []
+    line = next((ln for ln in lines if "GUL-961" in ln), "")
+    check("tick squash: a squash merge carrying the round settles the work order, "
+          "not an unlanded park",
+          code == 0 and issue["status"] == "done"
+          and (ledger.get("merge") or {}).get("state") == "merged"
+          and "unlanded" not in line,
+          "status=%s merge=%s line=%r" % (issue["status"], ledger.get("merge"), line))
+
+
 def run_one_case(name, stub, base_sha, repo):
     """Run a single case by name; `--case NAME` is how the red check isolates one."""
     cases = {n: f for n, f in globals().items() if n.startswith("case_") and callable(f)}
@@ -2572,6 +2756,9 @@ def main():
             case_fix_round_plans_a_gate(stub, base_sha, repo)
             case_gate_refuses_on_an_open_fix_round(stub, base_sha, repo)
             case_tick_settles_on_the_latest_gate_round(stub, base_sha, repo)
+            case_tick_settles_a_squash_merge(stub)
+            case_tick_settles_an_escalated_merge(stub)
+            case_merge_contains_a_squash_merge(stub)
         finally:
             stub.close()
     finally:
