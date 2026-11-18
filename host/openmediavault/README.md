@@ -22,3 +22,9 @@ never appears as a client.
 
 **MinIO users** scoped per consumer (CNPG backups per cluster, `k3s-etcd` for mimir's etcd snapshots;
 see `host/mimir/README.md`).
+
+## tang (network-bound disk unlock)
+
+`tangd.socket` on `192.168.1.180:7500` lets encrypted k3s nodes unlock LUKS at boot without a human.
+Keys are backed up SOPS-encrypted. See `tang/README.md`. If OMV is down, nodes fall back to the
+passphrase prompt (JetKVM).

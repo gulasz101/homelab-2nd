@@ -1,0 +1,34 @@
+# tang server keys on OMV (/var/lib/tang, owner _tang:_tang, mode 0440). NOT a cluster object:
+# Secret-shaped only so SOPS encrypts stringData. Restore: see host/openmediavault/tang/README.md.
+apiVersion: v1
+kind: Secret
+metadata:
+    name: omv-tang-keys
+type: Opaque
+stringData:
+    FY73uBGDfKQon8U2Ewe5IED3kmWGBbR3FOYzj0i00N8.jwk: ENC[AES256_GCM,data:O+3TpT/WCgAw1ydirPVDh4j4P6CN/Ok4wf5ls2eG62CqMntEbZSPrtaXuxBYtNh3yWBCAWlWq+YEOwc48wujhselhR4ZcVF2VD03Li1Lgnp9bsJvDrmxjG+yKDdE+yrS86boR+NhJMhVKEydRfiBawzD4KngxolDKQLJADqnLPTFhF/ICCAEXgoodX0F657ZAoRsm7q6vwuhWsHmqz03J0sbXFoy8/cncVH23Mc3EZ20PsBxIOlkEBCbzOEccPhm9WN5vGBo4A/QxeyqaHqD7QRDOZG/+7OFqfyXO5VFUJ0sopO2HDRPHMlb6BAZUulm13+k/EQ9yI1VcRmD5NeoYewOLPlToFjA5GYWpiLwgX4RNL2kv8ok5i8Rpx6wlcnFF3dey63SwvnckPjaAR2US8K3yyAoDhzEYj3PMGho7B4IjG2kU2UizooqYB7IyPjIDG/6yyCQpGeOZJaOP6vFVa1otl1ppp9spO5VE/nRrg==,iv:RXzuqyQiRvEYY/K8fGGSukYEFSaZpVt6vQic7k4bqfk=,tag:YudHTDQxLkmL26hfw77tXw==,type:str]
+    dITpSP6UYNiPgl6xSvZZ6SE4dQgSZ-O8pysD9959xjM.jwk: ENC[AES256_GCM,data:TCssl6m/3YUyE/O7DRudJaS7+92zJGsoFJSUBdeUPEnFIHMwpjMnxfa3hs3p9la+EyMN5/i+PREDotngymiQGdI5AE5c4lWvTKBdsiYhdsjsuXnovi4yIYXNbGO3xG+VHY9NFRfDjxQRy/uPqIaaSOIgASfL2nU3sBxLhFwq4oxJ19KsiSxijP7PnN4+g/idmVkoXRfB+clAvG2iq6deBFdgRnlrqQ3R9fd1XaceyYyyUod7tX++aaF93H17aoWffBKOSQqdyIC3Mm85rz+tNBWGpDVlxIDRvTJz8kkSTnFJipcxpcNuVWznObDw6LSmwO/VaOL7LepWL7TiNDhC/reVfcyhohpwv8SiveRP1DJli6GtV58OKriH4Gg/LF2GcbpSUC/oHNE2dm5sIiV53UzmvJzrytZvLb7C4+7bbvmNKH1nmTHFSZLnsgDCFmitCNQTShrz8TSznHAPWrZcoX5vyvHRHD6GIw==,iv:ciyzAOflelKfP5wl1iIw+4Ho45JdUwRjtmRPQsVmoC4=,tag:TG5jf+x4vyZqpNGdZY627Q==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBUcG9TYWZqdXU0dUVXOTY0
+            QWdBQjFxN1BGdXpFazBobURNOFBqNHQrMEIwCnFhUjltY2RqRWxwTkhMc01BZy9o
+            WDBLQTVEdHc1ckFOV0JxZGdmOHRIY00KLS0tIHljamdwN2czaU4yVGswMHJxbTFL
+            VjRaakFuME1ob1JNT04zWDdZQ3NFdW8K+ViULKdwwcNa5Q3xHxJbqMX4/DUNqPy9
+            OJgSwWgfmymd4Js4MSauBz7HNmei8jsadDcZZuQl+quM9dfIoIYTtg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age195fednlfd8q35tvyvf7umlseu4ez37k2m2d0wjawmje6nr9kzgyquhau9s
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBzZVIzRUZHUGthSlprY0Fa
+            NERGQ1RsRWN1bEZKUHQvaHFjb1pDQkE1TURFCmg0WDNmZHQrQWk3eDR0d1NLNXRP
+            VGt6WUFINVIwL1ppS0k1b0Z1VDIzN1UKLS0tIHZvdG9LK1RjdCtuT1hLK0NwSk54
+            aG1hNGl4UGVFYmVONFAvZ3hSOHdZa28KP8haSAFMqkYFZGuwt95MzuPNmTxtD2gC
+            SegklHDScVGwAX24Cs55E/kCJSHpQGw5AU1/zpUYYijGLrICsEAtnA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1mt6y86q9lhrmky0c0j7xwvacfzpep3w6e7z8zsrr22jj2u49gs6s59h7w2
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-11-16T18:22:08Z"
+    mac: ENC[AES256_GCM,data:eHsGUF/8qXppb20XyH2jMM+bEi241IsdsWBrU6u2PX842KDqOeq0C5+OAH7QgXllX0Il5FV4rii1SmO2X+CXt1vqq0IbCRErgYih1fP/YadUtAEaALG2DOR+9KRe2ThhtQV/0QbsDCEDqATjML2xbCH4cGf5qlLzkwKZTl8jqZ0=,iv:8f+ieNT21pPkLi0Jrgw6Lr2ryAVbDW9bierGB1EoLDk=,tag:KXJ+W+Gloc6ToCxMW3517g==,type:str]
+    version: 3.13.3

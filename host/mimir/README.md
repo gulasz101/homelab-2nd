@@ -43,7 +43,9 @@ ip route | grep -E '^1\.[01]\.'   # both routes must show src 192.168.1.179
 
 mimir waits at the LUKS passphrase prompt after any reboot (unlock over JetKVM). That is what made
 the 2026-11-16 reset look like a dead box for 16 h. MAC `04:7b:cb:45:f9:00` (WoL only helps when it's
-powered off). Unattended unlock: pending ADR `lan-dns-fails-over-off-mimir-keepalived-vip`.
+powered off). Unattended unlock: clevis + tang on OMV (`host/openmediavault/tang/README.md`); clevis packages
+installed and `DEVICE=enp1s0` set in `/etc/initramfs-tools/initramfs.conf` (2026-11-16); the LUKS
+bind is the owner's step (needs the passphrase).
 
 ## k3s config note
 
