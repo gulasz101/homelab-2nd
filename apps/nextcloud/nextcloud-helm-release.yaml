@@ -21,7 +21,29 @@ spec:
   upgrade:
     remediation:
       retries: 3
-    timeout: 30m
+    # 30m is shorter than the code copy on a cold cache; a Helm upgrade timeout
+    # here means a rollback against an already-migrated database.
+    timeout: 60m
+  # The chart does not template progressDeadlineSeconds, so the Deployment
+  # inherits the Kubernetes default of 600s. The Nextcloud entrypoint needs
+  # 20-40 minutes to rsync ~25k files onto the NFS-backed /var/www/html PVC
+  # before Apache binds port 80; at 600s the Deployment is marked Failed, the
+  # HelmRelease health check reads that as a stalled release and rolls back
+  # mid-upgrade — leaving the database migrated and the code not. Raise it to
+  # an hour so the schema and the code always move together.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: nextcloud
+            patch: |-
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: nextcloud
+              spec:
+                progressDeadlineSeconds: 3600
   values:
     image:
       flavor: apache
@@ -205,12 +227,16 @@ spec:
       failureThreshold: 60
       timeoutSeconds: 5
 
+    # 600x15s = 2.5h: the entrypoint rsyncs ~25k files (890MB) onto the NFS
+    # html PVC before Apache binds port 80 (measured ~1000-1300 files/min, so
+    # 20-40 min from cold). 120x15s = 30 min was not enough, and a kubelet kill
+    # mid-copy restarts the rsync from zero.
     startupProbe:
       enabled: true
-      initialDelaySeconds: 120
+      initialDelaySeconds: 60
       periodSeconds: 15
-      failureThreshold: 120
-      timeoutSeconds: 5
+      failureThreshold: 600
+      timeoutSeconds: 10
 
     # Metrics exporter
     metrics:
