@@ -215,6 +215,33 @@ spec:
           model: openai/iceman-contributor-free
           api_base: https://opencode.ai/zen/go/v1
           api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
+          # GUL-1446 (2026-11-13): Hindsight reflect + mental-model refresh
+          # primary, off the walled `gpt-oss-120b-ollama`. Measured through this
+          # router from the hindsight-api pod, with the real `hindsight-reflect`
+          # key, at reflect size (16.7k in-tokens, forced `search_observations`
+          # tool_choice): 5/5 x 200, tool_calls on all five, 3.2-5.7 s.
+          # Upstream, same payload: 5/5 x 200, 4/5 with the tool call, 3.4-4.5 s.
+          # It is a free Go model with its own "Unlimited" row in
+          # docs/console/go, so it spends none of beam-free-go's allowance.
+          # num_retries 0 and a 60 s cap: the caller gives up at 120 s
+          # (HINDSIGHT_API_REFLECT_LLM_TIMEOUT), so a retry or a hang here would
+          # eat the whole budget and the chain below would never fire.
+          num_retries: 0
+          timeout: 60
+      - model_name: longcat-2.5-free-go
+        litellm_params:
+          model: openai/longcat-2.5-free
+          api_base: https://opencode.ai/zen/go/v1
+          api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
+          # GUL-1446: second hop of the reflect chain, and the one that does not
+          # train on prompts (iceman does; longcat keeps 0 days retention -
+          # docs/zen). Paid for it with tool-call rate: upstream 5/5 x 200 but
+          # only 3/5 asked for the tool, 5.5-11 s. Note the id: ADR-113's
+          # `longcat-2.5-preview-free-go` below points at `longcat-2.5-preview`,
+          # which upstream now answers "Model is unavailable"; the shipped free
+          # model is `longcat-2.5-free`.
+          num_retries: 0
+          timeout: 60
       - model_name: deepseek-v4.1-flash-1017-ds
         litellm_params:
           model: deepseek/deepseek-flash
@@ -382,71 +409,60 @@ spec:
           # attempt, then the router moves on.
           num_retries: 0
 
-        # ── Local LM Studio model on the Hermes M1 Max (same LAN as the cluster) ──
-      - model_name: gemma-4-12b-uncensored
+        # ── Qwen3.6-35B-A3B, the only model in LM Studio on the M1 Max (GUL-1431) ──
+        # A MoE model: 35B parameters, about 3B active per token, so it is about
+        # 5x faster than the dense Saluki 27B it replaced on 2026-11-13. GGUF
+        # unsloth UD-IQ4_XS (17.7 GB) + mmproj-F16 (vision), llama.cpp engine.
+        # LM Studio loads it as identifier `qwen3.6-35b-a3b` at 128k context,
+        # 2 parallel slots, JIT auto-load OFF.
+        # LAN IP pinned because pods cannot resolve `.local`; if the lease moves,
+        # change it here (both entries) and in karakeep-prometheus-rules.yaml.
+        #
+        # Measured 2026-11-13 (pending ADR saluki-local-lane-and-gpu-slot):
+        # ~53 tok/s output for one request, ~33 each for two; prompt reading
+        # ~410-500 tok/s: 30k tokens in 71 s, 60k in 120 s, 99k in 241 s.
+        # The MLX 4-bit build was tried first and rejected: Metal out-of-memory
+        # on a 60k prompt at the default GPU limit, and a dead engine after it.
+        #
+        # The GPU slot (host/m1max/bin/gpu-slot.sh): a local image job unloads
+        # the model (ideogram4: 20-25 min). LM Studio then answers every request
+        # with a fast HTTP 400 "No models loaded", and the chain below moves the
+        # call. With JIT off LM Studio also serves ANY model name with whatever
+        # is loaded, so the upstream id here is a label, not a selector.
+        #
+        # Thinking is on by default. `reasoning_effort: none` turns it off on
+        # the llama.cpp engine (measured), so it is declared, never dropped.
+      - model_name: qwen3.6-35b-a3b-local
         litellm_params:
-            # LM Studio on the M1 Max, reached over the LAN (NOT NetBird).
-            # The Mac's address comes from an OPNsense DHCP lease (m1max.local);
-            # K8s pods cannot resolve `.local`, so pin the LAN IP here. If the
-            # address ever changes it must be updated in ONE place: this line.
-            # NOTE 2026-09-19: the lease is NOT truly static — it moved .148 → .129
-            # and broke this route (connection refused). Set a static DHCP
-            # reservation on OPNsense to stop this recurring.
-            # Reachable from homelab-2nd; no real API key required.
-          model: openai/gemma4-12b-qat-uncensored-hauhaucs-balanced
+          model: openai/qwen3.6-35b-a3b
           api_base: "http://192.168.1.119:1234/v1"
           api_key: "os.environ/DUMMY_API_KEY"
-
-        # Qwen3.8-9B heretic-uncensored (MLX 4-bit) — LM Studio on the M1 Max,
-        # same LAN route/caveats as the gemma entry above (pinned DHCP IP).
-        # NOTE: reasoning model — emits reasoning_content; test prompts need
-        # generous max_tokens or content comes back empty (reasoning burn).
-        # ⚠ DEPRECATED 2026-10-03: lineage runaway-think trap (9B-Distill has no
-        # documented enable_thinking path). Prefer qwen3.8-27b-mlx.
-      - model_name: qwen3.8-9b-heretic-uncensored
-        litellm_params:
-          model: openai/qwen3.8-9b-heretic-uncensored-mtplx
-          api_base: "http://192.168.1.119:1234/v1"
-          api_key: "os.environ/DUMMY_API_KEY"
-          # Advertise the real native window (ADR-036 pattern). Qwen3.8-9B
-          # Distill is Qwen3.5-arch with 262,144 native context (HF model
-          # card, confirmed 2026-10-05). Without this LiteLLM omits
-          # max_input_tokens and clients silently guess 131072. CAVEAT: the
-          # engine only honours 262k if LM Studio's load setting matches AND
-          # the MLX runtime escapes the auto-fit bug (pin 1.8.5, see
-          # qwen3.8-27b-mlx note / H2-129).
+          allowed_openai_params:
+          - reasoning_effort
+          timeout: 1800
+          num_retries: 0
         model_info:
-          max_input_tokens: 262144
+          max_input_tokens: 131072
           max_output_tokens: 32768
-
-        # Qwen3.8-27B MLX 4-bit (lmstudio-community, official weights) — LM
-        # Studio on the M1 Max. Chosen over the 9B distills because the
-        # official chat template ships a REAL thinking kill switch
-        # (chat_template_kwargs.enable_thinking=false pre-emits an empty
-        # think block) — verified live on 2026-10-03: loop-trap with 4000
-        # max_tokens completed clean, finish=stop, no runaway deliberation.
-        # Two aliases WERE planned: passthrough + nothink (route-side kill
-        # switch). PROBE 2026-10-03 after deploy: chat_template_kwargs is
-        # DROPPED on the way — LiteLLM does not forward it, and even a direct
-        # curl to LM Studio's /v1 with enable_thinking=false still returns
-        # reasoning_content. The kill switch only works inside the LM Studio
-        # UI/engine, not via its OpenAI-compatible API. Aliases removed;
-        # disable thinking from the LM Studio UI if you want it off globally.
-        # Sampling note: never greedy-decode this family (documented
-        # repetition loops): temp 0.7, top_p 0.8, top_k 20, presence 1.5.
-      - model_name: qwen3.8-27b-mlx
+          supports_function_calling: true
+          supports_vision: true
+        # Karakeep's route: same model, thinking forced off at the route.
+        # Karakeep sends ~1,200 tagging calls a day. No fallback on purpose:
+        # image tagging needs vision, and Karakeep retries a failed job itself.
+      - model_name: qwen3.6-35b-a3b-local-nothink
         litellm_params:
-          model: openai/qwen3.8-27b-mlx
+          model: openai/qwen3.6-35b-a3b
           api_base: "http://192.168.1.119:1234/v1"
           api_key: "os.environ/DUMMY_API_KEY"
-          # Advertise the real context window (ADR-036). Without this, LiteLLM
-          # omits max_input_tokens for the openai/ passthrough and clients
-          # (Hermes) fall back to a 131072 default — which is why the nightly
-          # karakeep digest "could not shrink" a ~28k-token session. LM Studio
-          # now serves this model at 262144 (MLX runtime pinned to 1.8.5).
+          reasoning_effort: "none"
+          allowed_openai_params:
+          - reasoning_effort
+          timeout: 900
+          num_retries: 0
         model_info:
-          max_input_tokens: 262144
-          max_output_tokens: 32768
+          max_input_tokens: 131072
+          max_output_tokens: 8192
+          supports_vision: true
 
         # ── FreeLLMAPI free-tier pool (GUL-184 / ADR-091) ──────────────
         # GUL-184 / ADR-091 (2026-10-26): free gpt-oss-120b pool in FreeLLMAPI
@@ -856,7 +872,35 @@ spec:
         #   - No paid hop, deliberately: the owner ruled out a metered lane for
         #     these calls on 2026-11-09 (ADR-127 reversed). Adding `-ds` here
         #     would silently reintroduce the bill.
+        # GUL-1446 (2026-11-13): reflect and the mental-model refresh left
+        # `gpt-oss-120b-ollama` for `iceman-contributor-free-go`, because
+        # ollama.com's weekly wall killed both lanes. The chain keeps the free
+        # family first, then returns home so the lane comes back to the
+        # subscription when the week resets:
+        #   1. longcat-2.5-free-go - the other healthy free Go route (5/5 x 200,
+        #      5.4-7.0 s, 0.6-1.0 s slower than iceman, and the tool call came
+        #      back 4/5, so second). It also keeps prompts 0 days and does not
+        #      train on them, which is why it is the one to reach for if the
+        #      owner objects to iceman's training terms.
+        #   2. gpt-oss-120b-ollama - back onto the subscription allowance once
+        #      the weekly window clears. Its own hop to the pool still fires
+        #      from there, so the ladder ends in the free pool as before.
+        # Every side of every hop carries num_retries 0: one walled call is one
+        # hop, never a ladder (GUL-1045).
+        - {"iceman-contributor-free-go": ["longcat-2.5-free-go", "gpt-oss-120b-ollama"]}
+        # GUL-1446 follow-up (2026-11-15): longcat is now the PRIMARY for the
+        # mental-model refresh lane (stated in apps/hindsight), because iceman
+        # refuses the `json_schema` structured output that refresh asks for. A
+        # primary with no chain is a wall with no hop, so longcat gets one -
+        # straight home to ollama, deliberately NOT through iceman: iceman has
+        # already been measured to 400 on exactly this call shape (2026-11-15),
+        # so hopping there would only spend the failure twice.
+        - {"longcat-2.5-free-go": ["gpt-oss-120b-ollama"]}
         - {"gpt-oss-120b-ollama": ["gpt-oss-120b-freellmapi"]}
+        # GUL-1431 (2026-11-12, owner ruling): local first, then the Ollama
+        # subscription, then the paid DeepSeek API as the last resort. The
+        # first hop fires every time a local image job holds the GPU slot.
+        - {"qwen3.6-35b-a3b-local": ["deepseek-v4.1-flash-1017-ollama", "deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-1017-ds"]}
         content_policy_fallbacks:
         - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama"]}
         - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama"]}
@@ -899,9 +943,33 @@ spec:
         # The pre-call hook is the primary source of the `x-opencode-session`
         # value; scoped forwarding is the belt-and-braces path for clients
         # that already send a real header (see ADR-029).
-        # Restrict UI to admins only; combined with no UI_USERNAME/UI_PASSWORD
-        # this hides the local login form, leaving only the SSO button
+        # Restrict UI to admins only.
         ui_access_mode: "admin_only"
+        # 2026-11-18: env-credential login is OFF, and it was live until now.
+        # "No UI_USERNAME/UI_PASSWORD" is NOT "no local login": with UI_PASSWORD
+        # unset, LiteLLM falls back to the MASTER KEY as the UI password for the
+        # username `admin` (get_ui_credentials() in proxy/auth/login_utils.py),
+        # so anyone holding the master key could sign in to the Admin UI as a
+        # proxy admin with a shared static secret. LiteLLM's own security banner
+        # reported it ("Environment-credential login is enabled"), and the
+        # comment that used to sit here claimed the opposite.
+        # The UI's only human login is Authentik SSO: akadmin is a proxy_admin
+        # bound by sso_user_id, /sso/key/generate answers 303 to
+        # auth.voitech.dev (verified live), and the SSO path never calls
+        # authenticate_user - only the password routes do.
+        # Lockout recovery if SSO itself breaks: the master key still
+        # administers the proxy over the API (that path never goes through
+        # authenticate_user either), and removing this line + letting Flux roll
+        # the pod brings the form back.
+        disable_env_credential_login: true
+        # SSO-only, per the house rule for Authentik-fronted services: no
+        # username/password login at all while the SSO provider is FULLY
+        # configured. Belt to the braces above - that flag is unconditional,
+        # this one is conditional on a complete SSO setup, so the pair can never
+        # leave the shared static secret reachable through an SSO misconfig.
+        # No DB user carries a password today, so this changes nothing until
+        # someone creates one - which is the point.
+        disable_password_login_when_sso_enabled: true
 
     # The chart creates a proxyConfigMap by default; leave it on
     proxyConfigMap:

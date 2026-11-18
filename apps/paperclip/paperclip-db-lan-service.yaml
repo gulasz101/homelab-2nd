@@ -1,0 +1,30 @@
+---
+# LAN door to the Paperclip CNPG primary, for the Paperclip server on the Air.
+#
+# Until 2026-11-12 the Air reached the ClusterIP paperclip-db-rw (10.43.114.174:5432)
+# over a NetBird network route for 10.43.0.0/16 whose only routing peer was the Clevo.
+# The Clevo was retired in the node move and the route died with it (Paperclip API down).
+# Owner, same day: the NetBird route "was just an experiment adding latency" - so the Air
+# now uses the house front door instead: 192.168.1.179:30432 (.179 = secondary IP on mimir).
+#
+# Selector = CNPG's own primary labels, so it follows a switchover like paperclip-db-rw does.
+# Exposure: LAN + NetBird peers on every node IP. Postgres auth (scram, the paperclip role
+# password from the SOPS secret) still applies; nothing here bypasses it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: paperclip-db-lan
+  namespace: paperclip
+  labels:
+    app.kubernetes.io/name: paperclip-db-lan
+spec:
+  type: NodePort
+  selector:
+    cnpg.io/cluster: paperclip-db
+    cnpg.io/instanceRole: primary
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      nodePort: 30432
+      protocol: TCP

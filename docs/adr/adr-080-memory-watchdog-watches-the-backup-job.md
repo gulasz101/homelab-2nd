@@ -2,6 +2,7 @@
 
 **Date:** 2026-10-22
 **Status:** Accepted
+**Amended 2026-11-15 (GUL-1573):** check 5 no longer expects a fixed five. It expects every profile `hermes_profiles` finds on disk, matched as exact words, and the alert names the missing ones.
 **Deciders:** Wojtek Gula; implemented by Andrzej (Hermes agent)
 **Project:** hermes / agent memory (epic H2-232)
 **Related:** GUL-89, GUL-87, ADR-071 (state.db backup and its watchdog), ADR-079 (LaunchAgents and the LAN), ADR-073 (Hermes on the Air)

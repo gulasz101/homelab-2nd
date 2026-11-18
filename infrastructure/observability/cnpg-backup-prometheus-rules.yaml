@@ -26,9 +26,10 @@ spec:
       rules:
         - alert: CNPGBackupFailed
           # Fires only when the most recent base-backup event was a failure.
-          # The legacy branch is guarded by last_available > 0 so the latched
-          # deprecated collector timestamp on plugin clusters cannot produce a
-          # false positive.
+          # The legacy cnpg_collector_* branch is excluded for every cluster
+          # that still exports the barman-cloud plugin metric: the collector
+          # latches its last value, so a plugin cluster would otherwise alert
+          # forever off a frozen deprecated timestamp (GUL-1625).
           expr: |
             (
               (barman_cloud_cloudnative_pg_io_last_failed_backup_timestamp > 0)
@@ -38,10 +39,14 @@ spec:
             )
             or
             (
-              (cnpg_collector_last_available_backup_timestamp > 0)
-              and
-              (cnpg_collector_last_failed_backup_timestamp
-                > cnpg_collector_last_available_backup_timestamp)
+              (
+                (cnpg_collector_last_available_backup_timestamp > 0)
+                and
+                (cnpg_collector_last_failed_backup_timestamp
+                  > cnpg_collector_last_available_backup_timestamp)
+              )
+              unless on (namespace, cluster)
+                barman_cloud_cloudnative_pg_io_last_available_backup_timestamp
             )
           for: 30m
           labels:

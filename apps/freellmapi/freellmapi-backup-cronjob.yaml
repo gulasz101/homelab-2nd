@@ -35,7 +35,7 @@ spec:
             runAsGroup: 1000
             runAsNonRoot: true
           nodeSelector:
-            kubernetes.io/hostname: homelab-2nd
+            kubernetes.io/hostname: mimir
           containers:
             - name: backup
               image: python:3.13-alpine

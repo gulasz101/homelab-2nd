@@ -36,10 +36,10 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
       # The OMV NFS export backing speaches-model-cache is only exported to
-      # homelab-2nd, so pin the pod to that node or the NFS mount fails with
+      # mimir and loki (by node IP, 2026-11-11 node move), so pin it or the NFS mount fails with
       # access denied if it is ever rescheduled elsewhere.
       nodeSelector:
-        kubernetes.io/hostname: homelab-2nd
+        kubernetes.io/hostname: mimir
       initContainers:
         - name: ensure-model-cache-writable
           image: busybox:1.36

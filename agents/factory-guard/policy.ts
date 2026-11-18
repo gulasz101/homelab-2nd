@@ -353,6 +353,10 @@ export function scanBashLine(text: string, depth = 0): ScanResult {
       if (text[i + 1] === "<") {
         let k = i + 2;
         if (text[k] === "-") k++;
+        // `<< 'EOF'` — whitespace between the operator and the delimiter is legal.
+        // Skipping it here also guarantees k advances, so a malformed `<<` can
+        // never spin this loop forever.
+        while (k < n && /[ \t]/.test(text[k])) k++;
         if (text[k] === "<") { // <<< here-string: skip the value token
           while (k < n && /\s/.test(text[k])) k++;
           while (k < n && !/\s/.test(text[k])) k++;
@@ -372,6 +376,10 @@ export function scanBashLine(text: string, depth = 0): ScanResult {
           i = lineStart + 1 + skipped.length + (consumed < lines.length ? 1 : 0);
           continue;
         }
+        // No delimiter found (malformed heredoc): advance past the operator so the
+        // scan always makes progress instead of spinning on the same character.
+        i = k > i ? k : i + 2;
+        continue;
       } else {
         pendingRedirect = "ignore"; // input redirect reads; secrets rule catches paths
         i++;
@@ -933,6 +941,27 @@ export function decideToolCall(
 }
 
 /** Fail-closed wrapper: any exception inside the rules becomes a block. */
+/**
+ * Default bash timeout (GUL-1537).
+ *
+ * Pi's bash tool documents "no default timeout", so a call that never ends — a
+ * command waiting on stdin, a wedged loop — blocks the tool call until the whole
+ * run dies on the adapter's `timeoutSec`. A gate that only says "allowed" and
+ * then hands over an unbounded process is not guarding anything, so the guard
+ * supplies a timeout when the model asked for none. Explicit values are left
+ * alone: a long build may opt in to more than the default.
+ */
+export const DEFAULT_BASH_TIMEOUT_SEC = 300;
+
+export function withDefaultBashTimeout(toolName: string, input: unknown): void {
+  if (toolName !== "bash" && toolName !== "powershell") return;
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return;
+  const inp = input as Record<string, unknown>;
+  const t = inp.timeout;
+  if (typeof t === "number" && Number.isFinite(t) && t > 0) return;
+  inp.timeout = DEFAULT_BASH_TIMEOUT_SEC;
+}
+
 export function decideToolCallSafe(
   role: RoleProfile | undefined,
   toolName: string,
