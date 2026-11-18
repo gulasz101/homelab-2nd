@@ -76,11 +76,18 @@ spec:
 
               # ── AI tagging via LiteLLM proxy ─────────────────────────────
               OPENAI_BASE_URL: "http://litellm.llm-hub.svc.cluster.local:4000/v1"
-              # GUL-1431: Qwen3.6-35B-A3B on the M1 Max, thinking forced off at the
-              # route (with thinking on, ~1,200 calls a day would fill the GPU).
-              # A local image job unloads it for up to 25 min, hence the job timeout.
-              INFERENCE_TEXT_MODEL: "qwen3.6-35b-a3b-local-nothink"
-              INFERENCE_IMAGE_MODEL: "qwen3.6-35b-a3b-local-nothink"
+              # GUL-1864, TEMPORARY: Karakeep is off the M1 Max local lane while we
+              # experiment with the resident model (Flint), so its ~1,200 calls a day
+              # no longer take the one GPU slot away from our runs and image tagging
+              # stops breaking whenever a text-only model is resident. Back to
+              # qwen3.6-35b-a3b-local-nothink when the Flint experiment ends.
+              # Text: DeepSeek v4.1 Flash on the Go subscription. NOT deepseek-flash-go —
+              # that name is no longer served by the subscription (probed 2026-11-18,
+              # Go answers "Model deepseek-flash isn't included in OpenCode Go").
+              # Image: GLM-5.3 Flash on Go, vision verified with a red-then-blue probe PNG
+              # (GUL-1431: the local route needed vision for image tagging).
+              INFERENCE_TEXT_MODEL: "deepseek-v4.1-flash-go"
+              INFERENCE_IMAGE_MODEL: "glm-5.3-flash-go"
               INFERENCE_CONTEXT_LENGTH: "8192"
               INFERENCE_ENABLE_AUTO_TAGGING: "true"
               INFERENCE_ENABLE_AUTO_SUMMARIZATION: "true"
