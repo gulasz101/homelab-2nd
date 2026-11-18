@@ -719,7 +719,7 @@ class Dashboard:
                     "signals (saturation, traffic, restarts, errors), then resources "
                     "(per-service requests against limits, storage, GPU), then logs."
                     % self.spec["k8sNamespace"]) + footer
-        services = ", ".join("%s %s %%%%" % (slo["label"], slo["target"])
+        services = ", ".join("%s %s %%" % (slo["label"], slo["target"])
                              for slo in SLO_SERVICES)
         return ("The **SLOs** of the three services that answer a request: %s. Two SLIs "
                 "each — availability and latency — recorded as an error ratio for the "

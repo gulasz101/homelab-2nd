@@ -1,7 +1,7 @@
 # SLOs and burn-rate alerting (GUL-1599, OTel work order 5)
 
 The design record for this directory is
-[ADR-135: Observability design — SLOs, multi-window burn-rate alerts and the SLO dashboard](../../docs/adr/adr-135-observability-design.md):
+[ADR-135: Observability design — SLOs, multi-window burn-rate alerts and the SLO dashboard](../../../docs/adr/adr-135-observability-design.md):
 the three services and their targets, the two SLIs, the recorded error ratio, the four workbook
 burn rates, the routing contract, the SLO dashboard and the runbook.
 
