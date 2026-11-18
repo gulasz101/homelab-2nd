@@ -62,6 +62,15 @@ to the Max and executes that file. It is silent while healthy and speaks on chan
 - cookie pool re-import, paid-tier canary, and a canary attributed by request-log id (the `ts`
   field in that log drifts behind the host clock, so it is useless as a key).
 
+**The re-import decision fingerprints session cookies only.** `SID`, `HSID`, `SSID`, `APISID`,
+`SAPISID`, `__Secure-1PSID` and `__Secure-1PAPISID` decide whether this is the same login;
+`__Secure-1PSIDTS` and `__Secure-1PSIDCC` are refreshed by Firefox on every google.com touch and
+are deliberately left out of the hash (they are still uploaded — the proxy needs all nine). Hashing
+the whole string made every browser visit look like a fresh login: one wasted Google `/check`
+round-trip and one pool churn per tick (GUL-1280). `gemini-guard-check.sh` now fails CI if the
+fingerprint's allowed list grows a rotating name back; that check reads the `STABLE` list, not the
+file, because the harvest list has to keep all nine names.
+
 **Do not move it back under `~/.hermes`.** ADR-128 retired Hermes on the Max, and `~/.hermes`
 there is a read-only tombstone *file*: the guard ran from that path for 30 ticks and failed with
 `[Errno 20] Not a directory` (GUL-1279). `host/m1max/tests/gemini-guard-check.sh` now fails CI if
