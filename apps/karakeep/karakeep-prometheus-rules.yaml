@@ -60,19 +60,18 @@ spec:
       rules:
         - alert: KarakeepInferenceFailing
           # LiteLLM records failures per deployment; requested_model is the
-          # Karakeep-facing alias. No successes + repeated failures = the
-          # LM Studio backend on the M1 Max is unreachable (wrong IP, LM Studio
-          # down, model unloaded).
-          # GUL-1431: a local image job unloads the local model for a few minutes on
-          # purpose (host/m1max/bin/gpu-slot.sh), so a short burst is normal.
-          # `for: 30m` waits out a run of image jobs; the gpu-slot keeper
-          # reloads the model within 2 minutes of the slot going free.
+          # Karakeep-facing alias. It runs on the Go subscription since GUL-1864
+          # (deepseek-v4.1-flash-go for text, glm-5.3-flash-go for images), so these
+          # two routes fail when the Go subscription is exhausted, a model name is
+          # dropped from it, or LiteLLM's key loses access — not when the M1 Max
+          # unloads its model. The old qwen3.6-35b-a3b-local-nothink watch (GUL-1431)
+          # was retired with the move off the local lane.
           expr: |
-            increase(litellm_deployment_failure_responses_total{requested_model="qwen3.6-35b-a3b-local-nothink"}[30m]) > 3
+            increase(litellm_deployment_failure_responses_total{requested_model=~"deepseek-v4.1-flash-go|glm-5.3-flash-go"}[30m]) > 3
           for: 30m
           labels:
             severity: warning
             namespace: karakeep
           annotations:
             summary: "Karakeep AI inference is failing"
-            description: "LiteLLM is recording repeated failures for qwen3.6-35b-a3b-local-nothink (Karakeep tagging/summarization) for 30 min. On the M1 Max run `~/.local/bin/gpu-slot.sh status` (model loaded? image job stuck?) and check that its LAN IP still matches the litellm api_base (currently 192.168.1.119:1234)."
+            description: "LiteLLM is recording repeated failures for the Karakeep Go routes (deepseek-v4.1-flash-go / glm-5.3-flash-go) for 30 min. Check the Go subscription still serves both names (`GET https://opencode.ai/zen/go/v1/models`) and that the karakeep LiteLLM key lists them, then look at `kubectl -n karakeep logs karakeep-0 | grep -i inference`."
