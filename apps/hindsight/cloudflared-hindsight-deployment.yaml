@@ -31,10 +31,10 @@ spec:
         app.kubernetes.io/component: tunnel
     spec:
       nodeSelector:
-        kubernetes.io/hostname: t460
+        kubernetes.io/hostname: loki
       containers:
         - name: cloudflared
-          image: cloudflare/cloudflared:2026.10.7
+          image: cloudflare/cloudflared:2026.11.1
           args:
             - tunnel
             - --no-autoupdate

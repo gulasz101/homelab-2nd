@@ -1,7 +1,8 @@
 # Runbook: whole LAN looks dead but every device is healthy
 
-**Scope:** the home LAN (OPNsense, the two small 8-port switches, Pi-hole on `homelab-2nd`, and
-what depends on them). **Written after:** the 2026-11-05 outage, 17:11 to about 19:55 CET.
+**Scope:** the home LAN (OPNsense, the two small 8-port switches, Pi-hole on `mimir` behind the
+`192.168.1.179` front-door address, and what depends on them). Node names updated 2026-11-15: the
+Clevo `homelab-2nd` was retired on 2026-11-12; the 2026-11-05 symptoms below are as observed then. **Written after:** the 2026-11-05 outage, 17:11 to about 19:55 CET.
 
 **Status of the root cause: unknown.** Power-cycling both switches restored the LAN with no config
 change. Both were reset together, so we do not know which one was at fault.
@@ -18,7 +19,8 @@ Blinking switch lights prove power, not forwarding. Do not use them as evidence.
 ## What it looks like
 
 - "No internet", but `ping 1.1.1.1` works through OPNsense. DHCP hands out only Pi-hole
-  (`192.168.1.179`), so if `homelab-2nd` is unreachable, names stop resolving while routing is fine.
+  (`192.168.1.179`), so if the `.179` holder (`mimir` since 2026-11-12) is unreachable, names stop resolving while routing is fine.
+  Since 2026-11-12 `.179` is a secondary IP on `mimir` (`homelab-frontdoor-ip.service`).
 - Nothing gets a DHCP lease through the switches, but a laptop plugged straight into OPNsense does.
 - `homelab-2nd` is up on `169.254.x.x` and ARPs for everything, including `1.1.1.1` and its own
   `.179`.
@@ -32,12 +34,12 @@ From the Framework laptop:
 
 - OPNsense root SSH is publickey only, and this laptop's key is not authorised. The SOPS password
   in `infrastructure/auth/` does not work over SSH.
-- The laptop's key is not authorised on `homelab-2nd` either, but its kubeconfig works. Point it at
-  whichever address the node has:
+- The laptop's key **is** authorised on `mimir@192.168.1.145`, `loki@192.168.1.190` and `root@192.168.1.180`
+  (OMV), and its kubeconfig works. Point it at whichever address mimir has (both are in the cert SANs):
 
   ```bash
-  kubectl --context homelab-2nd --server=https://192.168.1.179:6443 \
-    --tls-server-name=kubernetes get nodes
+  kubectl --context homelab-2nd --server=https://192.168.1.145:6443 get nodes     # LAN
+  kubectl --context homelab-2nd --server=https://100.96.12.30:6443 get nodes     # NetBird
   ```
 
 - To reach a `169.254` address over a direct cable, stop NetworkManager from wiping manual

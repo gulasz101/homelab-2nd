@@ -35,7 +35,7 @@ spec:
         app.kubernetes.io/component: agent-runner
     spec:
       nodeSelector:
-        kubernetes.io/hostname: t460
+        kubernetes.io/hostname: loki
       containers:
         - name: runner
           image: node:26-alpine

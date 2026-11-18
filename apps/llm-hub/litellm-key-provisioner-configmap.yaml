@@ -48,11 +48,13 @@ data:
         # Studio models; free tiers live in FreeLLMAPI (apps/freellmapi/).
         # ADR-091: one named free route into FreeLLMAPI's gpt-oss-120b pool.
         "gpt-oss-120b-freellmapi",
-        # Local LM Studio model on Hermes host
-        "gemma-4-12b-uncensored",
-        "qwen3.8-9b-heretic-uncensored",
-        "qwen3.8-27b-mlx",
-        # Honcho deriver/summary/dream/dialectic models
+        # Local LM Studio on the M1 Max: Qwen3.6-35B-A3B is the only model there
+        # (GUL-1431; Gemma and the local Qwens were deleted on 2026-11-12).
+        "qwen3.6-35b-a3b-local",
+        "qwen3.6-35b-a3b-local-nothink",
+        # Local Ollama models formerly used by the Honcho deriver (Honcho
+        # retired, GUL-355/GUL-402); kept routed for Hindsight experiments and
+        # the OpenChamber agents.
         "nemotron-3-nano-30b-ollama",
         "openai/nemotron-3-nano-30b-ollama",
         "nemotron-3-super-ollama",
@@ -122,6 +124,13 @@ data:
         # crouton-alpha-free-go, hy4-go) and clef-27b-ollama above.
         # iceman-contributor-free-go stays: main added its route (PR #172).
         "iceman-contributor-free-go",
+        # GUL-1446: second hop of the reflect chain and, since the 2026-11-15
+        # follow-up, the PRIMARY of the mental-model refresh lane in
+        # apps/hindsight/hindsight-helm-release.yaml (iceman cannot serve the
+        # `json_schema` a refresh asks for). Route added in
+        # litellm-helm-release.yaml, so the key must be able to call it or the
+        # lane dies at the key check.
+        "longcat-2.5-free-go",
     ]
 
     def expand_models(models):
@@ -142,9 +151,7 @@ data:
         "WIFE_KEY",
         "WOJTEK_KEY",
         "HERMES_ANDRZEJ_KEY",
-        "MEMORY_HONCHO_KEY",
         "HERMES_BILL_CIPHER_KEY",
-        "OPENVIKING_KEY",
         # Pi + OpenCode engineers in Paperclip on the M1 Air (ADR-075)
         "PAPERCLIP_CODERS_KEY",
         # Hindsight reflect + mental-model refresh through llm-hub (GUL-263 /

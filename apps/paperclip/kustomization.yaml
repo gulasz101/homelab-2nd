@@ -9,3 +9,5 @@ resources:
   - postgres-cluster.yaml
   - objectstore.yaml
   - scheduled-backup.yaml
+  - heartbeat-retention.yaml
+  - paperclip-db-lan-service.yaml

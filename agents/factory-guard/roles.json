@@ -8,7 +8,7 @@
       "allowPush": true
     },
     "tester": {
-      "turnCap": 25,
+      "turnCap": 60,
       "writesOutsideWorkspace": false,
       "writeScope": "test-only",
       "allowCommit": false,
@@ -22,7 +22,7 @@
       "allowPush": false
     },
     "readonly": {
-      "turnCap": 40,
+      "turnCap": 60,
       "writesOutsideWorkspace": false,
       "writeScope": "none",
       "allowCommit": false,

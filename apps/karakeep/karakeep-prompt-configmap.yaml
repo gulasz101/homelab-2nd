@@ -1,0 +1,32 @@
+---
+# GUL-1242 / GUL-1183 option (a): Karakeep's custom summary prompt, in git.
+#
+# Karakeep keeps a stock custom prompt so a bookmark card is worth reading; the
+# Morning Brew digest text still comes from `brew.py`, not from this prompt.
+# The prompt is stored in Karakeep's `customPrompts` table, which lives on the
+# `local-path`/NFS PVC - a node loss drops it silently. So the text lives here,
+# and karakeep-prompt-job.yaml converges the live account onto it.
+#
+# The value of `prompt.txt` is EXACTLY 480 characters, sha256
+# 15d5c297e90c10ed62a8a7eb9a6fd2cfd3d7df9b64e83053d249d60689c70ca2 (one trailing
+# newline from the `|` block scalar is stripped by the check and by the Job).
+# Editing the text means: recompute the sha256, update the
+# `checksum/prompt` annotation AND bump the Job name (v2), because Jobs are
+# immutable and Flux prunes the old one. apps/karakeep/tests/prompt-job-check.sh
+# fails when the annotation goes stale.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: karakeep-prompt
+  namespace: karakeep
+  labels:
+    app.kubernetes.io/name: karakeep-prompt
+    app.kubernetes.io/part-of: karakeep
+data:
+  prompt.txt: |
+    IGNORE the 3-4 sentences rule and the summary-only rule. Answer in Markdown with exactly these four parts and nothing else:
+    SHORT: one sentence, max 25 words.
+    HIGHLIGHTS: 3 bullets, max 15 words each.
+    DETAILS: one paragraph, 3-4 sentences, max 90 words.
+    IDEAS: up to 2 bullets on what this could mean for riffradar, homelab-2nd or ideogram4-local, or the single word NONE.
+    Do not list links. Do not add an intro, a heading or a closing line. Keep the whole answer under 400 words.

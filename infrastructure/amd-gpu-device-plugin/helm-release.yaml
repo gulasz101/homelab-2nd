@@ -1,0 +1,42 @@
+---
+# AMD GPU device plugin (ROCm/k8s-device-plugin). Advertises amd.com/gpu and
+# mounts /dev/kfd + the /dev/dri render node into pods that request it, so a
+# workload gets the GPU WITHOUT running privileged or hostPath-mounting /dev.
+#
+# Why (2026-11-12 node move): the Clevo's GTX 970M left with the Clevo. mimir's
+# Ryzen 5 PRO 4650GE has a Radeon Vega 7 iGPU ("Renoir", gfx90c). Ollama's
+# Vulkan backend runs nomic-embed-text on it 2.8x faster than on 4 CPU cores
+# (36.6 vs 101 ms/embed; 35.4 vs 10.2 embeds/s in batches of 64). See the
+# 2026-11-11 control-plane-move tracking note and pending ADR embeddings-on-mimir-igpu-vulkan.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: amd-gpu-device-plugin
+  namespace: amd-gpu-device-plugin
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: amd-gpu
+      version: "0.22.0"
+      sourceRef:
+        kind: HelmRepository
+        name: rocm-k8s-device-plugin
+        namespace: flux-system
+      interval: 24h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # NFD is already deployed (by the NVIDIA plugin chart) and labels nodes
+    # feature.node.kubernetes.io/pci-1002.present (AMD vendor id). The chart's
+    # default selector uses the class-specific pci-0300_1002 key, which our NFD
+    # config does not emit, so null it out and select on the vendor label.
+    node_selector_enabled: true
+    node_selector:
+      feature.node.kubernetes.io/pci-0300_1002.present: null
+      feature.node.kubernetes.io/pci-1002.present: "true"
+      kubernetes.io/arch: amd64
