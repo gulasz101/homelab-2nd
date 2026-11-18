@@ -156,8 +156,20 @@ def stat_options():
 # ---------------------------------------------------------------------------
 # PromQL / LogQL
 # ---------------------------------------------------------------------------
-def pod_selector(namespace, prefix):
-    return 'namespace="%s",pod=~"%s.*"' % (namespace, prefix)
+def pod_selector(namespace, prefix, exclude=()):
+    """A pod-name prefix as a selector, optionally minus sibling workloads.
+
+    `exclude` exists because a prefix is a substring match: `nextcloud-` also
+    matches `nextcloud-db` and `nextcloud-redis-master`, and summing those into
+    the app panel double-counts them. RE2 has no lookahead, so the exclusions
+    are a second `pod!~` matcher.
+    """
+    selector = 'namespace="%s",pod=~"%s.*"' % (namespace, prefix)
+    if exclude:
+        if isinstance(exclude, str):
+            exclude = [exclude]
+        selector += ',pod!~"%s"' % "|".join("%s.*" % item for item in exclude)
+    return selector
 
 
 def pvc_selector(pvc):
@@ -213,9 +225,9 @@ class Dashboard:
         self.y += h
 
     def timeseries(self, title, description, unit, targets, x, y, w=12, h=7,
-                   min_val=None, max_val=None, thresholds=None):
+                   min_val=None, max_val=None, thresholds=None, datasource=None):
         panel = {
-            "datasource": dict(PROM),
+            "datasource": dict(datasource or PROM),
             "description": description,
             "fieldConfig": {
                 "defaults": timeseries_defaults(unit, min_val, max_val, thresholds),
@@ -228,9 +240,10 @@ class Dashboard:
         }
         return self._add(panel, x, y, w, h)
 
-    def stat(self, title, description, unit, targets, x, y, w=8, h=4, thresholds=None):
+    def stat(self, title, description, unit, targets, x, y, w=8, h=4,
+             thresholds=None, datasource=None):
         panel = {
-            "datasource": dict(PROM),
+            "datasource": dict(datasource or PROM),
             "description": description,
             "fieldConfig": {"defaults": stat_defaults(unit, thresholds), "overrides": []},
             "options": stat_options(),
@@ -362,9 +375,22 @@ class Dashboard:
                     "refId": "A",
                 },
             ],
-            0, y, w=24, h=6, min_val=0,
+            # A count_over_time is LogQL, so the panel must point at Loki: on the
+            # Prometheus datasource every one of these dashboards query-errors.
+            0, y, w=24, h=6, min_val=0, datasource=LOKI,
         )
-        self.y = y + 6
+        y += 6
+        self.y = y
+        self.custom_panels(ROW_ORDER[0])
+
+    def service_namespace(self, service):
+        """The namespace a workload actually runs in.
+
+        A dashboard is usually one namespace, but whiteboard's tunnel lives in
+        `apps-tldraw` (the Cloudflare route is pinned to a service there), so a
+        service may name its own namespace instead of the dashboard's.
+        """
+        return service.get("k8sNamespace") or self.namespace
 
     def resources(self):
         self.row(ROW_ORDER[1])
@@ -375,6 +401,9 @@ class Dashboard:
             pod = service["pod"]
             label = service.get("label") or pod
             pvc = service.get("pvc")
+            pod_ns = self.service_namespace(service)
+            excluded = service.get("exclude") or ()
+            selector = pod_selector(pod_ns, pod, excluded)
 
             self.stat(
                 "%s CPU" % label,
@@ -383,21 +412,21 @@ class Dashboard:
                 [
                     {
                         "expr": 'sum(rate(container_cpu_usage_seconds_total{%s,container!=""}[5m]))'
-                                % pod_selector(ns, pod),
+                                % selector,
                         "instant": True,
                         "legendFormat": "usage",
                         "refId": "A",
                     },
                     {
                         "expr": 'sum(kube_pod_container_resource_requests{%s,resource="cpu",container!=""})'
-                                % pod_selector(ns, pod),
+                                % selector,
                         "instant": True,
                         "legendFormat": "request",
                         "refId": "B",
                     },
                     {
                         "expr": 'sum(kube_pod_container_resource_limits{%s,resource="cpu",container!=""})'
-                                % pod_selector(ns, pod),
+                                % selector,
                         "instant": True,
                         "legendFormat": "limit",
                         "refId": "C",
@@ -412,21 +441,21 @@ class Dashboard:
                 [
                     {
                         "expr": 'sum(container_memory_working_set_bytes{%s,container!=""})'
-                                % pod_selector(ns, pod),
+                                % selector,
                         "instant": True,
                         "legendFormat": "usage",
                         "refId": "A",
                     },
                     {
                         "expr": 'sum(kube_pod_container_resource_requests{%s,resource="memory",container!=""})'
-                                % pod_selector(ns, pod),
+                                % selector,
                         "instant": True,
                         "legendFormat": "request",
                         "refId": "B",
                     },
                     {
                         "expr": 'sum(kube_pod_container_resource_limits{%s,resource="memory",container!=""})'
-                                % pod_selector(ns, pod),
+                                % selector,
                         "instant": True,
                         "legendFormat": "limit",
                         "refId": "C",
@@ -442,14 +471,14 @@ class Dashboard:
                     [
                         {
                             "expr": 'kubelet_volume_stats_used_bytes{namespace="%s",%s}'
-                                    % (ns, pvc_selector(pvc)),
+                                    % (pod_ns, pvc_selector(pvc)),
                             "instant": True,
                             "legendFormat": "used",
                             "refId": "A",
                         },
                         {
                             "expr": 'kubelet_volume_stats_capacity_bytes{namespace="%s",%s}'
-                                    % (ns, pvc_selector(pvc)),
+                                    % (pod_ns, pvc_selector(pvc)),
                             "instant": True,
                             "legendFormat": "capacity",
                             "refId": "B",
@@ -596,6 +625,7 @@ class Dashboard:
             y += 7
 
         self.y = y
+        self.custom_panels(ROW_ORDER[1])
 
     def logs_row(self):
         self.row(ROW_ORDER[2])
@@ -605,6 +635,78 @@ class Dashboard:
             "error/warn and telemetry/export subsets.",
         )
         self.y += 12
+
+    # -- app-specific panels ------------------------------------------------
+    def custom_panels(self, row):
+        """The panels the manifest adds to one standard row.
+
+        A namespace dashboard for an app with its own metrics is useless without
+        them — Hindsight's consolidation backlog, the whiteboard tunnel — and
+        deleting them to fit the standard loses the signal the dashboard existed
+        for. They live in the manifest so the generator stays the only writer and
+        the panels obey the same datasource, description and unit rules as the
+        generated ones.
+        """
+        extras = [panel for panel in (self.spec.get("panels") or [])
+                  if (panel.get("row") or ROW_ORDER[0]) == row]
+        if not extras:
+            return
+        x = 0
+        line_height = 0
+        y = self.y
+        for extra in extras:
+            kind = extra.get("type") or "stat"
+            if kind not in ("stat", "timeseries"):
+                raise ValueError("manifest panel %r has unsupported type %r"
+                                 % (extra.get("title"), kind))
+            title = extra.get("title")
+            description = extra.get("description")
+            unit = extra.get("unit")
+            if not isinstance(title, str) or not title.strip():
+                raise ValueError("manifest panel has no title: %r" % (extra,))
+            if not isinstance(description, str) or not description.strip():
+                raise ValueError("manifest panel %r has no description" % title)
+            if not isinstance(unit, str) or not unit.strip():
+                raise ValueError("manifest panel %r has no unit" % title)
+            if extra.get("row") not in (None, ROW_ORDER[0], ROW_ORDER[1]):
+                raise ValueError("manifest panel %r targets row %r; app panels "
+                                 "may join %r or %r only"
+                                 % (title, extra.get("row"), ROW_ORDER[0], ROW_ORDER[1]))
+            targets = []
+            for ref, target in zip("ABCDEFGH", extra.get("targets") or []):
+                expr = target.get("expr")
+                if not isinstance(expr, str) or not expr.strip():
+                    raise ValueError("manifest panel %r has a target without an expr" % title)
+                rendered = {"editorMode": "code", "expr": expr, "refId": ref}
+                legend = target.get("legend")
+                if legend:
+                    rendered["legendFormat"] = legend
+                if kind == "stat" or target.get("instant"):
+                    rendered["instant"] = True
+                targets.append(rendered)
+            if not targets:
+                raise ValueError("manifest panel %r has no targets" % title)
+            datasource = LOKI if extra.get("datasource") == "loki" else PROM
+            thresholds = extra.get("thresholds")
+            if kind == "stat":
+                width, height = extra.get("w", 8), extra.get("h", 4)
+                self.stat(title, description, unit, targets, x, y, w=width, h=height,
+                          thresholds=thresholds, datasource=datasource)
+            else:
+                width, height = extra.get("w", 12), extra.get("h", 7)
+                self.timeseries(title, description, unit, targets, x, y,
+                                w=width, h=height, min_val=extra.get("min"),
+                                max_val=extra.get("max"), thresholds=thresholds,
+                                datasource=datasource)
+            x += width
+            line_height = max(line_height, height)
+            if x >= 24:
+                x = 0
+                y += line_height
+                line_height = 0
+        if x:
+            y += line_height
+        self.y = y
 
     # -- assembly -----------------------------------------------------------
     def render(self):
@@ -637,7 +739,7 @@ class Dashboard:
             "refresh": "30s",
             "schemaVersion": SCHEMA_VERSION,
             "tags": ["homelab", spec["namespace"]],
-            "templating": {"list": template_variables()},
+            "templating": {"list": template_variables(spec)},
             "time": {"from": "now-6h", "to": "now"},
             "timepicker": {},
             "timezone": "browser",
@@ -648,8 +750,8 @@ class Dashboard:
         return dashboard
 
 
-def template_variables():
-    return [
+def template_variables(spec=None):
+    variables = [
         {
             "current": {"selected": True, "text": "Prometheus", "value": "Prometheus"},
             "hide": 0,
@@ -679,6 +781,14 @@ def template_variables():
             "type": "datasource",
         },
     ]
+    # A dashboard may need one more variable (Hindsight filters every query by
+    # `tenant`). The manifest carries it as a ready Grafana variable object, so
+    # the generator does not grow a variable language of its own.
+    for extra in (spec or {}).get("variables") or []:
+        if not isinstance(extra, dict) or not isinstance(extra.get("name"), str):
+            raise ValueError("manifest variable is not an object with a name: %r" % (extra,))
+        variables.append(dict(extra))
+    return variables
 
 
 # ---------------------------------------------------------------------------
