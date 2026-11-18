@@ -1,0 +1,48 @@
+---
+# AlertmanagerConfig: route the SLO burn-rate alerts (slo-prometheus-rules.yaml)
+# to the existing Mattermost webhook, formatted as Slack messages so Mattermost
+# renders them nicely. Same shape as otel-pipeline-alertmanager-config.yaml,
+# flux-gitops-alertmanager-config.yaml, homelab-node-alertmanager-config.yaml and
+# cnpg-backup-alertmanager-config.yaml: the Prometheus Operator resolves urlSecret
+# in the AlertmanagerConfig's own namespace, so the existing
+# homelab-node-mattermost-webhook-url SOPS Secret is reused, never duplicated.
+#
+# Selector: the Alertmanager resource has alertmanagerConfigSelector
+# {release: kube-prometheus-stack}; an AlertmanagerConfig without that label is
+# created and then ignored, and every SLO alert would land on the top-level null
+# receiver - a rule that fires into the void.
+#
+# The route matches alertgroup = slo, the label all twelve burn-rate rules carry.
+# Do not add a second matcher here without checking the namespace trap: with the
+# default OnNamespace matcher strategy, prometheus-operator injects
+# namespace="observability" (this object's namespace) into the generated route,
+# so an alert labelled with another namespace matches nothing.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: slo-mattermost-alerts
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: slo-mattermost
+    matchers:
+      - name: alertgroup
+        value: slo
+        matchType: "="
+  receivers:
+    - name: slo-mattermost
+      slackConfigs:
+        - apiURL:
+            name: homelab-node-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.namespace }}: {{ len .Alerts.Firing }} SLO alert(s) firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }} ({{ .Labels.service }} / {{ .Labels.slo }}, target {{ .Labels.slo_target }}%): {{ .Annotations.summary }} — {{ .Annotations.description }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }} ({{ .Labels.service }} / {{ .Labels.slo }}): {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.namespace }} SLO alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

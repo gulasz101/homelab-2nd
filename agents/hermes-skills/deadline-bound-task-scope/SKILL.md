@@ -57,6 +57,11 @@ transcribed, reduced to key facts, and filed as a PARA note. The run had a 1800 
    deliver, verify. If a step threatens the budget, cut the *step*, not the deliverable.
 7. **When a run is resumed after a timeout, the previous work is the starting point.** Do not
    restart the pipeline from zero.
+8. **Never sleep in-band to reach a timed re-read.** A foreground `terminal` call dies at ~420 s
+   whatever `timeout` you pass, so `date; sleep 540; date` is killed and takes the measurement with
+   it. Split the window: take reading one, post interim progress, do other work in the gap, then take
+   reading two in a fresh short call. Put the clock time next to every reading — "30 min apart" is an
+   assertion a reviewer will check.
 
 ## Deadlines are often config, not law
 

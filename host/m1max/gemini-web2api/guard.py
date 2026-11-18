@@ -32,6 +32,12 @@ SKIP_COOKIES = os.environ.get("GUARD_SKIP_COOKIES") == "1"
 
 WANT = ["SID", "HSID", "SSID", "APISID", "SAPISID",
         "__Secure-1PSID", "__Secure-1PSIDTS", "__Secure-1PAPISID", "__Secure-1PSIDCC"]
+# Which of those identify a SESSION. This is the fingerprint's allowed list and it must stay
+# rotating-cookie-free (GUL-1280): Firefox refreshes __Secure-1PSIDTS and __Secure-1PSIDCC every
+# time it touches google.com, so hashing the whole harvested string meant every tick that used the
+# browser looked like a brand-new login — one wasted Google /check round-trip and one pool churn
+# per tick, on an account that has already been served /sorry twice (GUL-1243/1244).
+STABLE = ["SID", "HSID", "SSID", "APISID", "SAPISID", "__Secure-1PSID", "__Secure-1PAPISID"]
 CANARY_MODEL = "gemini-4-argon"
 PAID = ("4 Argon", "3.1 Pro", "3.8 Flash")
 
@@ -46,6 +52,32 @@ REMIND_AFTER = 6 * 3600          # repeat an unresolved fault every 6 h
 # sampler only ever sees the degraded side of that, so a contiguous clock never reaches the bar.
 DEGRADED_ALERT_S = 6 * 3600
 HEALTHY_CLEAR_S = 2 * 3600       # 2 quiet hours ends the streak (matches proxy_cooldown_min=120)
+
+
+def import_decision(h, st, n_valid):
+    """Should this tick import the harvested cookie? Returns (do_import, why).
+
+    Two triggers, because a session can die without the browser changing its login:
+      - `h` (session-cookie fingerprint) differs from the last import → a real re-login;
+      - the pool has no ENABLED entry → the account was auto-disabled after failing its health
+        checks, or its entry was deleted. The browser login is untouched by any of that.
+    GUL-1313 is the second trigger: the fingerprint had been stable since 10:44, the pool went
+    empty at 13:42, and the guard sat on `entitlement: no-cookie` for eight hours, running on
+    schedule and doing nothing, because it only ever looked at Firefox. Before GUL-1280 the
+    fingerprint churned on every `__Secure-1PSIDTS` refresh and re-imported by accident, which is
+    what hid this. Removing the churn also removed the accidental self-heal.
+
+    A degraded tier still pauses a re-import (each one costs a Google /check round-trip against a
+    throttled account), but never when the pool is empty: there is nothing left to protect, and
+    the import is the only path back.
+    """
+    changed = h != st.get("cookie_hash")
+    empty = not n_valid
+    if not changed and not empty:
+        return False, None
+    if changed and not empty and st.get("entitlement") == "degraded":
+        return False, "degraded"
+    return True, ("pool-empty" if empty else "relogin")
 
 
 def env():
@@ -117,6 +149,23 @@ def note_entitlement(st, paid_now, now, was_degraded):
         st.pop("degraded_since", None)
         st.pop("degraded_long", None)
     return int(st.get("degraded_accum_s") or 0)
+
+
+def note_import(st, cookie_hash, now):
+    """Record that a newly imported cookie took over, and restart its health clock.
+
+    The health window belongs to the cookie, not to the state file. `note_entitlement()` used
+    `setdefault("healthy_since", now)`, so a replaced cookie inherited the previous pair's window
+    and the guard reported "healthy for 3 h 13 min" about a cookie imported three minutes earlier
+    (measured 2026-11-11 21:31Z). Assign, never default, and drop the degraded window with it: the
+    old cookie's degraded time and its one-shot alert flag are not evidence about the new one.
+    """
+    st["cookie_hash"] = cookie_hash
+    st["healthy_since"] = now
+    st["degraded_accum_s"] = 0
+    st.pop("degraded_since", None)
+    st.pop("degraded_long", None)
+    return st
 
 
 def degraded_escalation(msgs, st):
@@ -572,6 +621,23 @@ def harvest_firefox():
     return "; ".join("%s=%s" % (w, rows[w]) for w in WANT if rows.get(w))
 
 
+def fingerprint(ck):
+    """What makes two harvests the SAME login: the STABLE cookies only, in WANT order.
+
+    Deliberately not the whole string. __Secure-1PSIDTS/__Secure-1PSIDCC rotate on their own, so
+    hashing them turns "Firefox touched google.com" into "the user logged in again". A real
+    re-login changes SID/HSID/SSID/APISID/SAPISID/__Secure-1PSID, so it is still caught.
+
+    The full `ck` string is what gets uploaded — this is only the identity used for the decision.
+    """
+    got = {}
+    for part in ck.split("; "):
+        k, _, v = part.partition("=")
+        if k:
+            got[k] = v
+    return "; ".join("%s=%s" % (w, got[w]) for w in STABLE if w in got)
+
+
 def main():
     # Credentials are NOT allowed to be a precondition for the availability checks: a broken
     # env file used to abort the whole run (210 consecutive failures once), which is the same
@@ -623,20 +689,36 @@ def main():
         print("\n".join(m for m in msgs if m))
         return
 
-    h = hashlib.sha256(ck.encode()).hexdigest()[:16]
+    h = hashlib.sha256(fingerprint(ck).encode()).hexdigest()[:16]
 
-    # A rate-limited account must not be re-imported on a schedule: each import costs a Google
-    # auth round-trip (the validity check), and while the account answers 429 that check fails and
-    # the candidate is deleted again — churn that feeds the very throttle we are waiting out.
-    # Only the import pauses; the canary below keeps running so recovery is still detected.
-    degraded = st.get("entitlement") == "degraded"
-    if h != st.get("cookie_hash") and degraded:
+    # Pool state BEFORE the import decision: an empty pool is itself a reason to import (GUL-1313).
+    # Cheap, and the alternative is a guard that runs every 30 min for eight hours and does nothing.
+    s_code, sbody = api("/admin/api/cookies", tok)
+    if s_code == 0:
+        speak(msgs, st, "admin", "unreachable",
+              "⚠️ gemini-web2api answers GET / but its admin API does not (%s). "
+              "Cookie pool and entitlement cannot be checked." % sbody[:120])
+        write_state(st)
+        print("\n".join(m for m in msgs if m))
+        return
+    st.pop("admin", None)
+    try:
+        n_valid = json.loads(sbody).get("enabled", 0)
+    except Exception:
+        n_valid = 0
+
+    do_import, why = import_decision(h, st, n_valid)
+    if not do_import and why == "degraded":
         speak(msgs, st, "import_hold", "paused",
               "⏸ gemini-web2api: paid tier degraded — cookie re-import paused on purpose. "
               "Importing now just re-validates against a throttled account (429) and deletes the "
               "candidate again. It resumes by itself when the tier comes back.")
-    elif h != st.get("cookie_hash"):
+    elif do_import:
         st.pop("import_hold", None)
+        if why == "pool-empty":
+            msgs.append("🔁 gemini-web2api: the cookie pool is empty (no enabled account) but the "
+                        "Firefox login has not changed — re-importing the same session. A dead "
+                        "pool is never a reason to wait.")
         # 1) add the candidate FIRST — never drop a working cookie before the new one proves itself
         st_code, body = api("/admin/api/cookies", tok, "POST",
                             {"label": "wojtek-ai-pro", "cookie": ck,
@@ -677,7 +759,7 @@ def main():
                 old = []
             for oid in old:
                 api("/admin/api/cookies/%s" % oid, tok, "DELETE")
-            st["cookie_hash"] = h
+            note_import(st, h, int(time.time()))
             msgs.append("✅ gemini-web2api: fresh cookie imported and validated"
                         + (" (retired %d stale entry/ies)." % len(old) if old else "."))
 
@@ -710,10 +792,15 @@ def main():
 
     # While the paid tier is degraded the account is usually RATE LIMITED, and every canary is
     # another premium-model request that works against the cooldown. Back off to hourly probes
-    # and stay silent until it recovers.
+    # and stay silent until it recovers. Exception: a pool that was empty at the top of this run
+    # and has just been refilled — a fresh account has its own quota and we need to know NOW
+    # whether the import actually restored the paid tier (GUL-1313).
     now = int(time.time())
     if st.get("entitlement") == "degraded":
         st.setdefault("degraded_since", now)
+    just_refilled = do_import and why == "pool-empty"
+    if just_refilled:
+        st["last_canary"] = 0
     if st.get("entitlement") == "degraded" and (now - st.get("last_canary", 0)) < 3600:
         degraded_escalation(msgs, st)
         write_state(st)

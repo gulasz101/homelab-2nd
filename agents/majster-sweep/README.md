@@ -73,6 +73,29 @@ issues titled `Hourly board sweep`; GUL-217
 Agents with status `paused`, `terminated` or `pending_approval` are ignored
 entirely: parked on purpose, never reported.
 
+### The wake gate (GUL-1761)
+
+A "needs model: yes" flag starts the routine only while it is news:
+
+- an item younger than `DECISION_WINDOW_MINUTES` (180) wakes the model;
+- an older item comes round once per `REMINDER_MINUTES` (360), in the
+  `REMINDER_SLOT_MINUTES` (60) window after `age % 360` returns to zero - one
+  wake per 6 h, not one per hour;
+- the `05:xx` UTC sweep always wakes it, so the 06:00 CET brief is written by
+  Majster and not by the script;
+- `agent_error` always wakes it, and an item with no knowable age always does:
+  no evidence of age is not evidence of staleness.
+
+`age` is the minutes since the fact that tripped the rule (`updatedAt` for the
+issue kinds, the heartbeat for `agent_zombie`, the process age for `long_child`).
+
+What this is not: a filter on the brief. The gate only decides whether a model
+is worth starting. `brief_md` still lists every item, hour after hour, because
+on `exit 0` the wrapper posts it for free. Without the gate a single parked
+issue woke the routine 24 times in 24 h at ~0.35 M tokens a go: on 2026-11-18
+GUL-1754 sat `blocked` with its only blocker `done` for 6.6 h and was, by
+itself, the reason 24 of 24 ticks exited 10.
+
 ## Output
 
 Exactly one JSON object on stdout:
@@ -83,7 +106,9 @@ Exactly one JSON object on stdout:
   "open": 57,
   "stop": null,
   "actionable": true,
-  "items": [{"kind": "hold", "issue": "GUL-123", "id": "<uuid>", "agent": "<agentId or null>", "detail": "<one line, max 160 chars>"}],
+  "morning_brief": false,
+  "woken_by": ["hold GUL-123"],
+  "items": [{"kind": "hold", "issue": "GUL-123", "id": "<uuid>", "agent": "<agentId or null>", "detail": "<one line, max 160 chars>", "age_min": 12}],
   "truncated": 0,
   "tick": ["<factory tick line>", "..."],
   "brief_md": "<!-- sweep:2026-11-09T18:00Z -->\n## Sweep 2026-11-09 18:00Z\n- ..."
@@ -92,7 +117,9 @@ Exactly one JSON object on stdout:
 
 - `stop` is the STOP file's text when it exists, else `null`. When set, the first
   line of `brief_md` after the heading is `factory STOPPED: <text>`.
-- `actionable` is true when at least one kept item is a "needs model: yes" kind.
+- `actionable` is true when at least one kept item passes the wake gate (see
+  above) or when the hour is `05` UTC; `woken_by` names those items as
+  `"<kind> <issue|agent>"` so the log says why a model was started.
 - `items` holds at most 15, needs-model kinds first; the rest count in
   `truncated`.
 - `brief_md` is the section Majster would post on GUL-217 for this hour: the
@@ -102,6 +129,14 @@ Exactly one JSON object on stdout:
 
 Exit codes: `0` nothing needs a model, `10` `actionable` is true, `2` setup
 error.
+
+Every board read sends `User-Agent: majster-sweep/1 (sweep.py)`. That is not
+cosmetic: with no UA, urllib sends `Python-urllib/<ver>`, and Cloudflare's
+Browser Integrity Check in front of `paperclip.voitech.dev` answers 403
+`Error 1010` to it on the same token and the same second that any explicit UA
+gets 200 (GUL-785, GUL-1638). Against `http://127.0.0.1:3100` the UA changes
+nothing; against the public hostname it is the difference between a brief and
+exit 2. `tests/user-agent-check.sh` fails if a read ever goes out without one.
 
 The script never writes to Paperclip: no `POST`, `PATCH`, `PUT` or `DELETE`
 anywhere in it. Posting the brief, nudging and hold releases stay with Majster or
@@ -120,4 +155,6 @@ bash agents/majster-sweep/tests/no-model-kinds-check.sh
 bash agents/majster-sweep/tests/stop-and-tick-check.sh
 bash agents/majster-sweep/tests/size-cap-check.sh
 bash agents/majster-sweep/tests/read-only-check.sh
+bash agents/majster-sweep/tests/user-agent-check.sh
+bash agents/majster-sweep/tests/gate-check.sh
 ```

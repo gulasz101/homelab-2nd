@@ -39,6 +39,7 @@ host/paperclip-air/
 │   │   ├── dev.voitech.homelab.gemini-tunnel.plist
 │   │   ├── dev.voitech.homelab.syncthing.plist
 │   │   ├── dev.voitech.homelab.hermes-dashboard.plist   # loopback only; phone reaches it via Cloudflare (GUL-1111)
+│   │   ├── dev.voitech.homelab.voicebox-server.plist    # TTS backend for the billcipher profile, loopback 17493 (GUL-1723)
 │   │   ├── com.gulasz101.hermes-state-backup.plist      # scheduled 03:30 (ADR-107/108)
 │   │   ├── com.gulasz101.hermes-memory-watchdog.plist   # scheduled hourly (ADR-107/108)
 │   │   └── dev.voitech.homelab.heartbeat.plist          # every 60 s, headless (ADR-126)
@@ -224,6 +225,33 @@ dashboard is a real outage for the phone. Install the daemon before you deploy t
 
 If a service has no derivable command the installer refuses to install its daemon (a `KeepAlive`
 daemon with an unknown command is a crash loop) and tells you which variable to fill in.
+
+## `voicebox-server` (GUL-1723)
+
+The Voicebox TTS backend behind the `billcipher` Hermes profile. Port 17493, `127.0.0.1` only,
+label `dev.voitech.homelab.voicebox-server`, logs `~/Library/Logs/homelab/voicebox-server{,.err}.log`.
+Not published: it is a local synthesis service for an agent, not a web app.
+
+```bash
+SVC_VOICEBOX_SERVER_CMD='/Applications/Voicebox.app/Contents/MacOS/voicebox-server --host 127.0.0.1 --port 17493 --data-dir /Users/paperclip/.hermes/profiles/billcipher/voicebox'
+```
+
+**`--data-dir` is not decoration.** The server defaults to `./data` next to its working directory.
+Started from the profile it landed in `cache/scratch/data`, and Hermes reaps a scratch subtree that
+sits idle for a day — the database (profiles, generations) would vanish under a *running* server,
+which keeps the deleted inode and looks healthy until the next restart finds nothing. The durable
+home is `~/.hermes/profiles/billcipher/voicebox`, and a `backups/` tarball of the old location sits
+beside it from the cutover.
+
+**Startup is slow on purpose:** torch + MLX import before uvicorn binds, measured 48-55 s to a 200
+on `/health`. `svc_rto voicebox-server` is 60 s for that reason; the heartbeat does not treat the
+first minute after a restart as a fault.
+
+Health probe: `/health`, no key, does not load a model. It reports `model_loaded: false` on an idle
+server — that is correct, models load on first synthesis, not at boot.
+
+Break-glass start, for when the daemon is not loaded at all: `~/.hermes/profiles/billcipher/scripts/start-voicebox.sh`
+(no-ops if the port already answers).
 
 ## Rollback
 

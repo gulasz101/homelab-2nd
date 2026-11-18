@@ -28,9 +28,9 @@ HOMELAB_AGENT_DIR="$HOMELAB_HOME/Library/LaunchAgents"
 # it has no business being on the public internet.
 HOMELAB_HEARTBEAT_URL_DEFAULT="http://192.168.1.179:30270/heartbeat"
 
-# The six headless services, in start order. Keep this list and the plists in
+# The seven headless services, in start order. Keep this list and the plists in
 # launchd/daemons/ in step: tests/host-tree-check.sh fails otherwise.
-HOMELAB_SERVICES="hermes-gateway paperclip minio-lan-proxy gemini-tunnel syncthing hermes-dashboard"
+HOMELAB_SERVICES="hermes-gateway paperclip minio-lan-proxy gemini-tunnel syncthing hermes-dashboard voicebox-server"
 
 svc_label() { printf '%s.%s' "$HOMELAB_DOMAIN" "$1"; }
 
@@ -45,6 +45,7 @@ svc_port() {
     gemini-tunnel)   echo 8083 ;;
     syncthing)       echo 8384 ;;
     hermes-dashboard) echo 9119 ;;
+    voicebox-server) echo 17493 ;;
     *) return 1 ;;
   esac
 }
@@ -65,6 +66,9 @@ svc_health_path() {
     # so almost every route answers 401. /api/health is on the dashboard's own
     # public allowlist (hermes_cli/dashboard_auth/public_paths.py) and needs no cookie.
     hermes-dashboard) echo "/api/health" ;;
+    # Voicebox answers /health without a key and without touching a model, so it
+    # is a true liveness probe rather than a "did the process load 5 GB" probe.
+    voicebox-server)  echo "/health" ;;
   esac
 }
 
@@ -87,6 +91,9 @@ svc_rto() {
     gemini-tunnel)   echo 30 ;;
     syncthing)       echo 30 ;;
     hermes-dashboard) echo 30 ;;
+    # Measured 2026-11-17: 48-55 s from launchd start to a 200 on /health
+    # (torch + MLX import before uvicorn binds). Not a slow network, a slow runtime.
+    voicebox-server) echo 60 ;;
   esac
 }
 
