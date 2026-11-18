@@ -35,8 +35,17 @@ It is not available on this instance:
 
 Until that flag is on, the factory runs **one work order at a time**. `factory
 start` refuses while another work order (open issue with a `spec` document,
-assigned to Majster) is open in the same project, and says why. One checkout, one
-diff, no second branch in the same tree.
+assigned to Majster) is open for the same **checkout**, and says why. One checkout,
+one diff, no second branch in the same tree.
+
+A work order's checkout is decided by the repo its spec names, not by the issue's
+project (GUL-1389): three Image Studio work orders asked for `gulasz101/homelab-2nd`,
+their project checks out `ideogram4-local`, and the factory cut branches in a tree
+where the work could never run. `work_order_cwd()` resolves the spec's `repo` against
+the project's own workspaces first, then the company's; a project checkout that
+provably holds a different repo is refused rather than used, and two checkouts of
+the same repo are refused rather than guessed. The same-checkout guard compares
+`cwd`s, so two projects that share one checkout still cannot run two work orders.
 
 We do not build a worktree manager of our own: no `git worktree` bookkeeping, no
 per-order directories, no branch registry. The checkout decision lives in one

@@ -129,26 +129,108 @@ spec:
         enabled: false
 
     # Datasource definitions provisioned directly in values.
+    #
+    # The uids are pinned, not left to Grafana. Every dashboard ConfigMap in
+    # this repo hard-codes them in its panels ("datasource": {"type": ...,
+    # "uid": ...}), so an auto-generated uid silently blinds every panel. The
+    # two values below are the uids Grafana minted for the default Prometheus
+    # and Loki datasources years ago and the ones the dashboards already query,
+    # so pinning them changes nothing for the dashboards (GUL-1596 AC-1).
     datasources:
       datasources.yaml:
         apiVersion: 1
+        # Grafana deletes the datasources listed here *before* it adds or
+        # updates the ones under `datasources` (provisioning spec), which is
+        # what makes the pinned uids below safe. Provisioning refuses a
+        # datasource whose pinned uid already exists in the database
+        # ("datasource with same uid already exists") and aborts the whole
+        # file, taking Grafana down with it. The four names are exactly the
+        # datasources this file re-creates, so a delete always pairs with a
+        # re-create and nothing disappears.
+        deleteDatasources:
+          - name: Prometheus
+            orgId: 1
+          - name: Loki
+            orgId: 1
+          - name: Tempo
+            orgId: 1
+          - name: InfluxDB
+            orgId: 1
         datasources:
           - name: Prometheus
             type: prometheus
+            uid: PBFA97CFB590B2093
             url: http://prometheus-stack-kube-prom-prometheus.observability.svc.cluster.local:9090
             access: proxy
             isDefault: true
             editable: false
+            jsonData:
+              # An exemplar attached to a sample carries the trace it was
+              # recorded in - the collector writes the OTLP span id as the
+              # `trace_id` exemplar label. Point it at Tempo so clicking an
+              # exemplar opens that trace (AC-4).
+              exemplarTraceIdDestinations:
+                - name: trace_id
+                  datasourceUid: tempo
           - name: Loki
             type: loki
+            uid: P8E80F9AEF21F6940
             url: http://loki-gateway.observability.svc.cluster.local:80
             access: proxy
             editable: false
+            jsonData:
+              # Logs reach Loki through the collector's OTLP exporter, and Loki
+              # keeps the OTLP trace context as structured metadata under the
+              # key `trace_id` (an index label per trace would be cardinality
+              # suicide). matcherType label matches that key rather than the log
+              # body, so a line with a trace id gets a Tempo link (AC-3).
+              derivedFields:
+                - name: TraceID
+                  matcherType: label
+                  matcherRegex: trace_id
+                  url: '$${__value.raw}'
+                  urlDisplayLabel: View trace in Tempo
+                  datasourceUid: tempo
           - name: Tempo
             type: tempo
+            uid: tempo
             url: http://tempo.observability.svc.cluster.local:3200
             access: proxy
             editable: false
+            jsonData:
+              # traces -> logs: the log lines of the selected trace, keyed on
+              # the trace id Loki holds as structured metadata (AC-2).
+              tracesToLogsV2:
+                datasourceUid: P8E80F9AEF21F6940
+                spanStartTimeShift: '-5m'
+                spanEndTimeShift: '5m'
+                filterByTraceID: true
+                filterBySpanID: false
+                customQuery: false
+                tags:
+                  - key: service.name
+                    value: service_name
+              # traces -> metrics: the span-metrics series Tempo's
+              # metrics-generator remote-writes to Prometheus (AC-2, AC-5).
+              # Tempo names the span label `service`, not OTel's service.name.
+              tracesToMetrics:
+                datasourceUid: PBFA97CFB590B2093
+                spanStartTimeShift: '-5m'
+                spanEndTimeShift: '5m'
+                tags:
+                  - key: service.name
+                    value: service
+                queries:
+                  - name: Span rate
+                    query: 'sum(rate(traces_spanmetrics_calls_total{$${__tags}}[$__rate_interval]))'
+                  - name: p95 span duration
+                    query: 'histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency_bucket{$${__tags}}[$__rate_interval])) by (le))'
+                  - name: Service graph request rate
+                    query: 'sum(rate(traces_service_graph_request_total{$${__tags}}[$__rate_interval])) by (client, server)'
+              # The service map view reads the service-graph series from
+              # Prometheus; Tempo itself has no graph to draw (AC-2).
+              serviceMap:
+                datasourceUid: PBFA97CFB590B2093
           # 2026-10-14: the migrated home-sensor pipeline (Node-RED influxdb-out
           # nodes, org 'na' bucket 'default', measurements LYWSD03MMC /
           # MOVEMENT / bathroom_heater / power_usage) had NO Grafana datasource

@@ -100,7 +100,7 @@ data:
       If the tree is dirty from a previous run, inspect it before overwriting;
       never discard someone else's commits.
     - Read the repo layout, the relevant manifests, and the ADRs under
-      `docs/adr/`. Query OpenViking for prior art and `docs-mcp` for library
+      `docs/adr/`. Query Hindsight for prior art and `docs-mcp` for library
       specifics.
     - `search_issues` / `list_issues` in H2 for duplicates or related work;
       link them later with `relates` / `duplicates`.

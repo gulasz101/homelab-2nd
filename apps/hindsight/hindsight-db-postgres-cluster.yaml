@@ -26,6 +26,9 @@ metadata:
   namespace: hindsight
 spec:
   instances: 1
+  # Switchover (not restart) on any primary pod-spec change: moving node = new replica +
+  # promote, never an in-place restart that a node-bound local-path PV can't follow.
+  primaryUpdateMethod: switchover
   imageName: ghcr.io/cloudnative-pg/postgresql:16
 
   # Pinned to homelab-2nd (architecture: live DB PVCs on its NVMe). Generation 1
@@ -35,7 +38,7 @@ spec:
   # BEFORE the first pod is scheduled; this is why generation 2 exists.
   affinity:
     nodeSelector:
-      kubernetes.io/hostname: homelab-2nd
+      kubernetes.io/hostname: mimir
 
   # Sized for homelab-2nd (8c/31GB). H2-307 measured ~56% CPU throttling at 1
   # core during backlog consolidation.

@@ -234,6 +234,26 @@ do_apply() {
     "$HOMELAB_LIBEXEC/homelab-service-run.sh" || die "could not install the launcher"
   say "installed $HOMELAB_LIBEXEC/homelab-service-run.sh"
 
+  # The Paperclip server backs its own database up hourly and shells out to `pg_dump`;
+  # macOS has none, so it silently falls back to a JavaScript dump that reads every
+  # table with SELECT * (GUL-1331, RUNBOOK 6a). Install the shim that runs the pod's
+  # own pg_dump, and name it pg_dump on both directories the daemon PATH may contain:
+  # /usr/local/bin is on the loaded daemon environment today, ~/.local/bin is what the
+  # on-disk plist leads with. Harmless when the cluster is down: engine "auto" just
+  # falls back to the slow engine.
+  step "installing the pg_dump shim for the Paperclip backup"
+  if [ -f "$SCRIPT_DIR/paperclip-pg-dump" ]; then
+    install -m 0755 -o root -g wheel "$SCRIPT_DIR/paperclip-pg-dump" \
+      /usr/local/bin/paperclip-pg-dump && say "installed /usr/local/bin/paperclip-pg-dump"
+    ln -sfn /usr/local/bin/paperclip-pg-dump /usr/local/bin/pg_dump
+    mkdir -p "$HOMELAB_HOME/.local/bin"
+    ln -sfn /usr/local/bin/paperclip-pg-dump "$HOMELAB_HOME/.local/bin/pg_dump"
+    chown -h "$HOMELAB_USER" "$HOMELAB_HOME/.local/bin/pg_dump" 2>/dev/null || :
+    say "pg_dump -> the pod's pg_dump on the daemon PATH (no restart needed: resolved per spawn)"
+  else
+    warn "bin/paperclip-pg-dump is missing: the Paperclip backup stays on the slow JS engine"
+  fi
+
   step "converting agents to daemons"
   agent_uid=$(appliance_uid)
   [ -n "$agent_uid" ] || die "user $HOMELAB_USER does not exist on this host"

@@ -44,7 +44,7 @@ spec:
         # Pinned off the control-plane node on purpose: homelab-2nd is the CPU
         # -saturated one and runs the whole workload; t460 is idle-ish. Same
         # choice as openchamber's proxy and the cloudflared pods.
-        kubernetes.io/hostname: t460
+        kubernetes.io/hostname: loki
       containers:
         - name: oauth2-proxy
           image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4

@@ -1,0 +1,45 @@
+---
+# AlertmanagerConfig: route the telemetry-pipeline alerts (otel-pipeline-
+# prometheus-rules.yaml) to the existing Mattermost webhook, formatted as Slack
+# messages so Mattermost renders them nicely. Same shape as
+# flux-gitops-alertmanager-config.yaml, homelab-node-alertmanager-config.yaml and
+# cnpg-backup-alertmanager-config.yaml: the Prometheus Operator resolves
+# urlSecret in the AlertmanagerConfig's own namespace, so the existing
+# homelab-node-mattermost-webhook-url SOPS Secret is reused, never duplicated.
+#
+# Selector: the Alertmanager resource has alertmanagerConfigSelector
+# {release: kube-prometheus-stack}; an AlertmanagerConfig without that label is
+# created and then ignored, and every otel-pipeline alert would land on the
+# top-level null receiver.
+#
+# The route matches alertgroup = otel-pipeline, the label all seven rules carry.
+# Do not add a second matcher here without checking the namespace trap below.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: otel-pipeline-mattermost-alerts
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: otel-pipeline-mattermost
+    matchers:
+      - name: alertgroup
+        value: otel-pipeline
+        matchType: "="
+  receivers:
+    - name: otel-pipeline-mattermost
+      slackConfigs:
+        - apiURL:
+            name: homelab-node-mattermost-webhook-url
+            key: url
+          sendResolved: true
+          title: |-
+            [{{ .Status | toUpper }}] {{ .CommonLabels.namespace }}: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}
+          text: |-
+            {{ range .Alerts.Firing }}- {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}
+            {{ end }}{{ range .Alerts.Resolved }}- {{ .Labels.alertname }}: {{ .Annotations.summary }} (resolved)
+            {{ end }}
+          fallback: |-
+            {{ .CommonLabels.namespace }} alert: {{ len .Alerts.Firing }} firing{{ if .Alerts.Resolved }}, {{ len .Alerts.Resolved }} resolved{{ end }}

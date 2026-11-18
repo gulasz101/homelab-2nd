@@ -7,7 +7,7 @@ side. Server alias `m1max` (`ssh m1max`). It runs as the owner's account
 - the Hermes gateway (`ai.hermes.gateway`)
 - Syncthing, the vault sync peer
 - the Gemini proxy (`127.0.0.1:8083`, inside OrbStack)
-- LM Studio, llama-embed, whisper, Kokoro, camofox, Star Office UI, ideogram4 worker
+- LM Studio (Saluki 27B only, see "GPU slot" below), llama-embed, whisper, Kokoro, camofox, Star Office UI, ideogram4 worker
 
 That list is the reason this machine must survive two things a laptop normally does not.
 
@@ -84,3 +84,33 @@ it while expecting the host to recover unattended: the two are mutually exclusiv
 
 Only because clamshell mode used to require a display. Once `disablesleep=1` is set, the plug is
 convenience, not a dependency — and it is worth pulling out once to prove it.
+
+## GPU slot: Saluki and the image worker take turns (GUL-1431)
+
+LM Studio serves one model, Saluki 27B (`saluki-27b`, 64k context, 2 slots, about 12-13 GB). A
+local image job (ideogram4, flux2-klein) needs about 17 GB, so both at once do not fit. The
+image worker calls `~/.local/bin/gpu-slot.sh begin <engine>` before a local job (Saluki unloads)
+and `end` after it (Saluki loads again, 11 s). LiteLLM sends LLM calls to the cloud in between.
+Record: `docs/adr/pending/saluki-local-lane-and-gpu-slot.md`.
+
+```bash
+~/.local/bin/gpu-slot.sh status                 # model=idle marker=none is the normal state
+tail ~/Library/Logs/homelab/gpu-slot.log
+```
+
+Install or update (from the Air):
+
+```bash
+scp host/m1max/bin/gpu-slot.sh m1max:.local/bin/gpu-slot.sh
+scp host/m1max/launchd/agents/com.gulasz101.gpu-slot-keeper.plist m1max:Library/LaunchAgents/
+ssh m1max 'launchctl bootout gui/$(id -u)/com.gulasz101.gpu-slot-keeper 2>/dev/null; launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gulasz101.gpu-slot-keeper.plist'
+```
+
+Two LM Studio settings this depends on:
+
+- **JIT auto-load off** (`~/.lmstudio/.internal/http-server-config.json`,
+  `"justInTimeModelLoading": false`). With it on, the first LLM call during an image job loads
+  Saluki straight back and the two fight for RAM.
+- With JIT off, LM Studio answers a request for **any** model name with the model that is loaded,
+  and with HTTP 400 "No models loaded" when none is. The fallback in LiteLLM relies on that 400.
+

@@ -94,7 +94,7 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-091 | The FreeLLMAPI gpt-oss-120b pool is also a LiteLLM route | Accepted | 2026-10-26 |
 | ADR-092 | Pin cloudflared image tags and ship tunnel upgrades as explicit tag bumps | Accepted | 2026-10-26 |
 | ADR-093 | Pi-only code factory with scripted gates; Wojtek keeps the merge button | Accepted | 2026-10-27 |
-| ADR-094 | Hindsight reflect rides the paid `gpt-oss-120b-ollama` route; retain stays free | Accepted | 2026-10-27 |
+| ADR-094 | Hindsight reflect rides the paid `gpt-oss-120b-ollama` route; retain stays free (amended 2026-11-13: both lanes on free Go `iceman-contributor-free-go`) | Accepted | 2026-10-27 |
 | ADR-095 | One factory work order per checkout until Paperclip's isolated workspaces are switched on | Accepted | 2026-10-28 |
 | ADR-096 | The factory runs its own code from a checkout of main, never from the work order's checkout | Accepted | 2026-10-28 |
 | ADR-097 | A Helm chart pin names one exact version and never sits below the deployed one | Accepted | 2026-10-28 |
@@ -128,6 +128,13 @@ ADRs are numbered sequentially. The numbering is not reused if an ADR is superse
 | ADR-126 | The heartbeat sender is a system daemon that reports the session, not one that dies with it | Accepted | 2026-11-02 |
 | ADR-127 | Hindsight reflect pays for the DeepSeek route, because the free routes are metered | Accepted | 2026-11-06 |
 | ADR-128 | The refresh and reflect ride the free lane, with a free fallback behind the router | Accepted | 2026-11-09 |
+| ADR-129 | A permanently red agent is caught by the hourly sweep, not by the Attention panel | Accepted | 2026-11-02 |
+| ADR-130 | The digest text comes from Brew; Karakeep keeps a reading card | Accepted | 2026-11-10 |
+| ADR-131 | Heartbeat run payloads are trimmed on a 14-day window | Accepted | 2026-11-10 |
+| ADR-132 | The Lodge learns an agent's Paperclip state by polling, because nothing inside the run can tell it | Accepted | 2026-11-02 |
+| ADR-133 | Image Studio — one designer agent, three engines behind one queue, verdicts in Paperclip | Accepted | 2026-11-12 |
+| ADR-134 | The Voicebox TTS backend is a supervised host daemon with a durable data directory | Accepted | 2026-11-17 |
+| ADR-135 | Observability design — one telemetry pipeline, one dashboard standard, three SLOs | Accepted | 2026-11-18 |
 
 > Note: rows ADR-057…ADR-061 and ADR-063…ADR-066 were back-filled on 2026-10-16 alongside
 > ADR-067 — the files had landed without index rows (same recurring miss as ADR-035/036,

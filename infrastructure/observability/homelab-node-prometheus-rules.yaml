@@ -1,5 +1,8 @@
 ---
-# PrometheusRule: thermal and load alerts for the homelab-2nd node.
+# PrometheusRule: thermal and load alerts for every homelab node (mimir, loki,
+# arr-box, zigbee-node, OMV). Per-instance since the 2026-11-12 node move
+# (pending ADR k3s-control-plane-moves-to-mimir); these used to be hard-wired to the Clevo (instance 192.168.1.179:9100,
+# Intel coretemp) and went silent the day the Clevo left.
 # Routes to the homelab-node AlertmanagerConfig in the observability namespace.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -14,35 +17,42 @@ spec:
       interval: 60s
       rules:
         - alert: HomelabNodeHighTemperature
-          expr: max(node_hwmon_temp_celsius{chip="platform_coretemp_0"}) > 85
+          # CPU package sensor: Intel coretemp (loki, arr-box) or AMD k10temp
+          # (mimir, chip pci0000:00_0000:00:18_3).
+          expr: |
+            max by (instance) (
+              node_hwmon_temp_celsius{chip=~"platform_coretemp_0|pci0000:00_0000:00:18_3"}
+            ) > 85
           for: 2m
           labels:
             severity: critical
             alertgroup: homelab-node
             namespace: observability
           annotations:
-            summary: "homelab-2nd CPU package temperature is high"
-            description: "CPU package temperature on homelab-2nd is {{ $value }}°C for more than 2 minutes."
+            summary: "CPU temperature is high on {{ $labels.instance }}"
+            description: "CPU package temperature on {{ $labels.instance }} is {{ $value }}°C for more than 2 minutes."
 
         - alert: HomelabNodeThermalThrottling
-          expr: max(node_thermal_zone_temp{zone="0"}) > 90
+          expr: max by (instance) (node_thermal_zone_temp) > 90
           for: 1m
           labels:
             severity: critical
             alertgroup: homelab-node
             namespace: observability
           annotations:
-            summary: "homelab-2nd thermal zone is near critical"
-            description: "Thermal zone 0 on homelab-2nd is {{ $value }}°C."
+            summary: "Thermal zone near critical on {{ $labels.instance }}"
+            description: "A thermal zone on {{ $labels.instance }} is {{ $value }}°C."
 
     - name: homelab-node-load
       interval: 60s
       rules:
+        # load1 per CPU. The old expression used `count without (mode)`, which keeps
+        # the cpu label, so it never matched node_load1 and could not fire.
         - alert: HomelabNodeHighLoad
           expr: |
-            node_load1{instance="192.168.1.179:9100"}
+            max by (instance) (node_load1)
             /
-            count without (mode) (node_cpu_seconds_total{instance="192.168.1.179:9100", mode="idle"})
+            count by (instance) (node_cpu_seconds_total{mode="idle"})
             > 0.85
           for: 5m
           labels:
@@ -50,14 +60,14 @@ spec:
             alertgroup: homelab-node
             namespace: observability
           annotations:
-            summary: "homelab-2nd load average is high"
-            description: "5-minute load average on homelab-2nd is {{ $value }} per CPU."
+            summary: "Load average is high on {{ $labels.instance }}"
+            description: "Load average on {{ $labels.instance }} is {{ $value }} per CPU."
 
         - alert: HomelabNodeSustainedHighLoad
           expr: |
-            node_load1{instance="192.168.1.179:9100"}
+            max by (instance) (node_load1)
             /
-            count without (mode) (node_cpu_seconds_total{instance="192.168.1.179:9100", mode="idle"})
+            count by (instance) (node_cpu_seconds_total{mode="idle"})
             > 0.95
           for: 10m
           labels:
@@ -65,5 +75,5 @@ spec:
             alertgroup: homelab-node
             namespace: observability
           annotations:
-            summary: "homelab-2nd is under sustained heavy load"
-            description: "10-minute sustained load on homelab-2nd is {{ $value }} per CPU — risk of thermal shutdown."
+            summary: "Sustained heavy load on {{ $labels.instance }}"
+            description: "Sustained load on {{ $labels.instance }} is {{ $value }} per CPU — risk of thermal shutdown."

@@ -235,6 +235,35 @@ rm -rf "$G/scripts"
 run $PY "$FACTORY" check-green --repo "$G" --red "$RED_SHA" --spec "$G/spec.md"
 expect_rc "green: clean source-only diff" 0 "$LAST_RC"
 
+# ---- GUL-1801: main's own work after the red commit is not the stage's ----
+# main moved after the red commit and touched a test path plus a path outside
+# allowedPaths; the work-order branch then took both through an update-branch
+# merge. That is PR #252 in miniature: check-green counted main's commits as stage
+# changes and reported six reasons nobody in the stage had caused. Both must be
+# dropped before the test-path comparison and before the allowedPaths check.
+git -C "$G" checkout -q -b main-side "$RED_SHA"
+printf '# main: tightened the check\n' >> "$G/tests/ac.sh"
+mkdir -p "$G/plugins" && printf 'print("main")\n' > "$G/plugins/from-main.py"
+git -C "$G" add "$G/plugins/from-main.py"
+git -C "$G" commit -q -m "main: tighten the check" -- tests/ac.sh plugins/from-main.py
+MAIN_SHA="$(git -C "$G" rev-parse HEAD)"
+git -C "$G" update-ref refs/remotes/origin/main "$MAIN_SHA"
+git -C "$G" checkout -q "$RED_SHA"
+git -C "$G" checkout -q "$MAIN_SHA" -- tests/ac.sh plugins/from-main.py
+run $PY "$FACTORY" check-green --repo "$G" --red "$RED_SHA" --spec "$G/spec.md"
+expect_rc "green (GUL-1801): main's own changes are not stage work -> PASS" 0 "$LAST_RC"
+grep -q 'tests/ac.sh' "$LAST_OUT" && ok "green (GUL-1801): the dropped test path is listed in fromMain" \
+  || bad "green (GUL-1801): fromMain does not name tests/ac.sh"
+# ...but a test path the stage changed on top of main's still fails.
+printf '# stage: changed the check too\n' >> "$G/tests/ac.sh"
+run $PY "$FACTORY" check-green --repo "$G" --red "$RED_SHA" --spec "$G/spec.md"
+expect_rc "green (GUL-1801): the stage changing a test path main also touched -> FAILS" 1 "$LAST_RC"
+grep -q "test path differs from the red commit" "$LAST_OUT" && ok "green (GUL-1801): names the test path it refused" \
+  || bad "green (GUL-1801): no test-path reason"
+git -C "$G" checkout -q "$MAIN_SHA" -- tests/ac.sh
+run $PY "$FACTORY" check-green --repo "$G" --red "$RED_SHA" --spec "$G/spec.md"
+expect_rc "green (GUL-1801): main's version restored -> PASS again" 0 "$LAST_RC"
+
 # ---------- 4. check-findings ----------
 echo "== check-findings =="
 FR="$TMP/find"
@@ -321,7 +350,10 @@ fi
 case "$1 $2" in
   "pr view")   cat "$GH_STUB_DIR/pr-view.json" ;;
   "pr checks") cat "$GH_STUB_DIR/pr-checks.json" ;;
-  "pr create") echo "https://github.example/gulasz101/homelab-2nd/pull/999" ;;
+  "pr create") printf '%s\n' "$*" >> "$(dirname "$0")/pr-create.log"
+               echo "https://github.example/gulasz101/homelab-2nd/pull/999" ;;
+  "pr ready")  printf '%s\n' "$*" >> "$(dirname "$0")/pr-ready.log"
+               echo "ready" ;;
   *) exit 1 ;;
 esac
 STUB
@@ -329,9 +361,9 @@ chmod +x "$GHSTUB/gh"
 export FACTORY_GH="$GHSTUB/gh"
 spec_file "$TMP/gate-spec.md" '["src/**"]' 100 '"true"'
 b64() { $PY -c 'import base64,sys; print(base64.b64encode(sys.stdin.buffer.read()).decode())'; }
-write_view() { # files-json additions deletions
+write_view() { # files-json additions deletions [draft]
   cat > "$GHSTUB/data/pr-view.json" <<EOF
-{"headRefOid":"aaaa","baseRefOid":"bbbb","additions":$2,"deletions":$3,"files":$1}
+{"headRefOid":"aaaa","baseRefOid":"bbbb","additions":$2,"deletions":$3,"files":$1,"isDraft":${4:-false}}
 EOF
 }
 export GH_STUB_DIR="$GHSTUB/data"
@@ -345,6 +377,9 @@ cat > "$GHSTUB/data/pr-checks.json" <<'EOF'
 EOF
 run env FACTORY_GH="$GHSTUB/gh" GH_STUB_DIR="$GHSTUB/data" $PY "$FACTORY" check-gate --pr "gulasz101/homelab-2nd#7" --spec "$TMP/gate-spec.md"
 expect_rc "gate: green check + clean paths" 0 "$LAST_RC"
+# GUL-1801: only a draft gets marked ready; a normal PR is left alone.
+[ -f "$GHSTUB/pr-ready.log" ] && bad "gate (GUL-1801): marked a non-draft PR ready" \
+  || ok "gate (GUL-1801): a non-draft PR is not touched"
 
 cat > "$GHSTUB/data/pr-checks.json" <<'EOF'
 [{"name":"check","state":"FAILURE"}]
@@ -379,9 +414,29 @@ write_view '[{"path":"apps/foo/enc.yaml","changeType":"MODIFIED","additions":1,"
 run env FACTORY_GH="$GHSTUB/gh" GH_STUB_DIR="$GHSTUB/data" $PY "$FACTORY" check-gate --pr "gulasz101/homelab-2nd#7" --spec "$TMP/gate-spec.md"
 expect_rc "gate: sops-encrypted content rule -> fail" 1 "$LAST_RC"
 
-write_view '[{"path":"src/app.yaml","changeType":"MODIFIED","additions":60,"deletions":60}]' 60 60
+# GUL-1730: 1x-3x maxDiffLines warns with one size note, it does not block. A green,
+# reviewed, verified PR lost over 59 lines (GUL-1597: 559 against 500) and the PM
+# raised the spec by hand; the merge decision sees the number instead.
+write_view '[{"path":"src/app.yaml","changeType":"MODIFIED","additions":75,"deletions":75}]' 75 75
 run env FACTORY_GH="$GHSTUB/gh" GH_STUB_DIR="$GHSTUB/data" $PY "$FACTORY" check-gate --pr "gulasz101/homelab-2nd#7" --spec "$TMP/gate-spec.md"
-expect_rc "gate: diff over maxDiffLines -> fail" 1 "$LAST_RC"
+expect_rc "gate: 1.5x maxDiffLines -> pass" 0 "$LAST_RC"
+grep -q 'size note: 150 lines > maxDiffLines 100' "$LAST_OUT" && ok "gate: 1.5x carries the size note" || bad "gate 1.5x size note"
+
+# 3x is the hard stop: nobody reviews that in one sitting.
+write_view '[{"path":"src/app.yaml","changeType":"MODIFIED","additions":175,"deletions":175}]' 175 175
+run env FACTORY_GH="$GHSTUB/gh" GH_STUB_DIR="$GHSTUB/data" $PY "$FACTORY" check-gate --pr "gulasz101/homelab-2nd#7" --spec "$TMP/gate-spec.md"
+expect_rc "gate: diff over 3x maxDiffLines -> fail" 1 "$LAST_RC"
+grep -q '3 \* maxDiffLines' "$LAST_OUT" && ok "gate: the hard stop names 3x" || bad "gate 3x reason"
+
+# GUL-1801: open-pr opens the PR as a draft while the round is unfinished, and the
+# passing gate is what takes the draft off. Wojtek's flow does not change: the merge
+# card is raised after the gate anyway.
+rm -f "$GHSTUB/pr-ready.log"
+write_view '[{"path":"src/app.yaml","changeType":"MODIFIED","additions":3,"deletions":1}]' 3 1 true
+run env FACTORY_GH="$GHSTUB/gh" GH_STUB_DIR="$GHSTUB/data" $PY "$FACTORY" check-gate --pr "gulasz101/homelab-2nd#7" --spec "$TMP/gate-spec.md"
+expect_rc "gate (GUL-1801): a passing gate on a draft PR -> pass" 0 "$LAST_RC"
+grep -q "pr ready 7" "$GHSTUB/pr-ready.log" 2>/dev/null && ok "gate (GUL-1801): marks the draft PR ready" \
+  || bad "gate (GUL-1801): pr ready was not called"
 
 write_view '[{"path":"src/app.yaml","changeType":"MODIFIED","additions":3,"deletions":1}]' 3 1
 rm -f "$GHSTUB/data/contents-app.yaml.json"
@@ -498,8 +553,20 @@ printf 'print("pr me")\n' > "$O/src/pr.py"
 run env FACTORY_GH="$GHSTUB/gh" $PY "$FACTORY" open-pr --repo "$O" --issue GUL-436 --title "Factory test PR"
 expect_rc "open-pr: pushes branch and prints url" 0 "$LAST_RC"
 expect_json_field x "url" "https://github.example/gulasz101/homelab-2nd/pull/999" && ok "open-pr url field" || bad "open-pr url"
+# GUL-1801: open-pr runs inside the green stage, so the round it belongs to is
+# never finished here — review, verify and the gate are still ahead and a fix round
+# can rewrite the head. The PR is opened as a draft (GitHub refuses to merge it) and
+# check-gate marks it ready when it passes.
+grep -q -- '--draft' "$GHSTUB/pr-create.log" 2>/dev/null && ok "open-pr (GUL-1801): opened as a draft" \
+  || bad "open-pr (GUL-1801): not opened as a draft"
 git -C "$TMP/origin.git" rev-parse --verify gul-436-work >/dev/null 2>&1 \
   && ok "branch actually pushed to origin" || bad "branch not pushed"
+# a caller that knows the round is over can open a normal PR
+git -C "$O" checkout -q gul-436-work
+run env FACTORY_GH="$GHSTUB/gh" $PY "$FACTORY" open-pr --repo "$O" --issue GUL-436 --title "Factory test PR" --ready
+expect_rc "open-pr --ready: still opens" 0 "$LAST_RC"
+tail -1 "$GHSTUB/pr-create.log" | grep -q -- '--draft' \
+  && bad "open-pr --ready (GUL-1801): still a draft" || ok "open-pr --ready (GUL-1801): no --draft"
 git -C "$O" checkout -q main
 run env FACTORY_GH="$GHSTUB/gh" $PY "$FACTORY" open-pr --repo "$O" --issue GUL-436 --title "nope"
 expect_rc "open-pr: refuses on main" 1 "$LAST_RC"

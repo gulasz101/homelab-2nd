@@ -26,7 +26,7 @@ spec:
       # incident, see vault tracking note). Pin to the big node until t460 gets
       # its RAM upgrade, then move the selector to t460 via a repo edit.
       nodeSelector:
-        kubernetes.io/hostname: homelab-2nd
+        kubernetes.io/hostname: loki
       containers:
         - name: api
           image: ghcr.io/firecrawl/firecrawl:latest
