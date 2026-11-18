@@ -287,12 +287,25 @@ def make_handler(state):
                 policy_in_body = "executionPolicy" in body
                 policy = body.get("executionPolicy")
                 projected = body.get("status", issue.get("status"))
+                exec_state = issue.get("executionState") or {}
+                state_stage = exec_state.get("currentStageId")
+                stored_ids = [s.get("id") for s in ((issue.get("executionPolicy") or {}).get("stages") or [])]
+                # GUL-1760: a PATCH that carries no policy is resolved against the
+                # *stored* one. When that stored policy still has the state's current
+                # stage, the write targets a live stage: an escalated hold refuses it
+                # outright, anything else is read as a request-changes, which lands
+                # `in_review` and then refuses the descriptor. Omitting the key is not
+                # an escape hatch — that is the bug the park has to avoid.
+                if not policy_in_body and state_stage and state_stage in stored_ids:
+                    if exec_state.get("changesRequestedCount", 0) >= 3:
+                        return self._send(422, {"error": "Only the escalated reviewer can advance "
+                                                         "the current execution stage"})
+                    projected = "in_review"
                 dissolve = policy_in_body and policy is None and was_in_review and return_to
                 if dissolve:
                     projected = "in_progress"
                 clear_state = False
                 if policy_in_body and isinstance(policy, dict):
-                    state_stage = (issue.get("executionState") or {}).get("currentStageId")
                     stage_ids = [s.get("id") for s in policy.get("stages") or []]
                     clear_state = bool(state_stage and state_stage not in stage_ids)
                 # Paperclip checks the descriptor against the *resulting* status, after the
@@ -302,8 +315,13 @@ def make_handler(state):
                 refused_descriptor = isinstance(descriptor, dict) and projected != "blocked"
                 if refused_descriptor:
                     return self._send(422, {"error": "unblockDescriptor requires blocked status"})
+                # `blockedByIssueIds` is stored too: a refused `start` parks the work
+                # order on the checkout it waits for (GUL-1730), and the blocker edge
+                # is what the server turns into `issue_blockers_resolved_wake_emitted`
+                # later. Without the copy the stub would pass the entering-blocked
+                # check and then forget which issue it is waiting on.
                 for key in ("status", "executionPolicy", "assigneeAgentId", "unblockDescriptor",
-                            "description"):
+                            "description", "blockedByIssueIds"):
                     if key in body:
                         issue[key] = body[key]
                 if dissolve:
@@ -375,6 +393,8 @@ def run(stub, args, extra_env=None, with_key=True):
     env["PAPERCLIP_COMPANY_ID"] = COMPANY
     env["FACTORY_STOP"] = os.path.join(WORKDIR, "STOP")
     env["FACTORY_LEDGER_JSONL"] = os.path.join(WORKDIR, "ledger.jsonl")
+    # durable scratch (recut ledger archives) — never the real one in ~/paperclip-agents
+    env["FACTORY_VAR"] = os.path.join(WORKDIR, "var")
     env["FACTORY_REPO"] = os.path.join(WORKDIR, "repo")
     if extra_env:
         env.update(extra_env)
@@ -608,6 +628,14 @@ def case_repo_decides_the_checkout(stub):
           code != 0 and any("GUL-920" in r for r in (out or {}).get("reasons", [])), raw[-400:])
     check("repo lookup: the blocked work order cuts no branch",
           branch_sha(wanted, "gul-921-add-the-fixture") == "", "branch exists")
+    parked_sib = stub.state.issues[sib["id"]]
+    check("repo lookup: the refused start parks the work order on the checkout holder (GUL-1730)",
+          parked_sib["status"] == "blocked"
+          and parked_sib.get("blockedByIssueIds") == [wo["id"]],
+          json.dumps({k: parked_sib.get(k) for k in ("status", "blockedByIssueIds")}))
+    check("repo lookup: the park names the holder and what wakes it — no hand step",
+          any("GUL-920" in c and "wake" in c for c in comments_on(stub, sib["id"])),
+          json.dumps(comments_on(stub, sib["id"])[-1:]))
 
     # two checkouts of one repo: refused, never guessed
     riff_a, _ = make_repo("repo-riff-a")
@@ -687,6 +715,158 @@ def case_start_creates_chain(stub, base_sha, repo):
     after = [i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]
     check("start twice: creates no duplicates", code2 == 0 and len(after) == 5
           and (out2 or {}).get("created") == 0, raw2[-300:])
+
+
+def forget_projects(stub, *pids):
+    """Drop the projects a case invented, so the next case's `--repo` resolution
+    does not see a second checkout claiming the same repo (GUL-1455)."""
+    for pid in pids:
+        stub.state.projects.pop(pid, None)
+        stub.state.workspaces.pop(pid, None)
+
+
+def misfiled_work_order(stub, identifier, wrong, right, right_sha, stage_shas=None, pr=None):
+    """A work order whose project checks out `wrong` while its spec names
+    homelab-2nd, with five stages already cut there (GUL-1340 shape, GUL-1455):
+    the old ledger was cut in `wrong` before the repo decided the checkout."""
+    misfiled = stub.state.add_project("Misfiled " + identifier)
+    holder = stub.state.add_project("Holds homelab-2nd " + identifier)
+    stub.state.add_workspace(misfiled, "ideogram4-local", wrong,
+                            repo_url="gulasz101/ideogram4-local")
+    stub.state.add_workspace(holder, "homelab-2nd", right, repo_url="gulasz101/homelab-2nd")
+    wo = base_work_order(stub, right_sha, wrong, identifier=identifier, project_id=misfiled)
+    rows = {}
+    for stage_name in ("red", "green", "review", "verify", "gate"):
+        stage = pending_review_stage(stub, wo, "[%s] Add the fixture" % stage_name)
+        rows[stage_name] = {"issueId": stage["id"], "identifier": stage["identifier"],
+                            "round": 1, "attempts": 0,
+                            "sha": (stage_shas or {}).get(stage_name)}
+    ledger = {
+        "version": 1, "workOrder": identifier, "workOrderId": wo["id"],
+        "title": "Add the fixture", "repo": "gulasz101/homelab-2nd", "base": "main",
+        "baseSha": right_sha, "cwd": wrong, "branch": "gul-%s-add-the-fixture"
+        % identifier.split("-")[-1], "projectId": misfiled, "stages": rows,
+        "fixRounds": 0, "pr": pr, "outcome": None, "escalated": None,
+    }
+    body = "# Factory ledger\n\n```json\n%s\n```\n" % json.dumps(ledger)
+    write_ledger(stub, wo, ledger)
+    return wo, rows, body, (misfiled, holder)
+
+
+def case_start_recut_moves_a_misfiled_work_order(stub):
+    """GUL-1455: `start --recut` re-cuts a work order whose stages were cut against
+    the wrong checkout — old ledger archived verbatim, superseded stages cancelled
+    without re-arming their agents, five fresh stages minted in the spec's repo."""
+    contract = open(os.path.join(HERE, "..", "CONTRACT.md")).read()
+    check("AC-1: CONTRACT.md documents --recut and the ledger's recut field",
+          "start GUL-N --recut" in contract and "recut: {at, archive" in contract,
+          "CONTRACT.md not updated")
+    wrong, _ = make_repo("repo-recut-wrong")
+    right, right_sha = make_repo("repo-recut-right")
+    wo, rows, _, pids = misfiled_work_order(stub, "GUL-916", wrong, right, right_sha)
+    old_body = stub.state.documents[(wo["id"], "ledger")]["body"]
+
+    code, out, raw = run(stub, ["start", "GUL-916", "--recut"])
+    check("AC-6: recut exits 0 and reports the re-cut", code == 0
+          and (out or {}).get("created") == 5 and (out or {}).get("recut") is True, raw[-600:])
+    children = [i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]
+    fresh = [c for c in children if c["id"] not in {r["issueId"] for r in rows.values()}]
+    stale = [c for c in children if c["id"] in {r["issueId"] for r in rows.values()}]
+    check("AC-5: recut mints five fresh stages beside the five superseded ones",
+          len(children) == 10 and len(fresh) == 5 and len(stale) == 5,
+          str([c["title"] for c in children]))
+    check("AC-5: the fresh chain is the whole red→gate chain",
+          [c["title"].split("]")[0] + "]" for c in sorted(fresh, key=lambda c: c["title"])]
+          == ["[gate]", "[green]", "[red]", "[review]", "[verify]"],
+          str([c["title"] for c in fresh]))
+    check("AC-4: every superseded stage is cancelled",
+          all(c["status"] == "cancelled" for c in stale), str([c["status"] for c in stale]))
+
+    cancels = [p["body"] for p in stub.state.patches
+               if p["body"].get("status") == "cancelled"]
+    check("AC-4: each cancel carries the policy with the stage ids stripped",
+          len(cancels) == 5 and all(
+              (b.get("executionPolicy") or {}).get("stages")
+              and not any("id" in s for s in b["executionPolicy"]["stages"])
+              for b in cancels), str(cancels[:1]))
+    check("AC-4: no cancel went out as a bare status write",
+          len(cancels) == len([b for b in cancels if b.get("executionPolicy")]), str(len(cancels)))
+
+    ledger_body = stub.state.documents[(wo["id"], "ledger")]["body"]
+    new = json.loads(ledger_body.split("```json")[1].split("```")[0])
+    archive = (new.get("recut") or {}).get("archive")
+    check("AC-5: the new ledger runs in the repo the spec names",
+          os.path.realpath(new["cwd"]) == os.path.realpath(right)
+          and new["baseSha"] == branch_sha(right, "main"),
+          "%s %s vs main %s" % (new["cwd"], new["baseSha"], branch_sha(right, "main")))
+    check("AC-5: the ledger records where the old one was cut",
+          os.path.realpath(((new.get("recut") or {}).get("previousCwd") or ""))
+          == os.path.realpath(wrong), str(new.get("recut")))
+    check("AC-3: the old ledger is archived verbatim under var/",
+          bool(archive) and os.path.exists(archive)
+          and json.load(open(archive))["document"]["body"] == old_body, str(archive))
+    check("AC-5: the branch is cut in the right checkout, not the wrong one",
+          branch_sha(right, new["branch"]) == right_sha
+          and branch_sha(wrong, new["branch"]) == "",
+          "%s %s" % (branch_sha(right, new["branch"]), branch_sha(wrong, new["branch"])))
+    check("AC-5: the work order is told what moved",
+          any("re-cut" in c for c in comments_on(stub, wo["id"])),
+          str(comments_on(stub, wo["id"]))[:300])
+
+    code2, out2, raw2 = run(stub, ["start", "GUL-916", "--recut"])
+    after = [i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]
+    check("AC-2: recut twice refuses and mints no third generation",
+          code2 == 1 and len(after) == 10
+          and any("already a re-cut" in r for r in (out2 or {}).get("reasons", [])),
+          raw2[-400:])
+    forget_projects(stub, *pids)
+
+
+def case_start_recut_refuses_pushed_work(stub):
+    """GUL-1455: a re-cut must never throw away pushed work. A stage `sha`, a `pr`
+    or a `merge` in the ledger refuses the re-cut and changes nothing."""
+    wrong, _ = make_repo("repo-recut-refuse-wrong")
+    right, right_sha = make_repo("repo-recut-refuse-right")
+    var_dir = os.path.join(WORKDIR, "var")
+    before = sorted(os.listdir(var_dir)) if os.path.isdir(var_dir) else []
+    wo, rows, _, pids = misfiled_work_order(stub, "GUL-917", wrong, right, right_sha,
+                                           stage_shas={"green": "0f1e2d3c4b5a"})
+
+    code, out, raw = run(stub, ["start", "GUL-917", "--recut"])
+    reasons = (out or {}).get("reasons", [])
+    check("AC-2: a committed stage refuses the re-cut",
+          code == 1 and any("pushed work" in r for r in reasons), raw[-400:])
+    check("AC-2: the refusal names the stage that committed",
+          any(rows["green"]["identifier"] in r for r in reasons), str(reasons))
+    check("AC-2: a refused re-cut cancels nothing",
+          not [p for p in stub.state.patches
+               if p["body"].get("status") == "cancelled"
+               and "GUL-917" in str(p["body"].get("comment"))],
+          "a cancel went out for GUL-917")
+    check("AC-2: a refused re-cut mints no stages",
+          len([i for i in stub.state.issues.values() if i.get("parentId") == wo["id"]]) == 5)
+    check("AC-2: a refused re-cut keeps the old ledger and writes no archive",
+          ledger_of(stub, wo).get("recut") is None
+          and (sorted(os.listdir(var_dir)) if os.path.isdir(var_dir) else []) == before,
+          "archive written for GUL-917")
+
+    pr_wo, _, _, pr_pids = misfiled_work_order(stub, "GUL-918", wrong, right, right_sha,
+                                              pr={"number": 41, "url": "https://example.invalid/41"})
+    code2, out2, raw2 = run(stub, ["start", "GUL-918", "--recut"])
+    check("AC-2: a ledger with a PR refuses the re-cut",
+          code2 == 1 and any("#41" in r for r in (out2 or {}).get("reasons", [])), raw2[-400:])
+    check("AC-2: the PR refusal names the repo",
+          any("gulasz101/homelab-2nd#41" in r for r in (out2 or {}).get("reasons", [])),
+          str((out2 or {}).get("reasons")))
+
+    plain = stub.state.add_issue(identifier="GUL-919", title="Never started",
+                                 assigneeAgentId=MAJSTER, projectId=PROJECT, status="in_progress")
+    stub.state.doc(plain["id"], "spec", SPEC_BODY)
+    code3, out3, raw3 = run(stub, ["start", "GUL-919", "--recut"])
+    check("AC-2: a work order with no ledger is told to start instead",
+          code3 == 1 and any("factory start GUL-919" in r
+                             for r in (out3 or {}).get("reasons", [])), raw3[-400:])
+    forget_projects(stub, *(pids + pr_pids))
 
 
 def case_settle_repairs(stub, base_sha, repo):
@@ -1038,6 +1218,93 @@ def case_decide_settles_a_merged_pr(stub, base_sha, repo):
           code_again == 1
           and any("already settled" in r for r in (out_again or {}).get("reasons", []))
           and len(stub.state.comments) == comments_before, raw_again[-300:])
+
+
+def case_decide_refuses_an_unlanded_merge(stub, base_sha, repo):
+    """GUL-1801: merged is not landed.
+
+    PR #252 was merged by hand while GUL-1598's fix round was still open, so the
+    merge commit took round 1 and round 2 never reached main. The factory then said
+    "already settled" and the round was lost. A merged PR whose merge commit does
+    not contain the work order's branch head must block the work order and name the
+    sha, and land it once the sha does arrive.
+    """
+    fixture, fixture_sha = make_repo("repo-unlanded")
+    wo = base_work_order(stub, fixture_sha, fixture, identifier="GUL-1598")
+    ledger = ledger_of(stub, wo)
+    branch = ledger["branch"]
+    ident = ["-c", "user.email=t@example.com", "-c", "user.name=T"]
+
+    # round 1 is the base; round 2 is the head that the merge never took
+    git_out(fixture, "checkout", "-q", "-b", branch, fixture_sha)
+    with open(os.path.join(fixture, "tests", "ac.sh"), "a") as fh:
+        fh.write("# round 2: the three blocking findings, fixed\n")
+    git_out(fixture, *ident, "commit", "-qam", "round 2")
+    round2 = git_out(fixture, "rev-parse", "HEAD")
+    # a merge commit that does not contain round 2 (and whose tree differs from it)
+    git_out(fixture, "checkout", "-q", "--orphan", "stranded")
+    with open(os.path.join(fixture, "STRANDED"), "w") as fh:
+        fh.write("round 1 only\n")
+    git_out(fixture, "add", "STRANDED")
+    git_out(fixture, *ident, "commit", "-qm", "round 1, merged")
+    merge_sha = git_out(fixture, "rev-parse", "HEAD")
+    git_out(fixture, "checkout", "-q", branch)
+
+    ledger["pr"] = {"number": 252,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/252"}
+    verify = stage_issue(stub, wo, "[verify] GUL-1598 — Add the fixture")
+    ledger["stages"] = {
+        "green": {"issueId": None, "round": 1, "attempts": 0, "sha": fixture_sha},
+        "green:r2": {"issueId": None, "round": 2, "attempts": 0, "sha": round2},
+        "verify": {"issueId": verify["id"], "identifier": verify["identifier"],
+                   "round": 1, "attempts": 0, "sha": None},
+    }
+    write_ledger(stub, wo, ledger)
+
+    env = merge_env("unlanded", {"state": "MERGED", "mergedAt": "2026-11-17T20:57:00Z",
+                                 "mergeCommit": {"oid": merge_sha}})
+    code, out, raw = run(stub, ["decide", verify["identifier"], "--apply"], extra_env=env)
+    ledger = ledger_of(stub, wo)
+    said = comments_on(stub, wo["id"])
+    reasons = (out or {}).get("reasons") or []
+
+    check("decide unlanded: a merge that does not contain the head -> ok: false",
+          code == 1 and (out or {}).get("ok") is False
+          and (out or {}).get("decision") == "unlanded", raw[-600:])
+    check("decide unlanded: never says `already settled`",
+          not any("already settled" in r for r in reasons), str(reasons))
+    check("decide unlanded: names the sha that never landed and the action",
+          any(round2[:7] in r and "on main" in r for r in reasons), str(reasons))
+    check("decide unlanded: the work order is blocked, not done, with a descriptor",
+          stub.state.issues[wo["id"]]["status"] == "blocked"
+          and bool(stub.state.issues[wo["id"]].get("unblockDescriptor")),
+          stub.state.issues[wo["id"]].get("status"))
+    check("decide unlanded: the ledger records the unlanded merge, not `merged`",
+          (ledger.get("merge") or {}).get("state") == "unlanded"
+          and (ledger.get("merge") or {}).get("head") == round2
+          and ledger.get("outcome") == "unlanded", ledger.get("merge"))
+    check("decide unlanded: a comment on the work order names the stranded commit",
+          any(round2[:7] in body for body in said), str(said[-1:]))
+
+    # a second decide keeps saying the same thing — it must not drift to "settled"
+    code_again, out_again, raw_again = run(stub, ["decide", verify["identifier"], "--apply"],
+                                           extra_env=env)
+    check("decide unlanded: re-running still refuses, never `already settled`",
+          code_again == 1
+          and not any("already settled" in r
+                      for r in (out_again or {}).get("reasons") or []), raw_again[-400:])
+
+    # land the sha: the same merge now contains the head, so the work order settles
+    git_out(fixture, "branch", "-f", "main", round2)
+    env2 = merge_env("unlanded-landed", {"state": "MERGED",
+                                         "mergedAt": "2026-11-17T20:57:00Z",
+                                         "mergeCommit": {"oid": round2}})
+    code3, out3, raw3 = run(stub, ["decide", verify["identifier"], "--apply"], extra_env=env2)
+    ledger = ledger_of(stub, wo)
+    check("decide unlanded: once the sha is on main the merge settles normally",
+          code3 == 0 and (out3 or {}).get("decision") == "merged"
+          and stub.state.issues[wo["id"]]["status"] == "done"
+          and (ledger.get("merge") or {}).get("state") == "merged", raw3[-500:])
 
 
 def case_third_failure_escalates(stub, base_sha, repo):
@@ -1595,12 +1862,218 @@ def case_gate_conflicting_pr_is_judged(stub):
     reasons = (out or {}).get("reasons") or []
     row = ((ledger_of(stub, wo).get("stages") or {}).get("gate") or {})
     check("gate decide: a PR GitHub cannot build is judged, not a setup error",
-          code == 1 and (out or {}).get("decision") == "request_changes", raw[-500:])
+          code == 1 and (out or {}).get("decision") == "escalate", raw[-500:])
     check("gate decide: the reason names the missing check and the conflict",
           any("no check run named 'check'" in r for r in reasons)
           and any("CONFLICTING" in r and "rebase" in r for r in reasons), reasons)
-    check("gate decide: the judgeable failure does spend a round",
-          int(row.get("attempts", 0)) == 1, row)
+    # GUL-1706: the gate has no fix round and its agent can change nothing, so a
+    # `request_changes` here handed the stage back to an agent that could only
+    # re-run the same check and left the work order ownerless. One fail is Wojtek's.
+    check("gate decide: the judgeable failure escalates instead of spending a round (GUL-1706)",
+          (out or {}).get("decision") == "escalate" and int(row.get("attempts", 0)) == 0
+          and stub.state.issues[wo["id"]]["status"] == "blocked", row)
+
+
+def case_gate_fail_escalates(stub):
+    """GUL-1706: a diff too big fails the gate and goes to Wojtek, not back to the stage."""
+    repo, base = make_repo("gate-big-diff")
+    wo = base_work_order(stub, base, repo, identifier="GUL-914")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 95, "url": "https://github.com/gulasz101/homelab-2nd/pull/95"}
+    write_ledger(stub, wo, ledger)
+    gate = stage_issue(stub, wo, "[gate] GUL-914 - Merge")
+    big = dict(GATE_VIEW, additions=728, deletions=0,
+               files=[{"path": "tests/big-check.sh", "changeType": "ADDED"}])
+    comments_before = len(stub.state.comments)
+
+    code0, out0, raw0 = run(stub, ["decide", gate["identifier"]],
+                            extra_env=merge_env("bigdiff-dry", big))
+    check("gate fail: a dry decide reports escalate and writes nothing",
+          code0 == 1 and (out0 or {}).get("decision") == "escalate"
+          and stub.state.issues[wo["id"]]["status"] == "in_progress"
+          and len(stub.state.comments) == comments_before, raw0[-500:])
+
+    code, out, raw = run(stub, ["decide", gate["identifier"], "--apply"],
+                         extra_env=merge_env("bigdiff", big))
+    reasons = (out or {}).get("reasons") or []
+    row = ((ledger_of(stub, wo).get("stages") or {}).get("gate") or {})
+    issue = stub.state.issues[wo["id"]]
+    parked = stub.state.issues[gate["id"]]
+
+    check("gate fail: --apply exits 1 with decision escalate, applied",
+          code == 1 and (out or {}).get("decision") == "escalate"
+          and (out or {}).get("applied") is True, raw[-500:])
+    check("gate fail: the reason is the check's own verdict, plus why it is not a round",
+          any("diff too big" in r for r in reasons)
+          and any("no fix round" in r for r in reasons), reasons)
+    check("gate fail: the work order is blocked with executionPolicy cleared",
+          issue["status"] == "blocked" and issue["executionPolicy"] is None, issue)
+    check("gate fail: the block is a self-owned descriptor that says what to decide (GUL-898)",
+          (issue.get("unblockDescriptor") or {}).get("owner", {}).get("agentId") == MAJSTER
+          and bool(((issue.get("unblockDescriptor") or {}).get("action") or "").strip()),
+          issue.get("unblockDescriptor"))
+    check("gate fail: the stage issue is parked blocked, not handed back in_progress (GUL-889)",
+          parked["status"] == "blocked" and parked["executionState"] is None
+          and parked["assigneeAgentId"] == MAJSTER,
+          {k: parked.get(k) for k in ("status", "executionState", "assigneeAgentId")})
+    check("gate fail: no round is spent on a stage that cannot fix anything",
+          int(row.get("attempts", 0)) == 0, row)
+    body = stub.state.documents[(wo["id"], "ledger")]["body"]
+    check("gate fail: the ledger records the escalation and its reason",
+          '"outcome": "escalate"' in body and "diff too big" in body, body[-400:])
+    said = comments_on(stub, wo["id"])
+    check("gate fail: the work order comment says the PM decides (GUL-1730)",
+          any("diff too big" in c and "pm decides in the 05:30 review" in c.lower()
+              for c in said), said[-1:])
+    check("gate fail: a diff-size failure names no owner at all",
+          not any("Wojtek" in c for c in said), said[-1:])
+
+
+def case_gate_size_warns_not_blocks(stub):
+    """GUL-1730: 1.5x maxDiffLines passes with one size note instead of an escalation.
+
+    GUL-1597 was green, reviewed and verified and died on `559 lines > maxDiffLines
+    500`; the PM raised the spec by hand and the factory waited a morning. The gate
+    now only stops a PR nobody could review in one sitting (3x), and says the number
+    out loud on the gate comment and on the work order.
+    """
+    repo, base = make_repo("gate-size-note")
+    wo = base_work_order(stub, base, repo, identifier="GUL-940")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 240, "url": "https://github.com/gulasz101/homelab-2nd/pull/240"}
+    write_ledger(stub, wo, ledger)
+    gate = stage_issue(stub, wo, "[gate] GUL-940 - Merge")
+    # maxDiffLines is 100 in SPEC_BODY: 150 is the 1.5x band, and every path is
+    # ordinary (never-path hits are case_gate_never_path_still_names_wojtek).
+    sizey = dict(GATE_VIEW, additions=150, deletions=0,
+                 files=[{"path": "tests/big-check.sh", "changeType": "ADDED"}])
+
+    code, out, raw = run(stub, ["decide", gate["identifier"], "--apply"],
+                         extra_env=merge_env("sizenote", sizey))
+    issue = stub.state.issues[wo["id"]]
+    note = "size note: 150 lines > maxDiffLines 100"
+
+    check("size note: 1.5x the cap approves the gate",
+          code == 0 and (out or {}).get("decision") == "approve", raw[-500:])
+    check("size note: the gate comment carries exactly one size note line",
+          sum(1 for c in comments_on(stub, gate["id"]) if note in c) == 1,
+          comments_on(stub, gate["id"])[-1:])
+    check("size note: the work order comment carries it too, where the merge is read",
+          any(note in c for c in comments_on(stub, wo["id"])), comments_on(stub, wo["id"])[-1:])
+    check("size note: the work order goes in_review, not blocked",
+          issue["status"] == "in_review", issue.get("status"))
+    check("size note: no round is spent and nothing escalates",
+          int(((ledger_of(stub, wo).get("stages") or {}).get("gate") or {})
+              .get("attempts", 0)) == 0
+          and (ledger_of(stub, wo).get("outcome") != "escalate"), ledger_of(stub, wo).get("outcome"))
+
+    # 3.5x is the hard stop: nobody reviews a 350-line change against a 100-line spec.
+    beyond = dict(GATE_VIEW, additions=350, deletions=0,
+                  files=[{"path": "tests/big-check.sh", "changeType": "ADDED"}])
+    repo2, base2 = make_repo("gate-size-hard-stop")
+    wo2 = base_work_order(stub, base2, repo2, identifier="GUL-941")
+    ledger2 = ledger_of(stub, wo2)
+    ledger2["pr"] = {"number": 241, "url": "https://github.com/gulasz101/homelab-2nd/pull/241"}
+    write_ledger(stub, wo2, ledger2)
+    gate2 = stage_issue(stub, wo2, "[gate] GUL-941 - Merge")
+    code2, out2, raw2 = run(stub, ["decide", gate2["identifier"], "--apply"],
+                            extra_env=merge_env("sizebeyond", beyond))
+    check("size note: 3.5x the cap still fails the gate (hard stop)",
+          code2 == 1 and any("3 * maxDiffLines" in r for r in ((out2 or {}).get("reasons") or [])),
+          raw2[-500:])
+
+
+def case_gate_never_path_still_names_wojtek(stub):
+    """GUL-1730: a never-path hit is the one escalation that still names Wojtek.
+
+    ADR-093 point 6 makes `agents/factory/**`, `clusters/`, the SOPS keys and public
+    exposure his, so those stay his decision — everything else goes to the PM.
+    """
+    repo, base = make_repo("gate-never-path")
+    wo = base_work_order(stub, base, repo, identifier="GUL-942")
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": 242, "url": "https://github.com/gulasz101/homelab-2nd/pull/242"}
+    write_ledger(stub, wo, ledger)
+    gate = stage_issue(stub, wo, "[gate] GUL-942 - Merge")
+    hit = dict(GATE_VIEW, additions=2, deletions=0,
+               files=[{"path": "agents/factory/factory.py", "changeType": "MODIFIED"}])
+
+    code, out, raw = run(stub, ["decide", gate["identifier"], "--apply"],
+                         extra_env=merge_env("neverpath", hit))
+    reasons = (out or {}).get("reasons") or []
+    said = comments_on(stub, wo["id"])
+
+    check("never path: the gate fails on the never-path hit, before any size check",
+          code == 1 and any("never path" in r for r in reasons), reasons)
+    check("never path: the escalation still names Wojtek (ADR-093 point 6)",
+          any("Wojtek decides" in c and "never path" in c for c in said), said[-1:])
+    check("never path: it does not hand a never path to the PM",
+          not any("the PM decides" in c for c in said), said[-1:])
+
+
+def case_start_parks_on_a_busy_checkout(stub):
+    """GUL-1730: a refused `start` parks the work order itself, and only when it has
+    not started yet.
+
+    GUL-1597 was refused twice in one morning because another work order held the
+    shared checkout; each time Majster set `blockedByIssueIds` by hand, and the first
+    time the work order had no wake path at all. Now the refusal writes the edge, so
+    `issue_blockers_resolved` wakes it when the checkout frees. The write is guarded:
+    a dry run writes nothing, and an already-started work order (ledger has `stages`)
+    is never re-parked — that would hide a half-cut ledger behind a block.
+    """
+    repo, base = make_repo("busy-checkout")
+    project = stub.state.add_project("Homelab")
+    stub.state.add_workspace(project, "homelab-2nd", repo,
+                             repo_url="https://github.com/gulasz101/homelab-2nd")
+    holder = stub.state.add_issue(identifier="GUL-930", title="Add the fixture",
+                                  assigneeAgentId=MAJSTER, projectId=project,
+                                  status="in_progress")
+    stub.state.doc(holder["id"], "spec", SPEC_BODY)
+    code, out, raw = run(stub, ["start", "GUL-930"])
+    check("busy checkout: the first work order takes the checkout", code == 0, raw[-400:])
+
+    def fresh(identifier):
+        issue = stub.state.add_issue(identifier=identifier, title="Add the fixture",
+                                     assigneeAgentId=MAJSTER, projectId=project,
+                                     status="in_progress")
+        stub.state.doc(issue["id"], "spec", SPEC_BODY)
+        return issue
+
+    # the dry run reports the refusal and writes nothing — same issue, two runs
+    waiter = fresh("GUL-931")
+    code, out, raw = run(stub, ["start", "GUL-931", "--dry-run"])
+    check("busy checkout: a dry run refuses and writes nothing",
+          code == 1 and stub.state.issues[waiter["id"]]["status"] == "in_progress"
+          and not stub.state.issues[waiter["id"]].get("blockedByIssueIds"),
+          json.dumps({k: stub.state.issues[waiter["id"]].get(k) for k in ("status", "blockedByIssueIds")}))
+
+    # the real thing: parked, with the edge and a comment
+    code, out, raw = run(stub, ["start", "GUL-931"])
+    parked = stub.state.issues[waiter["id"]]
+    check("busy checkout: the refusal keeps exit 1 and the JSON line",
+          code == 1 and any("another factory work order is open" in r
+                            for r in (out or {}).get("reasons", [])), raw[-400:])
+    check("busy checkout: the refused work order is parked blocked, by itself",
+          parked["status"] == "blocked", parked.get("status"))
+    check("busy checkout: it is blocked by the work order holding the checkout",
+          parked.get("blockedByIssueIds") == [holder["id"]], parked.get("blockedByIssueIds"))
+    check("busy checkout: one comment names the holder and the wake",
+          any("GUL-930" in c and "issue_blockers_resolved" in c
+              for c in comments_on(stub, waiter["id"])), json.dumps(comments_on(stub, waiter["id"])[-1:]))
+
+    # an already-started work order is not re-parked by a refusal
+    started = fresh("GUL-932")
+    body = json.loads(json.dumps(ledger_of(stub, holder)))
+    body.update({"workOrder": "GUL-932", "workOrderId": started["id"],
+                 "branch": "gul-932-add-the-fixture"})
+    stub.state.doc(started["id"], "ledger",
+                   "# Factory ledger\n\n```json\n%s\n```\n" % json.dumps(body))
+    code, out, raw = run(stub, ["start", "GUL-932"])
+    now = stub.state.issues[started["id"]]
+    check("busy checkout: an already-started work order is not re-parked",
+          code == 1 and now["status"] == "in_progress" and not now.get("blockedByIssueIds"),
+          json.dumps({k: now.get(k) for k in ("status", "blockedByIssueIds")}))
 
 
 def case_setup_error_spends_no_round(stub):
@@ -1658,6 +2131,66 @@ def case_tick_notices_the_merge(stub):
           leftover.get("status"))
     check("tick merged: the monitor is cleared", issue.get("executionPolicy") is None,
           issue.get("executionPolicy"))
+
+
+def case_tick_recovers_an_unlanded_merge(stub):
+    """GUL-1801: an unlanded park is not terminal.
+
+    The sweep must keep saying the round is not on main (the work order stays
+    blocked, it never reads as merged), and it must settle the work order by itself
+    the moment the stranded sha does reach main.
+    """
+    repo, _base = make_repo("tick-unlanded-repo")
+    wo, _gate = gate_work_order(stub, repo, "GUL-1598", 252)
+    ledger = ledger_of(stub, wo)
+    ident = ["-c", "user.email=t@example.com", "-c", "user.name=T"]
+    # round 2 on the work-order branch: the head nobody merged
+    branch = ledger["branch"]
+    base = git_out(repo, "rev-parse", "HEAD")
+    git_out(repo, "checkout", "-q", "-b", branch)
+    with open(os.path.join(repo, "tests", "ac.sh"), "a") as fh:
+        fh.write("# round 2: the three blocking findings, fixed\n")
+    git_out(repo, *ident, "commit", "-qam", "round 2")
+    head = git_out(repo, "rev-parse", "HEAD")
+    git_out(repo, "checkout", "-q", "--detach", base)
+    # a merge commit that does not contain the branch head and a different tree
+    git_out(repo, "checkout", "-q", "--orphan", "stranded")
+    with open(os.path.join(repo, "STRANDED"), "w") as fh:
+        fh.write("round 1 only\n")
+    git_out(repo, "add", "STRANDED")
+    git_out(repo, *ident, "commit", "-qm", "round 1, merged")
+    merge_sha = git_out(repo, "rev-parse", "HEAD")
+    git_out(repo, "checkout", "-q", "--detach", head)
+    ledger["merge"] = {"state": "unlanded", "sha": merge_sha, "head": head,
+                       "at": "2026-11-17T20:57:00Z"}
+    ledger["outcome"] = "unlanded"
+    write_ledger(stub, wo, ledger)
+    stub.state.issues[wo["id"]]["status"] = "blocked"
+
+    env = merge_env("tick-unlanded", {"state": "MERGED", "mergedAt": "2026-11-17T20:57:00Z",
+                                      "mergeCommit": {"oid": merge_sha}})
+    code, out, raw = run(stub, ["tick", "--apply"], extra_env=env)
+    issue = stub.state.issues[wo["id"]]
+    said = comments_on(stub, wo["id"])
+    check("tick unlanded: still merged but not landed -> blocked, never done",
+          issue["status"] == "blocked", raw[-500:])
+    check("tick unlanded: the sweep flags the work order",
+          "unlanded" in json.dumps(out), json.dumps(out)[:400])
+    check("tick unlanded: the reason names the stranded sha",
+          any(head[:7] in body for body in said), str(said[-1:]))
+
+    # the human lands the sha on main; the next pass settles it with nobody clicking
+    git_out(repo, "update-ref", "refs/remotes/origin/main", head)
+    code2, _out2, raw2 = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "tick-landed", {"state": "MERGED", "mergedAt": "2026-11-17T20:57:00Z",
+                        "mergeCommit": {"oid": head}}))
+    issue = stub.state.issues[wo["id"]]
+    ledger = ledger_of(stub, wo)
+    check("tick unlanded: once the head is on main the sweep settles it",
+          code2 == 0 and issue["status"] == "done"
+          and (ledger.get("merge") or {}).get("state") == "merged"
+          and (ledger.get("merge") or {}).get("sha") == head,
+          "status=%s merge=%s head=%s" % (issue["status"], ledger.get("merge"), head))
 
 
 def case_tick_waits_on_an_open_pr(stub):
@@ -1845,22 +2378,25 @@ def patch_body(stub, issue_id):
     return {}
 
 
-def case_park_omits_an_empty_policy(stub):
-    """GUL-1128: the park must never put an empty executionPolicy on the wire.
+def case_park_sends_a_dissolving_policy(stub):
+    """GUL-1128 / GUL-1760: the park always sends a policy that cannot resolve.
 
-    `_park_policy` keeps only stages that carry participants, so a stage issue
-    that never named a reviewer yields `stages: []`. paperclip 2026.1012.0
-    normalises a stage-less policy to null and then reads the PATCH as a
-    dissolve: the `in_review` issue goes back to its return assignee, the
-    requested `blocked` is overwritten with `in_progress`, and the whole write
-    dies `422 unblockDescriptor requires blocked status` — the stage stays
-    `in_review` with nothing recorded. Omitting the key is the fix. The stub
-    implements the same normalisation, so this case fails the same way the
-    board did if the empty policy ever comes back.
+    Paperclip 2026.1012.0 normalises a stage-less policy to null and reads that
+    PATCH as a dissolve, so an empty policy is not a park either: the `in_review`
+    issue goes back to its return assignee, the requested `blocked` is overwritten
+    with `in_progress`, and the write dies `422 unblockDescriptor requires blocked
+    status`. Omitting the key is no better — the server then applies the *stored*
+    policy, finds the stage the state points at, and refuses the write the same way
+    (on an escalated hold: `422 Only the escalated reviewer can advance the current
+    execution stage`). A park needs a policy whose stages carry participants and
+    whose ids resolve to nothing, which is what clears the state and keeps
+    `blocked`. The stub implements both the normalisation and the no-policy
+    refusal, so this case fails the way the board did if either comes back.
     """
     api = pc.Api(key="test-key-not-a-secret", run_id="test-run-id", base=stub.url)
     return_to = {"agentId": MAJSTER}
 
+    # a) the only stage lost its participants while the state still points at it.
     empty = stub.state.add_issue(
         identifier="GUL-1128-a", title="stage with no reviewer", status="in_review",
         assigneeAgentId=MAJSTER,
@@ -1871,52 +2407,55 @@ def case_park_omits_an_empty_policy(stub):
 
     factory._block_stage_issue(api, empty, "escalated: no reviewer on this stage")
     body = patch_body(stub, empty["id"])
-    check("park: a stage with no participant-bearing review sends no executionPolicy key (GUL-1128)",
-          body != {} and "executionPolicy" not in body, json.dumps(body))
-    check("park: the same write still asks for blocked, with a descriptor and the comment",
+    stages = (body.get("executionPolicy") or {}).get("stages") or []
+    check("park: a review stage with no participants still sends a policy, built from the issue (GUL-1760)",
+          len(stages) == 1 and (stages[0].get("participants") or [{}])[0].get("agentId") == MAJSTER
+          and "id" not in stages[0], json.dumps(body))
+    check("park: the same write asks for blocked, with a self-owned descriptor and the comment",
           body.get("status") == "blocked"
           and (body.get("unblockDescriptor") or {}).get("owner", {}).get("agentId") == MAJSTER
           and body.get("comment") == "escalated: no reviewer on this stage", json.dumps(body))
     stored = stub.state.issues[empty["id"]]
-    check("park: the stage reads blocked on the server, not dissolved back to its agent",
-          stored["status"] == "blocked" and stored["assigneeAgentId"] == MAJSTER,
+    check("park: the stage reads blocked on the server with its state cleared",
+          stored["status"] == "blocked" and stored["executionState"] is None,
           {k: stored.get(k) for k in ("status", "executionState", "assigneeAgentId")})
-    # No policy on the wire means the server has no stage transition to compute, so
-    # executionState is left as it was. Recorded rather than asserted: clearing it
-    # would need a policy Paperclip accepts, which is a separate change if a park
-    # ever re-enters its stage on unblock.
 
+    # b) nothing to name at all: no policy, no state, no assignee.
     no_policy = stub.state.add_issue(identifier="GUL-1128-b", title="stage with no policy",
                                      status="in_review", executionPolicy=None,
                                      executionState=None)
     factory._block_stage_issue(api, no_policy, "escalated: nothing to park")
     body2 = patch_body(stub, no_policy["id"])
-    check("park: a stage whose executionPolicy is None sends no executionPolicy key either (GUL-1128)",
+    check("park: a stage that names nobody sends no executionPolicy key (GUL-1128)",
           body2 != {} and "executionPolicy" not in body2, json.dumps(body2))
-    check("park: that stage also lands blocked",
+    check("park: and it still lands blocked",
           stub.state.issues[no_policy["id"]]["status"] == "blocked",
           stub.state.issues[no_policy["id"]].get("status"))
 
-    reviewed = stub.state.add_issue(
-        identifier="GUL-1128-c", title="stage with a reviewer", status="in_review",
+    # c) the GUL-1760 copy: the company issue list masks policy and state to null, and
+    #    the masked copy names nobody, so only a GET can produce a usable park.
+    full = stub.state.add_issue(
+        identifier="GUL-1760-a", title="escalated stage with a reviewer", status="in_review",
         assigneeAgentId=MAJSTER,
         executionPolicy={"mode": "normal",
                          "stages": [{"id": "stage-real", "type": "review",
                                      "participants": [{"type": "agent", "agentId": MAJSTER}],
                                      "approvalsNeeded": 1}]},
-        executionState={"currentStageId": "stage-real", "returnAssignee": return_to})
-    factory._block_stage_issue(api, reviewed, "escalated: three red rounds")
-    body3 = patch_body(stub, reviewed["id"])
-    stages = (body3.get("executionPolicy") or {}).get("stages") or []
-    check("park: a participant-bearing stage still sends executionPolicy with its stages (GUL-969)",
-          len(stages) == 1 and bool(stages[0].get("participants")) and "id" not in stages[0],
-          json.dumps(body3))
-    stored3 = stub.state.issues[reviewed["id"]]
-    check("park: and the server keeps blocked with the state cleared",
+        executionState={"currentStageId": "stage-real", "returnAssignee": return_to,
+                        "changesRequestedCount": 3})
+    masked = {"id": full["id"], "identifier": full["identifier"], "status": "in_review",
+              "executionPolicy": None, "executionState": None, "assigneeAgentId": None}
+    factory._block_stage_issue(api, masked, "escalated: third request-changes on green")
+    body3 = patch_body(stub, full["id"])
+    stages3 = (body3.get("executionPolicy") or {}).get("stages") or []
+    check("park: a masked list copy is re-read with GET /issues/{id} before the patch (GUL-1760)",
+          len(stages3) == 1 and "id" not in stages3[0], json.dumps(body3))
+    stored3 = stub.state.issues[full["id"]]
+    check("park: the escalated stage parks blocked instead of 422-ing on the hold",
           stored3["status"] == "blocked" and stored3["executionState"] is None,
           {k: stored3.get(k) for k in ("status", "executionState")})
 
-    for issue in (empty, no_policy, reviewed):
+    for issue in (empty, no_policy, full):
         stub.state.issues[issue["id"]]["status"] = "done"
 
 
@@ -1998,27 +2537,35 @@ def main():
             case_start_ignores_a_parked_blocker(stub)
             case_repo_decides_the_checkout(stub)
             case_start_creates_chain(stub, base_sha, repo)
+            case_start_recut_moves_a_misfiled_work_order(stub)
+            case_start_recut_refuses_pushed_work(stub)
             case_settle_repairs(stub, base_sha, repo)
             case_stop_blocks(stub, base_sha, repo)
             case_missing_key(stub)
             case_decide_red(stub, base_sha, repo)
             case_verify_fix_round(stub, base_sha, repo)
             case_decide_settles_a_merged_pr(stub, base_sha, repo)
+            case_decide_refuses_an_unlanded_merge(stub, base_sha, repo)
             case_third_failure_escalates(stub, base_sha, repo)
             case_missing_document_escalates(stub, base_sha, repo)
             case_half_applied_escalation_reparks(stub, base_sha, repo)
             case_tick(stub, base_sha, repo)
             case_write_document_carries_revision(stub)
             case_blocked_needs_a_descriptor(stub)
-            case_park_omits_an_empty_policy(stub)
+            case_park_sends_a_dissolving_policy(stub)
             case_edge_block_falls_back(stub)
             case_commit_is_idempotent(stub)
             case_ledger_write_precedes_done(stub)
             case_green_approve_opens_one_pr(stub)
             case_gate_leaves_no_card(stub)
             case_gate_conflicting_pr_is_judged(stub)
+            case_gate_fail_escalates(stub)
+            case_gate_size_warns_not_blocks(stub)
+            case_gate_never_path_still_names_wojtek(stub)
+            case_start_parks_on_a_busy_checkout(stub)
             case_setup_error_spends_no_round(stub)
             case_tick_notices_the_merge(stub)
+            case_tick_recovers_an_unlanded_merge(stub)
             case_tick_waits_on_an_open_pr(stub)
             case_tick_blocks_a_closed_pr(stub)
             case_tick_survives_a_stale_stage_row(stub)

@@ -51,6 +51,9 @@ Two implementation notes worth remembering:
 
 **Operational constraint:** never run `netbird up` on any k3s node without `--disable-firewall`, or the rules return and k3s goes back into the crash loop.
 
+**Enforced by** `host/k3s-node/bootstrap.sh` (applies it) and `host/k3s-node/verify.sh` (FAILs without it), since 2026-11-15, after mimir and loki joined with `DisableFirewall: false`.
+
+
 ### 2026-10-11 update — re-outbreak on `t460`, scope widened to all k3s nodes
 
 The September fix was applied only to `homelab-2nd`. The other NetBird-running k3s node, `t460` (worker), kept its host firewall enabled — and after the 2026-10-10 site move's full power cycle, NetBird re-applied its nftables rules at boot: identical crash loop, this time freezing every pod on the node, including five CNPG database primaries (~2 h outage; all recovered, no data loss). Verified learnings:

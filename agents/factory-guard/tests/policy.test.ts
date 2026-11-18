@@ -18,6 +18,8 @@ import {
   looksLikeTestPath,
   scanBashLine,
   turnCapReason,
+  withDefaultBashTimeout,
+  DEFAULT_BASH_TIMEOUT_SEC,
   type GuardState,
   type RolesConfig,
 } from "../policy.ts";
@@ -36,6 +38,11 @@ const ro = roles.readonly!;
 // ---------- bash cases: [command, role, expectRule | undefined(=allow)] ----------
 
 const bashCases: Array<[string, typeof exec, string | undefined]> = [
+  // --- heredocs must parse, not spin (GUL-1537) ---
+  ["cat > /tmp/gul1537.yml << 'EOF'\nname: check\nEOF", exec, undefined],
+  ["cat > /tmp/gul1537.yml <<'EOF'\nname: check\nEOF", exec, undefined],
+  ["cat > /tmp/gul1537.yml <<- 'EOF'\n\tname: check\nEOF", exec, undefined],
+
   // --- required by the plan (blocked) ---
   ["cd /tmp; find / -name x", exec, "disk-scan"],
   ['bash -c "grep -r foo /"', exec, "disk-scan"],
@@ -418,3 +425,26 @@ for (const [command, expected] of readonlyRefusals) {
     assert.equal(d!.reason, `factory-guard: ${expected} (readonly-allowlist)`);
   });
 }
+
+// ---------- default bash timeout (GUL-1537) ----------
+
+test("bash calls get a default timeout, explicit ones are respected", () => {
+  const implicit: Record<string, unknown> = { command: "cat > /tmp/a << 'EOF'\nhi\nEOF" };
+  withDefaultBashTimeout("bash", implicit);
+  assert.equal(implicit.timeout, DEFAULT_BASH_TIMEOUT_SEC);
+
+  const explicit: Record<string, unknown> = { command: "cargo build --release", timeout: 1800 };
+  withDefaultBashTimeout("bash", explicit);
+  assert.equal(explicit.timeout, 1800, "a long build may opt in to more than the default");
+
+  const nonsense: Record<string, unknown> = { command: "x", timeout: 0 };
+  withDefaultBashTimeout("bash", nonsense);
+  assert.equal(nonsense.timeout, DEFAULT_BASH_TIMEOUT_SEC);
+
+  const notBash: Record<string, unknown> = { path: "/repo/x" };
+  withDefaultBashTimeout("write", notBash);
+  assert.equal("timeout" in notBash, false, "only bash/powershell calls are touched");
+
+  withDefaultBashTimeout("bash", null);
+  withDefaultBashTimeout("bash", "just a string");
+});

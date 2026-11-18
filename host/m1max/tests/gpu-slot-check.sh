@@ -11,7 +11,10 @@
 #   4. keep clears a stale marker (dead PID) and reloads the model
 #   5. keep reloads after a reboot (nothing loaded, no marker)
 #   6. two loads at once never create a second instance
-#   7. bash 3.2 parses it, no bash-4-only constructs
+#   7. use switches the resident model, keep then keeps that one loaded
+#   8. release loads the default back and drops the switch
+#   9. use refuses while an image job holds the slot
+#  10. bash 3.2 parses it, no bash-4-only constructs
 #
 # Exit 0 = all good. Exit 1 = at least one check failed.
 # ---------------------------------------------------------------------------
@@ -64,7 +67,7 @@ chmod +x "$WORK/lms"
 
 export LMS="$WORK/lms" FAKE_LMS_STATE="$WORK/state" \
   GPU_SLOT_STATE_DIR="$WORK/slot" GPU_SLOT_LOG="$WORK/slot.log" \
-  GPU_SLOT_IDENTIFIER="saluki-27b" GPU_SLOT_POLL_SECS=1 GPU_SLOT_DRAIN_SECS=3
+  GPU_SLOT_MODEL_KEY="saluki-27b" GPU_SLOT_POLL_SECS=1 GPU_SLOT_DRAIN_SECS=3
 S="$WORK/state"
 slot() { bash "$TARGET" "$@"; }
 instances() { grep -c . "$S" 2>/dev/null || true; }
@@ -128,5 +131,34 @@ slot keep
 slot keep & slot end & wait
 [ "$(instances)" = "1" ] && pass "two concurrent loads give one instance" \
   || fail "concurrent loads gave $(instances) instances: $(cat "$S" | tr '\n' ';')"
+
+# 7. use switches the resident model, and the keeper then keeps THAT one loaded
+: >"$S"
+slot use flint 65536 1
+[ "$(instances)" = "1" ] && grep -q "^flint " "$S" && pass "use loads the new resident model" \
+  || fail "use left $(instances) instance(s): $(tr '\n' ';' <"$S")"
+: >"$S.calls"
+slot keep
+grep -q "load" "$S.calls" 2>/dev/null && fail "keep reloaded although the resident model was up" \
+  || pass "keep leaves a switched resident model alone"
+: >"$S"
+slot keep
+grep -q "^flint " "$S" && pass "keep loads the switched model, not the default" \
+  || fail "keep loaded $(tr '\n' ';' <"$S") instead of flint"
+grep -q "flint" "$WORK/slot/resident" && pass "use records the resident model" || fail "use wrote no resident file"
+
+# 8. release returns to the default
+slot release
+[ "$(instances)" = "1" ] && grep -q "^saluki-27b " "$S" && pass "release loads the default back" \
+  || fail "release left $(instances) instance(s): $(tr '\n' ';' <"$S")"
+[ ! -f "$WORK/slot/resident" ] && pass "release removes the resident file" || fail "release left the resident file"
+
+# 9. use refuses while a live image job holds the slot
+printf '%s ideogram4 %s\n' "$$" "$(date +%s)" >"$WORK/slot/image-job"
+: >"$S"
+slot use flint >/dev/null 2>&1; rc=$?
+[ "$rc" = "75" ] && [ "$(instances)" = "0" ] && pass "use refuses while an image job holds the slot" \
+  || fail "use during an image job: rc=$rc, $(instances) instance(s) loaded"
+rm -f "$WORK/slot/image-job"
 
 exit "$RC"

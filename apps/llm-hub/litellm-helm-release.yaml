@@ -215,6 +215,33 @@ spec:
           model: openai/iceman-contributor-free
           api_base: https://opencode.ai/zen/go/v1
           api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
+          # GUL-1446 (2026-11-13): Hindsight reflect + mental-model refresh
+          # primary, off the walled `gpt-oss-120b-ollama`. Measured through this
+          # router from the hindsight-api pod, with the real `hindsight-reflect`
+          # key, at reflect size (16.7k in-tokens, forced `search_observations`
+          # tool_choice): 5/5 x 200, tool_calls on all five, 3.2-5.7 s.
+          # Upstream, same payload: 5/5 x 200, 4/5 with the tool call, 3.4-4.5 s.
+          # It is a free Go model with its own "Unlimited" row in
+          # docs/console/go, so it spends none of beam-free-go's allowance.
+          # num_retries 0 and a 60 s cap: the caller gives up at 120 s
+          # (HINDSIGHT_API_REFLECT_LLM_TIMEOUT), so a retry or a hang here would
+          # eat the whole budget and the chain below would never fire.
+          num_retries: 0
+          timeout: 60
+      - model_name: longcat-2.5-free-go
+        litellm_params:
+          model: openai/longcat-2.5-free
+          api_base: https://opencode.ai/zen/go/v1
+          api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
+          # GUL-1446: second hop of the reflect chain, and the one that does not
+          # train on prompts (iceman does; longcat keeps 0 days retention -
+          # docs/zen). Paid for it with tool-call rate: upstream 5/5 x 200 but
+          # only 3/5 asked for the tool, 5.5-11 s. Note the id: ADR-113's
+          # `longcat-2.5-preview-free-go` below points at `longcat-2.5-preview`,
+          # which upstream now answers "Model is unavailable"; the shipped free
+          # model is `longcat-2.5-free`.
+          num_retries: 0
+          timeout: 60
       - model_name: deepseek-v4.1-flash-1017-ds
         litellm_params:
           model: deepseek/deepseek-flash
@@ -845,6 +872,30 @@ spec:
         #   - No paid hop, deliberately: the owner ruled out a metered lane for
         #     these calls on 2026-11-09 (ADR-127 reversed). Adding `-ds` here
         #     would silently reintroduce the bill.
+        # GUL-1446 (2026-11-13): reflect and the mental-model refresh left
+        # `gpt-oss-120b-ollama` for `iceman-contributor-free-go`, because
+        # ollama.com's weekly wall killed both lanes. The chain keeps the free
+        # family first, then returns home so the lane comes back to the
+        # subscription when the week resets:
+        #   1. longcat-2.5-free-go - the other healthy free Go route (5/5 x 200,
+        #      5.4-7.0 s, 0.6-1.0 s slower than iceman, and the tool call came
+        #      back 4/5, so second). It also keeps prompts 0 days and does not
+        #      train on them, which is why it is the one to reach for if the
+        #      owner objects to iceman's training terms.
+        #   2. gpt-oss-120b-ollama - back onto the subscription allowance once
+        #      the weekly window clears. Its own hop to the pool still fires
+        #      from there, so the ladder ends in the free pool as before.
+        # Every side of every hop carries num_retries 0: one walled call is one
+        # hop, never a ladder (GUL-1045).
+        - {"iceman-contributor-free-go": ["longcat-2.5-free-go", "gpt-oss-120b-ollama"]}
+        # GUL-1446 follow-up (2026-11-15): longcat is now the PRIMARY for the
+        # mental-model refresh lane (stated in apps/hindsight), because iceman
+        # refuses the `json_schema` structured output that refresh asks for. A
+        # primary with no chain is a wall with no hop, so longcat gets one -
+        # straight home to ollama, deliberately NOT through iceman: iceman has
+        # already been measured to 400 on exactly this call shape (2026-11-15),
+        # so hopping there would only spend the failure twice.
+        - {"longcat-2.5-free-go": ["gpt-oss-120b-ollama"]}
         - {"gpt-oss-120b-ollama": ["gpt-oss-120b-freellmapi"]}
         # GUL-1431 (2026-11-12, owner ruling): local first, then the Ollama
         # subscription, then the paid DeepSeek API as the last resort. The
@@ -892,9 +943,33 @@ spec:
         # The pre-call hook is the primary source of the `x-opencode-session`
         # value; scoped forwarding is the belt-and-braces path for clients
         # that already send a real header (see ADR-029).
-        # Restrict UI to admins only; combined with no UI_USERNAME/UI_PASSWORD
-        # this hides the local login form, leaving only the SSO button
+        # Restrict UI to admins only.
         ui_access_mode: "admin_only"
+        # 2026-11-18: env-credential login is OFF, and it was live until now.
+        # "No UI_USERNAME/UI_PASSWORD" is NOT "no local login": with UI_PASSWORD
+        # unset, LiteLLM falls back to the MASTER KEY as the UI password for the
+        # username `admin` (get_ui_credentials() in proxy/auth/login_utils.py),
+        # so anyone holding the master key could sign in to the Admin UI as a
+        # proxy admin with a shared static secret. LiteLLM's own security banner
+        # reported it ("Environment-credential login is enabled"), and the
+        # comment that used to sit here claimed the opposite.
+        # The UI's only human login is Authentik SSO: akadmin is a proxy_admin
+        # bound by sso_user_id, /sso/key/generate answers 303 to
+        # auth.voitech.dev (verified live), and the SSO path never calls
+        # authenticate_user - only the password routes do.
+        # Lockout recovery if SSO itself breaks: the master key still
+        # administers the proxy over the API (that path never goes through
+        # authenticate_user either), and removing this line + letting Flux roll
+        # the pod brings the form back.
+        disable_env_credential_login: true
+        # SSO-only, per the house rule for Authentik-fronted services: no
+        # username/password login at all while the SSO provider is FULLY
+        # configured. Belt to the braces above - that flag is unconditional,
+        # this one is conditional on a complete SSO setup, so the pair can never
+        # leave the shared static secret reachable through an SSO misconfig.
+        # No DB user carries a password today, so this changes nothing until
+        # someone creates one - which is the point.
+        disable_password_login_when_sso_enabled: true
 
     # The chart creates a proxyConfigMap by default; leave it on
     proxyConfigMap:

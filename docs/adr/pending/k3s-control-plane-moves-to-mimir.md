@@ -59,8 +59,8 @@ Two facts shaped the decision:
   host. It's documented here because nothing else makes it visible.
 - Cost paid on the night: a 6.5 h LAN DNS outage during the Pi-hole cutover. The new Pi-hole node
   had no cached image and used Pi-hole for DNS, and the orchestration hop hung on an SSO prompt.
-  The runbook rule that came out of it: **pre-pull on the target, run cutovers from a host that
-  can't prompt, and add a deadman revert**.
+  The runbook that came out of it is `docs/runbooks/service-cutover.md` (pre-pull on the target,
+  run the cutover from a path that can't prompt, a deadman revert).
 
 ## Alternatives considered
 

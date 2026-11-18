@@ -254,6 +254,23 @@ if [ "${1:-}" = "--list" ]; then
 fi
 [ "${1:-}" = "" ] || { printf 'usage: scripts/check.sh [--list]\n'; exit 2; }
 
+# ---- tool preflight ----
+# A missing tool used to surface as dozens of misleading "FAIL: yq could not read <file>" lines
+# (2026-11-12, a laptop with no yq/kubeconform/gitleaks). Say it once, with the fix. Pinned versions
+# live in .mise.toml (same as .github/workflows/check.yaml); `mise install` provides them.
+missing=""
+for t in yq kubeconform kubectl helm gitleaks; do command -v "$t" >/dev/null 2>&1 || missing="$missing $t"; done
+if command -v yq >/dev/null 2>&1 && ! yq --version 2>&1 | grep -q mikefarah; then
+  missing="$missing yq(wrong-flavour:need-mikefarah-v4)"
+fi
+# nc and python3 come from the OS, not mise (host/*/tests use them): netcat-openbsd / openbsd-netcat.
+for t in nc python3; do command -v "$t" >/dev/null 2>&1 || missing="$missing $t(os-package)"; done
+if [ -n "$missing" ] && [ "${CHECK_ALLOW_MISSING_TOOLS:-0}" != 1 ]; then
+  printf 'FAIL: missing tools:%s\n      fix: mise install   (versions pinned in .mise.toml); (os-package) ones from the OS,\n           e.g. pacman -S openbsd-netcat / apt install netcat-openbsd\n' "$missing"
+  printf '      or run anyway with CHECK_ALLOW_MISSING_TOOLS=1 (expect failures from those tools)\n'
+  exit 1
+fi
+
 # ---- run ----
 RESULTS=() PASSED=0 FAILED=0 SKIPPED=0
 for ((i = 0; i < ${#NAMES[@]}; i++)); do
