@@ -20,7 +20,20 @@
 #                   job holds the slot and it is not loaded (after a reboot, a
 #                   crashed worker, a failed `end`). Clears a stale marker
 #                   whose worker PID is dead or older than GPU_SLOT_MAX_SECS.
-#   status          one line: loaded or not, marker or not.
+#   status          one line: loaded or not, which model is resident, marker or not.
+#   use <key> [ctx] [parallel] [identifier]
+#                   switch the resident model, i.e. the one the keeper keeps
+#                   loaded. Unloads the current one first and refuses while an
+#                   image job holds the slot (exit 75). Recorded in
+#                   $STATE_DIR/resident so a reboot keeps it switched.
+#   release         drop the switch and load the default model back.
+#
+# Only ONE model may be resident, and the homelab's LiteLLM routes are written
+# for the default one. With JIT off, LM Studio answers any request with whatever
+# is loaded, so switching the resident model changes what every local route
+# returns — and a text-only model breaks Karakeep's image tagging (the
+# qwen3.6-35b-a3b-local-nothink route needs vision). Use `use` for a session,
+# `release` when you are done, and check `status` before blaming the cluster.
 #
 # While the model is unloaded, LM Studio answers every request with a fast
 # HTTP 400 "No models loaded" (measured: 14 ms), and LiteLLM's fallback chain
@@ -37,10 +50,9 @@
 set -uo pipefail
 
 LMS="${LMS:-$HOME/.lmstudio/bin/lms}"
-MODEL_KEY="${GPU_SLOT_MODEL_KEY:-qwen3.6-35b-a3b}"
-IDENTIFIER="${GPU_SLOT_IDENTIFIER:-qwen3.6-35b-a3b}"
-CONTEXT="${GPU_SLOT_CONTEXT:-131072}"
-PARALLEL="${GPU_SLOT_PARALLEL:-2}"
+DEFAULT_KEY="${GPU_SLOT_MODEL_KEY:-qwen3.6-35b-a3b}"
+DEFAULT_CONTEXT="${GPU_SLOT_CONTEXT:-131072}"
+DEFAULT_PARALLEL="${GPU_SLOT_PARALLEL:-2}"
 STATE_DIR="${GPU_SLOT_STATE_DIR:-$HOME/Library/Application Support/gpu-slot}"
 LOG_FILE="${GPU_SLOT_LOG:-$HOME/Library/Logs/homelab/gpu-slot.log}"
 DRAIN_SECS="${GPU_SLOT_DRAIN_SECS:-90}"
@@ -49,9 +61,28 @@ POLL_SECS="${GPU_SLOT_POLL_SECS:-3}"
 
 MARKER="$STATE_DIR/image-job"
 LOAD_LOCK="$STATE_DIR/load.lock"
+# The model that owns the slot when no image job does: "<key> <identifier>
+# <context> <parallel>". Absent = the built-in default (see DEFAULT_*). Written
+# by `use`, removed by `release`. The keeper reads it, so a switched model stays
+# switched across a reboot instead of being replaced by the default.
+RESIDENT_FILE="$STATE_DIR/resident"
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
 log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG_FILE"; }
+
+# Env override wins (tests), then the resident file, then the built-in default.
+read_resident() {
+  local k='' i='' c='' p=''
+  if [ -f "$RESIDENT_FILE" ]; then
+    read -r k i c p <"$RESIDENT_FILE" || true
+  fi
+  MODEL_KEY="${GPU_SLOT_MODEL_KEY:-${k:-$DEFAULT_KEY}}"
+  IDENTIFIER="${GPU_SLOT_IDENTIFIER:-${i:-$MODEL_KEY}}"
+  CONTEXT="${GPU_SLOT_CONTEXT:-${c:-$DEFAULT_CONTEXT}}"
+  PARALLEL="${GPU_SLOT_PARALLEL:-${p:-$DEFAULT_PARALLEL}}"
+}
+read_resident
+
 
 # Prints the status of our identifier ("idle", "generating", ...) or nothing.
 # `lms ps --json` is a list of loaded models with identifier and status.
@@ -188,16 +219,55 @@ cmd_status() {
   local st
   st=$(model_status)
   if [ -f "$MARKER" ]; then
-    printf 'model=%s marker=%s\n' "${st:-not-loaded}" "$(cat "$MARKER")"
+    printf 'model=%s resident=%s marker=%s\n' "${st:-not-loaded}" "$MODEL_KEY" "$(cat "$MARKER")"
   else
-    printf 'model=%s marker=none\n' "${st:-not-loaded}"
+    printf 'model=%s resident=%s marker=none\n' "${st:-not-loaded}" "$MODEL_KEY"
   fi
 }
 
+# Switch the resident model (the one the keeper keeps loaded). Used when the
+# owner wants a different model than the default in the slot — e.g. a coding
+# model for a session. Unloads what is loaded first: two models of this size on
+# 32 GB is exactly the OOM the slot exists to prevent.
+cmd_use() {
+  local key="${1:-}" ctx="${2:-$DEFAULT_CONTEXT}" par="${3:-1}" ident="${4:-}"
+  if [ -z "$key" ]; then
+    echo "usage: gpu-slot.sh use <model-key> [context] [parallel] [identifier]" >&2
+    return 64
+  fi
+  [ -n "$ident" ] || ident=$(printf '%s' "$key" | sed 's|.*/||' | tr 'A-Z' 'a-z' | tr -c 'a-z0-9._-' '-')
+  if marker_is_live; then
+    log "refuse use $key: an image job holds the slot"
+    echo "an image job holds the GPU slot; try again when it is done" >&2
+    return 75
+  fi
+  unload_model
+  printf '%s %s %s %s\n' "$key" "$ident" "$ctx" "$par" >"$RESIDENT_FILE"
+  read_resident
+  log "resident model -> $key (ident $IDENTIFIER, ctx $CONTEXT, parallel $PARALLEL)"
+  load_model
+}
+
+# Back to the default resident model. The keeper keeps it from then on.
+cmd_release() {
+  if marker_is_live; then
+    log "refuse release: an image job holds the slot"
+    echo "an image job holds the GPU slot; try again when it is done" >&2
+    return 75
+  fi
+  unload_model
+  rm -f "$RESIDENT_FILE"
+  read_resident
+  log "resident model -> default $MODEL_KEY (ctx $CONTEXT, parallel $PARALLEL)"
+  load_model
+}
+
 case "${1:-}" in
-  begin)  shift; cmd_begin "$@" ;;
-  end)    cmd_end ;;
-  keep)   cmd_keep ;;
-  status) cmd_status ;;
-  *) echo "usage: gpu-slot.sh begin <engine> | end | keep | status" >&2; exit 64 ;;
+  begin)   shift; cmd_begin "$@" ;;
+  end)     cmd_end ;;
+  keep)    cmd_keep ;;
+  status)  cmd_status ;;
+  use)     shift; cmd_use "$@" ;;
+  release) cmd_release ;;
+  *) echo "usage: gpu-slot.sh begin <engine> | end | keep | status | use <model-key> [context] [parallel] [identifier] | release" >&2; exit 64 ;;
 esac
