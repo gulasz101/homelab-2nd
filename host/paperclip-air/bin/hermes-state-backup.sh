@@ -1,6 +1,7 @@
 #!/bin/bash
 # hermes-state-backup.sh — nightly sqlite3 backup of all Hermes state.db files to OMV MinIO
-# H2-308. Never cp a live WAL database; use sqlite3 .backup for a consistent online copy.
+# H2-308. GUL-1573: "all" means every profile on disk (homelab-lib.sh hermes_profiles).
+# Never cp a live WAL database; use sqlite3 .backup for a consistent online copy.
 #
 # GUL-74: the 2026-10-21 03:30 run failed with "dial tcp 192.168.1.180:9000:
 # no route to host" - the Air had not got a route to OMV yet at that hour, so the
@@ -27,6 +28,19 @@ else
     HERMES_HOME="$(cd "${SCRIPT_DIR}/.." && pwd)"
 fi
 export HERMES_HOME
+
+# GUL-1573: the profile list comes from disk via homelab-lib.sh (installed next to
+# this script in /usr/local/libexec/homelab, and next to it in the repo's bin/).
+# It is sourced before log()/cleanup() are defined, so this script's own helpers win.
+# No lib means no profile list: fail loudly (watchdog check 5b alerts on the exit code)
+# rather than fall back to a fixed list that goes stale again.
+if [ -r "${SCRIPT_DIR}/homelab-lib.sh" ]; then
+    # shellcheck source=homelab-lib.sh
+    . "${SCRIPT_DIR}/homelab-lib.sh"
+else
+    echo "$(date -Iseconds) ERROR: ${SCRIPT_DIR}/homelab-lib.sh not found - cannot list Hermes profiles" >&2
+    exit 1
+fi
 LOG_DIR="${HERMES_HOME}/logs"
 STATE_DIR="${HERMES_HOME}/state"
 ENV_FILE="${ENV_FILE:-$HOME/.config/hermes-state-backup/minio.env}"
@@ -110,12 +124,20 @@ fi
 failures=0
 success_profiles=()
 
-for profile in default andrzej florian szarik zdzislaw; do
-    if [[ "${profile}" == "default" ]]; then
-        db_path="${HERMES_HOME}/state.db"
-    else
-        db_path="${HERMES_HOME}/profiles/${profile}/state.db"
-    fi
+# GUL-1573: every profile on disk, not a hard-coded five (billcipher and matejko
+# were never backed up under the old list).
+profiles=()
+while IFS= read -r p; do
+    [ -n "${p}" ] && profiles+=("${p}")
+done < <(hermes_profiles "${HERMES_HOME}")
+if [ "${#profiles[@]}" -eq 0 ]; then
+    log "ERROR: no Hermes profiles found under ${HERMES_HOME} (no config.yaml) - nothing to back up"
+    exit 1
+fi
+log "Profiles: [${profiles[*]}] total=${#profiles[@]}"
+
+for profile in "${profiles[@]}"; do
+    db_path="$(hermes_state_db "${HERMES_HOME}" "${profile}")"
 
     if [[ ! -f "${db_path}" ]]; then
         log "SKIP: ${db_path} not found"

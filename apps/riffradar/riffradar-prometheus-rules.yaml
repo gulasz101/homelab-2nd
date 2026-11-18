@@ -21,8 +21,12 @@ spec:
       interval: 30s
       rules:
         - alert: RiffRadarPodNotReady
+          # One-shot backup/migration Jobs run a `riffradar-*` pod that is never
+          # Ready in the Service sense; excluding Job-owned pods keeps a
+          # finished Job from paging for a 502 that is not happening (GUL-1625).
           expr: |
             kube_pod_status_ready{namespace="riffradar", condition="true", pod=~"riffradar-.*"} == 0
+            unless on (namespace, pod) kube_pod_owner{namespace="riffradar", owner_kind="Job"}
           for: 10m
           labels:
             severity: critical

@@ -1,6 +1,6 @@
 # ADR-113: The agent fleet runs on Ollama Cloud routes, not on the OpenCode Go allowance
 
-- **Status**: Accepted (amended 2026-11-05 by GUL-971 / GUL-972)
+- **Status**: Accepted (amended 2026-11-05 by GUL-971 / GUL-972; amended 2026-11-13 by GUL-1429, `andrzej` pin row refreshed 2026-11-17)
 - **Date**: 2026-10-29
 - **Issue**: GUL-581
 - **Related**: ADR-085 (LiteLLM carries paid subscriptions only), ADR-094 (Hindsight reflect on a paid Ollama route), ADR-075 (Paperclip org and agent runtimes), GUL-122 / GUL-480 (Pi sends `reasoning_effort`)
@@ -56,7 +56,7 @@ The Ollama Pro weekly allowance ran dry again (`HTTP 429 ... reached your weekly
 |---|---|---|
 | Paperclip runners: Tester, Builder, Reviewer, Verifier, Majster, Pi (`pi_local`) | `llmhub/deepseek-v4.1-flash-1017-ds` | 30–90 minute tool-calling runs |
 | Paperclip OpenCode runner + `~/.config/opencode/opencode.json` (`model`, `small_model`) | `llmhub/deepseek-v4.1-flash-1017-ds` | same work, local CLI |
-| Hermes `andrzej` | `deepseek-v4.1-flash-1017-ds` | ops executor, tool-heavy |
+| Hermes `andrzej` | `deepseek-v4.1-flash-1017-ollama` (local lane 11-13 → 11-16, then GUL-1517 / GUL-1593) | ops executor, tool-heavy; never on the free chat pool |
 | Hermes root (Bill Cipher), `florian`, `matejko`, `szarik`, `zdzislaw` | `beam-free-go` | chat-shaped work, does not hold the paid allowance |
 | `claude_local` (Claude Code) | unchanged | bills Anthropic |
 
@@ -74,6 +74,40 @@ Two traps recorded on the way, both of which cost a run:
 - `deepseek-v4.1-flash-1017-ds` rejects a *forced* `tool_choice` (`Thinking mode does not support
   this tool_choice`). `tool_choice: "auto"` works and returns `tool_calls`. A probe that forces the
   tool call will report the paid route as broken when it is fine.
+
+## Amendment 2026-11-13 — the chat profiles stay on the free pool, andrzej on the local lane (GUL-1428 → GUL-1429)
+
+On 2026-11-12 five chat profiles were moved wholesale to `deepseek-v4.1-flash-1017-ds` after three
+free routes hit their walls. The owner reverted it the same night: a profile that answers a question
+and stops belongs on the free pool while it lasts, and paying for that turn is waste. So
+`beam-free-go` (root, `florian`, `matejko`, `szarik`) stay primary, `zdzislaw` comes onto
+`beam-free-go` as well because its old `glm-5.3-ollama` route is weekly-walled and the profile has
+`fallback_providers: []` — restoring it literally would have left it unable to answer anything,
+`-ds` remains the last resort in `fallback_providers`, and the config comments say so — a stale
+"moved to -ds" comment above a `beam-free-go` pin is worse than no comment at all.
+
+The one durable change from that pair of issues: **`andrzej` does not ride the free chat pool.**
+The owner's words were "andrzej stays on saluki"; Saluki 27B became Qwen3.6-35B-A3B the same day
+(GUL-1431), so on 2026-11-13 the pin was `qwen3.6-35b-a3b-local`. Measured on that local lane: 10.0 s
+for a 294-token prompt that answers with a `tool_calls` turn, and 58 s + 7 s on a real ~19.7k-token
+Ops turn — fine for heartbeats, sluggish in chat. The route carried its own LiteLLM fallback chain
+(local → `deepseek-v4.1-flash-1017-ollama` → `deepseek-v4.1-flash-ollama` →
+`deepseek-v4.1-flash-1017-ds`), so a local image job holding the GPU slot cost a slow turn, not a
+dead run.
+
+**The pin itself did not survive**: on 2026-11-14 the owner set the rule "Andrzej is DeepSeek or Kimi
+K2.7 only" (GUL-1517), and on 2026-11-16 the profile moved to `deepseek-v4.1-flash-1017-ollama` after
+the weekly reset (GUL-1593). The durable rule is therefore the shape, not the model name: **the Ops
+agent runs on whatever route is not shared with the free chat pool**, because the agent that clears a
+quota wall must never be behind that wall. The local lane stays a valid fallback hop, not a primary.
+
+Two things the attempt taught, worth more than the move itself:
+
+- A model pin is a preference, not a fix. The owner reverted it the same night it was applied, which
+  is the strongest argument for editing files instead of pipelines.
+- `~/.hermes/profiles/<own>/config.yaml` is closed to the agent whose profile it is (the tool refuses
+  it as security-sensitive). Own-profile changes go through `hermes -p <profile> config set
+  model.default <route>`, which is the supported path and still lands without a gateway restart.
 
 ## Consequences
 

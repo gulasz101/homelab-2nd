@@ -85,18 +85,39 @@ it while expecting the host to recover unattended: the two are mutually exclusiv
 Only because clamshell mode used to require a display. Once `disablesleep=1` is set, the plug is
 convenience, not a dependency — and it is worth pulling out once to prove it.
 
-## GPU slot: Saluki and the image worker take turns (GUL-1431)
+## GPU slot: one model at a time (GUL-1431)
 
-LM Studio serves one model, Saluki 27B (`saluki-27b`, 64k context, 2 slots, about 12-13 GB). A
-local image job (ideogram4, flux2-klein) needs about 17 GB, so both at once do not fit. The
-image worker calls `~/.local/bin/gpu-slot.sh begin <engine>` before a local job (Saluki unloads)
-and `end` after it (Saluki loads again, 11 s). LiteLLM sends LLM calls to the cloud in between.
-Record: `docs/adr/pending/saluki-local-lane-and-gpu-slot.md`.
+LM Studio serves one model, by default `qwen3.6-35b-a3b` (GGUF UD-IQ4_XS, 131k context, 2
+slots, about 22-23 GB at 128k). A local image job (ideogram4, flux2-klein) needs about 17 GB, so
+both at once do not fit. The image worker calls `~/.local/bin/gpu-slot.sh begin <engine>` before
+a local job (the model unloads) and `end` after it (it loads again). LiteLLM sends LLM calls to
+the cloud in between. Record: `docs/adr/pending/saluki-local-lane-and-gpu-slot.md`.
 
 ```bash
-~/.local/bin/gpu-slot.sh status                 # model=idle marker=none is the normal state
+~/.local/bin/gpu-slot.sh status                 # model=idle resident=<model> marker=none is normal
 tail ~/Library/Logs/homelab/gpu-slot.log
 ```
+
+### Switching the resident model (`use` / `release`)
+
+The slot does not care *which* model it holds, so a different one can take it for a session.
+`use` unloads what is loaded, records the new model in
+`~/Library/Application Support/gpu-slot/resident` (the keeper reads it, so it survives a reboot)
+and loads it; `release` drops the switch and loads the default back. Both refuse while an image
+job holds the slot (exit 75).
+
+```bash
+~/.local/bin/gpu-slot.sh use unsloth/flint-GGUF 65536 1 flint   # key, context, parallel, identifier
+~/.local/bin/gpu-slot.sh status                                 # model=idle resident=unsloth/flint-GGUF
+~/.local/bin/gpu-slot.sh release                                # back to the default
+```
+
+Flint is Recursive's 39.8B MoE (2.5B active) at `unsloth/flint-GGUF`, `flint-UD-Q3_K_XL.gguf`,
+18.5 GB; it runs on the selected llama.cpp runtime (2.71.0 already knows the `flint` arch, no
+new backend). It is **text only**, so while it is resident the `qwen3.6-35b-a3b-local-nothink`
+route that Karakeep uses for image tagging gets a model with no vision — swap back with
+`release` when the session ends. 65536 context is the honest size here: 18.5 GB of weights plus
+KV on a 32 GB box leaves no room for 131k. Sampling: temperature 1.0, top-p 0.95, top-k 20.
 
 Install or update (from the Air):
 
@@ -110,7 +131,8 @@ Two LM Studio settings this depends on:
 
 - **JIT auto-load off** (`~/.lmstudio/.internal/http-server-config.json`,
   `"justInTimeModelLoading": false`). With it on, the first LLM call during an image job loads
-  Saluki straight back and the two fight for RAM.
+  the model straight back and the two fight for RAM.
 - With JIT off, LM Studio answers a request for **any** model name with the model that is loaded,
   and with HTTP 400 "No models loaded" when none is. The fallback in LiteLLM relies on that 400.
+
 

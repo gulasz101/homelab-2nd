@@ -1,0 +1,18 @@
+# Installed on mimir as /etc/systemd/system/homelab-frontdoor-ip.service,
+# script as /usr/local/sbin/homelab-frontdoor-ip.sh. See host/mimir/README.md.
+[Unit]
+Description=Homelab front-door address 192.168.1.179 (DHCP-advertised DNS, NodePorts, k3s API)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/homelab-frontdoor-ip.sh
+ExecStop=/sbin/ip addr del 192.168.1.179/24 dev enp1s0
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

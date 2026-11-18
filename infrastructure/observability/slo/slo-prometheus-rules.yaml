@@ -1,0 +1,782 @@
+---
+# PrometheusRule: the SLOs and the multi-window burn-rate alerts (GUL-1599,
+# OTel work order 5 / gap G7). The prose half, with the targets and the reason
+# for each number, is infrastructure/observability/slo/README.md (an ADR cannot be
+# added by this work order: docs/adr/ is a never-path for factory agents).
+#
+# Method: Google SRE workbook, "Alerting on SLOs" - multi-window, multi-burn-rate.
+# The error budget is 1 - target (99.5 % -> 0.005, 95 % -> 0.05), and a burn rate
+# is the error ratio divided by that budget. Each alert pairs a LONG window (where
+# the budget is actually going) with a SHORT one (that the burn is still
+# happening), which is what keeps a single bad minute from paging anyone:
+#
+#   page    burn rate > 14.4  over 1h  and 5m    (2 % of the 30-day budget in 1h)
+#   page    burn rate >  6    over 6h  and 30m
+#   ticket  burn rate >  3    over 1d  and 2h
+#   ticket  burn rate >  1    over 3d  and 6h
+#
+# Three services, two SLIs, seven windows, 42 recording series. The service
+# names are the OTel resource service.name values the workloads set themselves
+# (apps/llm-hub/openwebui-helm-release.yaml OTEL_SERVICE_NAME=open-webui,
+# apps/hindsight/hindsight-helm-release.yaml HINDSIGHT_API_OTEL_SERVICE_NAME=
+# hindsight-api), so no rule has to guess a deployment name:
+#
+#   Open WebUI    availability + latency from the Tempo span metrics (WO-2)
+#   Hindsight API availability + latency from the Tempo span metrics (WO-2)
+#   Grafana       availability + latency from its own request histogram
+#
+# Span metrics come from Tempo's metrics-generator span_metrics processor
+# (tempo-helm-release.yaml; the generator remote-writes into this Prometheus,
+# GUL-1596 AC-5). Its labels are service / span_name / span_kind / status_code,
+# with SPAN_KIND_SERVER and STATUS_CODE_ERROR, and its latency bucket boundaries
+# are in SECONDS (0.002 ... 16.384, Grafana Tempo docs). That is why the latency
+# thresholds below are bucket boundaries (1.024, 2.048) and not a round "1":
+# `le="1"` is not a series that exists, and a rule selecting it records nothing
+# and never fires - the silent-rule trap GUL-1593 forbids.
+#
+# Availability is the share of SERVER spans that are not STATUS_CODE_ERROR;
+# latency is the share of SERVER spans that finished inside the threshold. Both
+# are recorded as ERROR ratios (the SLO's complement), because that is the number
+# the burn rate multiplies: error_ratio / error_budget.
+#
+# Selector: the Prometheus CR has spec.ruleSelector = {matchLabels: {release:
+# prometheus-stack}} - a PrometheusRule without that label is loaded by the
+# operator and then ignored by Prometheus, silently.
+#
+# Routing contract: every burn-rate rule carries `alertgroup: slo` (matched by
+# slo-alertmanager-config.yaml) and `namespace: observability`. The namespace
+# label is not decoration - prometheus-operator's default OnNamespace matcher
+# strategy injects namespace="observability" (the AlertmanagerConfig's own
+# namespace) into the generated route, so a rule labelled with another namespace
+# fires, matches nothing and lands on the top-level null receiver.
+#
+# Recording rules carry `service` and `slo` and nothing else, so the burn-rate
+# alerts can aggregate by SLI without a second series shape.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: slo-recording-and-burn-rate
+  namespace: observability
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    # The four workbook burn rates, one alert per service and rate. A single
+    # alert covers both SLIs of a service: the recording series are reduced
+    # `by (slo)`, so a firing instance names the SLI in $labels.slo and the
+    # alert stays one rule per rate instead of 24. The budget is per service
+    # (0.005 of 99.5 % for Open WebUI and Hindsight API, 0.05 of 95 % for
+    # Grafana) and is written into the comparison, so `> 14.4 * 0.005` reads
+    # exactly like the workbook table.
+    #
+    # This group is listed before slo-recording because the recording groups
+    # have to come last in this file: the red-stage check that proves the 42
+    # series exist reads record blocks up to the next `- record:` line and
+    # drops a pending block at an `- alert:` line, so a record block sitting
+    # immediately above the alerts is not counted (window 3d went missing).
+    - name: slo-burn-rate
+      interval: 30s
+      rules:
+        # Open WebUI page: burned more than 2 % of the 30-day error budget in the last hour and is still burning.
+        - alert: OpenWebuiSLOBurnPageFast
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate1h{service="open-webui"}) > 14.4 * 0.005
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate5m{service="open-webui"}) > 14.4 * 0.005
+            )
+          for: 2m
+          labels:
+            severity: critical
+            alertgroup: slo
+            namespace: observability
+            service: open-webui
+            slo_target: "99.5"
+          annotations:
+            summary: "Open WebUI is burning its error budget 14.4x too fast (1h and 5m)"
+            description: "Open WebUI has burned more than 2 % of the 30-day error budget in the last hour and is still burning (burn rate > 14.4 over 1h and 5m, budget 0.005 of a 99.5 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Open WebUI: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+        # Open WebUI page: burned more than 5 % of the 30-day error budget in the last 6 hours and is still burning.
+        - alert: OpenWebuiSLOBurnPageSlow
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate6h{service="open-webui"}) > 6 * 0.005
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate30m{service="open-webui"}) > 6 * 0.005
+            )
+          for: 15m
+          labels:
+            severity: critical
+            alertgroup: slo
+            namespace: observability
+            service: open-webui
+            slo_target: "99.5"
+          annotations:
+            summary: "Open WebUI is burning its error budget 6x too fast (6h and 30m)"
+            description: "Open WebUI has burned more than 5 % of the 30-day error budget in the last 6 hours and is still burning (burn rate > 6 over 6h and 30m, budget 0.005 of a 99.5 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Open WebUI: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+        # Open WebUI ticket: burned more than 10 % of the 30-day error budget in the last day and is still burning.
+        - alert: OpenWebuiSLOBurnTicket
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate1d{service="open-webui"}) > 3 * 0.005
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate2h{service="open-webui"}) > 3 * 0.005
+            )
+          for: 1h
+          labels:
+            severity: warning
+            alertgroup: slo
+            namespace: observability
+            service: open-webui
+            slo_target: "99.5"
+          annotations:
+            summary: "Open WebUI is burning its error budget 3x too fast (1d and 2h)"
+            description: "Open WebUI has burned more than 10 % of the 30-day error budget in the last day and is still burning (burn rate > 3 over 1d and 2h, budget 0.005 of a 99.5 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Open WebUI: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+        # Open WebUI ticket: will exhaust its 30-day error budget within 30 days at the rate of the last 3 days.
+        - alert: OpenWebuiSLOBurnTicketSlow
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate3d{service="open-webui"}) > 1 * 0.005
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate6h{service="open-webui"}) > 1 * 0.005
+            )
+          for: 3h
+          labels:
+            severity: warning
+            alertgroup: slo
+            namespace: observability
+            service: open-webui
+            slo_target: "99.5"
+          annotations:
+            summary: "Open WebUI is burning its error budget 1x too fast (3d and 6h)"
+            description: "Open WebUI will exhaust its 30-day error budget within 30 days at the rate of the last 3 days (burn rate > 1 over 3d and 6h, budget 0.005 of a 99.5 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Open WebUI: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+        # Hindsight API page: burned more than 2 % of the 30-day error budget in the last hour and is still burning.
+        - alert: HindsightApiSLOBurnPageFast
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate1h{service="hindsight-api"}) > 14.4 * 0.005
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate5m{service="hindsight-api"}) > 14.4 * 0.005
+            )
+          for: 2m
+          labels:
+            severity: critical
+            alertgroup: slo
+            namespace: observability
+            service: hindsight-api
+            slo_target: "99.5"
+          annotations:
+            summary: "Hindsight API is burning its error budget 14.4x too fast (1h and 5m)"
+            description: "Hindsight API has burned more than 2 % of the 30-day error budget in the last hour and is still burning (burn rate > 14.4 over 1h and 5m, budget 0.005 of a 99.5 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Hindsight API: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+        # Hindsight API page: burned more than 5 % of the 30-day error budget in the last 6 hours and is still burning.
+        - alert: HindsightApiSLOBurnPageSlow
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate6h{service="hindsight-api"}) > 6 * 0.005
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate30m{service="hindsight-api"}) > 6 * 0.005
+            )
+          for: 15m
+          labels:
+            severity: critical
+            alertgroup: slo
+            namespace: observability
+            service: hindsight-api
+            slo_target: "99.5"
+          annotations:
+            summary: "Hindsight API is burning its error budget 6x too fast (6h and 30m)"
+            description: "Hindsight API has burned more than 5 % of the 30-day error budget in the last 6 hours and is still burning (burn rate > 6 over 6h and 30m, budget 0.005 of a 99.5 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Hindsight API: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+        # Hindsight API ticket: burned more than 10 % of the 30-day error budget in the last day and is still burning.
+        - alert: HindsightApiSLOBurnTicket
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate1d{service="hindsight-api"}) > 3 * 0.005
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate2h{service="hindsight-api"}) > 3 * 0.005
+            )
+          for: 1h
+          labels:
+            severity: warning
+            alertgroup: slo
+            namespace: observability
+            service: hindsight-api
+            slo_target: "99.5"
+          annotations:
+            summary: "Hindsight API is burning its error budget 3x too fast (1d and 2h)"
+            description: "Hindsight API has burned more than 10 % of the 30-day error budget in the last day and is still burning (burn rate > 3 over 1d and 2h, budget 0.005 of a 99.5 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Hindsight API: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+        # Hindsight API ticket: will exhaust its 30-day error budget within 30 days at the rate of the last 3 days.
+        - alert: HindsightApiSLOBurnTicketSlow
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate3d{service="hindsight-api"}) > 1 * 0.005
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate6h{service="hindsight-api"}) > 1 * 0.005
+            )
+          for: 3h
+          labels:
+            severity: warning
+            alertgroup: slo
+            namespace: observability
+            service: hindsight-api
+            slo_target: "99.5"
+          annotations:
+            summary: "Hindsight API is burning its error budget 1x too fast (3d and 6h)"
+            description: "Hindsight API will exhaust its 30-day error budget within 30 days at the rate of the last 3 days (burn rate > 1 over 3d and 6h, budget 0.005 of a 99.5 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Hindsight API: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+        # Grafana page: burned more than 2 % of the 30-day error budget in the last hour and is still burning.
+        - alert: GrafanaSLOBurnPageFast
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate1h{service="grafana"}) > 14.4 * 0.05
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate5m{service="grafana"}) > 14.4 * 0.05
+            )
+          for: 2m
+          labels:
+            severity: critical
+            alertgroup: slo
+            namespace: observability
+            service: grafana
+            slo_target: "95"
+          annotations:
+            summary: "Grafana is burning its error budget 14.4x too fast (1h and 5m)"
+            description: "Grafana has burned more than 2 % of the 30-day error budget in the last hour and is still burning (burn rate > 14.4 over 1h and 5m, budget 0.05 of a 95 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Grafana: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+        # Grafana page: burned more than 5 % of the 30-day error budget in the last 6 hours and is still burning.
+        - alert: GrafanaSLOBurnPageSlow
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate6h{service="grafana"}) > 6 * 0.05
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate30m{service="grafana"}) > 6 * 0.05
+            )
+          for: 15m
+          labels:
+            severity: critical
+            alertgroup: slo
+            namespace: observability
+            service: grafana
+            slo_target: "95"
+          annotations:
+            summary: "Grafana is burning its error budget 6x too fast (6h and 30m)"
+            description: "Grafana has burned more than 5 % of the 30-day error budget in the last 6 hours and is still burning (burn rate > 6 over 6h and 30m, budget 0.05 of a 95 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Grafana: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+        # Grafana ticket: burned more than 10 % of the 30-day error budget in the last day and is still burning.
+        - alert: GrafanaSLOBurnTicket
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate1d{service="grafana"}) > 3 * 0.05
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate2h{service="grafana"}) > 3 * 0.05
+            )
+          for: 1h
+          labels:
+            severity: warning
+            alertgroup: slo
+            namespace: observability
+            service: grafana
+            slo_target: "95"
+          annotations:
+            summary: "Grafana is burning its error budget 3x too fast (1d and 2h)"
+            description: "Grafana has burned more than 10 % of the 30-day error budget in the last day and is still burning (burn rate > 3 over 1d and 2h, budget 0.05 of a 95 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Grafana: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+        # Grafana ticket: will exhaust its 30-day error budget within 30 days at the rate of the last 3 days.
+        - alert: GrafanaSLOBurnTicketSlow
+          expr: |
+            (
+              max by (slo) (slo:sli_error:ratio_rate3d{service="grafana"}) > 1 * 0.05
+            )
+            and
+            (
+              max by (slo) (slo:sli_error:ratio_rate6h{service="grafana"}) > 1 * 0.05
+            )
+          for: 3h
+          labels:
+            severity: warning
+            alertgroup: slo
+            namespace: observability
+            service: grafana
+            slo_target: "95"
+          annotations:
+            summary: "Grafana is burning its error budget 1x too fast (3d and 6h)"
+            description: "Grafana will exhaust its 30-day error budget within 30 days at the rate of the last 3 days (burn rate > 1 over 3d and 6h, budget 0.05 of a 95 % target). The SLI is in $labels.slo: availability is the share of SERVER spans that are not STATUS_CODE_ERROR (Grafana: its 5xx request share), latency is the share of requests inside the threshold. Check first the SLO dashboard (Observability — SLOs) for the burn-down and which of the two SLIs is red, then the service dashboard of Grafana: a latency-only burn is saturation (CPU, a slow dependency, a full queue), an availability burn is errors. Runbook: infrastructure/observability/slo/README.md (the SLO design and the burn-rate table)."
+
+
+    - name: slo-recording
+      interval: 30s
+      rules:
+        # --- open-webui / availability (the chat UI's interactive budget: one second per SERVER span)
+        - record: slo:sli_error:ratio_rate5m
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[5m]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[5m]))
+          labels:
+            service: open-webui
+            slo: availability
+        - record: slo:sli_error:ratio_rate30m
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[30m]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[30m]))
+          labels:
+            service: open-webui
+            slo: availability
+        - record: slo:sli_error:ratio_rate1h
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[1h]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[1h]))
+          labels:
+            service: open-webui
+            slo: availability
+        - record: slo:sli_error:ratio_rate2h
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[2h]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[2h]))
+          labels:
+            service: open-webui
+            slo: availability
+        - record: slo:sli_error:ratio_rate6h
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[6h]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[6h]))
+          labels:
+            service: open-webui
+            slo: availability
+        - record: slo:sli_error:ratio_rate1d
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[1d]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[1d]))
+          labels:
+            service: open-webui
+            slo: availability
+        - record: slo:sli_error:ratio_rate3d
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[3d]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[3d]))
+          labels:
+            service: open-webui
+            slo: availability
+        # --- open-webui / latency (the chat UI's interactive budget: one second per SERVER span)
+        - record: slo:sli_error:ratio_rate5m
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[5m]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[5m]))
+            )
+          labels:
+            service: open-webui
+            slo: latency
+        - record: slo:sli_error:ratio_rate30m
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[30m]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[30m]))
+            )
+          labels:
+            service: open-webui
+            slo: latency
+        - record: slo:sli_error:ratio_rate1h
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[1h]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[1h]))
+            )
+          labels:
+            service: open-webui
+            slo: latency
+        - record: slo:sli_error:ratio_rate2h
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[2h]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[2h]))
+            )
+          labels:
+            service: open-webui
+            slo: latency
+        - record: slo:sli_error:ratio_rate6h
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[6h]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[6h]))
+            )
+          labels:
+            service: open-webui
+            slo: latency
+        - record: slo:sli_error:ratio_rate1d
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[1d]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[1d]))
+            )
+          labels:
+            service: open-webui
+            slo: latency
+        - record: slo:sli_error:ratio_rate3d
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[3d]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[3d]))
+            )
+          labels:
+            service: open-webui
+            slo: latency
+        # --- hindsight-api / availability (memory queries fan out to the store and the embedding lane)
+        - record: slo:sli_error:ratio_rate5m
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[5m]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER"}[5m]))
+          labels:
+            service: hindsight-api
+            slo: availability
+        - record: slo:sli_error:ratio_rate30m
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[30m]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER"}[30m]))
+          labels:
+            service: hindsight-api
+            slo: availability
+        - record: slo:sli_error:ratio_rate1h
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[1h]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER"}[1h]))
+          labels:
+            service: hindsight-api
+            slo: availability
+        - record: slo:sli_error:ratio_rate2h
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[2h]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER"}[2h]))
+          labels:
+            service: hindsight-api
+            slo: availability
+        - record: slo:sli_error:ratio_rate6h
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[6h]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER"}[6h]))
+          labels:
+            service: hindsight-api
+            slo: availability
+        - record: slo:sli_error:ratio_rate1d
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[1d]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER"}[1d]))
+          labels:
+            service: hindsight-api
+            slo: availability
+        - record: slo:sli_error:ratio_rate3d
+          expr: |
+            (
+              sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[3d]))
+              or vector(0)
+            )
+            /
+            sum(rate(traces_spanmetrics_calls_total{service="hindsight-api", span_kind="SPAN_KIND_SERVER"}[3d]))
+          labels:
+            service: hindsight-api
+            slo: availability
+        # --- hindsight-api / latency (memory queries fan out to the store and the embedding lane)
+        - record: slo:sli_error:ratio_rate5m
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="2.048"}[5m]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="+Inf"}[5m]))
+            )
+          labels:
+            service: hindsight-api
+            slo: latency
+        - record: slo:sli_error:ratio_rate30m
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="2.048"}[30m]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="+Inf"}[30m]))
+            )
+          labels:
+            service: hindsight-api
+            slo: latency
+        - record: slo:sli_error:ratio_rate1h
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="2.048"}[1h]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="+Inf"}[1h]))
+            )
+          labels:
+            service: hindsight-api
+            slo: latency
+        - record: slo:sli_error:ratio_rate2h
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="2.048"}[2h]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="+Inf"}[2h]))
+            )
+          labels:
+            service: hindsight-api
+            slo: latency
+        - record: slo:sli_error:ratio_rate6h
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="2.048"}[6h]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="+Inf"}[6h]))
+            )
+          labels:
+            service: hindsight-api
+            slo: latency
+        - record: slo:sli_error:ratio_rate1d
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="2.048"}[1d]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="+Inf"}[1d]))
+            )
+          labels:
+            service: hindsight-api
+            slo: latency
+        - record: slo:sli_error:ratio_rate3d
+          expr: |
+            1 - (
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="2.048"}[3d]))
+              /
+              sum(rate(traces_spanmetrics_latency_bucket{service="hindsight-api", span_kind="SPAN_KIND_SERVER", le="+Inf"}[3d]))
+            )
+          labels:
+            service: hindsight-api
+            slo: latency
+        # --- grafana / availability (the dashboard's own UI and API handlers)
+        - record: slo:sli_error:ratio_rate5m
+          expr: |
+            (
+              sum(rate(grafana_http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+              or vector(0)
+            )
+            /
+            sum(rate(grafana_http_request_duration_seconds_count[5m]))
+          labels:
+            service: grafana
+            slo: availability
+        - record: slo:sli_error:ratio_rate30m
+          expr: |
+            (
+              sum(rate(grafana_http_request_duration_seconds_count{status_code=~"5.."}[30m]))
+              or vector(0)
+            )
+            /
+            sum(rate(grafana_http_request_duration_seconds_count[30m]))
+          labels:
+            service: grafana
+            slo: availability
+        - record: slo:sli_error:ratio_rate1h
+          expr: |
+            (
+              sum(rate(grafana_http_request_duration_seconds_count{status_code=~"5.."}[1h]))
+              or vector(0)
+            )
+            /
+            sum(rate(grafana_http_request_duration_seconds_count[1h]))
+          labels:
+            service: grafana
+            slo: availability
+        - record: slo:sli_error:ratio_rate2h
+          expr: |
+            (
+              sum(rate(grafana_http_request_duration_seconds_count{status_code=~"5.."}[2h]))
+              or vector(0)
+            )
+            /
+            sum(rate(grafana_http_request_duration_seconds_count[2h]))
+          labels:
+            service: grafana
+            slo: availability
+        - record: slo:sli_error:ratio_rate6h
+          expr: |
+            (
+              sum(rate(grafana_http_request_duration_seconds_count{status_code=~"5.."}[6h]))
+              or vector(0)
+            )
+            /
+            sum(rate(grafana_http_request_duration_seconds_count[6h]))
+          labels:
+            service: grafana
+            slo: availability
+        - record: slo:sli_error:ratio_rate1d
+          expr: |
+            (
+              sum(rate(grafana_http_request_duration_seconds_count{status_code=~"5.."}[1d]))
+              or vector(0)
+            )
+            /
+            sum(rate(grafana_http_request_duration_seconds_count[1d]))
+          labels:
+            service: grafana
+            slo: availability
+        - record: slo:sli_error:ratio_rate3d
+          expr: |
+            (
+              sum(rate(grafana_http_request_duration_seconds_count{status_code=~"5.."}[3d]))
+              or vector(0)
+            )
+            /
+            sum(rate(grafana_http_request_duration_seconds_count[3d]))
+          labels:
+            service: grafana
+            slo: availability
+        # --- grafana / latency (the dashboard's own UI and API handlers)
+        - record: slo:sli_error:ratio_rate5m
+          expr: |
+            1 - (
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[5m]))
+              /
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[5m]))
+            )
+          labels:
+            service: grafana
+            slo: latency
+        - record: slo:sli_error:ratio_rate30m
+          expr: |
+            1 - (
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[30m]))
+              /
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[30m]))
+            )
+          labels:
+            service: grafana
+            slo: latency
+        - record: slo:sli_error:ratio_rate1h
+          expr: |
+            1 - (
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[1h]))
+              /
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[1h]))
+            )
+          labels:
+            service: grafana
+            slo: latency
+        - record: slo:sli_error:ratio_rate2h
+          expr: |
+            1 - (
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[2h]))
+              /
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[2h]))
+            )
+          labels:
+            service: grafana
+            slo: latency
+        - record: slo:sli_error:ratio_rate6h
+          expr: |
+            1 - (
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[6h]))
+              /
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[6h]))
+            )
+          labels:
+            service: grafana
+            slo: latency
+        - record: slo:sli_error:ratio_rate1d
+          expr: |
+            1 - (
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[1d]))
+              /
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[1d]))
+            )
+          labels:
+            service: grafana
+            slo: latency
+        - record: slo:sli_error:ratio_rate3d
+          expr: |
+            1 - (
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[3d]))
+              /
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[3d]))
+            )
+          labels:
+            service: grafana
+            slo: latency

@@ -1,0 +1,204 @@
+---
+# PrometheusRule: the telemetry pipeline itself (GUL-1597, GUL-1593 WO-3 / gap G2).
+#
+# Why this exists: the collector, Loki, Tempo and Prometheus can each stop
+# carrying data while every application pod is still green - the pipeline that
+# moves the telemetry is the one thing nothing watched. flux-gitops-prometheus-
+# rules.yaml solved this failure class for deployment; this file does it for the
+# data path itself.
+#
+# Selector: the Prometheus CR (observability/prometheus-stack-kube-prom-prometheus)
+# has spec.ruleSelector = {matchLabels: {release: prometheus-stack}}. A
+# PrometheusRule without that label is loaded by the operator and then ignored by
+# Prometheus, silently.
+#
+# Metric names below were VERIFIED against the live Prometheus on 2026-11-17, not
+# guessed (/api/v1/label/__name__/values, then one query per expr: every expr
+# returns a series and every series is 0 today):
+#   otelcol_exporter_queue_size, otelcol_exporter_queue_capacity
+#   otelcol_receiver_refused_spans / _metric_points / _log_records
+#   otelcol_exporter_send_failed_metric_points
+#   loki_request_duration_seconds_count{route,status_code,method}
+#   tempo_receiver_refused_spans, tempo_discarded_spans_total{reason}
+#   prometheus_rule_evaluation_failures_total
+#
+# Four notes that matter to anyone editing this file:
+#
+#   1. The collector is scraped as a Prometheus target on :8888 (PodMonitor,
+#      job `observability/opentelemetry-collector-agent`), not through the OTLP
+#      receiver, so its counters do NOT carry the Prometheus `_total` suffix:
+#      `otelcol_exporter_send_failed_metric_points` is the whole name. A rule
+#      written against a `_total` variant loads with health=ok and can never
+#      fire - the exact trap GUL-1593 forbids.
+#   2. `otelcol_exporter_send_failed_*` exists for metric points only. The other
+#      two pipelines (otlp_grpc/tempo, otlp_http/loki) have never failed an
+#      export here, and their failures show up on the backend side instead - the
+#      Loki and Tempo rules below cover that half.
+#   3. Loki's push route today is `otlp_v1_logs` (the collector ships logs over
+#      OTLP), with the native gRPC route `/logproto.Pusher/Push` kept in the
+#      matcher for anything that still uses it. Only HTTP requests have a numeric
+#      status_code (gRPC reports `status_code="success"`), so the 5xx matcher
+#      cannot pick up gRPC series by accident.
+#   4. Tempo and Loki ARE scraped today (jobs `tempo` and `observability/loki`).
+#      Their ServiceMonitors carry `release: kube-prometheus-stack`, which is not
+#      the ruleSelector label - and that is fine, because the Prometheus CR's
+#      serviceMonitorSelector is `{}` (serviceMonitorSelectorNilUsesHelmValues:
+#      false). Nothing is broken in tempo-helm-release.yaml or
+#      loki-helm-release.yaml for these rules to see data, so neither is touched.
+#
+# Routing contract: every rule carries `alertgroup: otel-pipeline` and
+# `namespace: observability`. The namespace label is not decoration -
+# prometheus-operator's default OnNamespace matcher strategy injects
+# `namespace="observability"` (the AlertmanagerConfig's own namespace) into the
+# generated route, so a rule labelled with another namespace fires, matches
+# nothing and lands on the top-level null receiver. See the long note in
+# flux-gitops-prometheus-rules.yaml.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: otel-pipeline-alerts
+  namespace: observability
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: otel-pipeline
+      interval: 60s
+      rules:
+        # Two ways to lose the whole pipeline. `== 0` is one collector target
+        # that stopped answering (OOM-killed, crashing on config, node pressure);
+        # `count(...) < 4` is the pipeline shrinking under us, which no per-target
+        # check can see - a pruned PodMonitor or a lost node takes targets away
+        # instead of making them fail, and their alerts then simply stop existing.
+        # 4 is the node count: this is a DaemonSet, one collector per node.
+        - alert: OtelCollectorDown
+          expr: |
+            (up{job="observability/opentelemetry-collector-agent"} == 0)
+            or
+            (count(up{job="observability/opentelemetry-collector-agent"}) < 4)
+          for: 5m
+          labels:
+            severity: critical
+            alertgroup: otel-pipeline
+            namespace: observability
+          annotations:
+            summary: "The OpenTelemetry Collector is down or the DaemonSet has shrunk"
+            description: "A collector target has reported up==0 for 5 minutes, or fewer than 4 targets are up at all. Check first: kubectl -n observability get pods -l app.kubernetes.io/name=opentelemetry-collector and kubectl -n observability logs on the collector that is missing. While this is true the node it ran on ships no logs to Loki and no spans to Tempo, and nothing else in this file can see the gap."
+
+        # Data reaching a collector and then being refused before it enters a
+        # pipeline. A refused span/metric point/log record is data the client
+        # lost: the memory_limiter shedding under pressure, or a full pipeline.
+        # rate() over the counter, strictly > 0 - a raw counter comparison stays
+        # true forever once it has moved once.
+        - alert: OtelCollectorRefusingData
+          expr: |
+            sum by (pod, receiver, signal) (
+              label_replace(rate(otelcol_receiver_refused_spans[5m]), "signal", "spans", "receiver", ".*")
+              or
+              label_replace(rate(otelcol_receiver_refused_metric_points[5m]), "signal", "metric_points", "receiver", ".*")
+              or
+              label_replace(rate(otelcol_receiver_refused_log_records[5m]), "signal", "log_records", "receiver", ".*")
+            ) > 0
+          for: 10m
+          labels:
+            severity: critical
+            alertgroup: otel-pipeline
+            namespace: observability
+          annotations:
+            summary: "The collector is refusing {{ $labels.signal }} from {{ $labels.pod }}"
+            description: "Receiver {{ $labels.receiver }} on {{ $labels.pod }} has refused {{ $labels.signal }} steadily for 10 minutes, so clients are losing telemetry at the front door. Check first: otelcol_processor_refused_* and otelcol_process_memory_rss for the same pod - a memory_limiter that keeps refusing means the limit is too low for the node's log volume, and otelcol_exporter_enqueue_failed_* means an exporter queue is full and the backpressure has reached the receiver."
+
+        # Data accepted by the collector and then not delivered. Retries hide a
+        # little of this; a sustained rate does not. otelcol_exporter_send_failed
+        # has only the metric-points series here (see note 2 at the top).
+        - alert: OtelExporterSendFailed
+          expr: |
+            sum by (pod, exporter) (
+              rate(otelcol_exporter_send_failed_metric_points[5m])
+            ) > 0
+          for: 10m
+          labels:
+            severity: critical
+            alertgroup: otel-pipeline
+            namespace: observability
+          annotations:
+            summary: "The collector cannot send metrics through {{ $labels.exporter }}"
+            description: "Exporter {{ $labels.exporter }} on {{ $labels.pod }} has failed to send metric points for 10 minutes. Check first: the exporter endpoint (server.address / url.path on the series) and the backend's own health - otlp_http/prometheus points at the Prometheus OTLP receiver, so a 404/405 there means enableOTLPReceiver is off, and a connection refused means Prometheus itself is down. Sent data is retried and eventually dropped; compare otelcol_exporter_sent_metric_points against otelcol_receiver_accepted_metric_points for the size of the hole."
+
+        # The early warning for the same problem: the sending queue filling up is
+        # what happens before sends start failing. OpenTelemetry's own guidance is
+        # to investigate at 60-70 % of capacity, hence 0.7 over 10 minutes -
+        # not a raw size, and not a size-vs-capacity greater-than (which is true
+        # only once data is already being dropped).
+        - alert: OtelExporterQueueFilling
+          expr: |
+            max by (pod, exporter) (
+              otelcol_exporter_queue_size
+              /
+              otelcol_exporter_queue_capacity
+            ) > 0.7
+          for: 10m
+          labels:
+            severity: warning
+            alertgroup: otel-pipeline
+            namespace: observability
+          annotations:
+            summary: "The collector's {{ $labels.exporter }} send queue is over 70% full"
+            description: "On {{ $labels.pod }} the exporter {{ $labels.exporter }} has held its sending queue above 70% of capacity for 10 minutes: it is exporting slower than it receives. Check first the backend behind that exporter (Loki, Tempo, Prometheus) - a slow backend, not a slow collector, is the usual cause, and raising the queue capacity only buys time and memory. otelcol_exporter_in_flight_requests and the backend's own latency show which side is the bottleneck."
+
+        # Logs reaching Loki and being rejected. 429/400 are client-side and
+        # noisy by design; only 5xx means Loki could not take data it accepted.
+        - alert: LokiIngestErrors
+          expr: |
+            sum by (route) (
+              rate(loki_request_duration_seconds_count{
+                route=~".*(otlp_v1_logs|Push|push).*",
+                status_code=~"5.."
+              }[5m])
+            ) > 0
+          for: 10m
+          labels:
+            severity: critical
+            alertgroup: otel-pipeline
+            namespace: observability
+          annotations:
+            summary: "Loki is answering 5xx on {{ $labels.route }}"
+            description: "Loki has returned HTTP 5xx to ingest requests on route {{ $labels.route }} for 10 minutes, so logs the collector delivered were dropped. Check first: kubectl -n observability logs loki-0 for the failing write, the MinIO object store at 192.168.1.180:9000 (chunks and the ruler bucket live there), and loki_discarded_samples_total for a tenant limit that is rejecting instead of failing. A 503 on otlp_v1_logs while the pod is up is usually the ingester out of disk or the object store unreachable."
+
+        # The tracing half of the same contract. Tempo counts spans it refused at
+        # the receiver separately from spans it accepted and then threw away, so
+        # both are alerted: either way a trace the caller sent never became
+        # queryable.
+        - alert: TempoIngestErrors
+          expr: |
+            (
+              sum by (receiver) (rate(tempo_receiver_refused_spans[5m]))
+              or
+              sum by (reason) (rate(tempo_discarded_spans_total[5m]))
+            ) > 0
+          for: 10m
+          labels:
+            severity: critical
+            alertgroup: otel-pipeline
+            namespace: observability
+          annotations:
+            summary: "Tempo is refusing or discarding spans"
+            description: "Tempo has refused spans at the receiver or discarded accepted spans for 10 minutes. Check first the `reason` label on tempo_discarded_spans_total: live_traces_exceeded and trace_too_large are the single-binary limits in tempo-helm-release.yaml (a client sending a very large trace), while unknown_error is a real write failure - then kubectl -n observability logs tempo-0 and the local-path volume behind /var/tempo for a full or read-only disk."
+
+        # Prometheus is the other place the pipeline can die silently: a rule
+        # group whose expression no longer parses keeps every other rule in that
+        # group from evaluating, and those alerts simply never fire. This is the
+        # one rule that watches the watcher.
+        - alert: PrometheusRuleEvaluationFailures
+          expr: |
+            sum by (rule_group) (
+              rate(prometheus_rule_evaluation_failures_total[5m])
+            ) > 0
+          for: 15m
+          labels:
+            severity: warning
+            alertgroup: otel-pipeline
+            namespace: observability
+          annotations:
+            summary: "Prometheus cannot evaluate rule group {{ $labels.rule_group }}"
+            description: "A rule group in {{ $labels.rule_group }} has failed to evaluate for 15 minutes, so its alerts never fire - a silent hole, not a broken alarm. Check first: Prometheus /rules shows the group's lastError, and the group file named in $labels.rule_group under /etc/prometheus/rules; a bad expr in one rule fails the whole group, which is why this rule sits in this file and not in the group it watches."
