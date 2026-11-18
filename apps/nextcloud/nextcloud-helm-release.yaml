@@ -9,7 +9,7 @@ spec:
   chart:
     spec:
       chart: nextcloud
-      version: "9.1.4"
+      version: "9.3.0"
       sourceRef:
         kind: HelmRepository
         name: nextcloud
@@ -51,7 +51,7 @@ spec:
       # 33.0.11 to get the rebuilt image with PHP >= 8.4.27 (CVE-2026-109618 /
       # CVE-2026-109619, unauthenticated PHP RCE). Step 1 of the 33 -> 34 -> 35
       # major upgrade path; Nextcloud refuses to skip a major version.
-      tag: "33.0.11-apache"
+      tag: "34.0.6-apache"
 
     replicaCount: 1
 
