@@ -252,6 +252,18 @@
         {"pod": "redis", "label": "redis", "pvc": "redis-data"},
         {"pod": "cloudflared-auth", "label": "tunnel"}
       ]
+    },
+    {
+      "output": "infrastructure/observability/dashboards/slo-dashboard-configmap.yaml",
+      "namespace": "Observability",
+      "k8sNamespace": "observability",
+      "configmapName": "slo-dashboard",
+      "folder": "observability",
+      "key": "observability-slos.json",
+      "title": "Observability — SLOs",
+      "uid": "observability-slos",
+      "description": "SLOs and error budgets for Open WebUI, Hindsight API and Grafana, generated from scripts/dashboards/manifest.json.",
+      "slo": true
     }
   ]
 }

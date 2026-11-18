@@ -68,6 +68,19 @@ THRESHOLDS_75_90 = [
     {"color": "red", "value": 90},
 ]
 
+# --- SLO dashboards (GUL-1599) --------------------------------------------
+# The SLOs `infrastructure/observability/slo/slo-prometheus-rules.yaml` records:
+# three services, two SLIs, one error budget per service (1 - target). Panels
+# read the recorded ERROR ratio and divide by that same budget, so the dashboard
+# and the burn-rate alerts cannot disagree about what a burn rate means.
+SLO_SERVICES = (
+    {"service": "open-webui", "label": "Open WebUI", "target": 99.5, "budget": "0.005"},
+    {"service": "hindsight-api", "label": "Hindsight API", "target": 99.5, "budget": "0.005"},
+    {"service": "grafana", "label": "Grafana", "target": 95, "budget": "0.05"},
+)
+SLO_SLIS = ("availability", "latency")
+SLO_BURN_WINDOWS = ("1h", "6h")
+
 LOG_OPTIONS = {
     "dedupStrategy": "none",
     "enableLogDetails": True,
@@ -597,6 +610,97 @@ class Dashboard:
 
         self.y = y
 
+    def slo_golden_signals(self):
+        """Golden signals row of an SLO dashboard: the SLI, the budget, the burn.
+
+        Every query is over the recording rules in
+        `infrastructure/observability/slo/slo-prometheus-rules.yaml`; none reads
+        a raw span metric, so a change to an SLI definition lands in one file.
+        The 30-day SLI is not one of the seven recorded windows (the alerts need
+        seven, not eight), so it is the mean of the 1d error ratios over [30d]:
+        the 30-day error ratio when traffic is steady, and the same series the
+        burn rates are computed from. `[30d]` is in the query rather than in a
+        hidden recording rule.
+        """
+        self.row(ROW_ORDER[0])
+        y = self.y
+        for slo in SLO_SERVICES:
+            service = slo["service"]
+            label = slo["label"]
+            budget = slo["budget"]
+            target = slo["target"]
+            for index, sli in enumerate(SLO_SLIS):
+                self.stat(
+                    "%s %s — 30d" % (label, sli),
+                    "Share of %s requests in the last 30 days that met the %s SLO "
+                    "(target %s %%). The SLI is the error ratio recorded by the "
+                    "slo:sli_error rules, inverted; it is the number the error "
+                    "budget and the burn rates are built from."
+                    % (label, sli, ("%.1f" % target).rstrip("0").rstrip(".")),
+                    "percent",
+                    [
+                        {
+                            "expr": '100 * (1 - avg_over_time(slo:sli_error:ratio_rate1d'
+                                    '{service="%s",slo="%s"}[30d]))' % (service, sli),
+                            "instant": True,
+                            "legendFormat": sli,
+                            "refId": "A",
+                        },
+                    ],
+                    8 * index, y, w=8, h=4,
+                    thresholds=[
+                        {"color": "red", "value": None},
+                        {"color": "green", "value": target},
+                    ],
+                )
+            self.stat(
+                "%s error budget left — 30d" % label,
+                "How much of %s's 30-day error budget is unspent, in percent. "
+                "100 %% means nothing spent, 0 %% means the %s %% target has been "
+                "missed; the budget is %s (1 - target). Under 25 %% the service "
+                "pages at the fast burn rate within hours, under 50 %% the ticket "
+                "alerts start." % (label, target, budget),
+                "percent",
+                [
+                    {
+                        "expr": '100 * (1 - (avg_over_time(slo:sli_error:ratio_rate1d'
+                                '{service="%s"}[30d]) / %s))' % (service, budget),
+                        "instant": True,
+                        "legendFormat": "{{slo}}",
+                        "refId": "A",
+                    },
+                ],
+                16, y, w=8, h=4,
+                thresholds=[
+                    {"color": "red", "value": None},
+                    {"color": "yellow", "value": 25},
+                    {"color": "green", "value": 50},
+                ],
+            )
+            y += 4
+
+            targets = []
+            for ref, window in zip(("A", "B"), SLO_BURN_WINDOWS):
+                targets.append({
+                    "expr": 'slo:sli_error:ratio_rate%s{service="%s"} / %s' % (window, service, budget),
+                    "legendFormat": "{{slo}} %s burn rate" % window,
+                    "refId": ref,
+                })
+            self.timeseries(
+                "%s burn rate — how fast the error budget is going" % label,
+                "Error ratio over the last %s divided by the %s error budget, per "
+                "SLI. 1 is spending exactly the budget, so the budget is gone within "
+                "the 30-day window; the page threshold is 14.4 over 1h (2 %% of the "
+                "budget in an hour) and 6 over 6h. A latency-only burn is "
+                "saturation, an availability burn is errors."
+                % (" and ".join(SLO_BURN_WINDOWS), budget),
+                "short",
+                targets,
+                0, y, w=24, h=7,
+            )
+            y += 7
+        self.y = y
+
     def logs_row(self):
         self.row(ROW_ORDER[2])
         self.logs(
@@ -607,19 +711,33 @@ class Dashboard:
         self.y += 12
 
     # -- assembly -----------------------------------------------------------
+    def overview(self):
+        footer = ("\n\nRe-rendered from `scripts/dashboards/manifest.json` — edit the "
+                  "manifest or `scripts/render_namespace_dashboard.py`, never this JSON.")
+        if not self.spec.get("slo"):
+            return ("Standard dashboard for **%s**. Rows follow the homelab order: golden "
+                    "signals (saturation, traffic, restarts, errors), then resources "
+                    "(per-service requests against limits, storage, GPU), then logs."
+                    % self.spec["k8sNamespace"]) + footer
+        services = ", ".join("%s %s %%%%" % (slo["label"], slo["target"])
+                             for slo in SLO_SERVICES)
+        return ("The **SLOs** of the three services that answer a request: %s. Two SLIs "
+                "each — availability and latency — recorded as an error ratio for the "
+                "seven alerting windows, with one error budget per service (1 - target).\n\n"
+                "Rows follow the homelab order: golden signals (the 30-day SLI, the error "
+                "budget left, the burn rate), resources (the observability namespace "
+                "itself), then logs. The alarms that read these series are in "
+                "`infrastructure/observability/slo/slo-prometheus-rules.yaml`; the design "
+                "is `docs/adr/adr-135-observability-design.md`."
+                % services) + footer
+
     def render(self):
         spec = self.spec
-        self.text(
-            "Overview",
-            "Standard dashboard for **%s**. Rows follow the homelab order: golden "
-            "signals (saturation, traffic, restarts, errors), then resources "
-            "(per-service requests against limits, storage, GPU), then logs.\n\n"
-            "Re-rendered from `scripts/dashboards/manifest.json` — edit the manifest "
-            "or `scripts/render_namespace_dashboard.py`, never this JSON."
-            % spec["k8sNamespace"],
-            h=3,
-        )
-        self.golden_signals()
+        self.text("Overview", self.overview(), h=3)
+        if spec.get("slo"):
+            self.slo_golden_signals()
+        else:
+            self.golden_signals()
         self.resources()
         self.logs_row()
 
