@@ -888,6 +888,14 @@ spec:
         # Every side of every hop carries num_retries 0: one walled call is one
         # hop, never a ladder (GUL-1045).
         - {"iceman-contributor-free-go": ["longcat-2.5-free-go", "gpt-oss-120b-ollama"]}
+        # GUL-1446 follow-up (2026-11-15): longcat is now the PRIMARY for the
+        # mental-model refresh lane (stated in apps/hindsight), because iceman
+        # refuses the `json_schema` structured output that refresh asks for. A
+        # primary with no chain is a wall with no hop, so longcat gets one -
+        # straight home to ollama, deliberately NOT through iceman: iceman has
+        # already been measured to 400 on exactly this call shape (2026-11-15),
+        # so hopping there would only spend the failure twice.
+        - {"longcat-2.5-free-go": ["gpt-oss-120b-ollama"]}
         - {"gpt-oss-120b-ollama": ["gpt-oss-120b-freellmapi"]}
         # GUL-1431 (2026-11-12, owner ruling): local first, then the Ollama
         # subscription, then the paid DeepSeek API as the last resort. The
