@@ -62,6 +62,12 @@ DEFAULT_TICK_CMD = "factory tick"
 
 PS_ARGV = ["ps", "-axo", "pid=,ppid=,etime=,comm="]
 
+# Cloudflare's Browser Integrity Check in front of paperclip.voitech.dev answers
+# 403 `Error 1010` to the stock `Python-urllib/<ver>` UA while the same token
+# and the same second answer 200 as soon as any explicit UA is sent (GUL-785,
+# GUL-1638). Same shape as agents/factory/pc.py so a log line names the client.
+USER_AGENT = "majster-sweep/1 (sweep.py)"
+
 
 class SetupError(Exception):
     """Something the script cannot work with: missing env, unreadable input."""
@@ -173,6 +179,7 @@ class ApiSource(object):
         request = urllib.request.Request(url, headers={
             "Authorization": "Bearer " + self.token,
             "Accept": "application/json",
+            "User-Agent": USER_AGENT,
         })
         # Errors name the endpoint, never an env value or the token.
         shown = path.replace(self.company, "<company>")
