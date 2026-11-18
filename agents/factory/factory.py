@@ -675,7 +675,22 @@ def merge_contains(repo: str, head, merge):
     same_tree = subprocess.run(["git", "-C", repo, "diff", "--quiet", head, merge],
                                stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL).returncode
-    return same_tree == 0
+    if same_tree == 0:
+        return True
+    # GUL-1812: equal trees are too strict once the branch takes main in after the
+    # squash (or main moves on after it): the two trees differ for ever although
+    # the round landed. The merge commit's own patch is the set of hunks that
+    # landed on main, so the round is on main when every file that patch touches
+    # holds the same content at the branch head and in the merge. A merge that
+    # rewrote one of those files (or never touched them) is still unlanded.
+    landed = git(repo, "diff", "--name-only", "--no-renames", merge + "^", merge,
+                 allow_fail=True)
+    paths = [ln.strip() for ln in (landed or "").splitlines() if ln.strip()]
+    if not paths:
+        return False
+    return subprocess.run(["git", "-C", repo, "diff", "--quiet", head, merge, "--"] + paths,
+                          stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode == 0
 
 
 def unlanded_reason(number, head, merge_sha) -> str:
@@ -772,12 +787,27 @@ def settle_merge(api, work_order: dict, ledger: dict, pr: dict, view: dict,
         note = ""
         if withdrawn:
             note = " %d leftover merge card(s) withdrawn." % withdrawn
-        api.patch_issue(work_order["id"], {
-            "status": "done", "executionPolicy": None,
-            "comment": ("PR #%s is merged in `%s` (%s). No card: the factory read "
-                        "the merge on GitHub and moved this work order on.%s"
-                        % (number, commit or "?", merged_at or "?", note)),
-        })
+        try:
+            api.patch_issue(work_order["id"], {
+                "status": "done", "executionPolicy": None,
+                "comment": ("PR #%s is merged in `%s` (%s). No card: the factory read "
+                            "the merge on GitHub and moved this work order on.%s"
+                            % (number, commit or "?", merged_at or "?", note)),
+            })
+        except Exception as exc:  # noqa: BLE001
+            # GUL-1812 fault 3 (GUL-1738): the ledger now says merged but the work
+            # order was never finished. Say so instead of a bare `pr-merged`, and
+            # leave a monitor armed so the next tick retries the write.
+            try:
+                api.patch_issue(work_order["id"], {
+                    "executionPolicy": {"monitor": monitor_payload(pr)},
+                })
+            except Exception as arm:  # noqa: BLE001
+                sys.stderr.write("factory tick: %s: cannot re-arm the merge monitor: %s\n"
+                                 % (work_order.get("identifier"), str(arm)[:200]))
+            reason = ("PR #%s is merged in `%s`, but finishing the work order failed: %s"
+                      % (number, commit or "?", str(exc)[:200]))
+            return {"state": "unsettled", "reason": reason, "sha": commit}
         return {"state": "merged", "reason": None, "sha": commit}
 
     if state == "CLOSED":
@@ -3237,9 +3267,22 @@ def cmd_factory_tick(args) -> int:
                                                     settled.get("sha")), apply)
         newest_gate = latest_gate_row(ledger)
         gate_entry = newest_gate[2] if newest_gate else {}
-        if pr.get("number") and not ledger.get("merge") and gate_entry.get("issueId"):
+        # GUL-1812: an escalated work order's gate is parked `blocked`, not `done`,
+        # and the PR it opened is still the thing a person merges on GitHub. The
+        # merge watch used to need a `done` gate, so that merge was never read and
+        # the work order stayed `blocked` for ever. An escalation is watched too;
+        # while its PR is open nothing is touched (the escalation owns the block).
+        escalated = ledger.get("outcome") == "escalate"
+        # GUL-1812 fault 3 (GUL-1738): a MERGED read whose "done" write failed left
+        # the ledger saying merged with the work order still waiting, and the
+        # `not ledger.get("merge")` guard below would never look at it again. Retry
+        # that write on every tick until it lands.
+        retry_settle = (settled.get("state") == "merged"
+                        and item.get("status") != "done")
+        if (pr.get("number") and (not ledger.get("merge") or retry_settle)
+                and gate_entry.get("issueId")):
             gate_issue = stage_issue(gate_entry, newest_gate[1])
-            if gate_issue and gate_issue.get("status") == "done":
+            if gate_issue and (gate_issue.get("status") == "done" or escalated):
                 try:
                     view = pr_merge_view(ledger.get("repo") or "", pr["number"])
                 except SetupError as exc:
@@ -3247,9 +3290,17 @@ def cmd_factory_tick(args) -> int:
                     sys.stderr.write("factory tick: %s: %s\n"
                                      % (item.get("identifier"), str(exc)[:200]))
                 else:
-                    settlement = settle_merge(api, item, ledger, pr, view, apply)
+                    still_open = str(view.get("state") or "").upper() not in (
+                        "MERGED", "CLOSED")
+                    settlement = settle_merge(api, item, ledger, pr, view,
+                                              apply and not (escalated and still_open))
                     merge_state = settlement["state"]
-                    flags.append("pr-%s" % merge_state)
+                    if merge_state == "unsettled":
+                        # not a bare `pr-merged`: the merge was read but the work
+                        # order was not finished, so the line must not claim it was.
+                        flags.append("pr-merged!unsettled")
+                    else:
+                        flags.append("pr-%s" % merge_state)
         attempts = 0
         if current_key and stages.get(current_key):
             attempts = int(stages[current_key].get("attempts", 0))
