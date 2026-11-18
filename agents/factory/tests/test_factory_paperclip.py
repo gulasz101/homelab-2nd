@@ -287,12 +287,25 @@ def make_handler(state):
                 policy_in_body = "executionPolicy" in body
                 policy = body.get("executionPolicy")
                 projected = body.get("status", issue.get("status"))
+                exec_state = issue.get("executionState") or {}
+                state_stage = exec_state.get("currentStageId")
+                stored_ids = [s.get("id") for s in ((issue.get("executionPolicy") or {}).get("stages") or [])]
+                # GUL-1760: a PATCH that carries no policy is resolved against the
+                # *stored* one. When that stored policy still has the state's current
+                # stage, the write targets a live stage: an escalated hold refuses it
+                # outright, anything else is read as a request-changes, which lands
+                # `in_review` and then refuses the descriptor. Omitting the key is not
+                # an escape hatch — that is the bug the park has to avoid.
+                if not policy_in_body and state_stage and state_stage in stored_ids:
+                    if exec_state.get("changesRequestedCount", 0) >= 3:
+                        return self._send(422, {"error": "Only the escalated reviewer can advance "
+                                                         "the current execution stage"})
+                    projected = "in_review"
                 dissolve = policy_in_body and policy is None and was_in_review and return_to
                 if dissolve:
                     projected = "in_progress"
                 clear_state = False
                 if policy_in_body and isinstance(policy, dict):
-                    state_stage = (issue.get("executionState") or {}).get("currentStageId")
                     stage_ids = [s.get("id") for s in policy.get("stages") or []]
                     clear_state = bool(state_stage and state_stage not in stage_ids)
                 # Paperclip checks the descriptor against the *resulting* status, after the
@@ -2365,22 +2378,25 @@ def patch_body(stub, issue_id):
     return {}
 
 
-def case_park_omits_an_empty_policy(stub):
-    """GUL-1128: the park must never put an empty executionPolicy on the wire.
+def case_park_sends_a_dissolving_policy(stub):
+    """GUL-1128 / GUL-1760: the park always sends a policy that cannot resolve.
 
-    `_park_policy` keeps only stages that carry participants, so a stage issue
-    that never named a reviewer yields `stages: []`. paperclip 2026.1012.0
-    normalises a stage-less policy to null and then reads the PATCH as a
-    dissolve: the `in_review` issue goes back to its return assignee, the
-    requested `blocked` is overwritten with `in_progress`, and the whole write
-    dies `422 unblockDescriptor requires blocked status` — the stage stays
-    `in_review` with nothing recorded. Omitting the key is the fix. The stub
-    implements the same normalisation, so this case fails the same way the
-    board did if the empty policy ever comes back.
+    Paperclip 2026.1012.0 normalises a stage-less policy to null and reads that
+    PATCH as a dissolve, so an empty policy is not a park either: the `in_review`
+    issue goes back to its return assignee, the requested `blocked` is overwritten
+    with `in_progress`, and the write dies `422 unblockDescriptor requires blocked
+    status`. Omitting the key is no better — the server then applies the *stored*
+    policy, finds the stage the state points at, and refuses the write the same way
+    (on an escalated hold: `422 Only the escalated reviewer can advance the current
+    execution stage`). A park needs a policy whose stages carry participants and
+    whose ids resolve to nothing, which is what clears the state and keeps
+    `blocked`. The stub implements both the normalisation and the no-policy
+    refusal, so this case fails the way the board did if either comes back.
     """
     api = pc.Api(key="test-key-not-a-secret", run_id="test-run-id", base=stub.url)
     return_to = {"agentId": MAJSTER}
 
+    # a) the only stage lost its participants while the state still points at it.
     empty = stub.state.add_issue(
         identifier="GUL-1128-a", title="stage with no reviewer", status="in_review",
         assigneeAgentId=MAJSTER,
@@ -2391,52 +2407,55 @@ def case_park_omits_an_empty_policy(stub):
 
     factory._block_stage_issue(api, empty, "escalated: no reviewer on this stage")
     body = patch_body(stub, empty["id"])
-    check("park: a stage with no participant-bearing review sends no executionPolicy key (GUL-1128)",
-          body != {} and "executionPolicy" not in body, json.dumps(body))
-    check("park: the same write still asks for blocked, with a descriptor and the comment",
+    stages = (body.get("executionPolicy") or {}).get("stages") or []
+    check("park: a review stage with no participants still sends a policy, built from the issue (GUL-1760)",
+          len(stages) == 1 and (stages[0].get("participants") or [{}])[0].get("agentId") == MAJSTER
+          and "id" not in stages[0], json.dumps(body))
+    check("park: the same write asks for blocked, with a self-owned descriptor and the comment",
           body.get("status") == "blocked"
           and (body.get("unblockDescriptor") or {}).get("owner", {}).get("agentId") == MAJSTER
           and body.get("comment") == "escalated: no reviewer on this stage", json.dumps(body))
     stored = stub.state.issues[empty["id"]]
-    check("park: the stage reads blocked on the server, not dissolved back to its agent",
-          stored["status"] == "blocked" and stored["assigneeAgentId"] == MAJSTER,
+    check("park: the stage reads blocked on the server with its state cleared",
+          stored["status"] == "blocked" and stored["executionState"] is None,
           {k: stored.get(k) for k in ("status", "executionState", "assigneeAgentId")})
-    # No policy on the wire means the server has no stage transition to compute, so
-    # executionState is left as it was. Recorded rather than asserted: clearing it
-    # would need a policy Paperclip accepts, which is a separate change if a park
-    # ever re-enters its stage on unblock.
 
+    # b) nothing to name at all: no policy, no state, no assignee.
     no_policy = stub.state.add_issue(identifier="GUL-1128-b", title="stage with no policy",
                                      status="in_review", executionPolicy=None,
                                      executionState=None)
     factory._block_stage_issue(api, no_policy, "escalated: nothing to park")
     body2 = patch_body(stub, no_policy["id"])
-    check("park: a stage whose executionPolicy is None sends no executionPolicy key either (GUL-1128)",
+    check("park: a stage that names nobody sends no executionPolicy key (GUL-1128)",
           body2 != {} and "executionPolicy" not in body2, json.dumps(body2))
-    check("park: that stage also lands blocked",
+    check("park: and it still lands blocked",
           stub.state.issues[no_policy["id"]]["status"] == "blocked",
           stub.state.issues[no_policy["id"]].get("status"))
 
-    reviewed = stub.state.add_issue(
-        identifier="GUL-1128-c", title="stage with a reviewer", status="in_review",
+    # c) the GUL-1760 copy: the company issue list masks policy and state to null, and
+    #    the masked copy names nobody, so only a GET can produce a usable park.
+    full = stub.state.add_issue(
+        identifier="GUL-1760-a", title="escalated stage with a reviewer", status="in_review",
         assigneeAgentId=MAJSTER,
         executionPolicy={"mode": "normal",
                          "stages": [{"id": "stage-real", "type": "review",
                                      "participants": [{"type": "agent", "agentId": MAJSTER}],
                                      "approvalsNeeded": 1}]},
-        executionState={"currentStageId": "stage-real", "returnAssignee": return_to})
-    factory._block_stage_issue(api, reviewed, "escalated: three red rounds")
-    body3 = patch_body(stub, reviewed["id"])
-    stages = (body3.get("executionPolicy") or {}).get("stages") or []
-    check("park: a participant-bearing stage still sends executionPolicy with its stages (GUL-969)",
-          len(stages) == 1 and bool(stages[0].get("participants")) and "id" not in stages[0],
-          json.dumps(body3))
-    stored3 = stub.state.issues[reviewed["id"]]
-    check("park: and the server keeps blocked with the state cleared",
+        executionState={"currentStageId": "stage-real", "returnAssignee": return_to,
+                        "changesRequestedCount": 3})
+    masked = {"id": full["id"], "identifier": full["identifier"], "status": "in_review",
+              "executionPolicy": None, "executionState": None, "assigneeAgentId": None}
+    factory._block_stage_issue(api, masked, "escalated: third request-changes on green")
+    body3 = patch_body(stub, full["id"])
+    stages3 = (body3.get("executionPolicy") or {}).get("stages") or []
+    check("park: a masked list copy is re-read with GET /issues/{id} before the patch (GUL-1760)",
+          len(stages3) == 1 and "id" not in stages3[0], json.dumps(body3))
+    stored3 = stub.state.issues[full["id"]]
+    check("park: the escalated stage parks blocked instead of 422-ing on the hold",
           stored3["status"] == "blocked" and stored3["executionState"] is None,
           {k: stored3.get(k) for k in ("status", "executionState")})
 
-    for issue in (empty, no_policy, reviewed):
+    for issue in (empty, no_policy, full):
         stub.state.issues[issue["id"]]["status"] = "done"
 
 
@@ -2533,7 +2552,7 @@ def main():
             case_tick(stub, base_sha, repo)
             case_write_document_carries_revision(stub)
             case_blocked_needs_a_descriptor(stub)
-            case_park_omits_an_empty_policy(stub)
+            case_park_sends_a_dissolving_policy(stub)
             case_edge_block_falls_back(stub)
             case_commit_is_idempotent(stub)
             case_ledger_write_precedes_done(stub)

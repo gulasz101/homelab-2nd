@@ -438,25 +438,34 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   reason starts with `never path` and the sentence names Wojtek, because it is
   his call. Only the name changes — the blocked state, the ledger write and the
   no-retry rule are untouched. The **stage issue** is parked a
-  different way (GUL-889, GUL-1128): `blocked`, a self-owned `unblockDescriptor`,
-  the comment, and `executionPolicy` **left off the PATCH entirely** unless one of
-  the stages it would carry has participants. Never `"executionPolicy": null`, and
-  never a policy whose `stages` list is empty. A stage issue carries a pending
-  review stage whose state names a return assignee, and Paperclip resolves the
-  PATCH against that stage before it applies the requested status: clearing the
-  policy dissolves the review *back to the return assignee* — `in_progress`, stage
-  agent reassigned, `blocked` overwritten — so the failed write re-arms the agent,
-  the stage is handed back in `in_review`, and the next foreman wake escalates
-  again. An empty stage list is that same write: paperclip `2026.1012.0`
-  normalises a policy with nothing to run to `null` before the transition is
-  computed, the descriptor is then checked against the resulting `in_progress`, and
-  the whole PATCH dies `422 unblockDescriptor requires blocked status` — stage
-  still `in_review`, nothing recorded. Leave the key out and there is no transition
-  to compute: the server stores `blocked`, keeps the descriptor, and leaves
-  `executionState` as it found it. The policy goes on the wire only when a stage
-  carries participants (GUL-969): the factory drops the stage ids there, so the
-  state's current stage is no longer in the list and the server clears the state
-  itself. A `decide --apply` that finds the ledger
+  different way (GUL-889, GUL-1128, GUL-1760): `blocked`, a self-owned
+  `unblockDescriptor`, the comment, and an `executionPolicy` whose stages carry
+  participants but not the stage id the state points at. Never
+  `"executionPolicy": null`, never a policy whose `stages` list is empty, and never
+  a PATCH that leaves the key out while the issue still carries a stage. Paperclip
+  resolves the PATCH against the *stored* policy before it applies the requested
+  status: a null or stage-less policy is a policy removal, which dissolves a live
+  review back to its return assignee — `in_progress`, stage agent reassigned,
+  `blocked` overwritten — so the failed write re-arms the agent, the stage hands
+  back `in_review`, and the next foreman wake escalates again. Leaving the key off
+  looks safer and is not: the server applies the stored policy, finds the stage
+  `executionState.currentStageId` still names, and refuses the same write —
+  `422 unblockDescriptor requires blocked status` on a spent round,
+  `422 Only the escalated reviewer can advance the current execution stage` on an
+  escalated hold. Only a policy whose stage id no longer resolves takes the branch
+  that clears `executionState` and keeps `blocked`, which is why the factory drops
+  the stage ids (GUL-969).
+
+  The stage issue the park is built from has to come from `GET /issues/{id}`. The
+  company issue list masks `executionPolicy` and `executionState` to null and
+  `decide` resolves its stage through that list, so a park built from the list copy
+  believes the stage never named a reviewer. `_fresh_issue` re-reads it, and
+  `_park_policy` falls back to whoever the issue still names — the state's
+  `currentParticipant`, its `returnAssignee`, then `assigneeAgentId` /
+  `assigneeUserId` — when the stored policy has no participant-bearing stage. The
+  key is left out only when the issue names nobody at all.
+
+  A `decide --apply` that finds the ledger
   already at `outcome: escalate` **and** the stage issue settled (`blocked`,
   `done`, `cancelled`) writes nothing and exits 1 with `already escalated` — one
   bad write must never become a wake loop. A **missing stage document**

@@ -2403,6 +2403,33 @@ def _escalate(api, work_order_id: str, ledger: dict, reason, identifier: str,
 # re-arm starts from the same review rather than a redefined one.
 
 
+def _park_participants(stage_issue: dict) -> list:
+    """A participant the park can name when the policy carries no review stage (GUL-1760).
+
+    Any participant will do: the park needs a stage whose id cannot resolve, not a
+    live review. The order is most-specific first — the reviewer holding the stage,
+    the agent the review returns to, then whoever the issue is assigned to.
+    """
+    state = stage_issue.get("executionState") or {}
+    named = []
+    for candidate in (state.get("currentParticipant"), state.get("returnAssignee")):
+        if isinstance(candidate, dict) and (candidate.get("agentId") or candidate.get("userId")):
+            named.append(candidate)
+    if stage_issue.get("assigneeAgentId"):
+        named.append({"type": "agent", "agentId": stage_issue["assigneeAgentId"]})
+    if stage_issue.get("assigneeUserId"):
+        named.append({"type": "user", "userId": stage_issue["assigneeUserId"]})
+    if not named:
+        return []
+    first = named[0]
+    kept = {"type": first.get("type") or ("user" if first.get("userId") else "agent")}
+    if first.get("agentId"):
+        kept["agentId"] = first["agentId"]
+    if first.get("userId"):
+        kept["userId"] = first["userId"]
+    return [kept]
+
+
 def _park_policy(stage_issue: dict) -> dict:
     """The park's policy: this stage issue's own stages, re-identified (GUL-969).
 
@@ -2410,6 +2437,11 @@ def _park_policy(stage_issue: dict) -> dict:
     `executionState` point at a stage that no longer exists, which is the branch
     that clears the state and keeps `blocked`. Participants and `approvalsNeeded`
     are kept so the stage still describes the review it came from.
+
+    GUL-1760: a policy with no participant-bearing stage is not a park. The server
+    resolves a stage-less policy against the stored one, finds the live stage and
+    refuses the write, so a stage that lost its definition still gets a stage here —
+    built from whoever the issue still names (`_park_participants`).
     """
     policy = stage_issue.get("executionPolicy") or {}
     stages = []
@@ -2423,9 +2455,29 @@ def _park_policy(stage_issue: dict) -> dict:
         if stage.get("name"):
             kept["name"] = stage["name"]
         stages.append(kept)
+    if not stages:
+        fallback = _park_participants(stage_issue)
+        if fallback:
+            stages.append({"type": "review", "participants": fallback, "approvalsNeeded": 1})
     return {"mode": policy.get("mode") or "normal",
             "commentRequired": bool(policy.get("commentRequired", True)),
             "stages": stages}
+
+
+def _fresh_issue(api, stage_issue: dict) -> dict:
+    """The stage issue as `GET /issues/{id}` returns it (GUL-1760).
+
+    The company issue list masks `executionPolicy` and `executionState` to null, so
+    a stage resolved through `resolve_issue` → `by_identifier` looks like a stage
+    that never named a reviewer. Parking on that copy is what put no policy on the
+    wire and let the server resolve the write against the stored stage.
+    """
+    issue_id = stage_issue.get("id")
+    if not issue_id:
+        return stage_issue
+    full = api.issue(issue_id)
+    return full if isinstance(full, dict) and full.get("id") else stage_issue
+
 
 
 def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
@@ -2439,20 +2491,26 @@ def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
     a self-owned descriptor: the agent running `factory decide` owns reopening
     it once the work order is decided.
 
-    GUL-1128: `executionPolicy` goes on the wire only when the policy actually
-    carries a participant-bearing stage. A stage whose policy has none — the
-    common case for a stage that never named a reviewer — leaves `_park_policy`
-    with `stages: []`, and paperclip 2026.1012.0 normalises that to null before
-    it applies the write. A null policy on an `in_review` issue takes the
-    dissolve branch: the server reads the PATCH as "moving to in_progress",
-    reassigns the stage agent, and then refuses the whole write with
-    `422 unblockDescriptor requires blocked status` — nothing recorded, stage
-    still `in_review`. Omitting the key is not the same as sending null: with
-    the policy untouched the server has no stage transition to resolve and
-    stores the requested `blocked` as asked. `_park_policy` keeps returning the
-    empty list; it just must never reach the wire.
+    GUL-1128 / GUL-1760: `executionPolicy` on the wire is what makes the park a
+    park. Paperclip 2026.1012.0 applies the *stored* policy when the PATCH carries
+    none, so against a stage that still names a reviewer — or that has an
+    `executionState` — omitting the key changes nothing and the server resolves the
+    write against the live stage: `422 Only the escalated reviewer can advance the
+    current execution stage` on an escalated hold, or a request-changes that lands
+    `in_review` and then `422 unblockDescriptor requires blocked status`. Sending the
+    policy with the stage ids dropped is the branch that clears the state and keeps
+    `blocked`; sending a policy that normalises to null (no stage, no monitor) is a
+    policy removal and dissolves the review instead.
+
+    So the park reads the stage issue with `GET /issues/{id}` first (`_fresh_issue`):
+    the company issue list masks `executionPolicy` and `executionState`, and a stage
+    resolved through `resolve_issue` carries neither. `_park_policy` then falls back
+    to whoever the issue still names, so the body carries a stage that cannot
+    resolve. The key is omitted only when the issue names nobody at all.
     """
     identifier = stage_issue.get("identifier", "?")
+    current = _fresh_issue(api, stage_issue)
+    identifier = current.get("identifier") or identifier
     body = {
         "status": "blocked",
         "unblockDescriptor": _unblock_descriptor(
@@ -2460,10 +2518,10 @@ def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
                  "stage; that agent owns clearing this block." % identifier),
         "comment": comment,
     }
-    policy = _park_policy(stage_issue)
+    policy = _park_policy(current)
     if policy["stages"]:
         body["executionPolicy"] = policy
-    api.patch_issue(stage_issue["id"], body)
+    api.patch_issue(current.get("id") or stage_issue["id"], body)
 
 
 def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: dict,
