@@ -141,3 +141,15 @@ The owner was offered three options and chose the third: split the routes —
   answered `429 All models exhausted` the same day, and both lanes were dead - a free
   route that answers beats a subscription route that does not. `beam-free-go` stays
   with the agents (owner).
+
+## Amendment 2026-11-15 (GUL-1446 follow-up)
+
+- **2026-11-15: the mental-model refresh moved one rung down** to `longcat-2.5-free-go`;
+  reflect stays on `iceman-contributor-free-go`. The split is capability, not taste.
+- **Why:** a refresh asks for `json_schema` structured output and iceman answers
+  `400 Model iceman-contributor-free does not support structured output` on every
+  delta-ops call. Measured 2026-11-15 against the deployed pod: longcat, same payload
+  and same key, 5/5 x 200 with schema-valid JSON in 4.7-8.0 s. Previously the router
+  absorbed the 400 by hopping to longcat, so the lane worked but paid a failed hop
+  (~60 s slow-call tail) on every refresh. Reflect asks for prose, not a schema, so it
+  keeps the faster model.

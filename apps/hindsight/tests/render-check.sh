@@ -528,12 +528,17 @@ fi
 # 5h-ter. GUL-263 / ADR-094: reflect and the mental-model refresh leave the
 # FreeLLMAPI *key* pool and ride a named route through llm-hub, so the route is
 # chosen in the router, not by the app. Since GUL-1446 (2026-11-13) both lanes
-# sit on the free OpenCode Go model `iceman-contributor-free-go` (owner ruling
-# 2026-11-09 still holds: no paid lane). What keeps that safe is not the model
+# left `gpt-oss-120b-ollama`, and since the 2026-11-15 follow-up they are split:
+# reflect keeps `iceman-contributor-free-go`, the refresh sits on
+# `longcat-2.5-free-go` because a refresh asks for `json_schema` structured
+# output and iceman answers 400 on it (owner ruling 2026-11-09 still holds: no
+# paid lane). What keeps that safe is not the model
 # name but the chain behind it in apps/llm-hub: `iceman-contributor-free-go`
 # falls back to `longcat-2.5-free-go`, then back onto `gpt-oss-120b-ollama`, and
 # that one still degrades to `gpt-oss-120b-freellmapi`, so a walled week ends in
-# the free pool instead of a failed call. This block asserts the two facts that
+# the free pool instead of a failed call; `longcat-2.5-free-go` hops straight
+# home to `gpt-oss-120b-ollama` and not through iceman, which cannot serve a
+# refresh anyway. This block asserts the two facts that
 # make that true - the pinned primary, and the chain entry with no paid hop in
 # it.
 #
@@ -555,7 +560,7 @@ for kv in \
   'HINDSIGHT_API_REFLECT_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
   'HINDSIGHT_API_REFLECT_LLM_MODEL: iceman-contributor-free-go' \
   'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
-  'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: iceman-contributor-free-go'
+  'HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: longcat-2.5-free-go'
 do
   key=${kv%%: *}; want=${kv#*: }
   got=$(env_value "$API" "$key")
@@ -584,8 +589,10 @@ done
 # error again.
 REFRESH_MODEL_NOW=$(env_value "$API" HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL)
 case "$REFRESH_MODEL_NOW" in
+  longcat-2.5-free-go)
+    ok "refresh model '$REFRESH_MODEL_NOW' is the measured free Go primary for structured output (GUL-1446)" ;;
   iceman-contributor-free-go)
-    ok "refresh model '$REFRESH_MODEL_NOW' is the measured free Go primary (GUL-1446)" ;;
+    bad "refresh model 'iceman-contributor-free-go' cannot serve a mental-model refresh - it answers 400 'does not support structured output' on the json_schema delta call (measured 2026-11-15); use longcat-2.5-free-go (GUL-1446)" ;;
   *-ds)
     bad "refresh model '$REFRESH_MODEL_NOW' is the metered DeepSeek API - the owner ruled out a paid lane for the refresh on 2026-11-09; revert to gpt-oss-120b-ollama unless that ruling changes (GUL-1045)" ;;
   *-ollama|*-go)
