@@ -303,6 +303,18 @@ def _default_run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
+def _ffmpeg(proc, label):
+    """Return `proc` if ffmpeg exited 0, else fail loudly (F-1: a broken encode
+    must not be reported as a finished episode). The stderr tail is what ffmpeg
+    actually complained about, so it goes into the message."""
+    code = getattr(proc, "returncode", 0)
+    if code:
+        lines = [line for line in (getattr(proc, "stderr", "") or "").splitlines() if line.strip()]
+        tail = " | ".join(lines[-3:]) or "no stderr"
+        raise PodcastTTSError(f"{label} failed with exit status {code}: {tail}")
+    return proc
+
+
 def _parse_loudnorm(stderr):
     """Pull the last JSON object out of ffmpeg's loudnorm measurement on stderr."""
     blocks = re.findall(r"\{[^{}]*\}", stderr or "", flags=re.DOTALL)
@@ -362,7 +374,7 @@ def assemble(audio_paths, paragraph_ids, config, out_path, work_dir, run=None):
         "-filter_complex", graph1, "-map", "[out]",
         "-ar", str(rate), "-ac", "1", str(paused),
     ]
-    proc1 = run(cmd1)
+    proc1 = _ffmpeg(run(cmd1), "ffmpeg pass 1 (concat + loudnorm measurement)")
     measured = _parse_loudnorm(getattr(proc1, "stderr", "") or "")
 
     graph2 = (
@@ -381,7 +393,7 @@ def assemble(audio_paths, paragraph_ids, config, out_path, work_dir, run=None):
         "-ar", str(rate), "-ac", "1", "-b:a", str(config.bitrate),
         str(out_path),
     ]
-    run(cmd2)
+    _ffmpeg(run(cmd2), "ffmpeg pass 2 (loudnorm + mp3 encode)")
     return [cmd1, cmd2]
 
 
