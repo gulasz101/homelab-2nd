@@ -73,6 +73,25 @@
       "namespace": "hindsight",
       "configmapName": "hindsight-dashboards",
       "folder": "hindsight",
+      "variables": [
+        {
+          "current": {"selected": true, "text": "All", "value": "$__all"},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "definition": "label_values(hindsight_consolidation_backlog, tenant)",
+          "hide": 0,
+          "includeAll": true,
+          "label": "Tenant",
+          "multi": true,
+          "name": "tenant",
+          "options": [],
+          "query": {"query": "label_values(hindsight_consolidation_backlog, tenant)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 2,
+          "type": "query"
+        }
+      ],
       "dashboards": [
         {
           "key": "hindsight-operations.json",
@@ -84,6 +103,119 @@
             {"pod": "hindsight-oauth2-proxy", "label": "oauth2-proxy"},
             {"pod": "hindsight-db", "label": "db", "pvc": "hindsight-db-*"},
             {"pod": "cloudflared-hindsight", "label": "tunnel"}
+          ],
+          "panels": [
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Consolidation backlog",
+              "description": "Facts waiting in the consolidation queue for the selected tenant. A backlog that only grows means the extractor cannot keep up with what the agents retain.",
+              "unit": "short",
+              "thresholds": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 1000}],
+              "targets": [
+                {"expr": "max(hindsight_consolidation_backlog{tenant=~\"$tenant\"})", "legend": "backlog"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Drain rate (facts/hour)",
+              "description": "How fast the consolidation backlog shrinks over the last hour, in facts per hour. Negative is draining, positive means the queue is growing.",
+              "unit": "short",
+              "targets": [
+                {"expr": "-deriv(max(hindsight_consolidation_backlog{tenant=~\"$tenant\"})[1h:1m]) * 3600", "legend": "facts/hour"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Operations/sec",
+              "description": "Retain, recall and reflect operations per second across the selected tenants — the request load the memory service is absorbing.",
+              "unit": "ops",
+              "targets": [
+                {"expr": "sum(rate(hindsight_operation_operations_total{tenant=~\"$tenant\"}[1m]))", "legend": "operations"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Retain/sec",
+              "description": "Memory retain operations per second. A retain that stalls shows up here first, before the backlog grows.",
+              "unit": "ops",
+              "targets": [
+                {"expr": "sum(rate(hindsight_operation_operations_total{operation=\"retain\", tenant=~\"$tenant\"}[1m]))", "legend": "retain"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Recall/sec",
+              "description": "Memory recall (search) operations per second. This is the read path every agent session hits.",
+              "unit": "ops",
+              "targets": [
+                {"expr": "sum(rate(hindsight_operation_operations_total{operation=\"recall\", tenant=~\"$tenant\"}[1m]))", "legend": "recall"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Reflect/sec",
+              "description": "Reflect (synthesis) operations per second. Reflect is the expensive path: it re-reads memory rather than one bank lookup.",
+              "unit": "ops",
+              "targets": [
+                {"expr": "sum(rate(hindsight_operation_operations_total{operation=\"reflect\", tenant=~\"$tenant\"}[1m]))", "legend": "reflect"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "Backlog over time",
+              "description": "Consolidation backlog per tenant over the selected range. A rising line is the earliest signal that extraction is falling behind.",
+              "unit": "short",
+              "targets": [
+                {"expr": "max(hindsight_consolidation_backlog{tenant=~\"$tenant\"})", "legend": "backlog"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "Pending / processing operations",
+              "description": "Async operations still pending or in flight, by operation type and status. Stuck processing counts are a wedged worker.",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum by (operation_type, status) (hindsight_async_operations{status=~\"pending|processing\", tenant=~\"$tenant\"})", "legend": "{{operation_type}} {{status}}"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "Operations per second by type",
+              "description": "Retain, recall and reflect throughput split by operation, so one slow path cannot hide behind the total.",
+              "unit": "ops",
+              "targets": [
+                {"expr": "sum by (operation) (rate(hindsight_operation_operations_total{tenant=~\"$tenant\"}[1m]))", "legend": "{{operation}}"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "p95 latency by operation type",
+              "description": "95th percentile server-side latency per operation type in seconds. Recall rising alone points at the vector store, reflect at the LLM.",
+              "unit": "seconds",
+              "targets": [
+                {"expr": "histogram_quantile(0.95, sum by (operation, le) (rate(hindsight_operation_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))", "legend": "{{operation}}"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "Operations per second by bank",
+              "description": "Operation throughput per memory bank. One hot bank is usually one noisy agent session rather than a service-wide load change.",
+              "unit": "ops",
+              "targets": [
+                {"expr": "sum by (bank_id) (rate(hindsight_operation_operations_total{tenant=~\"$tenant\"}[1m]))", "legend": "{{bank_id}}"}
+              ]
+            }
           ]
         },
         {
@@ -94,6 +226,208 @@
             {"pod": "hindsight-api", "label": "api"},
             {"pod": "hindsight-oauth2-proxy", "label": "oauth2-proxy"},
             {"pod": "cloudflared-hindsight", "label": "tunnel"}
+          ],
+          "panels": [
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Requests/sec",
+              "description": "HTTP requests per second served by the Hindsight API. The API is what agents and the MCP bridge call; a collapse here means memory is unavailable.",
+              "unit": "ops",
+              "targets": [
+                {"expr": "sum(rate(hindsight_http_requests_total{tenant=~\"$tenant\"}[1m]))", "legend": "requests"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Requests in progress",
+              "description": "HTTP requests currently being served. A number that only grows is a stuck pool or a hung dependency.",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum(hindsight_http_requests_in_progress_requests)", "legend": "in progress"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Error rate (5xx)",
+              "description": "Share of HTTP requests answered with a 5xx over the last five minutes. Above one percent the API is failing its callers.",
+              "unit": "percentunit",
+              "thresholds": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "red", "value": 0.05}],
+              "targets": [
+                {"expr": "sum(rate(hindsight_http_requests_total{status_class=\"5xx\", tenant=~\"$tenant\"}[5m])) / sum(rate(hindsight_http_requests_total{tenant=~\"$tenant\"}[5m]))", "legend": "5xx"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "p95 latency",
+              "description": "95th percentile HTTP latency in seconds. Agents block on this call, so it is the memory path's contribution to session latency.",
+              "unit": "seconds",
+              "targets": [
+                {"expr": "histogram_quantile(0.95, sum by (le) (rate(hindsight_http_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))", "legend": "p95"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "Requests/sec by endpoint",
+              "description": "HTTP request rate split by endpoint. Retain and recall volumes diverge when a client changes its memory strategy.",
+              "unit": "ops",
+              "targets": [
+                {"expr": "sum by (endpoint) (rate(hindsight_http_requests_total{tenant=~\"$tenant\"}[1m]))", "legend": "{{endpoint}}"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "HTTP latency percentiles",
+              "description": "p50, p95 and p99 HTTP latency in seconds. The gap between p50 and p99 is the tail a slow database query hides in.",
+              "unit": "seconds",
+              "targets": [
+                {"expr": "histogram_quantile(0.50, sum by (le) (rate(hindsight_http_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))", "legend": "p50"},
+                {"expr": "histogram_quantile(0.95, sum by (le) (rate(hindsight_http_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))", "legend": "p95"},
+                {"expr": "histogram_quantile(0.99, sum by (le) (rate(hindsight_http_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))", "legend": "p99"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "Error rate over time",
+              "description": "5xx and 4xx share of HTTP requests over time. 5xx is the service breaking; a 4xx spike is usually one client sending bad queries.",
+              "unit": "percentunit",
+              "targets": [
+                {"expr": "sum(rate(hindsight_http_requests_total{status_class=\"5xx\", tenant=~\"$tenant\"}[1m])) / sum(rate(hindsight_http_requests_total{tenant=~\"$tenant\"}[1m]))", "legend": "5xx"},
+                {"expr": "sum(rate(hindsight_http_requests_total{status_class=\"4xx\", tenant=~\"$tenant\"}[1m])) / sum(rate(hindsight_http_requests_total{tenant=~\"$tenant\"}[1m]))", "legend": "4xx"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "stat",
+              "title": "DB pool size",
+              "description": "Connections the API currently holds in its Postgres pool. At the maximum the API queues requests instead of serving them.",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum(hindsight_db_pool_size)", "legend": "pool"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "stat",
+              "title": "Idle connections",
+              "description": "Idle connections in the API's Postgres pool. Zero idle with a large pool means every connection is stuck on a slow query.",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum(hindsight_db_pool_idle)", "legend": "idle"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "stat",
+              "title": "Active connections",
+              "description": "Connections the pool reports as in use (size minus idle). Sustained saturation points at the database, not the API.",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum(hindsight_db_pool_size) - sum(hindsight_db_pool_idle)", "legend": "active"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "stat",
+              "title": "Pool utilisation",
+              "description": "Share of the maximum Postgres pool in use. Above eighty percent the API starts waiting on the connection pool.",
+              "unit": "percentunit",
+              "thresholds": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.8}, {"color": "red", "value": 0.9}],
+              "targets": [
+                {"expr": "sum(hindsight_db_pool_size) / sum(hindsight_db_pool_max)", "legend": "used"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "stat",
+              "title": "Memory (RSS max)",
+              "description": "Resident memory of the API process in bytes. Near the container limit the pod is one allocation away from an OOMKill.",
+              "unit": "bytes",
+              "targets": [
+                {"expr": "max(hindsight_process_memory_bytes)", "legend": "rss"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "stat",
+              "title": "Active threads",
+              "description": "Threads inside the API process. A count that climbs and never falls is a leaked worker pool.",
+              "unit": "short",
+              "targets": [
+                {"expr": "max(hindsight_process_threads)", "legend": "threads"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "stat",
+              "title": "Open file descriptors",
+              "description": "File descriptors held by the API process. Descriptors climbing toward the limit is a socket or log-file leak.",
+              "unit": "short",
+              "targets": [
+                {"expr": "max(hindsight_process_open_fds)", "legend": "fds"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "stat",
+              "title": "Total CPU time",
+              "description": "Cumulative CPU seconds the API process has burned. The slope of this line is the process CPU rate.",
+              "unit": "seconds",
+              "targets": [
+                {"expr": "sum(hindsight_process_cpu_seconds)", "legend": "cpu seconds"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "timeseries",
+              "title": "Connection pool over time",
+              "description": "Pool size, idle, active and maximum connections over time. Active pinned at maximum while idle stays zero is pool exhaustion.",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum(hindsight_db_pool_size)", "legend": "size"},
+                {"expr": "sum(hindsight_db_pool_idle)", "legend": "idle"},
+                {"expr": "sum(hindsight_db_pool_size) - sum(hindsight_db_pool_idle)", "legend": "active"},
+                {"expr": "sum(hindsight_db_pool_max)", "legend": "max"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "timeseries",
+              "title": "Memory usage over time",
+              "description": "Resident memory of the API process over time. A sawtooth that returns to the same floor is normal; a rising floor is a leak.",
+              "unit": "bytes",
+              "targets": [
+                {"expr": "max(hindsight_process_memory_bytes)", "legend": "rss"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "timeseries",
+              "title": "CPU usage rate (seconds/second)",
+              "description": "User and system CPU time per second consumed by the API process. One full core reads as 1.0.",
+              "unit": "seconds",
+              "targets": [
+                {"expr": "rate(hindsight_process_cpu_seconds{type=\"user\"}[1m])", "legend": "user"},
+                {"expr": "rate(hindsight_process_cpu_seconds{type=\"system\"}[1m])", "legend": "system"}
+              ]
+            },
+            {
+              "row": "Resources",
+              "type": "timeseries",
+              "title": "Threads and file descriptors over time",
+              "description": "Thread and file-descriptor counts over time. Both should drift flat; a rising line is a resource leak.",
+              "unit": "short",
+              "targets": [
+                {"expr": "max(hindsight_process_threads)", "legend": "threads"},
+                {"expr": "max(hindsight_process_open_fds)", "legend": "fds"}
+              ]
+            }
           ]
         },
         {
@@ -102,6 +436,90 @@
           "uid": "hindsight-llm",
           "services": [
             {"pod": "hindsight-api", "label": "api (internal worker)"}
+          ],
+          "panels": [
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Total LLM calls",
+              "description": "LLM calls the extractor has made for the selected tenants. This is the spend the memory service generates on the model lane.",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum(hindsight_llm_calls_total{tenant=~\"$tenant\"})", "legend": "calls"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Total tokens used",
+              "description": "Input plus output tokens the extractor has spent. Tokens, not calls, is what the free-tier limits and the bill are measured in.",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum(hindsight_llm_tokens_input_tokens_total{tenant=~\"$tenant\"}) + sum(hindsight_llm_tokens_output_tokens_total{tenant=~\"$tenant\"})", "legend": "tokens"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Input tokens",
+              "description": "Prompt tokens sent to the extraction model. A jump without more calls means bigger prompts (more context per fact).",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum(hindsight_llm_tokens_input_tokens_total{tenant=~\"$tenant\"})", "legend": "input"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "stat",
+              "title": "Output tokens",
+              "description": "Completion tokens the extraction model returned. Output is the expensive half on most providers.",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum(hindsight_llm_tokens_output_tokens_total{tenant=~\"$tenant\"})", "legend": "output"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "LLM calls per second by scope",
+              "description": "LLM call rate split by extraction scope. Each scope is a prompt shape, so one scope storming is one prompt getting more work.",
+              "unit": "ops",
+              "targets": [
+                {"expr": "sum by (scope) (rate(hindsight_llm_calls_total{tenant=~\"$tenant\"}[1m]))", "legend": "{{scope}}"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "Token usage rate (tokens/sec)",
+              "description": "Input and output tokens per second across the selected tenants — the rate the model lane has to sustain.",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum(rate(hindsight_llm_tokens_input_tokens_total{tenant=~\"$tenant\"}[1m]))", "legend": "input"},
+                {"expr": "sum(rate(hindsight_llm_tokens_output_tokens_total{tenant=~\"$tenant\"}[1m]))", "legend": "output"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "LLM call latency p95 by scope",
+              "description": "95th percentile extraction call latency in seconds per scope. Latency here sets how fast the consolidation backlog drains.",
+              "unit": "seconds",
+              "targets": [
+                {"expr": "histogram_quantile(0.95, sum by (scope, le) (rate(hindsight_llm_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))", "legend": "{{scope}}"}
+              ]
+            },
+            {
+              "row": "Golden signals",
+              "type": "timeseries",
+              "title": "Token usage by scope (tokens/sec)",
+              "description": "Token rate split by extraction scope, so a single expensive prompt cannot hide inside the total.",
+              "unit": "short",
+              "targets": [
+                {"expr": "sum by (scope) (rate(hindsight_llm_tokens_input_tokens_total{tenant=~\"$tenant\"}[1m]))", "legend": "{{scope}} input"},
+                {"expr": "sum by (scope) (rate(hindsight_llm_tokens_output_tokens_total{tenant=~\"$tenant\"}[1m]))", "legend": "{{scope}} output"}
+              ]
+            }
           ]
         }
       ]
@@ -123,7 +541,7 @@
       "title": "llm-hub — LiteLLM + Open WebUI",
       "uid": "llm-hub-overview",
       "services": [
-        {"pod": "litellm", "label": "litellm"},
+        {"pod": "litellm", "label": "litellm", "exclude": ["litellm-db"]},
         {"pod": "litellm-db", "label": "litellm-db", "pvc": "litellm-db-*"},
         {"pod": "open-webui", "label": "open-webui"},
         {"pod": "openwebui-db", "label": "openwebui-db", "pvc": "openwebui-db-*"},
@@ -159,7 +577,9 @@
       "title": "nextcloud — Photos + Files",
       "uid": "nextcloud-overview",
       "services": [
-        {"pod": "nextcloud-", "label": "nextcloud", "pvc": "nextcloud-data"},
+        {"pod": "nextcloud-", "label": "nextcloud", "pvc": "nextcloud-data",
+         "exclude": ["nextcloud-db", "nextcloud-redis-master", "nextcloud-metrics",
+                     "nextcloud-cloudflared"]},
         {"pod": "nextcloud-db", "label": "nextcloud-db", "pvc": "nextcloud-db-*"},
         {"pod": "nextcloud-redis-master", "label": "redis"},
         {"pod": "nextcloud-metrics", "label": "metrics"},
@@ -225,7 +645,31 @@
       "uid": "whiteboard-overview",
       "services": [
         {"pod": "excalidraw", "label": "excalidraw"},
-        {"pod": "cloudflared-whiteboard", "label": "tunnel"}
+        {"pod": "cloudflared-whiteboard", "label": "tunnel", "k8sNamespace": "apps-tldraw"}
+      ],
+      "panels": [
+        {
+          "row": "Golden signals",
+          "type": "stat",
+          "title": "Excalidraw available replicas",
+          "description": "Available replicas of the excalidraw Deployment in apps-whiteboard. Below one the editor has no backend and the public page fails.",
+          "unit": "short",
+          "thresholds": [{"color": "red", "value": null}, {"color": "green", "value": 1}],
+          "targets": [
+            {"expr": "kube_deployment_status_replicas_available{namespace=\"apps-whiteboard\", deployment=\"excalidraw\"}", "legend": "excalidraw"}
+          ]
+        },
+        {
+          "row": "Golden signals",
+          "type": "stat",
+          "title": "Tunnel connectors available",
+          "description": "Available replicas of the cloudflared-whiteboard tunnel. The pod runs in apps-tldraw because the Cloudflare route is pinned to a service there; below one connector the public hostname returns CF error 1033.",
+          "unit": "short",
+          "thresholds": [{"color": "red", "value": null}, {"color": "green", "value": 1}],
+          "targets": [
+            {"expr": "kube_deployment_status_replicas_available{namespace=\"apps-tldraw\", deployment=\"cloudflared-whiteboard\"}", "legend": "cloudflared"}
+          ]
+        }
       ]
     },
     {
@@ -252,6 +696,18 @@
         {"pod": "redis", "label": "redis", "pvc": "redis-data"},
         {"pod": "cloudflared-auth", "label": "tunnel"}
       ]
+    },
+    {
+      "output": "infrastructure/observability/dashboards/slo-dashboard-configmap.yaml",
+      "namespace": "Observability",
+      "k8sNamespace": "observability",
+      "configmapName": "slo-dashboard",
+      "folder": "observability",
+      "key": "observability-slos.json",
+      "title": "Observability — SLOs",
+      "uid": "observability-slos",
+      "description": "SLOs and error budgets for Open WebUI, Hindsight API and Grafana, generated from scripts/dashboards/manifest.json.",
+      "slo": true
     }
   ]
 }

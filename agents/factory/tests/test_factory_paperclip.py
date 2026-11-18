@@ -287,12 +287,25 @@ def make_handler(state):
                 policy_in_body = "executionPolicy" in body
                 policy = body.get("executionPolicy")
                 projected = body.get("status", issue.get("status"))
+                exec_state = issue.get("executionState") or {}
+                state_stage = exec_state.get("currentStageId")
+                stored_ids = [s.get("id") for s in ((issue.get("executionPolicy") or {}).get("stages") or [])]
+                # GUL-1760: a PATCH that carries no policy is resolved against the
+                # *stored* one. When that stored policy still has the state's current
+                # stage, the write targets a live stage: an escalated hold refuses it
+                # outright, anything else is read as a request-changes, which lands
+                # `in_review` and then refuses the descriptor. Omitting the key is not
+                # an escape hatch — that is the bug the park has to avoid.
+                if not policy_in_body and state_stage and state_stage in stored_ids:
+                    if exec_state.get("changesRequestedCount", 0) >= 3:
+                        return self._send(422, {"error": "Only the escalated reviewer can advance "
+                                                         "the current execution stage"})
+                    projected = "in_review"
                 dissolve = policy_in_body and policy is None and was_in_review and return_to
                 if dissolve:
                     projected = "in_progress"
                 clear_state = False
                 if policy_in_body and isinstance(policy, dict):
-                    state_stage = (issue.get("executionState") or {}).get("currentStageId")
                     stage_ids = [s.get("id") for s in policy.get("stages") or []]
                     clear_state = bool(state_stage and state_stage not in stage_ids)
                 # Paperclip checks the descriptor against the *resulting* status, after the
@@ -1207,6 +1220,93 @@ def case_decide_settles_a_merged_pr(stub, base_sha, repo):
           and len(stub.state.comments) == comments_before, raw_again[-300:])
 
 
+def case_decide_refuses_an_unlanded_merge(stub, base_sha, repo):
+    """GUL-1801: merged is not landed.
+
+    PR #252 was merged by hand while GUL-1598's fix round was still open, so the
+    merge commit took round 1 and round 2 never reached main. The factory then said
+    "already settled" and the round was lost. A merged PR whose merge commit does
+    not contain the work order's branch head must block the work order and name the
+    sha, and land it once the sha does arrive.
+    """
+    fixture, fixture_sha = make_repo("repo-unlanded")
+    wo = base_work_order(stub, fixture_sha, fixture, identifier="GUL-1598")
+    ledger = ledger_of(stub, wo)
+    branch = ledger["branch"]
+    ident = ["-c", "user.email=t@example.com", "-c", "user.name=T"]
+
+    # round 1 is the base; round 2 is the head that the merge never took
+    git_out(fixture, "checkout", "-q", "-b", branch, fixture_sha)
+    with open(os.path.join(fixture, "tests", "ac.sh"), "a") as fh:
+        fh.write("# round 2: the three blocking findings, fixed\n")
+    git_out(fixture, *ident, "commit", "-qam", "round 2")
+    round2 = git_out(fixture, "rev-parse", "HEAD")
+    # a merge commit that does not contain round 2 (and whose tree differs from it)
+    git_out(fixture, "checkout", "-q", "--orphan", "stranded")
+    with open(os.path.join(fixture, "STRANDED"), "w") as fh:
+        fh.write("round 1 only\n")
+    git_out(fixture, "add", "STRANDED")
+    git_out(fixture, *ident, "commit", "-qm", "round 1, merged")
+    merge_sha = git_out(fixture, "rev-parse", "HEAD")
+    git_out(fixture, "checkout", "-q", branch)
+
+    ledger["pr"] = {"number": 252,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/252"}
+    verify = stage_issue(stub, wo, "[verify] GUL-1598 — Add the fixture")
+    ledger["stages"] = {
+        "green": {"issueId": None, "round": 1, "attempts": 0, "sha": fixture_sha},
+        "green:r2": {"issueId": None, "round": 2, "attempts": 0, "sha": round2},
+        "verify": {"issueId": verify["id"], "identifier": verify["identifier"],
+                   "round": 1, "attempts": 0, "sha": None},
+    }
+    write_ledger(stub, wo, ledger)
+
+    env = merge_env("unlanded", {"state": "MERGED", "mergedAt": "2026-11-17T20:57:00Z",
+                                 "mergeCommit": {"oid": merge_sha}})
+    code, out, raw = run(stub, ["decide", verify["identifier"], "--apply"], extra_env=env)
+    ledger = ledger_of(stub, wo)
+    said = comments_on(stub, wo["id"])
+    reasons = (out or {}).get("reasons") or []
+
+    check("decide unlanded: a merge that does not contain the head -> ok: false",
+          code == 1 and (out or {}).get("ok") is False
+          and (out or {}).get("decision") == "unlanded", raw[-600:])
+    check("decide unlanded: never says `already settled`",
+          not any("already settled" in r for r in reasons), str(reasons))
+    check("decide unlanded: names the sha that never landed and the action",
+          any(round2[:7] in r and "on main" in r for r in reasons), str(reasons))
+    check("decide unlanded: the work order is blocked, not done, with a descriptor",
+          stub.state.issues[wo["id"]]["status"] == "blocked"
+          and bool(stub.state.issues[wo["id"]].get("unblockDescriptor")),
+          stub.state.issues[wo["id"]].get("status"))
+    check("decide unlanded: the ledger records the unlanded merge, not `merged`",
+          (ledger.get("merge") or {}).get("state") == "unlanded"
+          and (ledger.get("merge") or {}).get("head") == round2
+          and ledger.get("outcome") == "unlanded", ledger.get("merge"))
+    check("decide unlanded: a comment on the work order names the stranded commit",
+          any(round2[:7] in body for body in said), str(said[-1:]))
+
+    # a second decide keeps saying the same thing — it must not drift to "settled"
+    code_again, out_again, raw_again = run(stub, ["decide", verify["identifier"], "--apply"],
+                                           extra_env=env)
+    check("decide unlanded: re-running still refuses, never `already settled`",
+          code_again == 1
+          and not any("already settled" in r
+                      for r in (out_again or {}).get("reasons") or []), raw_again[-400:])
+
+    # land the sha: the same merge now contains the head, so the work order settles
+    git_out(fixture, "branch", "-f", "main", round2)
+    env2 = merge_env("unlanded-landed", {"state": "MERGED",
+                                         "mergedAt": "2026-11-17T20:57:00Z",
+                                         "mergeCommit": {"oid": round2}})
+    code3, out3, raw3 = run(stub, ["decide", verify["identifier"], "--apply"], extra_env=env2)
+    ledger = ledger_of(stub, wo)
+    check("decide unlanded: once the sha is on main the merge settles normally",
+          code3 == 0 and (out3 or {}).get("decision") == "merged"
+          and stub.state.issues[wo["id"]]["status"] == "done"
+          and (ledger.get("merge") or {}).get("state") == "merged", raw3[-500:])
+
+
 def case_third_failure_escalates(stub, base_sha, repo):
     wo = base_work_order(stub, base_sha, repo)
     stage = pending_review_stage(stub, wo, "[red] GUL-900 — Add the fixture")
@@ -2033,6 +2133,66 @@ def case_tick_notices_the_merge(stub):
           issue.get("executionPolicy"))
 
 
+def case_tick_recovers_an_unlanded_merge(stub):
+    """GUL-1801: an unlanded park is not terminal.
+
+    The sweep must keep saying the round is not on main (the work order stays
+    blocked, it never reads as merged), and it must settle the work order by itself
+    the moment the stranded sha does reach main.
+    """
+    repo, _base = make_repo("tick-unlanded-repo")
+    wo, _gate = gate_work_order(stub, repo, "GUL-1598", 252)
+    ledger = ledger_of(stub, wo)
+    ident = ["-c", "user.email=t@example.com", "-c", "user.name=T"]
+    # round 2 on the work-order branch: the head nobody merged
+    branch = ledger["branch"]
+    base = git_out(repo, "rev-parse", "HEAD")
+    git_out(repo, "checkout", "-q", "-b", branch)
+    with open(os.path.join(repo, "tests", "ac.sh"), "a") as fh:
+        fh.write("# round 2: the three blocking findings, fixed\n")
+    git_out(repo, *ident, "commit", "-qam", "round 2")
+    head = git_out(repo, "rev-parse", "HEAD")
+    git_out(repo, "checkout", "-q", "--detach", base)
+    # a merge commit that does not contain the branch head and a different tree
+    git_out(repo, "checkout", "-q", "--orphan", "stranded")
+    with open(os.path.join(repo, "STRANDED"), "w") as fh:
+        fh.write("round 1 only\n")
+    git_out(repo, "add", "STRANDED")
+    git_out(repo, *ident, "commit", "-qm", "round 1, merged")
+    merge_sha = git_out(repo, "rev-parse", "HEAD")
+    git_out(repo, "checkout", "-q", "--detach", head)
+    ledger["merge"] = {"state": "unlanded", "sha": merge_sha, "head": head,
+                       "at": "2026-11-17T20:57:00Z"}
+    ledger["outcome"] = "unlanded"
+    write_ledger(stub, wo, ledger)
+    stub.state.issues[wo["id"]]["status"] = "blocked"
+
+    env = merge_env("tick-unlanded", {"state": "MERGED", "mergedAt": "2026-11-17T20:57:00Z",
+                                      "mergeCommit": {"oid": merge_sha}})
+    code, out, raw = run(stub, ["tick", "--apply"], extra_env=env)
+    issue = stub.state.issues[wo["id"]]
+    said = comments_on(stub, wo["id"])
+    check("tick unlanded: still merged but not landed -> blocked, never done",
+          issue["status"] == "blocked", raw[-500:])
+    check("tick unlanded: the sweep flags the work order",
+          "unlanded" in json.dumps(out), json.dumps(out)[:400])
+    check("tick unlanded: the reason names the stranded sha",
+          any(head[:7] in body for body in said), str(said[-1:]))
+
+    # the human lands the sha on main; the next pass settles it with nobody clicking
+    git_out(repo, "update-ref", "refs/remotes/origin/main", head)
+    code2, _out2, raw2 = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "tick-landed", {"state": "MERGED", "mergedAt": "2026-11-17T20:57:00Z",
+                        "mergeCommit": {"oid": head}}))
+    issue = stub.state.issues[wo["id"]]
+    ledger = ledger_of(stub, wo)
+    check("tick unlanded: once the head is on main the sweep settles it",
+          code2 == 0 and issue["status"] == "done"
+          and (ledger.get("merge") or {}).get("state") == "merged"
+          and (ledger.get("merge") or {}).get("sha") == head,
+          "status=%s merge=%s head=%s" % (issue["status"], ledger.get("merge"), head))
+
+
 def case_tick_waits_on_an_open_pr(stub):
     """GUL-553: an open PR changes nothing but keeps the wait a real path."""
     repo, _base = make_repo("open-repo")
@@ -2218,22 +2378,25 @@ def patch_body(stub, issue_id):
     return {}
 
 
-def case_park_omits_an_empty_policy(stub):
-    """GUL-1128: the park must never put an empty executionPolicy on the wire.
+def case_park_sends_a_dissolving_policy(stub):
+    """GUL-1128 / GUL-1760: the park always sends a policy that cannot resolve.
 
-    `_park_policy` keeps only stages that carry participants, so a stage issue
-    that never named a reviewer yields `stages: []`. paperclip 2026.1012.0
-    normalises a stage-less policy to null and then reads the PATCH as a
-    dissolve: the `in_review` issue goes back to its return assignee, the
-    requested `blocked` is overwritten with `in_progress`, and the whole write
-    dies `422 unblockDescriptor requires blocked status` — the stage stays
-    `in_review` with nothing recorded. Omitting the key is the fix. The stub
-    implements the same normalisation, so this case fails the same way the
-    board did if the empty policy ever comes back.
+    Paperclip 2026.1012.0 normalises a stage-less policy to null and reads that
+    PATCH as a dissolve, so an empty policy is not a park either: the `in_review`
+    issue goes back to its return assignee, the requested `blocked` is overwritten
+    with `in_progress`, and the write dies `422 unblockDescriptor requires blocked
+    status`. Omitting the key is no better — the server then applies the *stored*
+    policy, finds the stage the state points at, and refuses the write the same way
+    (on an escalated hold: `422 Only the escalated reviewer can advance the current
+    execution stage`). A park needs a policy whose stages carry participants and
+    whose ids resolve to nothing, which is what clears the state and keeps
+    `blocked`. The stub implements both the normalisation and the no-policy
+    refusal, so this case fails the way the board did if either comes back.
     """
     api = pc.Api(key="test-key-not-a-secret", run_id="test-run-id", base=stub.url)
     return_to = {"agentId": MAJSTER}
 
+    # a) the only stage lost its participants while the state still points at it.
     empty = stub.state.add_issue(
         identifier="GUL-1128-a", title="stage with no reviewer", status="in_review",
         assigneeAgentId=MAJSTER,
@@ -2244,52 +2407,55 @@ def case_park_omits_an_empty_policy(stub):
 
     factory._block_stage_issue(api, empty, "escalated: no reviewer on this stage")
     body = patch_body(stub, empty["id"])
-    check("park: a stage with no participant-bearing review sends no executionPolicy key (GUL-1128)",
-          body != {} and "executionPolicy" not in body, json.dumps(body))
-    check("park: the same write still asks for blocked, with a descriptor and the comment",
+    stages = (body.get("executionPolicy") or {}).get("stages") or []
+    check("park: a review stage with no participants still sends a policy, built from the issue (GUL-1760)",
+          len(stages) == 1 and (stages[0].get("participants") or [{}])[0].get("agentId") == MAJSTER
+          and "id" not in stages[0], json.dumps(body))
+    check("park: the same write asks for blocked, with a self-owned descriptor and the comment",
           body.get("status") == "blocked"
           and (body.get("unblockDescriptor") or {}).get("owner", {}).get("agentId") == MAJSTER
           and body.get("comment") == "escalated: no reviewer on this stage", json.dumps(body))
     stored = stub.state.issues[empty["id"]]
-    check("park: the stage reads blocked on the server, not dissolved back to its agent",
-          stored["status"] == "blocked" and stored["assigneeAgentId"] == MAJSTER,
+    check("park: the stage reads blocked on the server with its state cleared",
+          stored["status"] == "blocked" and stored["executionState"] is None,
           {k: stored.get(k) for k in ("status", "executionState", "assigneeAgentId")})
-    # No policy on the wire means the server has no stage transition to compute, so
-    # executionState is left as it was. Recorded rather than asserted: clearing it
-    # would need a policy Paperclip accepts, which is a separate change if a park
-    # ever re-enters its stage on unblock.
 
+    # b) nothing to name at all: no policy, no state, no assignee.
     no_policy = stub.state.add_issue(identifier="GUL-1128-b", title="stage with no policy",
                                      status="in_review", executionPolicy=None,
                                      executionState=None)
     factory._block_stage_issue(api, no_policy, "escalated: nothing to park")
     body2 = patch_body(stub, no_policy["id"])
-    check("park: a stage whose executionPolicy is None sends no executionPolicy key either (GUL-1128)",
+    check("park: a stage that names nobody sends no executionPolicy key (GUL-1128)",
           body2 != {} and "executionPolicy" not in body2, json.dumps(body2))
-    check("park: that stage also lands blocked",
+    check("park: and it still lands blocked",
           stub.state.issues[no_policy["id"]]["status"] == "blocked",
           stub.state.issues[no_policy["id"]].get("status"))
 
-    reviewed = stub.state.add_issue(
-        identifier="GUL-1128-c", title="stage with a reviewer", status="in_review",
+    # c) the GUL-1760 copy: the company issue list masks policy and state to null, and
+    #    the masked copy names nobody, so only a GET can produce a usable park.
+    full = stub.state.add_issue(
+        identifier="GUL-1760-a", title="escalated stage with a reviewer", status="in_review",
         assigneeAgentId=MAJSTER,
         executionPolicy={"mode": "normal",
                          "stages": [{"id": "stage-real", "type": "review",
                                      "participants": [{"type": "agent", "agentId": MAJSTER}],
                                      "approvalsNeeded": 1}]},
-        executionState={"currentStageId": "stage-real", "returnAssignee": return_to})
-    factory._block_stage_issue(api, reviewed, "escalated: three red rounds")
-    body3 = patch_body(stub, reviewed["id"])
-    stages = (body3.get("executionPolicy") or {}).get("stages") or []
-    check("park: a participant-bearing stage still sends executionPolicy with its stages (GUL-969)",
-          len(stages) == 1 and bool(stages[0].get("participants")) and "id" not in stages[0],
-          json.dumps(body3))
-    stored3 = stub.state.issues[reviewed["id"]]
-    check("park: and the server keeps blocked with the state cleared",
+        executionState={"currentStageId": "stage-real", "returnAssignee": return_to,
+                        "changesRequestedCount": 3})
+    masked = {"id": full["id"], "identifier": full["identifier"], "status": "in_review",
+              "executionPolicy": None, "executionState": None, "assigneeAgentId": None}
+    factory._block_stage_issue(api, masked, "escalated: third request-changes on green")
+    body3 = patch_body(stub, full["id"])
+    stages3 = (body3.get("executionPolicy") or {}).get("stages") or []
+    check("park: a masked list copy is re-read with GET /issues/{id} before the patch (GUL-1760)",
+          len(stages3) == 1 and "id" not in stages3[0], json.dumps(body3))
+    stored3 = stub.state.issues[full["id"]]
+    check("park: the escalated stage parks blocked instead of 422-ing on the hold",
           stored3["status"] == "blocked" and stored3["executionState"] is None,
           {k: stored3.get(k) for k in ("status", "executionState")})
 
-    for issue in (empty, no_policy, reviewed):
+    for issue in (empty, no_policy, full):
         stub.state.issues[issue["id"]]["status"] = "done"
 
 
@@ -2379,13 +2545,14 @@ def main():
             case_decide_red(stub, base_sha, repo)
             case_verify_fix_round(stub, base_sha, repo)
             case_decide_settles_a_merged_pr(stub, base_sha, repo)
+            case_decide_refuses_an_unlanded_merge(stub, base_sha, repo)
             case_third_failure_escalates(stub, base_sha, repo)
             case_missing_document_escalates(stub, base_sha, repo)
             case_half_applied_escalation_reparks(stub, base_sha, repo)
             case_tick(stub, base_sha, repo)
             case_write_document_carries_revision(stub)
             case_blocked_needs_a_descriptor(stub)
-            case_park_omits_an_empty_policy(stub)
+            case_park_sends_a_dissolving_policy(stub)
             case_edge_block_falls_back(stub)
             case_commit_is_idempotent(stub)
             case_ledger_write_precedes_done(stub)
@@ -2398,6 +2565,7 @@ def main():
             case_start_parks_on_a_busy_checkout(stub)
             case_setup_error_spends_no_round(stub)
             case_tick_notices_the_merge(stub)
+            case_tick_recovers_an_unlanded_merge(stub)
             case_tick_waits_on_an_open_pr(stub)
             case_tick_blocks_a_closed_pr(stub)
             case_tick_survives_a_stale_stage_row(stub)

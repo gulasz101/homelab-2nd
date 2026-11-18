@@ -202,13 +202,13 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 |---|---|
 | `lint-spec --spec FILE` | the spec follows point 1 (block found & parseable; a broken/unparseable JSON block is a lint **failure**, exit 1; an unreadable FILE is exit 2), including the reporting rule for every `check` |
 | `check-red --repo DIR --base SHA --spec FILE` | the diff SHA→worktree touches only test paths, all inside `allowedPaths`; every AC's check runs and reports `AC-n: FAIL`; no setup errors |
-| `check-green --repo DIR --red SHA --spec FILE` | every test path is byte-identical to the red commit (worktree contents; a new untracked test path is a violation); every changed path is inside `allowedPaths`; every AC reports `PASS`; if the repo has `scripts/check.sh`, it runs (`bash scripts/check.sh`, repo root) and must exit 0 |
+| `check-green --repo DIR --red SHA --spec FILE` | every test path is byte-identical to the red commit (worktree contents; a new untracked test path is a violation); every changed path is inside `allowedPaths`; every AC reports `PASS`; if the repo has `scripts/check.sh`, it runs (`bash scripts/check.sh`, repo root) and must exit 0. **Main's own work is not stage work (GUL-1801):** for each touched path, when the stage's diff red→worktree for that path is identical to `git diff <red> origin/main -- <path>` (same status, same content), it came from `main` and is dropped before the `allowedPaths` check and before the test-path byte comparison; the JSON lists those paths under `fromMain`. A path the stage really changed still fails, and a test path main touched while the stage also changed it fails too |
 | `check-findings --repo DIR --base SHA --findings FILE` | findings follow point 3; every `file` is in the diff SHA→worktree; every `line` exists in the new version (file readable, ≥ `line` lines) |
 | `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed` |
-| `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ 3 × maxDiffLines` (between 1× and 3× the gate still passes and the JSON carries `"sizeNote": "size note: N lines > maxDiffLines M"`; only above 3× is it a failure, GUL-1730); every HelmRelease the PR changes pins a chart version at or above the one the cluster runs (ADR-097, below) |
+| `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ 3 × maxDiffLines` (between 1× and 3× the gate still passes and the JSON carries `"sizeNote": "size note: N lines > maxDiffLines M"`; only above 3× is it a failure, GUL-1730); every HelmRelease the PR changes pins a chart version at or above the one the cluster runs (ADR-097, below). On a pass it takes the PR out of draft (`gh pr ready`), so a passing gate is what makes a PR mergeable (GUL-1801) |
 | `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only). A second run on a clean tree whose HEAD is already `factory(GUL-N): <stage>` is not an error: it passes and returns that HEAD sha, so a `decide` that died after its commit can be re-run (GUL-497) |
 | `push --repo DIR --issue GUL-N` | pushes the checkout's branch to origin (`git push -u origin <branch>`, never `--force`); refuses (exit 1) on `main`/`master`. JSON adds `"branch"` and `"sha"`. Used by `decide` when the PR already exists, so a later round's commit reaches the PR head (GUL-1267 F-1) |
-| `open-pr --repo DIR --issue GUL-N --title T` | current branch is not `main`/`master` (refuse, exit 1); `git push -u origin <branch>` (never `--force`); `gh pr create` with body linking the work order: `Work order: [GUL-N](https://paperclip.voitech.dev/GUL/issues/GUL-N)`. JSON adds `"url": "<PR url>"`. Repo comes from `git remote get-url origin` |
+| `open-pr --repo DIR --issue GUL-N --title T [--ready]` | current branch is not `main`/`master` (refuse, exit 1); `git push -u origin <branch>` (never `--force`); `gh pr create` with body linking the work order: `Work order: [GUL-N](https://paperclip.voitech.dev/GUL/issues/GUL-N)`. Creates the PR **as a draft** — the draft is the guard that stops a merge landing a round the factory has not passed, because the merge card is only raised after the gate and the gate marks it ready (GUL-1801). `--ready` creates a normal PR for a caller that already knows the round is over. JSON adds `"url": "<PR url>"` and `"draft": true|false`. Repo comes from `git remote get-url origin` |
 | `start GUL-N [--dry-run\|--recut]` | point 9 below |
 | `decide GUL-M [--apply]` | point 9 below |
 | `tick` | point 9 below |
@@ -361,6 +361,14 @@ writer: the client re-reads the revision and retries once.
 the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
 `check-verdicts`, `check-gate` with the ledger's PR).
 
+- **A settled merge is `already settled` only if it landed (GUL-1801).** When the
+  ledger has a merge record and the PR's merge commit does not contain the work
+  order's branch head, `decide` answers `ok: false`, decision `unlanded`, naming the
+  head sha and the one action — *land `<head>` on main, then re-run* — and parks the
+  work order `blocked`. It never answers `already settled` for work that is not on
+  main (GUL-1598's round 2 died behind that sentence). An `unlanded` record is not
+  terminal either: the next `decide` re-reads the PR (or, if the head reached main
+  another way, settles it from `main`).
 - Pass → `commit`/`open-pr` where the stage calls for it, then **the ledger write,
   and only then** `PATCH {"status": "done", "comment": …}`. The order is part of
   the contract (GUL-497): a stage marked `done` whose ledger write then fails
@@ -430,25 +438,34 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   reason starts with `never path` and the sentence names Wojtek, because it is
   his call. Only the name changes — the blocked state, the ledger write and the
   no-retry rule are untouched. The **stage issue** is parked a
-  different way (GUL-889, GUL-1128): `blocked`, a self-owned `unblockDescriptor`,
-  the comment, and `executionPolicy` **left off the PATCH entirely** unless one of
-  the stages it would carry has participants. Never `"executionPolicy": null`, and
-  never a policy whose `stages` list is empty. A stage issue carries a pending
-  review stage whose state names a return assignee, and Paperclip resolves the
-  PATCH against that stage before it applies the requested status: clearing the
-  policy dissolves the review *back to the return assignee* — `in_progress`, stage
-  agent reassigned, `blocked` overwritten — so the failed write re-arms the agent,
-  the stage is handed back in `in_review`, and the next foreman wake escalates
-  again. An empty stage list is that same write: paperclip `2026.1012.0`
-  normalises a policy with nothing to run to `null` before the transition is
-  computed, the descriptor is then checked against the resulting `in_progress`, and
-  the whole PATCH dies `422 unblockDescriptor requires blocked status` — stage
-  still `in_review`, nothing recorded. Leave the key out and there is no transition
-  to compute: the server stores `blocked`, keeps the descriptor, and leaves
-  `executionState` as it found it. The policy goes on the wire only when a stage
-  carries participants (GUL-969): the factory drops the stage ids there, so the
-  state's current stage is no longer in the list and the server clears the state
-  itself. A `decide --apply` that finds the ledger
+  different way (GUL-889, GUL-1128, GUL-1760): `blocked`, a self-owned
+  `unblockDescriptor`, the comment, and an `executionPolicy` whose stages carry
+  participants but not the stage id the state points at. Never
+  `"executionPolicy": null`, never a policy whose `stages` list is empty, and never
+  a PATCH that leaves the key out while the issue still carries a stage. Paperclip
+  resolves the PATCH against the *stored* policy before it applies the requested
+  status: a null or stage-less policy is a policy removal, which dissolves a live
+  review back to its return assignee — `in_progress`, stage agent reassigned,
+  `blocked` overwritten — so the failed write re-arms the agent, the stage hands
+  back `in_review`, and the next foreman wake escalates again. Leaving the key off
+  looks safer and is not: the server applies the stored policy, finds the stage
+  `executionState.currentStageId` still names, and refuses the same write —
+  `422 unblockDescriptor requires blocked status` on a spent round,
+  `422 Only the escalated reviewer can advance the current execution stage` on an
+  escalated hold. Only a policy whose stage id no longer resolves takes the branch
+  that clears `executionState` and keeps `blocked`, which is why the factory drops
+  the stage ids (GUL-969).
+
+  The stage issue the park is built from has to come from `GET /issues/{id}`. The
+  company issue list masks `executionPolicy` and `executionState` to null and
+  `decide` resolves its stage through that list, so a park built from the list copy
+  believes the stage never named a reviewer. `_fresh_issue` re-reads it, and
+  `_park_policy` falls back to whoever the issue still names — the state's
+  `currentParticipant`, its `returnAssignee`, then `assigneeAgentId` /
+  `assigneeUserId` — when the stored policy has no participant-bearing stage. The
+  key is left out only when the issue names nobody at all.
+
+  A `decide --apply` that finds the ledger
   already at `outcome: escalate` **and** the stage issue settled (`blocked`,
   `done`, `cancelled`) writes nothing and exits 1 with `already escalated` — one
   bad write must never become a wake loop. A **missing stage document**
@@ -462,7 +479,8 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
 
 **`tick [--apply]`** — read-only without `--apply`. One line per open work order: stage,
 agent, age, rounds, and flags (`idle>2h`, `no-run`, `runs-unknown`,
-`recovery-hold`, `stage-missing`, `STOP`, `pr-open`, `pr-merged`, `pr-closed`, `merge-unknown`). A ledger row whose
+`recovery-hold`, `stage-missing`, `STOP`, `pr-open`, `pr-merged`, `pr-closed`, `merge-unknown`,
+`unlanded`). A ledger row whose
 `issueId` the API no longer returns is `stage-missing`: the id and the 404 go to
 stderr, that one work order is flagged, and the sweep reads the rest (GUL-557).
 Config drift: every factory agent's
@@ -487,6 +505,17 @@ ledger has no `merge` record, `tick` reads
 - `OPEN` → re-arm the monitor (`nextCheckAt` = now + 1h) and change nothing else.
 - `CLOSED` without a merge → ledger `outcome: closed`, work order `blocked` with
   one sentence: *PR #N was closed without a merge, so nothing shipped.*
+- **`MERGED` is not `landed` (GUL-1801).** A merge commit only settles the work
+  order when it contains the work order's branch head. When it does not, the round
+  that head carries never reached `main` (GUL-1598: the merge took round 1 and the
+  finished fix round was stranded on a local branch), so `tick` parks the work
+  order `blocked` with `merge: {state: unlanded, sha, head, at}` and one sentence:
+  *PR #N is merged in `<merge>`, but the work order's branch head `<head>` is not in
+  that merge: land `<head>` on main, then re-run.* It never says merged and never
+  says done. Every later sweep re-checks the park with `head` against `main`
+  (`origin/main` first): once the head is on main — however it got there — the
+  normal settle runs and the ledger says `merged`. A work order that is already
+  `done` is left alone.
 - `gh` errors → the line carries `merge-unknown`, the reason goes to stderr, and
   nothing is written. One unreadable PR never stops the sweep. A `gate` row whose
   issue is gone is `stage-missing` and the merge is not settled, for the same

@@ -104,6 +104,69 @@ def diff_touched(repo: str, sha: str) -> dict:
 
 
 # --------------------------------------------------------------------------
+# main's own work vs the stage's (GUL-1801)
+# --------------------------------------------------------------------------
+
+def _blob_at(repo: str, rev: str, path: str):
+    """The bytes of `path` at `rev`, or None when the path is not there."""
+    proc = subprocess.run(["git", "-C", repo, "cat-file", "-p", "%s:%s" % (rev, path)],
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _worktree_bytes(repo: str, path: str):
+    """The bytes of `path` in the worktree, untracked files included."""
+    full = os.path.join(repo, path)
+    try:
+        if os.path.islink(full):
+            return os.fsencode(os.readlink(full))
+        if not os.path.isfile(full):
+            return None
+        with open(full, "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def main_ref(repo: str) -> str:
+    """The commit that holds main's own work: `origin/main`, else a local `main`."""
+    for ref in ("refs/remotes/origin/main", "refs/heads/main"):
+        proc = subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "--quiet",
+                               ref + "^{commit}"],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if proc.returncode == 0:
+            return proc.stdout.decode().strip()
+    return ""
+
+
+def from_main(repo: str, red: str, path: str, base: str) -> bool:
+    """True when this path's change against `red` is main's work, not the stage's.
+
+    GUL-1801: an update-branch merge brings main's commits into the work order's
+    branch, and every one of them used to be counted as a stage change. A merged
+    test change can never match the red commit byte for byte, so the green stage
+    failed on work nobody in the stage did (GUL-1598: six reasons, not one of them
+    the stage's). The comparison is status *and* content: main moved the path away
+    from `red`, and the worktree holds exactly what main holds.
+    """
+    if not base:
+        return False
+    main_state = _blob_at(repo, base, path)
+    if main_state == _blob_at(repo, red, path):
+        return False  # main never touched this path: whatever changed it, the stage did
+    return _worktree_bytes(repo, path) == main_state
+
+
+def stage_changes(repo: str, red: str, touched: dict, base: str = "") -> dict:
+    """`touched` minus the paths whose change came from main (GUL-1801)."""
+    if not base:
+        base = main_ref(repo)
+    if not base:
+        return touched
+    return {p: s for p, s in touched.items() if not from_main(repo, red, p, base)}
+
+
+# --------------------------------------------------------------------------
 # globs (CONTRACT.md point 1: ** crosses folders)
 # --------------------------------------------------------------------------
 
@@ -543,18 +606,165 @@ def withdraw_merge_cards(api, work_order_id: str) -> int:
     return withdrawn
 
 
+def branch_head_sha(repo: str, ledger: dict) -> str:
+    """The sha the work order's branch head should be: its newest green commit.
+
+    GUL-1801: the round that a merge strands is always in a `green` row — a Builder
+    commits locally, and the merge lands the older head. The ledger row is the
+    record; the PR's own head and the local branch are the fallbacks for a ledger
+    written before this check existed.
+    """
+    best = None
+    for key, row in (ledger.get("stages") or {}).items():
+        if not isinstance(row, dict):
+            continue
+        if key != "green" and not key.startswith("green:"):
+            continue
+        try:
+            round_no = int(row.get("round") or (int(key.split(":r")[1]) if ":r" in key else 1))
+        except (TypeError, ValueError):
+            round_no = 1
+        sha = str(row.get("sha") or "").strip()
+        if sha and (best is None or round_no >= best[0]):
+            best = (round_no, sha)
+    if best:
+        return best[1]
+    pr = ledger.get("pr") or {}
+    if pr.get("head"):
+        return str(pr["head"]).strip()
+    branch = ledger.get("branch")
+    if repo and branch:
+        return git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch,
+                   allow_fail=True).strip()
+    return ""
+
+
+def merge_contains(repo: str, head, merge):
+    """Is `head` in `merge`'s history? True / False / None when it cannot be settled.
+
+    GUL-1801: the merge commit is the proof that the round landed, and a merged PR
+    whose merge commit does not contain the branch head is a work order that must
+    say so instead of "already settled" (GUL-1598 lost its whole round-2 diff to
+    that sentence). `None` means the objects are neither in the checkout nor
+    fetchable, so the caller keeps the answer it already had instead of guessing.
+    """
+    if not (repo and head and merge):
+        return None
+
+    def present(sha: str) -> bool:
+        return subprocess.run(["git", "-C", repo, "cat-file", "-e", sha + "^{commit}"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+
+    if not (present(head) and present(merge)):
+        git(repo, "fetch", "--quiet", "origin", allow_fail=True)
+        for sha in (head, merge):
+            if not present(sha):
+                git(repo, "fetch", "--quiet", "origin", sha, allow_fail=True)
+    if not (present(head) and present(merge)):
+        return None
+    rc = subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", head, merge],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+    if rc == 0:
+        return True
+    if rc != 1:
+        return None
+    # A squash or rebase merge leaves the branch head out of main's history even
+    # though the content landed. Equal trees are the honest test for that; a
+    # different tree means this head's work is still not on main.
+    same_tree = subprocess.run(["git", "-C", repo, "diff", "--quiet", head, merge],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL).returncode
+    return same_tree == 0
+
+
+def unlanded_reason(number, head, merge_sha) -> str:
+    return ("PR #%s is merged in %s, but the work order's branch head %s is not in that "
+            "merge: land %s on main, then re-run (the round that commit carries never "
+            "reached main)" % (number, merge_sha or "?", head, head))
+
+
+def _park_unlanded(api, work_order, ledger, pr, head,
+                   merge_sha, merged_at, reason) -> None:
+    """Block an unlanded merge with the one action that fixes it (GUL-1801)."""
+    ledger["merge"] = {"state": "unlanded", "sha": merge_sha, "head": head,
+                       "at": merged_at, "reason": reason}
+    ledger["outcome"] = "unlanded"
+    save_ledger(api, work_order["id"], ledger, "unlanded merge for PR #%s" % pr.get("number"))
+    api.patch_issue(work_order["id"], {
+        "status": "blocked",
+        "executionPolicy": None,
+        "unblockDescriptor": _unblock_descriptor(
+            api, "land %s on main (merge the work order's branch again, or push that "
+                 "commit), then re-run `factory decide` / `factory tick` so PR #%s "
+                 "settles." % (head, pr.get("number"))),
+        "comment": ("factory stop: %s. Nothing is lost: the commit is on the branch; "
+                    "the merge did not take it." % reason),
+    })
+
+
+def _park_unlanded_once(api, work_order, ledger, pr, head, merge_sha, merged_at,
+                        reason, apply) -> None:
+    """Park an unlanded merge, but do not nag: one comment per distinct reason.
+
+    The sweep runs hourly and the park does not change, so re-blocking an already
+    blocked work order with the same sentence would only bury the board.
+    """
+    if not apply or not head:
+        return
+    if (work_order.get("status") == "blocked"
+            and (ledger.get("merge") or {}).get("reason") == reason):
+        return
+    _park_unlanded(api, work_order, ledger, pr, head, merge_sha, merged_at, reason)
+
+
+def landed_on(repo, head) -> bool:
+    """Is `head` on main now? The one question an unlanded park has to answer.
+
+    GUL-1801: when a merge landed an older head, the stranded round gets onto main
+    some other way entirely (a later merge, a cherry-pick, a rebase). The merge
+    commit that stranded it will never contain it, so recovery cannot go through
+    that commit — it goes through main.
+    """
+    if not (repo and head):
+        return False
+    for ref in ("refs/remotes/origin/main", "refs/heads/main", "main"):
+        if merge_contains(repo, head, ref) is True:
+            return True
+    return False
+
+
+def settled_view(head, merged_at) -> dict:
+    """The PR view a landed strand deserves: it is on main, at `head`."""
+    return {"state": "MERGED", "mergedAt": merged_at or "",
+            "mergeCommit": {"oid": head}}
+
+
 def settle_merge(api, work_order: dict, ledger: dict, pr: dict, view: dict,
-                 apply: bool) -> str:
-    """Move a work order on after a merge, or say why it cannot. Returns the
-    merge state it saw: `merged`, `closed` or `open`."""
+                 apply: bool) -> dict:
+    """Move a work order on after a merge, or say why it cannot.
+
+    Returns `{"state": merged|closed|open|unlanded, "reason": str|None, "sha": …}`.
+    """
     number = pr.get("number")
     state = str(view.get("state") or "").upper()
     merged_at = view.get("mergedAt")
     commit = ((view.get("mergeCommit") or {}) or {}).get("oid")
 
     if state == "MERGED":
+        # GUL-1801: merged is not landed. The PR can be merged while a fix round's
+        # commit is still local (GUL-1598: PR #252 took round 1 while round 2's
+        # 5a4b779 was never pushed), and settling that as "merged" throws the round
+        # away. The merge commit must contain the work order's branch head.
+        head = branch_head_sha(ledger.get("cwd") or "", ledger)
+        contained = merge_contains(ledger.get("cwd") or "", head, commit)
+        if contained is False:
+            reason = unlanded_reason(number, head, commit)
+            if apply:
+                _park_unlanded(api, work_order, ledger, pr, head, commit, merged_at, reason)
+            return {"state": "unlanded", "reason": reason, "sha": commit}
         if not apply:
-            return "merged"
+            return {"state": "merged", "reason": None, "sha": commit}
         withdrawn = withdraw_merge_cards(api, work_order["id"])
         ledger["merge"] = {"state": "merged", "sha": commit, "at": merged_at}
         ledger["outcome"] = "merged"
@@ -568,11 +778,13 @@ def settle_merge(api, work_order: dict, ledger: dict, pr: dict, view: dict,
                         "the merge on GitHub and moved this work order on.%s"
                         % (number, commit or "?", merged_at or "?", note)),
         })
-        return "merged"
+        return {"state": "merged", "reason": None, "sha": commit}
 
     if state == "CLOSED":
+        reason = ("PR #%s was closed without a merge, so nothing shipped. Reopen it "
+                  "or start a new work order." % number)
         if not apply:
-            return "closed"
+            return {"state": "closed", "reason": reason, "sha": None}
         ledger["merge"] = {"state": "closed", "sha": None, "at": None}
         ledger["outcome"] = "closed"
         save_ledger(api, work_order["id"], ledger, "PR #%s closed without a merge" % number)
@@ -581,15 +793,14 @@ def settle_merge(api, work_order: dict, ledger: dict, pr: dict, view: dict,
             "unblockDescriptor": _unblock_descriptor(
                 api, "PR #%s was closed unmerged: reopen it or start a new work order, then "
                      "clear this block; the factory owns this park." % number),
-            "comment": ("PR #%s was closed without a merge, so nothing shipped. "
-                        "Reopen it or start a new work order." % number),
+            "comment": reason,
         })
-        return "closed"
+        return {"state": "closed", "reason": reason, "sha": None}
 
     if apply:
         # still open: keep the wait a real path by re-arming the monitor
         api.patch_issue(work_order["id"], {"executionPolicy": {"monitor": monitor_payload(pr)}})
-    return "open"
+    return {"state": "open", "reason": None, "sha": None}
 
 
 # --------------------------------------------------------------------------
@@ -633,8 +844,17 @@ def cmd_check_red(args) -> int:
 def cmd_check_green(args) -> int:
     spec = load_spec(args.spec)
     touched = diff_touched(args.repo, args.red)
+    # GUL-1801: main's own commits reach this branch through an update-branch
+    # merge, and they are not stage work. A path whose state here is exactly what
+    # main holds — and which main moved away from the red commit — is dropped
+    # before the test-path comparison and the allowedPaths check. A path the stage
+    # really changed still fails, including a test path main changed and the stage
+    # changed again on top of it.
+    base = main_ref(args.repo)
+    stage_touched = stage_changes(args.repo, args.red, touched, base)
+    dropped = sorted(set(touched) - set(stage_touched))
     reasons: list = []
-    for path, status in sorted(touched.items()):
+    for path, status in sorted(stage_touched.items()):
         if looks_like_test_path(path):
             reasons.append("test path differs from the red commit: %s (%s)" % (path, status))
         if not glob_match(spec["allowedPaths"], path):
@@ -651,7 +871,8 @@ def cmd_check_green(args) -> int:
         sys.stderr.write(proc.stdout)
         if proc.returncode != 0:
             reasons.append("scripts/check.sh exited %d" % proc.returncode)
-    emit(len(reasons) == 0, "check-green", reasons)
+    emit(len(reasons) == 0, "check-green", reasons,
+         {"fromMain": dropped} if dropped else None)
     return 0 if not reasons else 1
 
 
@@ -847,11 +1068,28 @@ def touches_helmrelease(files: list, head_oid: str, text_for_path, globs: list) 
     return False
 
 
+def mark_pr_ready(repo: str, number) -> str:
+    """`gh pr ready` on a draft PR. Returns "" on success, the failure reason.
+
+    GUL-1801: `open-pr` opens the PR as a draft so a merge cannot land a round the
+    factory has not passed. The gate is what ends that: when the PR passes, the
+    human must find a mergeable PR, not one still marked draft.
+    """
+    last = ""
+    for _ in range(2):  # one transient gh hiccup should not fail a passing gate
+        proc = subprocess.run([gh_bin(), "pr", "ready", str(number), "--repo", repo],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode == 0:
+            return ""
+        last = (proc.stderr or proc.stdout).strip()[:200]
+    return last or "gh pr ready exited non-zero"
+
+
 def cmd_check_gate(args) -> int:
     spec = load_spec(args.spec)
     repo, num = parse_pr_ref(args.pr)
     view = gh_json(["pr", "view", num, "--repo", repo, "--json",
-                    "headRefOid,baseRefOid,additions,deletions,files,mergeable"])
+                    "headRefOid,baseRefOid,additions,deletions,files,mergeable,isDraft"])
     reasons: list = []
     try:
         head_oid = view["headRefOid"]
@@ -937,6 +1175,15 @@ def cmd_check_gate(args) -> int:
     gate_repo = os.environ.get("FACTORY_GATE_REPO") or REPO_ROOT
     if touches_helmrelease(files, head_oid, pr_content_text, cfg["globs"]):
         reasons.extend(pin_reasons(gate_repo, num, base_oid, head_oid))
+    # GUL-1801: a passing gate is the end of the draft. `open-pr` opened it as a
+    # draft so no merge could land an unpassed round; if it is still a draft here,
+    # mark it ready — a gate that passes and leaves the PR a draft leaves the human
+    # with a merge button GitHub refuses, which reads as a broken factory.
+    if not reasons and isinstance(view, dict) and bool(view.get("isDraft")):
+        failed = mark_pr_ready(repo, num)
+        if failed:
+            reasons.append("PR #%s is still a draft and `gh pr ready` failed: %s"
+                           % (num, failed))
     emit(len(reasons) == 0, "check-gate", reasons,
          {"sizeNote": size_note} if size_note else None)
     return 0 if not reasons else 1
@@ -1021,11 +1268,20 @@ def cmd_open_pr(args) -> int:
     owner_repo = "%s/%s" % (m.group(1), m.group(2))
     git(args.repo, "push", "-u", "origin", branch)
     body = "Work order: [%s](https://paperclip.voitech.dev/GUL/issues/%s)\n" % (args.issue, args.issue)
-    url = gh_text(["pr", "create", "--repo", owner_repo, "--title", args.title,
-                   "--body", body, "--head", branch]).strip()
+    # GUL-1801: the gate cannot stop a human clicking merge, so the PR itself is
+    # the guard. `open-pr` runs inside the green stage, which means the round it
+    # belongs to is never finished at this moment — review, verify and the gate
+    # still have to pass, and a fix round can still rewrite the head. So the PR is
+    # opened as a draft, which GitHub refuses to merge, and `check-gate` marks it
+    # ready when it passes. `--ready` is for a caller that knows the round is over.
+    create_args = ["pr", "create", "--repo", owner_repo, "--title", args.title,
+                   "--body", body, "--head", branch]
+    if not args.ready:
+        create_args.append("--draft")
+    url = gh_text(create_args).strip()
     if not url.startswith("http"):
         raise SetupError("gh pr create did not print a URL: %r" % url[:200])
-    emit(True, "open-pr", [], {"url": url})
+    emit(True, "open-pr", [], {"url": url, "draft": not args.ready})
     return 0
 
 
@@ -2147,6 +2403,33 @@ def _escalate(api, work_order_id: str, ledger: dict, reason, identifier: str,
 # re-arm starts from the same review rather than a redefined one.
 
 
+def _park_participants(stage_issue: dict) -> list:
+    """A participant the park can name when the policy carries no review stage (GUL-1760).
+
+    Any participant will do: the park needs a stage whose id cannot resolve, not a
+    live review. The order is most-specific first — the reviewer holding the stage,
+    the agent the review returns to, then whoever the issue is assigned to.
+    """
+    state = stage_issue.get("executionState") or {}
+    named = []
+    for candidate in (state.get("currentParticipant"), state.get("returnAssignee")):
+        if isinstance(candidate, dict) and (candidate.get("agentId") or candidate.get("userId")):
+            named.append(candidate)
+    if stage_issue.get("assigneeAgentId"):
+        named.append({"type": "agent", "agentId": stage_issue["assigneeAgentId"]})
+    if stage_issue.get("assigneeUserId"):
+        named.append({"type": "user", "userId": stage_issue["assigneeUserId"]})
+    if not named:
+        return []
+    first = named[0]
+    kept = {"type": first.get("type") or ("user" if first.get("userId") else "agent")}
+    if first.get("agentId"):
+        kept["agentId"] = first["agentId"]
+    if first.get("userId"):
+        kept["userId"] = first["userId"]
+    return [kept]
+
+
 def _park_policy(stage_issue: dict) -> dict:
     """The park's policy: this stage issue's own stages, re-identified (GUL-969).
 
@@ -2154,6 +2437,11 @@ def _park_policy(stage_issue: dict) -> dict:
     `executionState` point at a stage that no longer exists, which is the branch
     that clears the state and keeps `blocked`. Participants and `approvalsNeeded`
     are kept so the stage still describes the review it came from.
+
+    GUL-1760: a policy with no participant-bearing stage is not a park. The server
+    resolves a stage-less policy against the stored one, finds the live stage and
+    refuses the write, so a stage that lost its definition still gets a stage here —
+    built from whoever the issue still names (`_park_participants`).
     """
     policy = stage_issue.get("executionPolicy") or {}
     stages = []
@@ -2167,9 +2455,29 @@ def _park_policy(stage_issue: dict) -> dict:
         if stage.get("name"):
             kept["name"] = stage["name"]
         stages.append(kept)
+    if not stages:
+        fallback = _park_participants(stage_issue)
+        if fallback:
+            stages.append({"type": "review", "participants": fallback, "approvalsNeeded": 1})
     return {"mode": policy.get("mode") or "normal",
             "commentRequired": bool(policy.get("commentRequired", True)),
             "stages": stages}
+
+
+def _fresh_issue(api, stage_issue: dict) -> dict:
+    """The stage issue as `GET /issues/{id}` returns it (GUL-1760).
+
+    The company issue list masks `executionPolicy` and `executionState` to null, so
+    a stage resolved through `resolve_issue` → `by_identifier` looks like a stage
+    that never named a reviewer. Parking on that copy is what put no policy on the
+    wire and let the server resolve the write against the stored stage.
+    """
+    issue_id = stage_issue.get("id")
+    if not issue_id:
+        return stage_issue
+    full = api.issue(issue_id)
+    return full if isinstance(full, dict) and full.get("id") else stage_issue
+
 
 
 def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
@@ -2183,20 +2491,26 @@ def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
     a self-owned descriptor: the agent running `factory decide` owns reopening
     it once the work order is decided.
 
-    GUL-1128: `executionPolicy` goes on the wire only when the policy actually
-    carries a participant-bearing stage. A stage whose policy has none — the
-    common case for a stage that never named a reviewer — leaves `_park_policy`
-    with `stages: []`, and paperclip 2026.1012.0 normalises that to null before
-    it applies the write. A null policy on an `in_review` issue takes the
-    dissolve branch: the server reads the PATCH as "moving to in_progress",
-    reassigns the stage agent, and then refuses the whole write with
-    `422 unblockDescriptor requires blocked status` — nothing recorded, stage
-    still `in_review`. Omitting the key is not the same as sending null: with
-    the policy untouched the server has no stage transition to resolve and
-    stores the requested `blocked` as asked. `_park_policy` keeps returning the
-    empty list; it just must never reach the wire.
+    GUL-1128 / GUL-1760: `executionPolicy` on the wire is what makes the park a
+    park. Paperclip 2026.1012.0 applies the *stored* policy when the PATCH carries
+    none, so against a stage that still names a reviewer — or that has an
+    `executionState` — omitting the key changes nothing and the server resolves the
+    write against the live stage: `422 Only the escalated reviewer can advance the
+    current execution stage` on an escalated hold, or a request-changes that lands
+    `in_review` and then `422 unblockDescriptor requires blocked status`. Sending the
+    policy with the stage ids dropped is the branch that clears the state and keeps
+    `blocked`; sending a policy that normalises to null (no stage, no monitor) is a
+    policy removal and dissolves the review instead.
+
+    So the park reads the stage issue with `GET /issues/{id}` first (`_fresh_issue`):
+    the company issue list masks `executionPolicy` and `executionState`, and a stage
+    resolved through `resolve_issue` carries neither. `_park_policy` then falls back
+    to whoever the issue still names, so the body carries a stage that cannot
+    resolve. The key is omitted only when the issue names nobody at all.
     """
     identifier = stage_issue.get("identifier", "?")
+    current = _fresh_issue(api, stage_issue)
+    identifier = current.get("identifier") or identifier
     body = {
         "status": "blocked",
         "unblockDescriptor": _unblock_descriptor(
@@ -2204,10 +2518,10 @@ def _block_stage_issue(api, stage_issue: dict, comment: str) -> None:
                  "stage; that agent owns clearing this block." % identifier),
         "comment": comment,
     }
-    policy = _park_policy(stage_issue)
+    policy = _park_policy(current)
     if policy["stages"]:
         body["executionPolicy"] = policy
-    api.patch_issue(stage_issue["id"], body)
+    api.patch_issue(current.get("id") or stage_issue["id"], body)
 
 
 def _stage_document_missing(api, work_order: dict, ledger: dict, stage_issue: dict,
@@ -2297,16 +2611,63 @@ def cmd_factory_decide(args) -> int:
     # call `settle_merge()` uses, and a merged or closed PR goes straight to
     # that settlement path instead of being decided again.
     pr = ledger.get("pr") or {}
-    if pr.get("number"):
-        settled = ledger.get("merge") or {}
-        if settled.get("state"):
-            reason = "already settled: PR #%s %s" % (pr["number"], settled["state"])
-            emit(False, "decide", [reason], {
-                "ok": False, "check": "decide", "reasons": [reason], "stage": stage,
-                "round": round_no, "decision": settled["state"], "applied": False,
+    settled = ledger.get("merge") or {}
+    if pr.get("number") and settled.get("state") == "unlanded":
+        # GUL-1801: an unlanded park is not a terminal state. If the head is on main
+        # now, the work landed (however it got there) and settles; if not, the PR read
+        # below parks it again with the same reason.
+        if landed_on(cwd, branch_head_sha(cwd, ledger)):
+            settlement = settle_merge(api, work_order, ledger, pr, settled_view(
+                branch_head_sha(cwd, ledger), settled.get("at")), args.apply)
+            result = {"ok": settlement["state"] == "merged", "check": "decide",
+                      "decision": settlement["state"], "applied": bool(args.apply),
+                      "reasons": [settlement["reason"]] if settlement.get("reason") else [],
+                      "stage": stage, "round": round_no,
+                      "workOrder": work_order.get("identifier")}
+            emit(settlement["state"] == "merged", "decide",
+                 [settlement["reason"]] if settlement.get("reason") else [], result)
+            return 0 if settlement["state"] == "merged" else 1
+        ledger["merge"] = {}
+    elif pr.get("number") and settled.get("state"):
+        # "already settled" is a claim that the work is on main, and the merge commit
+        # is the only proof of it. A merged PR whose merge commit does not contain the
+        # work order's branch head gets the one action that fixes it (GUL-1598: round 2
+        # was stranded behind exactly this sentence), never "already settled".
+        head = branch_head_sha(cwd, ledger)
+        contained = merge_contains(cwd, head, settled.get("sha"))
+        if contained is False:
+            reason = (unlanded_reason(pr["number"], head, settled.get("sha"))
+                      if head else
+                      "PR #%s is merged in %s, but its round never landed: land the "
+                      "branch's head on main, then re-run"
+                      % (pr["number"], settled.get("sha") or "?"))
+            if args.apply and head:
+                _park_unlanded_once(api, work_order, ledger, pr, head,
+                                    settled.get("sha"), settled.get("at"), reason,
+                                    work_order.get("status") != "blocked"
+                                    or (settled.get("reason") != reason))
+            result = {
+                "ok": False,
+                "check": "decide",
+                "reasons": [reason],
+                "stage": stage,
+                "round": round_no,
+                "decision": "unlanded",
+                "applied": bool(args.apply),
+                "merge": settled.get("sha"),
+                "head": head,
                 "workOrder": work_order.get("identifier"),
-            })
+            }
+            emit(False, "decide", [reason], result)
             return 1
+        reason = "already settled: PR #%s %s" % (pr["number"], settled["state"])
+        emit(False, "decide", [reason], {
+            "ok": False, "check": "decide", "reasons": [reason], "stage": stage,
+            "round": round_no, "decision": settled["state"], "applied": False,
+            "workOrder": work_order.get("identifier"),
+        })
+        return 1
+    if pr.get("number"):
         try:
             view = pr_merge_view(ledger.get("repo") or "", pr["number"])
         except SetupError as exc:
@@ -2315,9 +2676,11 @@ def cmd_factory_decide(args) -> int:
             raise SetupError("cannot read PR #%s state, refusing to decide: %s"
                              % (pr["number"], str(exc)[:200]))
         if str(view.get("state") or "").upper() in ("MERGED", "CLOSED"):
-            merge_state = settle_merge(api, work_order, ledger, pr, view, bool(args.apply))
-            reason = "PR #%s is %s: settled, no stage opened" % (pr["number"], merge_state)
-            if args.apply:
+            settlement = settle_merge(api, work_order, ledger, pr, view, bool(args.apply))
+            merge_state = settlement["state"]
+            reason = settlement.get("reason") or \
+                "PR #%s is %s: settled, no stage opened" % (pr["number"], merge_state)
+            if args.apply and merge_state != "unlanded":
                 api.patch_issue(stage_issue["id"], {
                     "status": "cancelled",
                     "comment": ("cancelled: PR #%s is %s, so the work order moved on "
@@ -2845,6 +3208,33 @@ def cmd_factory_tick(args) -> int:
         # opening a fix round cancels that one.
         merge_state = None
         pr = ledger.get("pr") or {}
+        settled = ledger.get("merge") or {}
+        cwd_repo = ledger.get("cwd") or ""
+        # GUL-1801: a merge only settles a work order when its commit contains the
+        # branch head. Whatever the remote says, a merged-but-not-landed PR stays
+        # blocked (GUL-1598 lost a whole fix round to "already merged"), and a park
+        # that was unlanded is re-checked every pass until the sha lands.
+        if pr.get("number") and settled.get("state") and item.get("status") != "done":
+            head = branch_head_sha(cwd_repo, ledger)
+            if settled.get("state") == "unlanded":
+                if landed_on(cwd_repo, head):
+                    # the head reached main some other way: that is the landing
+                    settlement = settle_merge(api, item, ledger, pr, settled_view(
+                        head, settled.get("at")), apply)
+                    merge_state = settlement["state"]
+                    flags.append("pr-%s" % merge_state)
+                else:
+                    flags.append("unlanded")
+                    _park_unlanded_once(api, item, ledger, pr, head,
+                                        settled.get("sha"), settled.get("at"),
+                                        unlanded_reason(pr["number"], head,
+                                                        settled.get("sha")), apply)
+            elif merge_contains(cwd_repo, head, settled.get("sha")) is False:
+                flags.append("unlanded")
+                _park_unlanded_once(api, item, ledger, pr, head, settled.get("sha"),
+                                    settled.get("at"),
+                                    unlanded_reason(pr["number"], head,
+                                                    settled.get("sha")), apply)
         newest_gate = latest_gate_row(ledger)
         gate_entry = newest_gate[2] if newest_gate else {}
         if pr.get("number") and not ledger.get("merge") and gate_entry.get("issueId"):
@@ -2857,7 +3247,8 @@ def cmd_factory_tick(args) -> int:
                     sys.stderr.write("factory tick: %s: %s\n"
                                      % (item.get("identifier"), str(exc)[:200]))
                 else:
-                    merge_state = settle_merge(api, item, ledger, pr, view, apply)
+                    settlement = settle_merge(api, item, ledger, pr, view, apply)
+                    merge_state = settlement["state"]
                     flags.append("pr-%s" % merge_state)
         attempts = 0
         if current_key and stages.get(current_key):
@@ -2985,6 +3376,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--repo", required=True)
     s.add_argument("--issue", required=True)
     s.add_argument("--title", required=True)
+    # GUL-1801: draft by default; the gate marks it ready when it passes.
+    s.add_argument("--ready", action="store_true")
     s.set_defaults(fn=cmd_open_pr)
 
     common = argparse.ArgumentParser(add_help=False)
