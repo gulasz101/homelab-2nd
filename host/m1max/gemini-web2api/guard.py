@@ -119,6 +119,23 @@ def note_entitlement(st, paid_now, now, was_degraded):
     return int(st.get("degraded_accum_s") or 0)
 
 
+def note_import(st, cookie_hash, now):
+    """Record that a newly imported cookie took over, and restart its health clock.
+
+    The health window belongs to the cookie, not to the state file. `note_entitlement()` used
+    `setdefault("healthy_since", now)`, so a replaced cookie inherited the previous pair's window
+    and the guard reported "healthy for 3 h 13 min" about a cookie imported three minutes earlier
+    (measured 2026-11-11 21:31Z). Assign, never default, and drop the degraded window with it: the
+    old cookie's degraded time and its one-shot alert flag are not evidence about the new one.
+    """
+    st["cookie_hash"] = cookie_hash
+    st["healthy_since"] = now
+    st["degraded_accum_s"] = 0
+    st.pop("degraded_since", None)
+    st.pop("degraded_long", None)
+    return st
+
+
 def degraded_escalation(msgs, st):
     """Speak once when cumulative degraded time passes DEGRADED_ALERT_S. Called on every run (not
     only on canary runs) so crossing the bar is reported within one cadence, not within an hour."""
@@ -677,7 +694,7 @@ def main():
                 old = []
             for oid in old:
                 api("/admin/api/cookies/%s" % oid, tok, "DELETE")
-            st["cookie_hash"] = h
+            note_import(st, h, int(time.time()))
             msgs.append("✅ gemini-web2api: fresh cookie imported and validated"
                         + (" (retired %d stale entry/ies)." % len(old) if old else "."))
 
