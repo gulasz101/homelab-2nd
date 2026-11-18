@@ -125,3 +125,31 @@ The owner was offered three options and chose the third: split the routes —
 - Reflect's prompt size changes materially (consolidation batching, mental-model
   redesign): the 12k figure is the input to this decision and should be re-taken
   before trusting it again.
+
+## Amendment 2026-11-13 (GUL-1446)
+
+- **2026-11-13: reflect and the mental-model refresh moved** from `gpt-oss-120b-ollama`
+  to the free OpenCode Go model `iceman-contributor-free-go`, with
+  `longcat-2.5-free-go` and then `gpt-oss-120b-ollama` behind it in
+  `apps/llm-hub/litellm-helm-release.yaml`.
+- **What it overrides:** the "shared weekly bucket" objection above. Go bills per
+  model and the free models each sit on their own *Unlimited* row
+  (`opencode.ai/docs/console/go`), so reflect spends none of the agents' allowance.
+  Measured with the real `hindsight-reflect` key at reflect size (16.7k in-tokens,
+  forced `search_observations` tool call): 5/5 x 200, tool call every time, 3.2-5.7 s.
+- **Why now:** ollama.com's weekly wall was up again on 2026-11-12, the free pool
+  answered `429 All models exhausted` the same day, and both lanes were dead - a free
+  route that answers beats a subscription route that does not. `beam-free-go` stays
+  with the agents (owner).
+
+## Amendment 2026-11-15 (GUL-1446 follow-up)
+
+- **2026-11-15: the mental-model refresh moved one rung down** to `longcat-2.5-free-go`;
+  reflect stays on `iceman-contributor-free-go`. The split is capability, not taste.
+- **Why:** a refresh asks for `json_schema` structured output and iceman answers
+  `400 Model iceman-contributor-free does not support structured output` on every
+  delta-ops call. Measured 2026-11-15 against the deployed pod: longcat, same payload
+  and same key, 5/5 x 200 with schema-valid JSON in 4.7-8.0 s. Previously the router
+  absorbed the 400 by hopping to longcat, so the lane worked but paid a failed hop
+  (~60 s slow-call tail) on every refresh. Reflect asks for prose, not a schema, so it
+  keeps the faster model.

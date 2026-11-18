@@ -247,23 +247,33 @@ else
     maybe_alert "hindsight-key-missing" "Hermes memory watchdog: HINDSIGHT_API_KEY not found in ${ENV_FILE}"
 fi
 
-# ---- 5. the backup log must show success for all 5 profiles ------------------
+# ---- 5. the backup log must show success for every profile -----------------
+# GUL-1573: "every profile" is read from disk (homelab-lib.sh hermes_profiles), the
+# same definition the backup uses. The old fixed five never noticed that billcipher
+# and matejko were not backed up. Words are matched exactly, not as substrings.
 missing_backup=0
+missing_list=""
 if [[ ! -f "${BACKUP_LOG}" ]]; then
     missing_backup=1
+    missing_list="<no backup log>"
+elif declare -F hermes_backup_missing >/dev/null; then
+    missing_list="$(hermes_backup_missing "${BACKUP_LOG}" "${BASE_DIR}" | tr '\n' ' ' | sed 's/ *$//')"
+    [[ -n "${missing_list}" ]] && missing_backup=1
 else
+    # homelab-lib.sh not installed next to this script: keep the historical check.
     last_success="$(grep 'SUCCESS profiles=' "${BACKUP_LOG}" 2>/dev/null | tail -1 || true)"
     if [[ -z "${last_success}" ]]; then
         missing_backup=1
+        missing_list="<no SUCCESS line>"
     else
         for p in default andrzej florian szarik zdzislaw; do
-            grep -q "${p}" <<<"${last_success}" || missing_backup=1
+            grep -q "${p}" <<<"${last_success}" || { missing_backup=1; missing_list="${missing_list} ${p}"; }
         done
     fi
 fi
 if [[ "${missing_backup}" -eq 1 ]]; then
     last_line="$(grep 'SUCCESS profiles=' "${BACKUP_LOG}" 2>/dev/null | tail -1 || echo none)"
-    maybe_alert "backup-missing" "Hermes memory watchdog: the state.db backup log does not show all 5 profiles succeeding (last SUCCESS line: ${last_line})"
+    maybe_alert "backup-missing" "Hermes memory watchdog: the state.db backup log does not show every profile succeeding (missing: ${missing_list# }; last SUCCESS line: ${last_line})"
 fi
 
 # ---- 5b. the backup JOB, not just the backup LOG ---------------------------
@@ -385,17 +395,61 @@ PY
     fi
 fi
 
+# ---- 5c. the vault restic backup succeeded in the last 26 h (GUL-1577) ------
+# vault-backup.sh failed three nights running (2026-11-13..15: a root-owned
+# restic cache from a sudo'd verify run) and nothing noticed. Its status file is
+# written only on success, so its age is the whole check.
+VAULT_STATUS="${VAULT_BACKUP_STATUS:-${HOME}/.config/vault-backup/last-run}"
+if declare -F vault_backup_state >/dev/null; then
+    vault_state="$(vault_backup_state "${VAULT_STATUS}" "$(date +%s)")"
+    log "check5c vault_backup=${vault_state}"
+    case "${vault_state}" in
+        ok\ *) ;;
+        *) maybe_alert "vault-backup-stale" "Hermes memory watchdog: the vault restic backup has not succeeded in the last 26 h (${vault_state}). Read ~/Library/Logs/homelab/vault-backup.log on the Air." ;;
+    esac
+else
+    log "check5c skipped: homelab-lib.sh has no vault_backup_state"
+fi
+
+# ---- 10. agent rule files changed since the last run (GUL-1572) -------------
+# The Hermes gate exempts ~/.hermes, so an agent can rewrite any SOUL.md without
+# asking; the factory guard silently restores ~/paperclip-agents/*/AGENTS.md to its
+# session-start snapshot (it undid an owner fix on 2026-11-15 16:42). Neither is
+# visible without this: hash every rule file hourly, alert once per distinct change.
+RULES_STATE="${STATE_DIR}/agent-rules.sha256"
+if declare -F agent_rules_hashes >/dev/null; then
+    rules_now="$(mktemp "${STATE_DIR}/agent-rules.XXXXXX")"
+    agent_rules_hashes "${HOME}" > "${rules_now}"
+    if [[ -s "${RULES_STATE}" ]]; then
+        rules_diff="$(agent_rules_changed "${RULES_STATE}" "${rules_now}")"
+        if [[ -n "${rules_diff}" ]]; then
+            rules_key="$(printf '%s' "${rules_diff}" | homelab_sha256 | cut -c1-12)"
+            rules_list="$(printf '%s\n' "${rules_diff}" | sed "s#${HOME}#~#" | paste -sd ';' - | sed 's/;/; /g')"
+            log "check10 agent rules moved: ${rules_list}"
+            maybe_alert "agent-rules-changed-${rules_key}" "Hermes memory watchdog: agent rule files changed in the last hour: ${rules_list}. Expected after an owner deploy (homelab-install-agent-rules.sh); otherwise compare with the restic agent-rules snapshots."
+        else
+            log "check10 agent rules unchanged ($(wc -l < "${rules_now}" | tr -d ' ') files)"
+        fi
+    else
+        log "check10 baseline written ($(wc -l < "${rules_now}" | tr -d ' ') files)"
+    fi
+    mv -f "${rules_now}" "${RULES_STATE}"
+else
+    log "check10 skipped: homelab-lib.sh has no agent_rules_hashes"
+fi
+
 # ---- 6. no Hindsight operation stuck in 'processing' for more than 3 h --------
 # Until 2026-10-19 every API restart orphaned in-flight consolidations and left them
 # 'processing' forever, blocking whole banks for days. Fixed upstream with a stable worker
 # id + Recreate strategy; this is the tripwire if it regresses. Read-only over SSH.
 STUCK_HOURS="${STUCK_HOURS:-3}"
-HINDSIGHT_DB_HOST="${HINDSIGHT_DB_HOST:-homelab-2nd}"
+# The k3s server (mimir since the 2026-11-12 node move; homelab-2nd was retired).
+HINDSIGHT_DB_HOST="${HINDSIGHT_DB_HOST:-mimir}"
 # No `timeout` binary guaranteed on macOS (that one is homebrew coreutils); ssh keepalives
 # bound a hung session instead. One retry first: an mDNS/wifi blip must not page anyone.
 read_stuck_ops() {
     ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 "${HINDSIGHT_DB_HOST}" \
-        'sudo k3s kubectl -n hindsight exec -i hindsight-db-1 -c postgres -- psql -U postgres -d hindsight -tA' \
+        'sudo k3s kubectl -n hindsight exec -i "$(sudo k3s kubectl -n hindsight get pod -l cnpg.io/cluster=hindsight-db,cnpg.io/instanceRole=primary -o name)" -c postgres -- psql -U postgres -d hindsight -tA' \
         <<SQL 2>/dev/null || true
 select count(*) from async_operations where status='processing' and updated_at < now() - interval '${STUCK_HOURS} hours';
 SQL
@@ -494,7 +548,7 @@ fi
 # profile and every Paperclip runner now runs on DeepSeek's own API, so DeepSeek's
 # prepaid balance is the one to guard. OpenRouter is kept as a second provider that
 # auto-skips when no key is present, so re-adding the credential arms it again.
-BALANCE_SSH_HOST="${BALANCE_SSH_HOST:-${HINDSIGHT_DB_HOST:-homelab-2nd}}"
+BALANCE_SSH_HOST="${BALANCE_SSH_HOST:-${HINDSIGHT_DB_HOST:-mimir}}"
 BALANCE_SECRET_NS="${BALANCE_SECRET_NS:-llm-hub}"
 BALANCE_SECRET_NAME="${BALANCE_SECRET_NAME:-litellm-provider-keys}"
 DEEPSEEK_FLOOR_USD="${DEEPSEEK_FLOOR_USD:-5}"
