@@ -115,7 +115,51 @@ grep -q 'hashlib.sha256(fingerprint(ck)' "$TARGET" \
   && pass "import decision hashes fingerprint(ck)" \
   || fail "import decision no longer hashes fingerprint(ck) - rotating cookies re-import every tick"
 
-# 7. the hand-import helper ships next to it and reuses the same harvest
+# 7. GUL-1313: an empty pool must trigger an import on its own.
+#    The GUL-1280 fingerprint only moves when the browser login changes. The proxy disabling its
+#    own account does not touch the browser, so on 2026-11-10 the guard ran for eight hours with
+#    `entitlement: no-cookie` and imported nothing: stable hash → "nothing to do" → return.
+#    Tested against the real function, not a grep, because the trigger ORDER is the whole bug.
+ID_OUT=$(PYTHONDONTWRITEBYTECODE=1 python3 - "$TARGET" <<'PY'
+import sys
+path = sys.argv[1]
+ns = {"__name__": "guard_under_test"}
+exec(compile(open(path).read(), path, "exec"), ns)
+decide, errs = ns.get("import_decision"), []
+if not callable(decide):
+    print("no import_decision() helper in guard.py")
+    raise SystemExit(0)
+H = "5736930d99d7ceb2"
+cases = [
+    # (name, h, state, enabled, expected do_import, expected why)
+    ("quiet tick",            H,         {"cookie_hash": H, "entitlement": "ok"},       1, False, None),
+    ("pool empty",            H,         {"cookie_hash": H, "entitlement": "no-cookie"}, 0, True,  "pool-empty"),
+    ("new login",             "newhash", {"cookie_hash": H, "entitlement": "ok"},       1, True,  "relogin"),
+    ("degraded + working",    "newhash", {"cookie_hash": H, "entitlement": "degraded"}, 1, False, "degraded"),
+    ("degraded + dead pool",  H,         {"cookie_hash": H, "entitlement": "degraded"}, 0, True,  "pool-empty"),
+]
+for name, h, st, n, want_do, want_why in cases:
+    got_do, got_why = decide(h, dict(st), n)
+    if (got_do, got_why) != (want_do, want_why):
+        errs.append("%s: decided %r, expected %r" % (name, (got_do, got_why), (want_do, want_why)))
+print("; ".join(errs) if errs else "empty pool triggers an import, degraded still pauses a relogin")
+PY
+)
+if [ "$ID_OUT" = "empty pool triggers an import, degraded still pauses a relogin" ]; then
+  pass "$ID_OUT"
+else
+  fail "import trigger: ${ID_OUT:-python check produced no verdict}"
+fi
+# the pool state must be read BEFORE the import decision, or an empty pool is never noticed
+POOL_LINE=$(grep -n 'n_valid = json.loads(sbody).get("enabled", 0)' "$TARGET" | head -1 | cut -d: -f1)
+DECIDE_LINE=$(grep -n 'do_import, why = import_decision' "$TARGET" | head -1 | cut -d: -f1)
+if [ -n "$POOL_LINE" ] && [ -n "$DECIDE_LINE" ] && [ "$POOL_LINE" -lt "$DECIDE_LINE" ]; then
+  pass "pool state read before the import decision"
+else
+  fail "import decision runs before the pool is read - the empty-pool trigger can never fire"
+fi
+
+# 8. the hand-import helper ships next to it and reuses the same harvest
 HELPER="$HERE/gemini-web2api/manual-import.py"
 if [ -f "$HELPER" ] && python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$HELPER" 2>/dev/null; then
   pass "manual-import.py present and parses"
