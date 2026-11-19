@@ -307,6 +307,14 @@ EOF
 run $PY "$FACTORY" check-verdicts --findings "$TMP/f2.md" --verdicts "$TMP/v2.md"
 expect_rc "verdicts: complete and valid" 0 "$LAST_RC"
 expect_json_field x "blockingConfirmed.0" "F-1" && ok "verdicts: blockingConfirmed=[F-1]" || bad "verdicts: blockingConfirmed"
+# GUL-1929: the fix-round brief needs the finding's text, not just its id, and a
+# minor finding has no business in the blocking list.
+expect_json_field x "blockingFindings.0.id" "F-1" && ok "verdicts: blockingFindings carries the id" || bad "verdicts: blockingFindings id"
+expect_json_field x "blockingFindings.0.file" "src/a.py" && ok "verdicts: blockingFindings carries file" || bad "verdicts: blockingFindings file"
+expect_json_field x "blockingFindings.0.line" "1" && ok "verdicts: blockingFindings carries line" || bad "verdicts: blockingFindings line"
+expect_json_field x "blockingFindings.0.claim" "one" && ok "verdicts: blockingFindings carries the claim" || bad "verdicts: blockingFindings claim"
+expect_json_field x "blockingFindings.0.evidence" "ran bash -c grep, src/a.py:1" && ok "verdicts: blockingFindings carries the verifier's evidence" || bad "verdicts: blockingFindings evidence"
+$PY -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if len(d["blockingFindings"])==1 else 1)' "$LAST_OUT" && ok "verdicts: only the confirmed blocking finding carries detail" || bad "verdicts: blockingFindings count"
 cat > "$TMP/v-miss.md" <<'EOF'
 ```json
 [{"id": "F-1", "verdict": "confirmed", "evidence": "x"}]
