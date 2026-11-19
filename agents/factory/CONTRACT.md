@@ -204,7 +204,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 | `check-red --repo DIR --base SHA --spec FILE` | the diff SHA→worktree touches only test paths, all inside `allowedPaths`; every AC's check runs and reports `AC-n: FAIL`; no setup errors |
 | `check-green --repo DIR --red SHA --spec FILE` | every test path is byte-identical to the red commit (worktree contents; a new untracked test path is a violation); every changed path is inside `allowedPaths`; every AC reports `PASS`; if the repo has `scripts/check.sh`, it runs (`bash scripts/check.sh`, repo root) and must exit 0. **Main's own work is not stage work (GUL-1801):** for each touched path, when the stage's diff red→worktree for that path is identical to `git diff <red> origin/main -- <path>` (same status, same content), it came from `main` and is dropped before the `allowedPaths` check and before the test-path byte comparison; the JSON lists those paths under `fromMain`. A path the stage really changed still fails, and a test path main touched while the stage also changed it fails too |
 | `check-findings --repo DIR --base SHA --findings FILE` | findings follow point 3; every `file` is in the diff SHA→worktree; every `line` exists in the new version (file readable, ≥ `line` lines) |
-| `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed` |
+| `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed`, and `"blockingFindings"`: the same findings in order, each as `{id, file, line, claim, evidence}` (evidence = the verifier's own words). The ids are for logic; the detail is for the fix-round brief, so the next round does not have to go and find it (GUL-1929) |
 | `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ 3 × maxDiffLines` (between 1× and 3× the gate still passes and the JSON carries `"sizeNote": "size note: N lines > maxDiffLines M"`; only above 3× is it a failure, GUL-1730); every HelmRelease the PR changes pins a chart version at or above the one the cluster runs (ADR-097, below). On a pass it takes the PR out of draft (`gh pr ready`), so a passing gate is what makes a PR mergeable (GUL-1801) |
 | `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only). A second run on a clean tree whose HEAD is already `factory(GUL-N): <stage>` is not an error: it passes and returns that HEAD sha, so a `decide` that died after its commit can be re-run (GUL-497) |
 | `push --repo DIR --issue GUL-N` | pushes the checkout's branch to origin (`git push -u origin <branch>`, never `--force`); refuses (exit 1) on `main`/`master`. JSON adds `"branch"` and `"sha"`. Used by `decide` when the PR already exists, so a later round's commit reaches the PR head (GUL-1267 F-1) |
@@ -292,7 +292,12 @@ review stage to hand off to.
    before it ever started holds no branch and no checkout, so it does not count;
    one that already carries a `ledger` does, because its diff may be the one in
    the checkout (GUL-951). Without that split, a work order waiting on another
-   deadlocks the project for good. `--dry-run` plans and creates nothing.
+   deadlocks the project for good. One exception: a ledger whose `outcome` is
+   `escalate` is parked on a **person's** decision, not on the checkout, and does
+   not count either (GUL-1888). Counting it froze a whole project for a night
+   twice — GUL-1599 (cleared by hand in GUL-1811) and GUL-1749 (GUL-1886) — while
+   the escalated order waited for a review that could not happen until morning.
+   `--dry-run` plans and creates nothing.
    Before the refusal returns, the work order is **parked itself** (GUL-1730):
    one PATCH sets `status: blocked` with `blockedByIssueIds` = the open work
    orders that actually hold the checkout, plus one comment naming them. That
@@ -304,19 +309,31 @@ review stage to hand off to.
    work order whose ledger already has `stages` (it has started, so its diff may
    be the one in the checkout — parking it would hide a half-cut ledger behind a
    block).
-3. Cuts the work order's own branch, which is what `open-pr` needs: runs
+3. Takes the shared checkout back from a parked work order (GUL-1888). An
+   escalated order is left with its diff still in the working tree, so letting the
+   next order in blindly would carry those hunks onto the next order's branch,
+   silently, under the wrong issue. When the checkout is dirty **and** the checked
+   out branch is the one an escalated ledger records in this `cwd`, `start`
+   commits the diff as `wip(<N>): parked diff kept on escalation` on that branch,
+   pushes `<branch>:<branch>`, and only then checks out `base` — the diff is where
+   it belongs and nothing is lost. A push that fails is exit 1 with nothing thrown
+   away. Dirt on any other branch is still the operator's: untouched, and refused
+   by the dirty check below. The `start` JSON then carries
+   `cleared: {issue, branch, sha}` and the work order's comment says it took the
+   checkout back from which order.
+4. Cuts the work order's own branch, which is what `open-pr` needs: runs
    `git fetch origin`, refuses (exit 1) when `git status --porcelain` is not empty,
    resolves `baseSha` = `origin/<spec.base>` and runs
    `git switch -c gul-<N>-<slug> <baseSha>` — or switches to that branch when it
    already exists at that sha. `--dry-run` does none of it.
-4. Records in the work order's `ledger` document: `baseSha` (= `origin/<spec.base>`),
+5. Records in the work order's `ledger` document: `baseSha` (= `origin/<spec.base>`),
    `branch` = `gul-<N>-<slug>`, `cwd`.
-5. Creates 5 children: `[red]` → Tester, `[green]` → Builder, `[review]` →
+6. Creates 5 children: `[red]` → Tester, `[green]` → Builder, `[review]` →
    Reviewer, `[verify]` → Verifier, `[gate]` → Majster. The first is `todo`, each
    later one `blocked` by the one before. Red/green/review/verify carry
    `executionPolicy {"stages": [{"type": "review", "participants": [{"type": "agent",
    "agentId": Majster}]}]}`.
-6. `start` twice creates nothing the second time (the ledger has the stages).
+7. `start` twice creates nothing the second time (the ledger has the stages).
 
 **`start GUL-N --recut`** (GUL-1455) — moves a misfiled work order: one whose
 stages were cut against a checkout the spec's repo does not resolve to any more
@@ -404,6 +421,16 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   stage and the round it is superseded by, and it writes nothing: no ledger, no
   stage PATCH, no comment (GUL-1267 G1). The same ledger still decides once every
   later-round stage is `done` or `cancelled`.
+  **The green brief of a fix round carries the findings themselves** (GUL-1929):
+  the round's `green` description gets a `findingsBlock` listing every confirmed
+  blocking finding as `id`, `file:line`, the `claim` and the verifier's
+  `evidence`, plus the identifier of the verify issue the detail came from. Ids
+  alone are not a brief — GUL-1922's green r2 spent its whole 40-turn cap
+  re-deriving three findings out of another issue's document and committed
+  nothing. Claim and evidence are collapsed to one line and capped at 400
+  characters each so a rambling finding cannot break the description, and when
+  the check output carries no detail the block falls back to the ids plus the
+  issue name.
 - **latest gate round**: because a fix round carries a gate of its own, "the gate
   stage" is whichever `gate` / `gate:rN` row has the highest round, and every
   reader uses that one. The round-1 `gate` row is the latest gate round only
@@ -493,15 +520,25 @@ skips the drift check there and prints `guard: not required` instead of reportin
 Majster as drift on every sweep.
 
 **`tick --apply` — the merge watch (GUL-553).** For every open work order whose
-ledger has a `pr.number`, whose **latest gate round** (`gate`, `gate:r2`, … — the
-highest `round` in the ledger, GUL-1267 G4) stage issue is `done`, and whose
-ledger has no `merge` record, `tick` reads
+ledger has a `pr.number` and no `merge` record, and whose **latest gate round**
+(`gate`, `gate:r2`, … — the highest `round` in the ledger, GUL-1267 G4) stage
+issue is `done` **or** the work order is escalated (GUL-1888), `tick` reads
 `gh pr view <n> --repo OWNER/REPO --json state,mergedAt,mergeCommit` and settles it:
 
-- `MERGED` → withdraw any leftover "Merge PR #N?" card, write `merge: {state,
-  sha, at}` and `outcome: merged` to the ledger, **then** PATCH the work order
-  `{"status": "done", "executionPolicy": null, "comment": "PR #N is merged in
-  `<sha>` (<mergedAt>)"}`. Ledger first, status second, same rule as `decide`.
+- **An escalated work order is watched too (GUL-1888).** Its gate is parked
+  `blocked`, not `done`, because a failed gate escalates at once (GUL-1706) — and
+  the PR it opened is still the thing a person merges on GitHub. Requiring a `done`
+  gate meant that merge was never read and the work order stayed `blocked` for
+  ever, until someone fixed it by hand (GUL-1749). While the PR is **open** nothing
+  is touched: the escalation owns the block, and `--apply` refuses to settle a
+  still-open PR even if a caller insists.
+- `MERGED` → withdraw any leftover "Merge PR #N?" card, cancel the work order's
+  parked stage issues, write `merge: {state, sha, at}` and `outcome: merged` to the
+  ledger, **then** PATCH the work order `{"status": "done", "executionPolicy":
+  null, "comment": "PR #N is merged in `<sha>` (<mergedAt>)"}`. Ledger first,
+  status second, same rule as `decide`. If that PATCH fails the ledger already says
+  `merged` while the work order still waits, so the tick prints `unsettled` (never a
+  bare `pr-merged`), re-arms the merge monitor and retries the write next sweep.
 - `OPEN` → re-arm the monitor (`nextCheckAt` = now + 1h) and change nothing else.
 - `CLOSED` without a merge → ledger `outcome: closed`, work order `blocked` with
   one sentence: *PR #N was closed without a merge, so nothing shipped.*
@@ -516,6 +553,13 @@ ledger has no `merge` record, `tick` reads
   (`origin/main` first): once the head is on main — however it got there — the
   normal settle runs and the ledger says `merged`. A work order that is already
   `done` is left alone.
+- **A squash merge counts (GUL-1888).** Equal trees are too strict once the branch
+  takes `main` in after the squash (or `main` moves on after it): the trees differ
+  for ever although the round landed. So when the trees differ, the merge commit's
+  own patch (`<merge>^..<merge> --name-only`) is the set of hunks that landed, and
+  the round is landed when **every file that patch touches** holds the same content
+  at the branch head and in the merge. A merge that rewrote one of those files, or
+  never touched them, is still unlanded.
 - `gh` errors → the line carries `merge-unknown`, the reason goes to stderr, and
   nothing is written. One unreadable PR never stops the sweep. A `gate` row whose
   issue is gone is `stage-missing` and the merge is not settled, for the same

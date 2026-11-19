@@ -675,7 +675,22 @@ def merge_contains(repo: str, head, merge):
     same_tree = subprocess.run(["git", "-C", repo, "diff", "--quiet", head, merge],
                                stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL).returncode
-    return same_tree == 0
+    if same_tree == 0:
+        return True
+    # GUL-1812: equal trees are too strict once the branch takes main in after the
+    # squash (or main moves on after it): the two trees differ for ever although
+    # the round landed. The merge commit's own patch is the set of hunks that
+    # landed on main, so the round is on main when every file that patch touches
+    # holds the same content at the branch head and in the merge. A merge that
+    # rewrote one of those files (or never touched them) is still unlanded.
+    landed = git(repo, "diff", "--name-only", "--no-renames", merge + "^", merge,
+                 allow_fail=True)
+    paths = [ln.strip() for ln in (landed or "").splitlines() if ln.strip()]
+    if not paths:
+        return False
+    return subprocess.run(["git", "-C", repo, "diff", "--quiet", head, merge, "--"] + paths,
+                          stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode == 0
 
 
 def unlanded_reason(number, head, merge_sha) -> str:
@@ -771,13 +786,34 @@ def settle_merge(api, work_order: dict, ledger: dict, pr: dict, view: dict,
         save_ledger(api, work_order["id"], ledger, "merged PR #%s" % number)
         note = ""
         if withdrawn:
-            note = " %d leftover merge card(s) withdrawn." % withdrawn
-        api.patch_issue(work_order["id"], {
-            "status": "done", "executionPolicy": None,
-            "comment": ("PR #%s is merged in `%s` (%s). No card: the factory read "
-                        "the merge on GitHub and moved this work order on.%s"
-                        % (number, commit or "?", merged_at or "?", note)),
-        })
+            note += " %d leftover merge card(s) withdrawn." % withdrawn
+        # GUL-1888: an escalated work order settles with its gate parked `blocked`.
+        # Nothing else would ever move that stage, so cancel it here.
+        parked = cancel_parked_stages(api, ledger,
+                                      work_order.get("identifier") or work_order["id"], number)
+        if parked:
+            note += " %d parked stage issue(s) cancelled (%s)." % (len(parked), ", ".join(parked))
+        try:
+            api.patch_issue(work_order["id"], {
+                "status": "done", "executionPolicy": None,
+                "comment": ("PR #%s is merged in `%s` (%s). No card: the factory read "
+                            "the merge on GitHub and moved this work order on.%s"
+                            % (number, commit or "?", merged_at or "?", note)),
+            })
+        except Exception as exc:  # noqa: BLE001
+            # GUL-1812 fault 3 (GUL-1738): the ledger now says merged but the work
+            # order was never finished. Say so instead of a bare `pr-merged`, and
+            # leave a monitor armed so the next tick retries the write.
+            try:
+                api.patch_issue(work_order["id"], {
+                    "executionPolicy": {"monitor": monitor_payload(pr)},
+                })
+            except Exception as arm:  # noqa: BLE001
+                sys.stderr.write("factory tick: %s: cannot re-arm the merge monitor: %s\n"
+                                 % (work_order.get("identifier"), str(arm)[:200]))
+            reason = ("PR #%s is merged in `%s`, but finishing the work order failed: %s"
+                      % (number, commit or "?", str(exc)[:200]))
+            return {"state": "unsettled", "reason": reason, "sha": commit}
         return {"state": "merged", "reason": None, "sha": commit}
 
     if state == "CLOSED":
@@ -969,13 +1005,23 @@ def cmd_check_verdicts(args) -> int:
     for vid in sorted(seen):
         if vid not in f_ids:
             reasons.append("verdict %s has no matching finding" % vid)
-    blocking_confirmed = [
-        f["id"] for f in findings
-        if f["id"] in by_id and f["severity"] == "blocking"
-        and by_id[f["id"]]["verdict"] == "confirmed"
-    ]
+    blocking_findings = []
+    for f in findings:
+        if not isinstance(f, dict) or f.get("id") not in by_id:
+            continue
+        if f.get("severity") != "blocking" or by_id[f["id"]]["verdict"] != "confirmed":
+            continue
+        # The claim, file, line and the verifier's evidence travel with the id:
+        # `blockingConfirmed` alone is what cost GUL-1922 a whole round.
+        blocking_findings.append({
+            "id": f["id"], "file": f["file"], "line": f["line"],
+            "claim": f["claim"], "evidence": by_id[f["id"]]["evidence"],
+        })
+    blocking_confirmed = [b["id"] for b in blocking_findings]
     ok = len(reasons) == 0
-    emit(ok, "check-verdicts", reasons, {"blockingConfirmed": blocking_confirmed if ok else []})
+    emit(ok, "check-verdicts", reasons,
+         {"blockingConfirmed": blocking_confirmed if ok else [],
+          "blockingFindings": blocking_findings if ok else []})
     return 0 if ok else 1
 
 
@@ -1567,6 +1613,17 @@ def work_order_cwd(api, issue: dict, repo: str = "", company_id: str = "") -> tu
             or os.path.abspath(os.path.join(FACTORY_DIR, "..", ".."))), "FACTORY_REPO"
 
 
+def escalated(ledger: dict) -> bool:
+    """Is this work order parked on a PM decision, not on the checkout?
+
+    GUL-1888: `outcome: escalate` is the factory's own word for "this order was
+    stopped at a gate and handed to a person" (GUL-1706). The diff is preserved on
+    the order's pushed branch and the work order is `blocked` on the PM's review, so
+    it holds no work in the shared checkout — even though its ledger still exists.
+    """
+    return isinstance(ledger, dict) and ledger.get("outcome") == "escalate"
+
+
 def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_id,
                      cwd: str = "") -> list:
     """Every other open issue assigned to Majster that carries a `spec` document and
@@ -1582,6 +1639,12 @@ def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_i
     project it waits on — 948 waits for 875, so 875 cannot start because 948 is
     "open", and 948 cannot start because 875 is not done. A blocked work order that
     has already started still counts: its diff may be the one in the checkout.
+
+    An escalated work order is the second kind of "parked, but carrying a ledger".
+    It waits on a person, not on the checkout, and `start` clears the checkout
+    before it hands it on (GUL-1888) — so it does not count either. Before this,
+    one escalation froze the whole project for a night: GUL-1599 (cleared by hand in
+    GUL-1811) and GUL-1749 (cleared by hand in GUL-1886).
     """
     wanted_cwd = os.path.realpath(cwd) if cwd else ""
     found = []
@@ -1597,9 +1660,12 @@ def open_work_orders(api, company_id: str, cfg: dict, exclude_id: str, project_i
             continue
         if item.get("status") == "blocked" and not api.document(item["id"], "ledger"):
             continue
+        ledger = load_json_document(api, item["id"], "ledger")
+        ledger = ledger if isinstance(ledger, dict) else {}
+        if escalated(ledger):
+            continue
         if not same_project:
-            ledger = load_json_document(api, item["id"], "ledger") or {}
-            other = ledger.get("cwd") if isinstance(ledger, dict) else ""
+            other = ledger.get("cwd") or ""
             if not other or os.path.realpath(other) != wanted_cwd:
                 continue
         if api.document(item["id"], "spec"):
@@ -1644,6 +1710,47 @@ def template_values(spec: dict, ledger: dict, cfg: dict, stage: str, round_no: i
     }
     values.update(extra)
     return values
+
+
+def _brief_line(value, limit=400):
+    """One line of text, whitespace collapsed, capped so a rambling claim cannot
+    push a stage description past what the board will store."""
+    text = " ".join(str(value if value is not None else "").split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def fix_round_findings_block(blocking, detail, round_no, verify_identifier) -> str:
+    """The verified-findings brief a fix round's green stage is opened with (GUL-1929).
+
+    `blocking` is `check-verdicts`'s `blockingConfirmed` (ids only) and `detail`
+    its `blockingFindings` (claim + file + line + the verifier's evidence).
+
+    Ids alone are a wild goose chase: the Builder has to find the review issue,
+    open its `findings` document and match ids to claims, and GUL-1922's green
+    r2 spent its whole 40-turn cap doing exactly that and committed nothing. So
+    the text travels in the brief, and the verify issue is named as the place
+    the full record lives — one GET if the agent wants the reasoning, never a
+    search.
+    """
+    lines = []
+    for item in detail or []:
+        if not isinstance(item, dict):
+            continue
+        lines.append("- **%s** `%s:%s` — %s\n  Verifier evidence: %s"
+                     % (_brief_line(item.get("id"), 20), _brief_line(item.get("file"), 200),
+                        item.get("line"), _brief_line(item.get("claim")),
+                        _brief_line(item.get("evidence"))))
+    if not lines:
+        # Older check output, or a detail list that did not parse: the ids are
+        # still better than nothing, and the issue pointer below still works.
+        lines = ["- %s" % b for b in blocking]
+    where = ("the verify issue `%s`" % verify_identifier if verify_identifier
+             else "the verify issue")
+    return ("\n**Confirmed blocking findings from verify (fix these, round %d):**\n%s\n\n"
+            "That list is complete: id, file, line, the claim and the verifier's evidence. "
+            "The full record is %s — its `verdicts` document and the review `findings` "
+            "document it judged — but you do not need to go and read them to know what to "
+            "fix.\n" % (round_no, "\n".join(lines), where))
 
 
 def plan_stages(cfg: dict, spec: dict, ledger: dict, work_order: dict, round_no: int,
@@ -1969,6 +2076,49 @@ def archive_ledger(doc: dict, ledger, path: str, cwd: str) -> None:
         raise SetupError("cannot archive the old ledger to %s: %s" % (path, exc))
 
 
+def cancel_parked_stages(api, ledger: dict, identifier: str, number) -> list:
+    """Cancel the stage issues a settled work order leaves parked (GUL-1888).
+
+    An escalated work order settles with its gate still `blocked`: the factory put
+    it there and nothing else will ever move it, so it would sit in the queue for
+    ever as a dead end. Cancel it, with the merge as the reason. Never let one
+    unreadable stage stop the settle — the work order is already done by then.
+    """
+    import pc
+    cancelled = []
+    for key in sorted(ledger.get("stages") or {}):
+        row = ledger["stages"].get(key) or {}
+        issue_id = row.get("issueId")
+        if not issue_id:
+            continue
+        label = row.get("identifier") or key
+        try:
+            issue = api.issue(issue_id)
+        except pc.ApiError as exc:
+            if exc.status != 404:
+                sys.stderr.write("factory tick: %s: cannot read stage %s: %s\n"
+                                 % (identifier, label, str(exc)[:200]))
+            continue
+        if not issue or issue.get("status") in ("done", "cancelled"):
+            continue
+        body: dict = {
+            "status": "cancelled",
+            "comment": ("cancelled: PR #%s is merged, so %s is done. This stage was "
+                        "parked and decides nothing any more." % (number, identifier)),
+        }
+        policy = _park_policy(issue)
+        if policy["stages"]:
+            body["executionPolicy"] = policy
+        try:
+            api.patch_issue(issue_id, body)
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write("factory tick: %s: cannot cancel stage %s: %s\n"
+                             % (identifier, label, str(exc)[:200]))
+            continue
+        cancelled.append(label)
+    return cancelled
+
+
 def cancel_superseded_stages(api, ledger: dict, identifier: str, cwd: str, archive: str) -> list:
     """Cancel the stage issues the old ledger holds, without re-arming their agents.
 
@@ -2059,6 +2209,85 @@ def _park_on_the_checkout(api, work_order: dict, busy: list) -> list:
     except pc.ApiError as exc:
         return ["could not park the work order on the checkout: %s" % exc]
     return []
+
+
+def _parked_holder(api, company_id: str, cfg: dict, work_order: dict, cwd: str):
+    """The escalated work order whose branch is checked out and dirty in `cwd`.
+
+    Returns `(issue, ledger)` or `None`. Matched on the branch name the ledger
+    records, not on the issue number in the directory name: the checkout is the
+    thing being asked about, and the ledger's `branch`/`cwd` are what `start` wrote
+    there.
+    """
+    branch = git(cwd, "rev-parse", "--abbrev-ref", "HEAD", allow_fail=True).strip()
+    if not branch or branch == "HEAD":
+        return None
+    real = os.path.realpath(cwd)
+    for item in api.issues(company_id):
+        if item.get("id") == work_order["id"]:
+            continue
+        if item.get("assigneeAgentId") != cfg["majster"]:
+            continue
+        ledger = load_json_document(api, item["id"], "ledger")
+        if not isinstance(ledger, dict) or not escalated(ledger):
+            continue
+        if ledger.get("branch") != branch:
+            continue
+        other = ledger.get("cwd") or ""
+        if other and os.path.realpath(other) != real:
+            continue
+        return item, ledger
+    return None
+
+
+def _clear_parked_checkout(api, company_id: str, cfg: dict, work_order: dict,
+                           cwd: str, base: str) -> tuple:
+    """Leave the shared checkout clean before the next work order takes it.
+
+    GUL-1888: an escalated work order is parked with its diff still in the working
+    tree — that is how one escalation froze a project for a night (GUL-1599,
+    GUL-1749). `open_work_orders` now lets the next order through, so `start` has to
+    take the tree back first. It cannot simply refuse as dirty (the queue stays
+    frozen) nor `reset --hard` (that throws away work the branch may not hold yet).
+
+    So: commit the parked diff onto the parked order's own branch, push that branch,
+    and only then move the checkout to `base`. The branch is the work order's, so
+    the hunks stay auditable where they belong, and `git switch -c` cannot carry
+    them into the next work order's branch (which is what a dirty tree would have
+    done: silently, under the wrong issue).
+
+    Dirt on any other branch is still the operator's: untouched here, and still
+    refused by the caller's dirty check.
+
+    Returns `(cleared, refusal)`; `cleared` is `{"issue", "branch", "sha"}` or `None`.
+    """
+    dirty = git(cwd, "status", "--porcelain").strip()
+    if not dirty:
+        return None, None
+    parked = _parked_holder(api, company_id, cfg, work_order, cwd)
+    if not parked:
+        return None, None
+    item, ledger = parked
+    branch = ledger["branch"]
+    identifier = item.get("identifier") or item["id"]
+    git(cwd, "add", "-A")
+    git(cwd, "-c", "user.name=factory", "-c", "user.email=factory@paperclip.ing",
+        "commit", "--quiet", "-m",
+        "wip(%s): parked diff kept on escalation\n\nCommitted by `factory start %s`: the "
+        "escalated work order's diff was still in the shared checkout, and the next "
+        "work order needs a clean tree. Nothing is lost: this is the branch the "
+        "ledger records.\n" % (identifier, work_order.get("identifier") or work_order["id"]))
+    head = git(cwd, "rev-parse", "HEAD").strip()
+    push = subprocess.run(["git", "-C", cwd, "push", "--quiet", "origin",
+                           "%s:%s" % (branch, branch)],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if push.returncode != 0:
+        return None, ("checkout holds %s's parked diff and it is committed on `%s` (%s) "
+                      "but not pushed: %s. Nothing was thrown away — push the branch, then "
+                      "re-run start" % (identifier, branch, head[:12],
+                                        (push.stderr or "").strip()[:300]))
+    git(cwd, "switch", "--quiet", base, allow_fail=True)
+    return {"issue": identifier, "branch": branch, "sha": head}, None
 
 
 def cmd_factory_start(args) -> int:
@@ -2167,6 +2396,7 @@ def cmd_factory_start(args) -> int:
             "previousBaseSha": old.get("baseSha"),
         }
 
+    cleared = None
     if args.dry_run:
         base_sha = _resolve_base(cwd, base)
     else:
@@ -2174,6 +2404,15 @@ def cmd_factory_start(args) -> int:
         # the red commit lands on the checkout's local main and `open-pr` refuses
         # ("refusing to open a PR from main"), so a real work order cannot finish.
         git(cwd, "fetch", "origin")
+        # GUL-1888: an escalated work order is parked with its diff still in this
+        # tree, and `open_work_orders` no longer counts it — so the checkout is
+        # handed over here, not left frozen. The parked diff goes onto its own
+        # branch (pushed) before anything is cut, and then the checkout is on base.
+        cleared, cleared_refusal = _clear_parked_checkout(
+            api, company, cfg, work_order, cwd, base)
+        if cleared_refusal:
+            emit(False, "start", [cleared_refusal], {"workOrder": args.work_order})
+            return 1
         dirty = git(cwd, "status", "--porcelain").strip()
         if dirty:
             paths = [ln[3:] for ln in dirty.splitlines()][:5]
@@ -2268,6 +2507,13 @@ def cmd_factory_start(args) -> int:
     patched = settle_stage_descriptions(api, cfg, spec, ledger, work_order, 1, "",
                                         plan, created)
     review_ref = (ledger["stages"].get(stage_key("review", 1)) or {}).get("identifier")
+    # GUL-1888: say it on the work order, not just in the ledger — the handover is
+    # what proves the escalated order lost nothing.
+    handover = (""
+                if not cleared else
+                " Took the shared checkout back from %s: its parked diff is committed and "
+                "pushed on `%s` (%s) before anything was cut here, so nothing was lost."
+                % (cleared["issue"], cleared["branch"], cleared["sha"][:12]))
     if recut_note:
         superseded = ", ".join(item["issue"] for item in recut_note["superseded"]) or "none"
         api.comment(work_order["id"],
@@ -2277,12 +2523,14 @@ def cmd_factory_start(args) -> int:
                     % (cwd, recut_note.get("previousCwd") or "?",
                        " → ".join(i["issue"].get("identifier", "?") for i in created),
                        ledger["branch"], superseded, recut_note["archive"])
-                    + (" Verify names the review issue `%s`." % review_ref if review_ref else ""))
+                    + (". Verify names the review issue `%s`." % review_ref if review_ref else "")
+                    + handover)
     else:
         api.comment(work_order["id"],
                     "factory start: 5 stage issues created, chained %s. Checkout `%s`, branch `%s`."
                     % (" → ".join(i["issue"].get("identifier", "?") for i in created), cwd, ledger["branch"])
-                    + (" Verify names the review issue `%s`." % review_ref if review_ref else ""))
+                    + (". Verify names the review issue `%s`." % review_ref if review_ref else "")
+                    + handover)
     emit(True, "start",
          (["5 stage issues re-cut into %s" % cwd, "superseded: %s"
            % ", ".join(item["issue"] for item in recut_note["superseded"])]
@@ -2292,6 +2540,7 @@ def cmd_factory_start(args) -> int:
         "cwd": cwd,
         "branch": ledger["branch"],
         "stages": [{"stage": i["stage"], "issue": i["issue"].get("identifier")} for i in created],
+        **({"cleared": cleared} if cleared else {}),
         **({"recut": True, "archive": recut_note["archive"],
             "previousCwd": recut_note.get("previousCwd"),
             "superseded": recut_note["superseded"]} if recut_note else {}),
@@ -2954,8 +3203,12 @@ def cmd_factory_decide(args) -> int:
             new_round = round_no + 1
             superseded = latest_gate_row(ledger, round_no)
             ledger["fixRounds"] = int(ledger.get("fixRounds", 0)) + 1
-            findings_block = ("\n**Confirmed blocking findings from verify (fix these, round %d):**\n%s\n"
-                              % (round_no + 1, "\n".join("- %s" % b for b in blocking)))
+            detail = parsed.get("blockingFindings") if isinstance(parsed, dict) else None
+            # the verify issue is named in the brief: the full findings record
+            # lives on it, and "read GUL-nnn" beats "go find it" (GUL-1929)
+            verify_ref = stage_issue.get("identifier") if isinstance(stage_issue, dict) else None
+            findings_block = fix_round_findings_block(
+                blocking, detail or [], round_no + 1, verify_ref)
             spec, spec_reasons = extract_json_block(spec_doc["body"], "spec")
             if spec is None:
                 raise SetupError("spec document does not parse: %s" % "; ".join(spec_reasons))
@@ -3237,9 +3490,22 @@ def cmd_factory_tick(args) -> int:
                                                     settled.get("sha")), apply)
         newest_gate = latest_gate_row(ledger)
         gate_entry = newest_gate[2] if newest_gate else {}
-        if pr.get("number") and not ledger.get("merge") and gate_entry.get("issueId"):
+        # GUL-1812: an escalated work order's gate is parked `blocked`, not `done`,
+        # and the PR it opened is still the thing a person merges on GitHub. The
+        # merge watch used to need a `done` gate, so that merge was never read and
+        # the work order stayed `blocked` for ever. An escalation is watched too;
+        # while its PR is open nothing is touched (the escalation owns the block).
+        was_escalated = escalated(ledger)
+        # GUL-1812 fault 3 (GUL-1738): a MERGED read whose "done" write failed left
+        # the ledger saying merged with the work order still waiting, and the
+        # `not ledger.get("merge")` guard below would never look at it again. Retry
+        # that write on every tick until it lands.
+        retry_settle = (settled.get("state") == "merged"
+                        and item.get("status") != "done")
+        if (pr.get("number") and (not ledger.get("merge") or retry_settle)
+                and gate_entry.get("issueId")):
             gate_issue = stage_issue(gate_entry, newest_gate[1])
-            if gate_issue and gate_issue.get("status") == "done":
+            if gate_issue and (gate_issue.get("status") == "done" or was_escalated):
                 try:
                     view = pr_merge_view(ledger.get("repo") or "", pr["number"])
                 except SetupError as exc:
@@ -3247,9 +3513,17 @@ def cmd_factory_tick(args) -> int:
                     sys.stderr.write("factory tick: %s: %s\n"
                                      % (item.get("identifier"), str(exc)[:200]))
                 else:
-                    settlement = settle_merge(api, item, ledger, pr, view, apply)
+                    still_open = str(view.get("state") or "").upper() not in (
+                        "MERGED", "CLOSED")
+                    settlement = settle_merge(api, item, ledger, pr, view,
+                                              apply and not (was_escalated and still_open))
                     merge_state = settlement["state"]
-                    flags.append("pr-%s" % merge_state)
+                    if merge_state == "unsettled":
+                        # not a bare `pr-merged`: the merge was read but the work
+                        # order was not finished, so the line must not claim it was.
+                        flags.append("pr-merged!unsettled")
+                    else:
+                        flags.append("pr-%s" % merge_state)
         attempts = 0
         if current_key and stages.get(current_key):
             attempts = int(stages[current_key].get("attempts", 0))
