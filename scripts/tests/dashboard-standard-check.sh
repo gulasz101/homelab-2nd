@@ -69,7 +69,8 @@ THIN_DASHBOARDS = ("arr-stack", "star-office", "itsaplan")
 ROW_ORDER = ("Golden signals", "Resources", "Logs")
 MIN_MANIFEST_ENTRIES = 20
 MIN_THIN_PANELS = 8
-SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache"}
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache",
+             ".paperclip-repositories"}
 
 reasons = {("AC-%d" % n): [] for n in range(1, 8)}
 
