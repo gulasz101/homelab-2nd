@@ -289,7 +289,7 @@ class Dashboard:
                 },
                 {
                     "editorMode": "code",
-                    "expr": '%s |~ "(?i)metric|telemetry|otel|export"' % base,
+                    "expr": '%s |~ "(?i)start|ready|listen|shutdown"' % base,
                     "queryType": "range",
                     "refId": "C",
                 },
@@ -313,9 +313,12 @@ class Dashboard:
             "percent",
             [
                 {
+                    # kube-state-metrics, not the cAdvisor quota pair: the
+                    # cluster stopped exporting container_spec_cpu_* and every
+                    # panel built on it rendered empty (GUL-1758).
                     "expr": '100 * sum(rate(container_cpu_usage_seconds_total{namespace="%s",container!=""}[5m]))'
-                            ' / sum(container_spec_cpu_quota{namespace="%s",container!=""}'
-                            ' / container_spec_cpu_period{namespace="%s",container!=""})' % (ns, ns, ns),
+                            ' / sum(kube_pod_container_resource_limits{namespace="%s",resource="cpu",container!=""})'
+                            % (ns, ns),
                     "legendFormat": "used of limit",
                     "refId": "A",
                 },
@@ -513,8 +516,7 @@ class Dashboard:
                     "refId": "A",
                 },
                 {
-                    "expr": 'sum by (pod, container) (container_spec_cpu_quota{namespace="%s",container!=""}'
-                            ' / container_spec_cpu_period{namespace="%s",container!=""})' % (ns, ns),
+                    "expr": 'sum by (pod, container) (kube_pod_container_resource_limits{namespace="%s",resource="cpu",container!=""})' % ns,
                     "legendFormat": "{{pod}}/{{container}} limit",
                     "refId": "B",
                 },
@@ -571,14 +573,15 @@ class Dashboard:
                 0, y, w=12, h=7, max_val=100, thresholds=THRESHOLDS_75_90,
             )
         self.timeseries(
-            "Node disk utilisation (homelab-2nd)",
+            "Node disk utilisation",
             "Used space of the node filesystems holding the k3s data directory and "
-            "the PVC backing store, as a percentage of capacity.",
+            "the PVC backing store, as a percentage of capacity. node-exporter is "
+            "scraped behind its job label, not behind a per-host label.",
             "percent",
             [
                 {
-                    "expr": '100 - ((node_filesystem_avail_bytes{host="homelab-2nd",fstype!="tmpfs",fstype!="overlay"} * 100)'
-                            ' / node_filesystem_size_bytes{host="homelab-2nd",fstype!="tmpfs",fstype!="overlay"})',
+                    "expr": '100 - ((node_filesystem_avail_bytes{job="node-exporter",fstype!="tmpfs",fstype!="overlay"} * 100)'
+                            ' / node_filesystem_size_bytes{job="node-exporter",fstype!="tmpfs",fstype!="overlay"})',
                     "legendFormat": "{{mountpoint}}",
                     "refId": "A",
                 },
@@ -586,56 +589,6 @@ class Dashboard:
             12, y, w=12, h=7, max_val=100, thresholds=THRESHOLDS_75_90,
         )
         y += 7
-
-        if self.spec.get("withGpu"):
-            self.timeseries(
-                "GPU utilization",
-                "Utilisation of the single GPU on this node. Every GPU workload in "
-                "the homelab shares it, so a second tenant is visible here.",
-                "percent",
-                [
-                    {
-                        "expr": "nvidia_smi_utilization_gpu_ratio * 100",
-                        "legendFormat": "{{name}}",
-                        "refId": "A",
-                    },
-                ],
-                0, y, w=8, h=7, max_val=100, thresholds=THRESHOLDS_80_90,
-            )
-            self.timeseries(
-                "GPU memory used",
-                "Framebuffer memory used and total on the GPU, in bytes. A model "
-                "that does not fit is unloaded and reloaded on every request.",
-                "bytes",
-                [
-                    {
-                        "expr": "nvidia_smi_memory_used_bytes",
-                        "legendFormat": "{{name}} used",
-                        "refId": "A",
-                    },
-                    {
-                        "expr": "nvidia_smi_memory_total_bytes",
-                        "legendFormat": "{{name}} total",
-                        "refId": "B",
-                    },
-                ],
-                8, y, w=8, h=7,
-            )
-            self.timeseries(
-                "GPU temperature",
-                "GPU core temperature in degrees Celsius. The card throttles above "
-                "the vendor limit, which shows up as latency first.",
-                "celsius",
-                [
-                    {
-                        "expr": "nvidia_smi_temperature_gpu",
-                        "legendFormat": "{{name}}",
-                        "refId": "A",
-                    },
-                ],
-                16, y, w=8, h=7, min_val=0,
-            )
-            y += 7
 
         self.y = y
         self.custom_panels(ROW_ORDER[1])
@@ -736,7 +689,7 @@ class Dashboard:
         self.logs(
             "%s logs" % self.namespace,
             "Every log line the namespace ships to Loki, with toggles for the "
-            "error/warn and telemetry/export subsets.",
+            "error/warn and the startup/ready subsets.",
         )
         self.y += 12
 
@@ -819,7 +772,7 @@ class Dashboard:
         if not self.spec.get("slo"):
             return ("Standard dashboard for **%s**. Rows follow the homelab order: golden "
                     "signals (saturation, traffic, restarts, errors), then resources "
-                    "(per-service requests against limits, storage, GPU), then logs."
+                    "(per-service requests against limits, storage, node power), then logs."
                     % self.spec["k8sNamespace"]) + footer
         services = ", ".join("%s %s %%" % (slo["label"], slo["target"])
                              for slo in SLO_SERVICES)
@@ -977,7 +930,6 @@ def entry_dashboards(entry, namespace):
         merged["uid"] = merged.get("uid") or "%s-dashboard" % namespace
         merged["key"] = merged.get("key") or "%s-dashboard.json" % namespace
         merged["services"] = merged.get("services") or []
-        merged["withGpu"] = bool(merged.get("withGpu"))
         specs.append(merged)
     return specs
 

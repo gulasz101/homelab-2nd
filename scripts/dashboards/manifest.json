@@ -63,9 +63,31 @@
       "namespace": "gpu-embedding",
       "title": "gpu-embedding — Ollama Embedding Service",
       "uid": "gpu-embedding-ollama",
-      "withGpu": true,
       "services": [
         {"pod": "ollama-embeddings", "label": "ollama", "pvc": "ollama-models"}
+      ],
+      "panels": [
+        {
+          "row": "Resources",
+          "type": "timeseries",
+          "title": "Node package power (RAPL)",
+          "description": "Package power drawn by the CPU that hosts the GPU, from node-exporter's Intel RAPL counters in watts. The GPU has no exporter of its own any more, so the node-side reading is what tracks how hard the embedding workload is working.",
+          "unit": "watt",
+          "targets": [
+            {"expr": "rate(node_rapl_package_joules_total{job=\"node-exporter\"}[5m])", "legend": "package power"}
+          ]
+        },
+        {
+          "row": "Resources",
+          "type": "timeseries",
+          "title": "Node thermal zones",
+          "description": "Temperature of every node thermal zone in degrees Celsius. A model that keeps the GPU busy shows up here as a sustained rise before it shows up as latency.",
+          "unit": "celsius",
+          "min": 0,
+          "targets": [
+            {"expr": "max by (instance, type) (node_thermal_zone_temp{job=\"node-exporter\"})", "legend": "{{instance}} {{type}}"}
+          ]
+        }
       ]
     },
     {
@@ -545,7 +567,7 @@
         {"pod": "litellm-db", "label": "litellm-db", "pvc": "litellm-db-*"},
         {"pod": "open-webui", "label": "open-webui"},
         {"pod": "openwebui-db", "label": "openwebui-db", "pvc": "openwebui-db-*"},
-        {"pod": "open-webui-redis", "label": "webui-redis", "pvc": "redis-data"},
+        {"pod": "open-webui-redis", "label": "webui-redis"},
         {"pod": "cloudflared-litellm", "label": "litellm-tunnel"},
         {"pod": "cloudflared-openwebui", "label": "webui-tunnel"}
       ]
