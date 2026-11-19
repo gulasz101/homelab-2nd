@@ -1,0 +1,35 @@
+# Ear-checked respellings for podcast-tts (GUL-1749).
+#
+# Two tables, both applied by `normalise_text` in this order:
+#   1. [phrases] -- multi-word fixes and abbreviations, matched case-insensitively.
+#   2. [words]   -- single words, applied last, after the numeric pass.
+#
+# How to add one: listen to the episode, note the word the engine gets wrong,
+# add `"wrong" = "what it should sound like"`, regenerate that chunk. No code
+# change, no re-run of the whole episode (the manifest only redoes changed text).
+#
+# Every entry must be confirmed with an ear-check, not guessed. Polish text only:
+# keys are plain words, values are what the voice should pronounce.
+
+[phrases]
+"science fiction" = "sajens fikszyn"
+"smart city" = "smart siti"
+"machine learning" = "maszyn lernin"
+"open source" = "open sors"
+"OSW" = "Ośrodka Studiów Wschodnich"
+"UE" = "Unii Europejskiej"
+"USA" = "Stanów Zjednoczonych"
+"np." = "na przykład"
+"itd." = "i tak dalej"
+"itp." = "i tym podobne"
+"km" = "kilometrów"
+"GB" = "gigabajtów"
+
+[words]
+# Empty on purpose -- every entry here must be confirmed by listening.
+# Seed entries from the bake-off, both confirmed acoustically by Wojtek
+# 2026-11-18 (see the prototype's probe_*.py):
+#   "całej" -> "tsałej"   engine read "c" as /k/; "ts" gives the affricate
+#   "Chin"  -> "Hin"      Polish h and ch are the same /x/; stops the "cin" fusion
+"całej" = "tsałej"
+"Chin" = "Hin"

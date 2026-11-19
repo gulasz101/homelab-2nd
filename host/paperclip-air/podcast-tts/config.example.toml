@@ -1,0 +1,33 @@
+# podcast-tts config (GUL-1749). Copy to config.toml and edit; every key below is
+# required and unknown keys are an error, so a typo never silently does nothing.
+#
+# Engine: Chatterbox Multilingual v3 on MLX, in-process via mlx-audio. Do NOT
+# point this at the Voicebox daemon -- Voicebox 0.5.x pins Chatterbox to the CPU
+# on macOS (measured RTF ~75). Measured with mlx-audio 0.6.6 / mlx 0.32.4:
+# RTF ~2.5-3.4 on normalised text, model load ~40 s, weights 2.7 GB.
+
+# Model id passed to mlx_audio's load_model.
+model = "mlx-community/chatterbox-multilingual-v3"
+
+# Reference voice WAV (Wojtek's cloned voice). Chatterbox needs no transcript.
+ref_audio = "/Users/paperclip/.hermes/profiles/billcipher/voicebox/profiles/f0a84a2b-bd7d-4344-857e-d4defd315e86/9b680fbd-1dcc-4830-8f96-0aebd30faa0c.wav"
+
+# Chatterbox language code.
+lang_code = "pl"
+
+# Longest chunk handed to the engine. The chunker never exceeds it and never
+# splits mid-sentence (an over-long sentence splits at a comma/semicolon).
+max_chunk_chars = 300
+
+# Silence between chunks of one paragraph, and between paragraphs.
+pause_ms = 350
+paragraph_pause_ms = 800
+
+# Extra attempts per chunk after the first one (so 2 = three tries).
+retries = 2
+
+# MP3 bitrate. Mono, 24 kHz, two-pass loudnorm I=-16:TP=-1.5:LRA=11.
+bitrate = "128k"
+
+# Ear-checked respellings. Relative paths resolve against this file's directory.
+respell = "respell.toml"
