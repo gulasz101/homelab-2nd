@@ -204,7 +204,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 | `check-red --repo DIR --base SHA --spec FILE` | the diff SHA→worktree touches only test paths, all inside `allowedPaths`; every AC's check runs and reports `AC-n: FAIL`; no setup errors |
 | `check-green --repo DIR --red SHA --spec FILE` | every test path is byte-identical to the red commit (worktree contents; a new untracked test path is a violation); every changed path is inside `allowedPaths`; every AC reports `PASS`; if the repo has `scripts/check.sh`, it runs (`bash scripts/check.sh`, repo root) and must exit 0. **Main's own work is not stage work (GUL-1801):** for each touched path, when the stage's diff red→worktree for that path is identical to `git diff <red> origin/main -- <path>` (same status, same content), it came from `main` and is dropped before the `allowedPaths` check and before the test-path byte comparison; the JSON lists those paths under `fromMain`. A path the stage really changed still fails, and a test path main touched while the stage also changed it fails too |
 | `check-findings --repo DIR --base SHA --findings FILE` | findings follow point 3; every `file` is in the diff SHA→worktree; every `line` exists in the new version (file readable, ≥ `line` lines) |
-| `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed` |
+| `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed`, and `"blockingFindings"`: the same findings in order, each as `{id, file, line, claim, evidence}` (evidence = the verifier's own words). The ids are for logic; the detail is for the fix-round brief, so the next round does not have to go and find it (GUL-1929) |
 | `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ 3 × maxDiffLines` (between 1× and 3× the gate still passes and the JSON carries `"sizeNote": "size note: N lines > maxDiffLines M"`; only above 3× is it a failure, GUL-1730); every HelmRelease the PR changes pins a chart version at or above the one the cluster runs (ADR-097, below). On a pass it takes the PR out of draft (`gh pr ready`), so a passing gate is what makes a PR mergeable (GUL-1801) |
 | `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only). A second run on a clean tree whose HEAD is already `factory(GUL-N): <stage>` is not an error: it passes and returns that HEAD sha, so a `decide` that died after its commit can be re-run (GUL-497) |
 | `push --repo DIR --issue GUL-N` | pushes the checkout's branch to origin (`git push -u origin <branch>`, never `--force`); refuses (exit 1) on `main`/`master`. JSON adds `"branch"` and `"sha"`. Used by `decide` when the PR already exists, so a later round's commit reaches the PR head (GUL-1267 F-1) |
@@ -421,6 +421,16 @@ the ledger (`check-red`, `check-green` with the red sha, `check-findings`,
   stage and the round it is superseded by, and it writes nothing: no ledger, no
   stage PATCH, no comment (GUL-1267 G1). The same ledger still decides once every
   later-round stage is `done` or `cancelled`.
+  **The green brief of a fix round carries the findings themselves** (GUL-1929):
+  the round's `green` description gets a `findingsBlock` listing every confirmed
+  blocking finding as `id`, `file:line`, the `claim` and the verifier's
+  `evidence`, plus the identifier of the verify issue the detail came from. Ids
+  alone are not a brief — GUL-1922's green r2 spent its whole 40-turn cap
+  re-deriving three findings out of another issue's document and committed
+  nothing. Claim and evidence are collapsed to one line and capped at 400
+  characters each so a rambling finding cannot break the description, and when
+  the check output carries no detail the block falls back to the ids plus the
+  issue name.
 - **latest gate round**: because a fix round carries a gate of its own, "the gate
   stage" is whichever `gate` / `gate:rN` row has the highest round, and every
   reader uses that one. The round-1 `gate` row is the latest gate round only

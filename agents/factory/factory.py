@@ -1005,13 +1005,23 @@ def cmd_check_verdicts(args) -> int:
     for vid in sorted(seen):
         if vid not in f_ids:
             reasons.append("verdict %s has no matching finding" % vid)
-    blocking_confirmed = [
-        f["id"] for f in findings
-        if f["id"] in by_id and f["severity"] == "blocking"
-        and by_id[f["id"]]["verdict"] == "confirmed"
-    ]
+    blocking_findings = []
+    for f in findings:
+        if not isinstance(f, dict) or f.get("id") not in by_id:
+            continue
+        if f.get("severity") != "blocking" or by_id[f["id"]]["verdict"] != "confirmed":
+            continue
+        # The claim, file, line and the verifier's evidence travel with the id:
+        # `blockingConfirmed` alone is what cost GUL-1922 a whole round.
+        blocking_findings.append({
+            "id": f["id"], "file": f["file"], "line": f["line"],
+            "claim": f["claim"], "evidence": by_id[f["id"]]["evidence"],
+        })
+    blocking_confirmed = [b["id"] for b in blocking_findings]
     ok = len(reasons) == 0
-    emit(ok, "check-verdicts", reasons, {"blockingConfirmed": blocking_confirmed if ok else []})
+    emit(ok, "check-verdicts", reasons,
+         {"blockingConfirmed": blocking_confirmed if ok else [],
+          "blockingFindings": blocking_findings if ok else []})
     return 0 if ok else 1
 
 
@@ -1700,6 +1710,47 @@ def template_values(spec: dict, ledger: dict, cfg: dict, stage: str, round_no: i
     }
     values.update(extra)
     return values
+
+
+def _brief_line(value, limit=400):
+    """One line of text, whitespace collapsed, capped so a rambling claim cannot
+    push a stage description past what the board will store."""
+    text = " ".join(str(value if value is not None else "").split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def fix_round_findings_block(blocking, detail, round_no, verify_identifier) -> str:
+    """The verified-findings brief a fix round's green stage is opened with (GUL-1929).
+
+    `blocking` is `check-verdicts`'s `blockingConfirmed` (ids only) and `detail`
+    its `blockingFindings` (claim + file + line + the verifier's evidence).
+
+    Ids alone are a wild goose chase: the Builder has to find the review issue,
+    open its `findings` document and match ids to claims, and GUL-1922's green
+    r2 spent its whole 40-turn cap doing exactly that and committed nothing. So
+    the text travels in the brief, and the verify issue is named as the place
+    the full record lives — one GET if the agent wants the reasoning, never a
+    search.
+    """
+    lines = []
+    for item in detail or []:
+        if not isinstance(item, dict):
+            continue
+        lines.append("- **%s** `%s:%s` — %s\n  Verifier evidence: %s"
+                     % (_brief_line(item.get("id"), 20), _brief_line(item.get("file"), 200),
+                        item.get("line"), _brief_line(item.get("claim")),
+                        _brief_line(item.get("evidence"))))
+    if not lines:
+        # Older check output, or a detail list that did not parse: the ids are
+        # still better than nothing, and the issue pointer below still works.
+        lines = ["- %s" % b for b in blocking]
+    where = ("the verify issue `%s`" % verify_identifier if verify_identifier
+             else "the verify issue")
+    return ("\n**Confirmed blocking findings from verify (fix these, round %d):**\n%s\n\n"
+            "That list is complete: id, file, line, the claim and the verifier's evidence. "
+            "The full record is %s — its `verdicts` document and the review `findings` "
+            "document it judged — but you do not need to go and read them to know what to "
+            "fix.\n" % (round_no, "\n".join(lines), where))
 
 
 def plan_stages(cfg: dict, spec: dict, ledger: dict, work_order: dict, round_no: int,
@@ -3152,8 +3203,12 @@ def cmd_factory_decide(args) -> int:
             new_round = round_no + 1
             superseded = latest_gate_row(ledger, round_no)
             ledger["fixRounds"] = int(ledger.get("fixRounds", 0)) + 1
-            findings_block = ("\n**Confirmed blocking findings from verify (fix these, round %d):**\n%s\n"
-                              % (round_no + 1, "\n".join("- %s" % b for b in blocking)))
+            detail = parsed.get("blockingFindings") if isinstance(parsed, dict) else None
+            # the verify issue is named in the brief: the full findings record
+            # lives on it, and "read GUL-nnn" beats "go find it" (GUL-1929)
+            verify_ref = stage_issue.get("identifier") if isinstance(stage_issue, dict) else None
+            findings_block = fix_round_findings_block(
+                blocking, detail or [], round_no + 1, verify_ref)
             spec, spec_reasons = extract_json_block(spec_doc["body"], "spec")
             if spec is None:
                 raise SetupError("spec document does not parse: %s" % "; ".join(spec_reasons))

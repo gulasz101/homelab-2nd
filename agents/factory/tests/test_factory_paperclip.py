@@ -1024,6 +1024,18 @@ def case_fix_round_supersedes_the_old_gate(stub, base_sha, repo):
           [c["title"] for c in round2])
     check("decide verify: the confirmed finding is pasted into the fix issue",
           "F-1" in round2[0]["description"], round2[0]["description"][:200])
+    # GUL-1929: an id is not a brief. The Builder must not have to go and find
+    # the claim, the file or the line — that cost GUL-1922's green r2 its whole
+    # 40-turn cap, and the round closed with nothing committed.
+    brief = round2[0]["description"]
+    check("decide verify: the fix brief carries the claim, not just the id",
+          "the AC check never runs" in brief, brief[-600:])
+    check("decide verify: the fix brief carries file:line",
+          "`tests/ac.sh:1`" in brief, brief[-600:])
+    check("decide verify: the fix brief carries the verifier's evidence",
+          "bash tests/ac.sh -> AC-1: FAIL" in brief, brief[-600:])
+    check("decide verify: the fix brief names the verify issue to read for the full record",
+          verify["identifier"] in brief, brief[-600:])
     # GUL-1267 G2: the round-2 gate is a real ledger row, the last stage created.
     gate_r2 = (ledger.get("stages") or {}).get("gate:r2") or {}
     check("decide verify: the round-2 gate is recorded in the ledger as gate:r2, round 2",
@@ -1054,6 +1066,30 @@ def case_fix_round_supersedes_the_old_gate(stub, base_sha, repo):
           and "GUL-950" not in round2[2]["description"],
           round2[2]["description"].split("\n")[0][:160])
     stub.state.issues[wo["id"]]["status"] = "done"
+
+
+def case_fix_round_brief_falls_back_to_ids(stub, base_sha, repo):
+    """GUL-1929: the brief still reads when the check output carries no detail.
+
+    `blockingFindings` is additive. A stale check (or a dict that did not parse)
+    leaves only `blockingConfirmed`, and ids plus the verify issue reference is
+    still a usable brief — where a KeyError on the missing field would take the
+    whole fix round down with it.
+    """
+    text = factory.fix_round_findings_block(["F-1", "F-2"], [], 2, "GUL-951")
+    check("fix-round brief: ids only still renders every id",
+          "- F-1" in text and "- F-2" in text, text)
+    check("fix-round brief: ids only still names the verify issue", "GUL-951" in text, text)
+    check("fix-round brief: no detail invents no claim and no evidence line",
+          "Verifier evidence" not in text, text)
+    long_claim = "x" * 900
+    text2 = factory.fix_round_findings_block(
+        ["F-1"], [{"id": "F-1", "file": "a/b.py", "line": 7,
+                   "claim": long_claim, "evidence": "  ran\n the  thing "}], 2, "GUL-951")
+    check("fix-round brief: a long claim is capped so the description stays postable",
+          long_claim not in text2 and len(text2) < 1200, str(len(text2)))
+    check("fix-round brief: the evidence is collapsed onto one line",
+          "Verifier evidence: ran the thing" in text2, text2)
 
 
 def case_gate_refuses_on_an_open_fix_round(stub, base_sha, repo):
@@ -2828,6 +2864,7 @@ def main():
             case_missing_key(stub)
             case_decide_red(stub, base_sha, repo)
             case_verify_fix_round(stub, base_sha, repo)
+            case_fix_round_brief_falls_back_to_ids(stub, base_sha, repo)
             case_decide_settles_a_merged_pr(stub, base_sha, repo)
             case_decide_refuses_an_unlanded_merge(stub, base_sha, repo)
             case_third_failure_escalates(stub, base_sha, repo)
