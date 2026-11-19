@@ -2508,7 +2508,8 @@ def case_start_ignores_a_parked_blocker(stub):
 # merge that carries the round is landed even when the trees differ.
 # --------------------------------------------------------------------------
 
-def escalated_gate_work_order(stub, repo, identifier, pr_number):
+def escalated_gate_work_order(stub, repo, identifier, pr_number, base="base-sha",
+                              project_id=None):
     """A work order the factory escalated at its gate: blocked, PR on the forge.
 
     The shape is the one `_escalate` writes (GUL-1706/GUL-1730): the work order is
@@ -2517,7 +2518,7 @@ def escalated_gate_work_order(stub, repo, identifier, pr_number):
     PR is still the thing a person merges on GitHub, and nothing in the factory
     may forget it because the gate failed.
     """
-    wo = base_work_order(stub, "base-sha", repo, identifier=identifier)
+    wo = base_work_order(stub, base, repo, identifier=identifier, project_id=project_id)
     ledger = ledger_of(stub, wo)
     ledger["pr"] = {"number": pr_number,
                     "url": "https://github.com/gulasz101/homelab-2nd/pull/%d" % pr_number}
@@ -2583,6 +2584,11 @@ def case_tick_settles_an_escalated_merge(stub):
           and "pr-merged" in line
           and any(merge_sha[:7] in body or "#160" in body for body in said),
           "status=%s merge=%s line=%r" % (issue["status"], ledger.get("merge"), line))
+
+    gate_state = stub.state.issues[_gate["id"]]["status"]
+    check("tick escalated: the parked gate stage is cancelled, not left as a dead end",
+          gate_state == "cancelled", "gate=%r" % gate_state)
+    stub.state.issues[wo["id"]]["status"] = "done"
 
 
 def case_merge_contains_a_squash_merge(stub):
@@ -2683,6 +2689,100 @@ def case_tick_settles_a_squash_merge(stub):
           and (ledger.get("merge") or {}).get("state") == "merged"
           and "unlanded" not in line,
           "status=%s merge=%s line=%r" % (issue["status"], ledger.get("merge"), line))
+
+
+def parked_checkout_repo(name="repo-parked"):
+    """A checkout with a *bare* origin, so a branch push is a real push.
+
+    `make_repo` points origin at the checkout itself, and git refuses to update a
+    branch that is checked out in a non-bare repo — which is exactly the branch a
+    parked work order sits on.
+    """
+    root = os.path.join(WORKDIR, name)
+    origin = os.path.join(root, "origin.git")
+    repo = os.path.join(root, "repo")
+    os.makedirs(os.path.join(repo, "tests"), exist_ok=True)
+    with open(os.path.join(repo, "tests", "ac.sh"), "w") as fh:
+        fh.write('#!/usr/bin/env bash\necho "AC-1: PASS"\nexit 0\n')
+    with open(os.path.join(repo, "README.md"), "w") as fh:
+        fh.write("fixture\n")
+    subprocess.run(["git", "init", "--bare", "-q", origin],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "add", "-A")
+    git(repo, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-qm", "base")
+    git(repo, "remote", "add", "origin", origin)
+    git(repo, "push", "-q", "origin", "main")
+    git(repo, "fetch", "-q", "origin")
+    return repo, git_out(repo, "rev-parse", "HEAD")
+
+
+def case_start_clears_a_parked_checkout(stub):
+    """GUL-1888 fault 1: an escalated order is parked on a person, not on the checkout.
+
+    GUL-1599 and GUL-1749 each froze a whole project for a night: the escalated order
+    was `blocked` with a ledger, so `open_work_orders()` read it as holding the shared
+    checkout and every other order in the project refused to start. The tree was also
+    still dirty with the diff it was stopped on — so simply letting the next order in
+    would have carried that diff onto the next order's branch, silently, under the
+    wrong issue.
+    """
+    repo, base_sha = parked_checkout_repo()
+    project = stub.state.add_project("Parked " + "GUL-980")
+    env = {"FACTORY_REPO": repo}
+
+    wo, _gate, ledger = escalated_gate_work_order(stub, repo, "GUL-980", 180,
+                                                  base=base_sha, project_id=project)
+    branch = ledger["branch"]
+    # the round that reached the gate is on the branch ...
+    git(repo, "checkout", "-q", "-b", branch)
+    with open(os.path.join(repo, "tests", "ac.sh"), "a") as fh:
+        fh.write('echo "AC-2: PASS"\n')
+    git(repo, "add", "-A")
+    git(repo, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-qm",
+        "factory(GUL-980): the round the gate escalated")
+    git(repo, "push", "-q", "origin", branch)
+    # ... and the hunk it was stopped mid-way through is still in the working tree.
+    with open(os.path.join(repo, "tests", "ac.sh"), "a") as fh:
+        fh.write('echo "AC-3: PASS"\n')
+    assert git_out(repo, "status", "--porcelain"), "fixture left no diff in the checkout"
+
+    nxt = base_work_order(stub, base_sha, repo, identifier="GUL-981", project_id=project)
+    code, out, raw = run(stub, ["start", "GUL-981"], extra_env=env)
+    reasons = " ".join((out or {}).get("reasons", []) or [])
+    next_branch = (ledger_of(stub, nxt) or {}).get("branch") or ""
+    check("start parked: an escalated work order does not hold the shared checkout",
+          code == 0 and "another factory work order is open" not in reasons,
+          "code=%s reasons=%r raw=%s" % (code, reasons, raw[-400:]))
+
+    kept = git_out(repo, "show", "%s:tests/ac.sh" % branch)
+    wip = git_out(repo, "log", "-1", "--format=%s", branch)
+    check("start parked: the parked diff is committed on the escalated order's own branch",
+          "AC-3: PASS" in kept and wip.startswith("wip(GUL-980)"),
+          "ac.sh=%r head=%r" % (kept[-120:], wip))
+    remote = git_out(repo, "ls-remote", "origin", "refs/heads/" + branch).split("\t")[0]
+    check("start parked: that commit is pushed, so the handover loses nothing",
+          bool(remote) and remote == branch_sha(repo, branch),
+          "remote=%r local=%r" % (remote, branch_sha(repo, branch)))
+    check("start parked: the next order is cut at base on a clean tree",
+          head_branch(repo) == next_branch
+          and branch_sha(repo, next_branch) == base_sha
+          and not git_out(repo, "status", "--porcelain")
+          and "AC-3: PASS" not in git_out(repo, "show", "main:tests/ac.sh"),
+          "branch=%r sha=%r dirty=%r" % (head_branch(repo), branch_sha(repo, next_branch),
+                                         git_out(repo, "status", "--porcelain")))
+    comments = comments_on(stub, nxt["id"])
+    check("start parked: the handover is written on the new work order",
+          ((out or {}).get("cleared") or {}).get("issue") == "GUL-980"
+          and any("GUL-980" in c and branch in c for c in comments),
+          "cleared=%r comments=%r" % ((out or {}).get("cleared"), comments))
+    check("start parked: the escalated work order is still parked, not settled",
+          stub.state.issues[wo["id"]]["status"] == "blocked"
+          and (ledger_of(stub, wo) or {}).get("outcome") == "escalate",
+          "status=%r outcome=%r" % (stub.state.issues[wo["id"]]["status"],
+                                    (ledger_of(stub, wo) or {}).get("outcome")))
+    for item in (wo, nxt):
+        stub.state.issues[item["id"]]["status"] = "done"
 
 
 def run_one_case(name, stub, base_sha, repo):
