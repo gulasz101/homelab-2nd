@@ -583,13 +583,15 @@ def container_check(msgs, st):
         speak(msgs, st, "container", "healthy", "✅ zeroclaw healthy again.")
 
 
-def harvest_firefox():
-    """Return a 'k=v; ...' cookie string from the Firefox profile, or None.
+def cookie_db():
+    """Path of the Firefox cookie DB (`cookies.sqlite`) the guard reads, or None.
 
     Pick the profile that actually HAS a cookies.sqlite, newest first, and prefer a
     `.default-release` profile over a stale `.default` one. The old rule (newest profile
     DIRECTORY by mtime) silently chose a `.default` profile with no cookie DB at all, which
     reads as "no usable cookie" even while the live login sits in default-release.
+
+    GUL-1387: this file's identity is also what decides an import — see db_identity().
     """
     profs = glob.glob(os.path.expanduser("~/Library/Application Support/Firefox/Profiles/*default*"))
     profs = [p for p in profs if os.path.exists(os.path.join(p, "cookies.sqlite"))]
@@ -597,7 +599,67 @@ def harvest_firefox():
         return None
     release = [p for p in profs if p.endswith(".default-release")]
     src = os.path.join(max(release or profs, key=os.path.getmtime), "cookies.sqlite")
-    if not os.path.exists(src):
+    return src if os.path.exists(src) else None
+
+
+def db_identity(src):
+    """The cookie DB file's identity: `{"mtime": ..., "size": ...}`, or None if unreadable.
+
+    GUL-1387 (measured 2026-11-11 21:51Z): with Firefox quit, `cookies.sqlite` is frozen while the
+    proxy keeps rotating its own copy of the pair, so the harvested fingerprint diverges from
+    `cookie_hash` permanently — in the wrong direction. A hash-first guard therefore re-imported
+    the frozen DB on every tick, the candidate failed `/check`, and the failure path retired the
+    entry that was the only owner of the LIVE cookie. The file cannot lie that way: it changes
+    only when the browser writes it. `mtime` alone is not enough — a rewrite can land in the same
+    clock tick — hence `size` too.
+    """
+    try:
+        s = os.stat(src)
+    except (OSError, TypeError):
+        return None
+    return {"mtime": s.st_mtime, "size": s.st_size}
+
+
+def same_db(recorded, current):
+    """Does a recorded `import_db` describe the DB on disk right now? Absent or junk = no."""
+    if not isinstance(recorded, dict) or not current:
+        return False
+    try:
+        return (abs(float(recorded.get("mtime")) - float(current["mtime"])) < 0.000001
+                and int(recorded.get("size")) == int(current["size"]))
+    except (TypeError, ValueError):
+        return False
+
+
+def db_decision(st, current):
+    """Should this tick touch the pool? The cookie DB FILE decides, not the cookie hash.
+
+    Returns (import_needed, why, skipped_reason):
+      - no `import_db` in the state file (every pre-change state) -> baseline only, no import;
+      - DB identical to the recorded `import_db` -> skip the whole import block, silently;
+      - DB changed -> True, the caller imports exactly as before and records the new identity.
+    An active DB with no `import_db` still gets a reason recorded, so the next tick is provably
+    an unchanged one and cannot mistake a missing baseline for a fresh login.
+    """
+    recorded = st.get("import_db")
+    if current is None:
+        return True, None, None          # no DB at all: the harvest alarm is the honest one
+    if recorded is None:
+        st["import_db"] = current
+        return False, "baseline", (
+            "firefox DB adopted as the import baseline (cookies.sqlite mtime %d, size %d): "
+            "baseline recorded, no import" % (int(current["mtime"]), int(current["size"])))
+    if same_db(recorded, current):
+        return False, "frozen", (
+            "firefox DB unchanged since the last import (cookies.sqlite mtime %d, size %d): "
+            "import skipped, no pool write" % (int(recorded["mtime"]), int(recorded["size"])))
+    return True, "db-changed", None
+
+
+def harvest_firefox():
+    """Return a 'k=v; ...' cookie string from the Firefox profile, or None."""
+    src = cookie_db()
+    if not src:
         return None
     tmp = SCRATCH + "/_guard_ck.sqlite"
     try:
@@ -679,18 +741,6 @@ def main():
 
     artifact_check(msgs, st, tok)
 
-    ck = harvest_firefox()
-    if not ck:
-        speak(msgs, st, "last_pool", "empty-harvest",
-              "⚠️ gemini-web2api: no usable cookie found in the Firefox profile "
-              "(no google.com cookies / no profile). Paid models are unavailable; "
-              "requests fall back to anonymous 3.5 Flash-Lite.")
-        write_state(st)
-        print("\n".join(m for m in msgs if m))
-        return
-
-    h = hashlib.sha256(fingerprint(ck).encode()).hexdigest()[:16]
-
     # Pool state BEFORE the import decision: an empty pool is itself a reason to import (GUL-1313).
     # Cheap, and the alternative is a guard that runs every 30 min for eight hours and does nothing.
     s_code, sbody = api("/admin/api/cookies", tok)
@@ -707,7 +757,42 @@ def main():
     except Exception:
         n_valid = 0
 
-    do_import, why = import_decision(h, st, n_valid)
+    # GUL-1387: the cookie DB FILE decides an import, not the cookie hash. A frozen
+    # cookies.sqlite means "the browser has not written a new login", and that is the only
+    # question the import is allowed to answer — importing the same frozen pair again costs a
+    # Google /check round-trip and, when it fails, retires the live cookie. The hash is still
+    # what note_import() records; it just no longer decides.
+    db = cookie_db()
+    db_now = db_identity(db) if db else None
+    need_import, why, skipped = db_decision(st, db_now)
+    if skipped:
+        st["import_skipped_reason"] = skipped
+    do_import = False
+    if need_import:
+        ck = harvest_firefox()
+        if not ck:
+            speak(msgs, st, "last_pool", "empty-harvest",
+                  "⚠️ gemini-web2api: no usable cookie found in the Firefox profile "
+                  "(no google.com cookies / no profile). Paid models are unavailable; "
+                  "requests fall back to anonymous 3.5 Flash-Lite.")
+            write_state(st)
+            print("\n".join(m for m in msgs if m))
+            return
+
+        h = hashlib.sha256(fingerprint(ck).encode()).hexdigest()[:16]
+        do_import, why = import_decision(h, st, n_valid)
+        if not do_import and why is None:
+            # The DB file moved, so the browser wrote a login — the file wins even when the
+            # fingerprint already matches (a rewrite that only touched the login, or a state
+            # file that was seeded from the wrong DB). `import_decision` only ever answers
+            # "nothing to do" when the hash is unchanged, which is not the question any more.
+            if n_valid and st.get("entitlement") == "degraded":
+                why = "degraded"        # same pause as a hash-first re-login on a throttled tier
+            else:
+                do_import, why = True, "db-changed"
+
+    # "baseline" and "frozen" fall through silently on purpose: neither is a fault, and a stale
+    # DB must never speak the "browser session expired" line.
     if not do_import and why == "degraded":
         speak(msgs, st, "import_hold", "paused",
               "⏸ gemini-web2api: paid tier degraded — cookie re-import paused on purpose. "
@@ -760,6 +845,13 @@ def main():
             for oid in old:
                 api("/admin/api/cookies/%s" % oid, tok, "DELETE")
             note_import(st, h, int(time.time()))
+            # GUL-1387: record the file identity ONLY after the candidate validated. A failed
+            # /check must keep the previous baseline, so the next tick tries the same DB again
+            # instead of silently skipping a login the browser already wrote.
+            fresh_db = db_identity(db) if db else None
+            if fresh_db:
+                st["import_db"] = fresh_db
+            st.pop("import_skipped_reason", None)
             msgs.append("✅ gemini-web2api: fresh cookie imported and validated"
                         + (" (retired %d stale entry/ies)." % len(old) if old else "."))
 
