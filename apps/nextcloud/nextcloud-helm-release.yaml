@@ -47,11 +47,22 @@ spec:
   values:
     image:
       flavor: apache
-      # Pinned deliberately: charts cap at Nextcloud 33.0.5, but we must run
-      # 33.0.11 to get the rebuilt image with PHP >= 8.4.27 (CVE-2026-109618 /
-      # CVE-2026-109619, unauthenticated PHP RCE). Step 1 of the 33 -> 34 -> 35
-      # major upgrade path; Nextcloud refuses to skip a major version.
-      tag: "35.0.3-apache"
+      # Pinned to an exact digest on purpose. Nextcloud ships security fixes by
+      # REBUILDING an existing tag instead of cutting a new version, so
+      # `35.0.3-apache` silently changed content on 2026-11-19 (image built
+      # 15:13Z) to pick up the PHP security release: 8.5.12 -> 8.5.13
+      # (18 CVEs incl. the session-serializer and PHP-FPM FastCGI issues,
+      # CVE-2026-109618 / CVE-2026-109619 on the CISA KEV list). The tag alone
+      # cannot record that, and a running pod keeps its old digest. Pinning the
+      # index digest makes every rollout pull the patched build.
+      #
+      # No 35.0.4 exists yet (checked 2026-11-20): 35.0.3-apache IS the newest
+      # published tag, re-spun against PHP 8.5.13.
+      #
+      # Chart value is rendered as `<registry>/<repo>:<tag>`, so the digest
+      # suffix rides along as a normal OCI reference. Bump this digest (not just
+      # the version) the next time Nextcloud re-spins a tag.
+      tag: "35.0.3-apache@sha256:f22d1dd63844bd15bbf6c2019149653c3d1c775ba48b173b56c3c6ad5f386196"
 
     replicaCount: 1
 
