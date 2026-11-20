@@ -91,6 +91,34 @@ Optional per entry:
 - `variables` — extra Grafana template variables as ready-made variable objects, merged
   after the two required datasource variables. Hindsight adds a `tenant` query variable,
   which every one of its queries filters on.
+- `platform` — `true` for a dashboard that is about the cluster itself rather than one
+  application (`Observability — Pipeline health`, `Homelab — Flux reconciliation and
+  nodes`, the power and system-load boards). The row panels and every Prometheus target
+  then carry the pinned Prometheus UID and the Loki row the pinned Loki UID instead of
+  `${datasource}` / `${loki}`, because these boards are also the dashboards that answer
+  "is the datasource itself alive?". The logs panels keep the `${loki}` variable.
+- `logsNamespace` — the namespace the Logs row streams from, when it is not the
+  dashboard's own (defaults to `k8sNamespace` or `namespace`).
+
+A dashboard of an application is an entry in this file, not a hand-written ConfigMap:
+`karakeep`, `riffradar`, `openchamber` and `host-watch` were the last four apps without
+one and are rendered here now. An app's directory `kustomization.yaml` must list the
+rendered `*-dashboard-configmap.yaml`, otherwise Flux never applies it and AC-2 of
+`scripts/tests/dashboard-standard-check.sh` says so by name.
+
+Three of those four are wired that way today — `apps/host-watch`, `apps/riffradar` and
+`apps/openchamber` are nested kustomizations, listed as `- <app>/` in
+`apps/kustomization.yaml`. `apps/karakeep` was not: its 21 manifests are enumerated one by
+one in `apps/kustomization.yaml` (lines 158-185), so nothing there reads
+`apps/karakeep/kustomization.yaml`. GUL-1600 added that nested kustomization (all 21
+manifests plus the dashboard, `kubectl kustomize apps/karakeep` renders and carries
+`ConfigMap/karakeep-dashboard`), and the dashboard is applied as soon as that enumeration
+is replaced by `- karakeep/`. Until then Flux does not apply `karakeep-dashboard`, and the
+`grafana_dashboard` ConfigMap is present in the repo but missing from the cluster. The
+switch edits `apps/kustomization.yaml`, which this work order's `allowedPaths` does not
+cover, so it is a one-line follow-up: replace lines 158-185 with `- karakeep/` — replace,
+not add, because listing a directory *and* its files registers every object twice and
+`kubectl kustomize ./apps` then refuses the whole root.
 
 ## Adding or changing a dashboard
 
@@ -130,10 +158,13 @@ manifest, and every generated *and* hand-maintained dashboard has to obey it.
 Run it the same way as the standard suite: `bash scripts/tests/dashboard-liveness-check.sh`
 (`--ac N` for one rule).
 
-## Not in this set
+## Not app dashboards: the platform boards are rendered too
 
-The four dashboards of the observability stack itself
-(`infrastructure/observability/dashboards/*-dashboard-configmap.yaml` — Prometheus,
-Loki, Tempo, Collector) are maintained in place, not rendered from this manifest. They
-still carry one pinned Prometheus UID and one pinned Loki UID, which
-`infrastructure/observability/tests/signal-correlation-check.sh` asserts.
+The five dashboards of the observability stack and the cluster itself
+(`infrastructure/observability/dashboards/*-dashboard-configmap.yaml`: pipeline health,
+SLOs, Flux reconciliation and nodes, power and thermals, system load) are generated from
+this same manifest, with `"platform": true`. They still carry one pinned Prometheus UID
+and one pinned Loki UID, which
+`infrastructure/observability/tests/signal-correlation-check.sh` asserts — that is what
+`platform` is for. Re-rendering them is what keeps them honest: before GUL-1973 they were
+the only dashboards in the repo nobody could reproduce.

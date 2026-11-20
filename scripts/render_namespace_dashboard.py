@@ -41,6 +41,17 @@ MANIFEST_DEFAULT = "scripts/dashboards/manifest.json"
 PROM = {"type": "prometheus", "uid": "${datasource}"}
 LOKI = {"type": "loki", "uid": "${loki}"}
 
+# The two uids `infrastructure/observability/grafana-helm-release.yaml` pins
+# (GUL-1693). A `platform` dashboard of the observability stack itself names
+# them instead of the variables: signal-correlation-check.sh AC-1 requires the
+# dashboards to query exactly one Prometheus uid and one Loki uid, and answers
+# "the dashboards query 0 prometheus uids, so there is no single uid to pin"
+# once every panel in the set uses ${datasource}. The row panels carry the uid
+# and the data panels resolve a variable, so dashboard-liveness-check.sh AC-5
+# (every logs panel declares ${loki}) still holds.
+PINNED_PROM = {"type": "prometheus", "uid": "PBFA97CFB590B2093"}
+PINNED_LOKI = {"type": "loki", "uid": "P8E80F9AEF21F6940"}
+
 ROW_ORDER = ("Golden signals", "Resources", "Logs")
 
 HOMELAB_LINK = {
@@ -205,6 +216,12 @@ class Dashboard:
     def __init__(self, spec):
         self.spec = spec
         self.namespace = spec["k8sNamespace"]
+        # A platform dashboard shows the cluster, not one namespace's workloads,
+        # so it renders only the manifest's own panels and pins the datasource
+        # uids (see PINNED_PROM above).
+        self.is_platform = bool(spec.get("platform"))
+        self.prom = dict(PINNED_PROM) if self.is_platform else dict(PROM)
+        self.logs_namespace = spec.get("logsNamespace") or self.namespace
         self.panels = []
         self.next_id = 1
         self.y = 0
@@ -217,13 +234,15 @@ class Dashboard:
         self.panels.append(panel)
         return panel
 
-    def row(self, title):
+    def row(self, title, datasource=None):
         panel = {
             "collapsed": False,
             "panels": [],
             "title": title,
             "type": "row",
         }
+        if self.is_platform:
+            panel["datasource"] = dict(datasource or self.prom)
         self._add(panel, 0, self.y, 24, 1)
         self.y += 1
 
@@ -232,7 +251,7 @@ class Dashboard:
             "options": {"content": content, "mode": "markdown"},
             "title": title,
             "type": "text",
-            "datasource": dict(PROM),
+            "datasource": dict(self.prom),
         }
         self._add(panel, 0, self.y, 24, h)
         self.y += h
@@ -240,7 +259,7 @@ class Dashboard:
     def timeseries(self, title, description, unit, targets, x, y, w=12, h=7,
                    min_val=None, max_val=None, thresholds=None, datasource=None):
         panel = {
-            "datasource": dict(datasource or PROM),
+            "datasource": dict(datasource or self.prom),
             "description": description,
             "fieldConfig": {
                 "defaults": timeseries_defaults(unit, min_val, max_val, thresholds),
@@ -256,7 +275,7 @@ class Dashboard:
     def stat(self, title, description, unit, targets, x, y, w=8, h=4,
              thresholds=None, datasource=None):
         panel = {
-            "datasource": dict(datasource or PROM),
+            "datasource": dict(datasource or self.prom),
             "description": description,
             "fieldConfig": {"defaults": stat_defaults(unit, thresholds), "overrides": []},
             "options": stat_options(),
@@ -267,7 +286,10 @@ class Dashboard:
         return self._add(panel, x, y, w, h)
 
     def logs(self, title, description):
-        namespace = self.namespace
+        # Always the ${loki} variable, even on a platform dashboard: a logs panel
+        # that pins a uid goes blank on a re-provisioned datasource and fails
+        # dashboard-liveness-check.sh AC-5.
+        namespace = self.logs_namespace
         base = '{k8s_namespace_name="%s"}' % namespace
         panel = {
             "datasource": dict(LOKI),
@@ -408,11 +430,13 @@ class Dashboard:
         """
         return service.get("k8sNamespace") or self.namespace
 
-    def resources(self):
-        self.row(ROW_ORDER[1])
-        ns = self.namespace
-        y = self.y
+    def service_stats(self):
+        """The CPU / memory / PVC stat triplet, rendered once per manifest service.
 
+        Shared with the platform dashboards: those list the workloads they care
+        about instead of covering a whole namespace.
+        """
+        y = self.y
         for service in self.spec.get("services") or []:
             pod = service["pod"]
             label = service.get("label") or pod
@@ -503,6 +527,13 @@ class Dashboard:
                     16, y,
                 )
             y += 4
+        self.y = y
+
+    def resources(self):
+        self.row(ROW_ORDER[1])
+        ns = self.namespace
+        self.service_stats()
+        y = self.y
 
         self.timeseries(
             "CPU usage vs request vs limit per pod",
@@ -685,9 +716,12 @@ class Dashboard:
         self.y = y
 
     def logs_row(self):
-        self.row(ROW_ORDER[2])
+        # On a platform dashboard the Loki uid has to appear somewhere and every
+        # logs panel must keep the variable, so the row carries the pinned uid.
+        self.row(ROW_ORDER[2],
+                 datasource=PINNED_LOKI if self.is_platform else None)
         self.logs(
-            "%s logs" % self.namespace,
+            "%s logs" % self.logs_namespace,
             "Every log line the namespace ships to Loki, with toggles for the "
             "error/warn and the startup/ready subsets.",
         )
@@ -743,7 +777,10 @@ class Dashboard:
                 targets.append(rendered)
             if not targets:
                 raise ValueError("manifest panel %r has no targets" % title)
-            datasource = LOKI if extra.get("datasource") == "loki" else PROM
+            datasource = (LOKI if extra.get("datasource") == "loki" else PROM)
+            if self.is_platform:
+                datasource = (PINNED_LOKI if extra.get("datasource") == "loki"
+                              else PINNED_PROM)
             thresholds = extra.get("thresholds")
             if kind == "stat":
                 width, height = extra.get("w", 8), extra.get("h", 4)
@@ -769,6 +806,8 @@ class Dashboard:
     def overview(self):
         footer = ("\n\nRe-rendered from `scripts/dashboards/manifest.json` — edit the "
                   "manifest or `scripts/render_namespace_dashboard.py`, never this JSON.")
+        if self.is_platform:
+            return (self.spec.get("overview") or "") + footer
         if not self.spec.get("slo"):
             return ("Standard dashboard for **%s**. Rows follow the homelab order: golden "
                     "signals (saturation, traffic, restarts, errors), then resources "
@@ -786,15 +825,34 @@ class Dashboard:
                 "is `docs/adr/adr-135-observability-design.md`."
                 % services) + footer
 
+    def platform(self):
+        """A dashboard of the platform itself, from the manifest's own panels.
+
+        The same three rows, but the golden signals of a collector or a node are
+        not `http_requests_total` and the resources are not one namespace, so
+        this row walk lists the workloads the entry names and fills the rest
+        from its panels.
+        """
+        self.row(ROW_ORDER[0])
+        self.custom_panels(ROW_ORDER[0])
+        self.row(ROW_ORDER[1])
+        self.service_stats()
+        self.custom_panels(ROW_ORDER[1])
+        self.logs_row()
+
     def render(self):
         spec = self.spec
         self.text("Overview", self.overview(), h=3)
-        if spec.get("slo"):
+        if self.is_platform:
+            self.platform()
+        elif spec.get("slo"):
             self.slo_golden_signals()
+            self.resources()
+            self.logs_row()
         else:
             self.golden_signals()
-        self.resources()
-        self.logs_row()
+            self.resources()
+            self.logs_row()
 
         dashboard = {
             "annotations": {"list": []},

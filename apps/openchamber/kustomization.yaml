@@ -43,6 +43,8 @@ resources:
   - openchamber-backup-cronjob.yaml
   # Observability (H2-28): namespace pod/health alerts
   - openchamber-prometheus-rules.yaml
+  # Grafana dashboard, generated from scripts/dashboards/manifest.json (GUL-1598)
+  - openchamber-dashboard-configmap.yaml
 configMapGenerator:
   - name: openchamber-sou-reporter-plugin
     namespace: openchamber

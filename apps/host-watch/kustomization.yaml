@@ -22,6 +22,8 @@ resources:
   - host-watch-networkpolicy.yaml
   - host-watch-service-monitor.yaml
   - host-watch-prometheus-rules.yaml
+  # Grafana dashboard, generated from scripts/dashboards/manifest.json (GUL-1598)
+  - host-watch-dashboard-configmap.yaml
   - host-watch-alertmanager-config.yaml
   - host-watch-mattermost-webhook-url.sops.yaml
   # The heartbeat token (GUL-643). Same value as
