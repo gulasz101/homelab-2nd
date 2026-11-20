@@ -91,6 +91,20 @@ Optional per entry:
 - `variables` — extra Grafana template variables as ready-made variable objects, merged
   after the two required datasource variables. Hindsight adds a `tenant` query variable,
   which every one of its queries filters on.
+- `platform` — `true` for a dashboard that is about the cluster itself rather than one
+  application (`Observability — Pipeline health`, `Homelab — Flux reconciliation and
+  nodes`, the power and system-load boards). The row panels and every Prometheus target
+  then carry the pinned Prometheus UID and the Loki row the pinned Loki UID instead of
+  `${datasource}` / `${loki}`, because these boards are also the dashboards that answer
+  "is the datasource itself alive?". The logs panels keep the `${loki}` variable.
+- `logsNamespace` — the namespace the Logs row streams from, when it is not the
+  dashboard's own (defaults to `k8sNamespace` or `namespace`).
+
+A dashboard of an application is an entry in this file, not a hand-written ConfigMap:
+`karakeep`, `riffradar`, `openchamber` and `host-watch` were the last four apps without
+one and are rendered here now. An app's directory `kustomization.yaml` must list the
+rendered `*-dashboard-configmap.yaml`, otherwise Flux never applies it and AC-2 of
+`scripts/tests/dashboard-standard-check.sh` says so by name.
 
 ## Adding or changing a dashboard
 
@@ -130,10 +144,13 @@ manifest, and every generated *and* hand-maintained dashboard has to obey it.
 Run it the same way as the standard suite: `bash scripts/tests/dashboard-liveness-check.sh`
 (`--ac N` for one rule).
 
-## Not in this set
+## Not app dashboards: the platform boards are rendered too
 
-The four dashboards of the observability stack itself
-(`infrastructure/observability/dashboards/*-dashboard-configmap.yaml` — Prometheus,
-Loki, Tempo, Collector) are maintained in place, not rendered from this manifest. They
-still carry one pinned Prometheus UID and one pinned Loki UID, which
-`infrastructure/observability/tests/signal-correlation-check.sh` asserts.
+The five dashboards of the observability stack and the cluster itself
+(`infrastructure/observability/dashboards/*-dashboard-configmap.yaml`: pipeline health,
+SLOs, Flux reconciliation and nodes, power and thermals, system load) are generated from
+this same manifest, with `"platform": true`. They still carry one pinned Prometheus UID
+and one pinned Loki UID, which
+`infrastructure/observability/tests/signal-correlation-check.sh` asserts — that is what
+`platform` is for. Re-rendering them is what keeps them honest: before GUL-1973 they were
+the only dashboards in the repo nobody could reproduce.

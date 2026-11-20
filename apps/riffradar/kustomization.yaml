@@ -38,3 +38,5 @@ resources:
   - riffradar-loki-rule.yaml
   - riffradar-alertmanager-config.yaml
   - riffradar-mattermost-webhook-url.sops.yaml
+  # Grafana dashboard, generated from scripts/dashboards/manifest.json (GUL-1598)
+  - riffradar-dashboard-configmap.yaml

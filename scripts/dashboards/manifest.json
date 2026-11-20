@@ -707,6 +707,181 @@
       ]
     },
     {
+      "output": "apps/host-watch/host-watch-dashboard-configmap.yaml",
+      "namespace": "host-watch",
+      "title": "host-watch — Off-host watchdog",
+      "uid": "host-watch-dashboard",
+      "services": [
+        {"pod": "host-watch", "label": "host-watch"}
+      ],
+      "panels": [
+        {
+          "title": "Probes succeeding",
+          "description": "hostwatch_probe_success is 1 per configured target while the last probe passed, so a drop here is the exact set of endpoints that went dark.",
+          "unit": "short",
+          "targets": [
+            {"expr": "sum(hostwatch_probe_success)", "legend": "passing"},
+            {"expr": "count(hostwatch_probe_success)", "legend": "configured"}
+          ]
+        },
+        {
+          "title": "Heartbeat age",
+          "description": "Seconds since the watchdog last received a heartbeat from the host it watches. HostWatchHeartbeatMissing fires on the same series, so a rising line is the alert before the alert.",
+          "unit": "s",
+          "targets": [
+            {"expr": "time() - max(hostwatch_heartbeat_last_seen_timestamp_seconds)", "legend": "since last heartbeat"}
+          ]
+        },
+        {
+          "title": "Heartbeat rejections (24h)",
+          "description": "Heartbeats the watchdog accepted the connection for but refused, which is what a mis-scoped token or a clock skew looks like from the inside.",
+          "unit": "short",
+          "targets": [
+            {"expr": "sum(increase(hostwatch_heartbeat_rejected_total[24h]))", "legend": "rejected"}
+          ]
+        },
+        {
+          "title": "Consecutive probe failures",
+          "description": "Per-target failure count straight from hostwatch_probe_consecutive_failures. HostWatchProbeFailing pages at 3, so this panel shows how close each target is to that line.",
+          "unit": "short",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "hostwatch_probe_consecutive_failures", "legend": "{{target}}"}
+          ]
+        },
+        {
+          "title": "Probe duration by target",
+          "description": "How long each watched endpoint took to answer, from hostwatch_probe_duration_seconds. A slow probe is a degraded dependency before it is a down one.",
+          "unit": "s",
+          "type": "timeseries",
+          "row": "Resources",
+          "targets": [
+            {"expr": "hostwatch_probe_duration_seconds", "legend": "{{target}}"}
+          ]
+        }
+      ]
+    },
+    {
+      "output": "apps/karakeep/karakeep-dashboard-configmap.yaml",
+      "namespace": "karakeep",
+      "title": "karakeep — Bookmarks, search and AI tagging",
+      "uid": "karakeep-dashboard",
+      "services": [
+        {"pod": "karakeep", "label": "karakeep app", "pvc": "data-karakeep-0", "exclude": ["karakeep-meilisearch"]},
+        {"pod": "karakeep-meilisearch", "label": "meilisearch", "pvc": "karakeep-meilisearch"},
+        {"pod": "cloudflared-karakeep", "label": "tunnel"}
+      ],
+      "panels": [
+        {
+          "title": "Backup age",
+          "description": "Hours since karakeep-backup last succeeded, from kube_cronjob_status_last_successful_time. KarakeepBackupStale pages at 30 hours, so this is the same clock the alert reads.",
+          "unit": "h",
+          "targets": [
+            {"expr": "(time() - max(kube_cronjob_status_last_successful_time{namespace=\"karakeep\",cronjob=\"karakeep-backup\"})) / 3600", "legend": "hours since success"}
+          ]
+        },
+        {
+          "title": "Replicas ready",
+          "description": "Ready replicas against the requested count for every Deployment in the namespace, so a wedged rollout shows as ready below desired instead of a green dashboard.",
+          "unit": "short",
+          "targets": [
+            {"expr": "sum(kube_deployment_status_replicas_ready{namespace=\"karakeep\"})", "legend": "ready"},
+            {"expr": "sum(kube_deployment_spec_replicas{namespace=\"karakeep\"})", "legend": "desired"}
+          ]
+        },
+        {
+          "title": "Failed jobs (6h)",
+          "description": "Jobs in the namespace that ended in Failed, which is the backup and maintenance half of the golden signals that no HTTP metric covers.",
+          "unit": "short",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "sum(increase(kube_job_status_failed{namespace=\"karakeep\"}[6h]))", "legend": "failed jobs"}
+          ]
+        }
+      ]
+    },
+    {
+      "output": "apps/openchamber/openchamber-dashboard-configmap.yaml",
+      "namespace": "openchamber",
+      "title": "openchamber — Workspaces, sync and the agent runner",
+      "uid": "openchamber-dashboard",
+      "services": [
+        {"pod": "openchamber", "label": "openchamber web", "pvc": "openchamber-storage", "exclude": ["openchamber-oauth2-proxy", "openchamber-itsaplan-runner", "openchamber-itsaplan-sou-runner", "openchamber-syncthing"]},
+        {"pod": "openchamber-oauth2-proxy", "label": "oauth2 proxy"},
+        {"pod": "openchamber-itsaplan-runner", "label": "itsaplan runner"},
+        {"pod": "openchamber-itsaplan-sou-runner", "label": "itsaplan sourcer"},
+        {"pod": "openchamber-syncthing", "label": "syncthing"},
+        {"pod": "cloudflared-openchamber", "label": "tunnel"}
+      ],
+      "panels": [
+        {
+          "title": "Memory against limit",
+          "description": "Working set of the whole namespace as a percentage of its memory limits. OpenChamberMemoryAbove85PercentLimit pages on the same ratio, per pod.",
+          "unit": "percent",
+          "targets": [
+            {"expr": "100 * sum(container_memory_working_set_bytes{namespace=\"openchamber\",container!=\"\"}) / sum(kube_pod_container_resource_limits{namespace=\"openchamber\",resource=\"memory\",container!=\"\"})", "legend": "percent of limit"}
+          ]
+        },
+        {
+          "title": "Workspace volume used",
+          "description": "Used space on the openchamber-data claim as a percentage of its capacity. The NFS export behind it is shared with the host, so a leak here fills a disk the host also writes to.",
+          "unit": "percent",
+          "targets": [
+            {"expr": "100 * kubelet_volume_stats_used_bytes{namespace=\"openchamber\",persistentvolumeclaim=\"openchamber-data\"} / kubelet_volume_stats_capacity_bytes{namespace=\"openchamber\",persistentvolumeclaim=\"openchamber-data\"}", "legend": "used"}
+          ]
+        },
+        {
+          "title": "Restarts by container",
+          "description": "Container restarts in the namespace over the last hour. The agent runner and the syncthing sidecar are the two that restart without taking the web pod down.",
+          "unit": "short",
+          "type": "timeseries",
+          "row": "Resources",
+          "targets": [
+            {"expr": "sum by (pod, container) (increase(kube_pod_container_status_restarts_total{namespace=\"openchamber\"}[1h]))", "legend": "{{pod}}/{{container}}"}
+          ]
+        }
+      ]
+    },
+    {
+      "output": "apps/riffradar/riffradar-dashboard-configmap.yaml",
+      "namespace": "riffradar",
+      "title": "riffradar — Demo app, backups and restarts",
+      "uid": "riffradar-dashboard",
+      "services": [
+        {"pod": "riffradar", "label": "riffradar", "pvc": "riffradar-data", "exclude": ["riffradar-backup"]},
+        {"pod": "cloudflared-riffradar", "label": "tunnel"}
+      ],
+      "panels": [
+        {
+          "title": "Backup age",
+          "description": "Hours since riffradar-backup last succeeded. RiffRadarBackupStale pages on this series, and the app exports no /metrics of its own, so the backup is the only liveness signal with a schedule.",
+          "unit": "h",
+          "targets": [
+            {"expr": "(time() - max(kube_cronjob_status_last_successful_time{namespace=\"riffradar\",cronjob=\"riffradar-backup\"})) / 3600", "legend": "hours since success"}
+          ]
+        },
+        {
+          "title": "Replicas ready",
+          "description": "Ready replicas against the requested count for every Deployment in the namespace. RiffRadarPodNotReady excludes Job-owned pods, so this is the same population the alert judges.",
+          "unit": "short",
+          "targets": [
+            {"expr": "sum(kube_deployment_status_replicas_ready{namespace=\"riffradar\"})", "legend": "ready"},
+            {"expr": "sum(kube_deployment_spec_replicas{namespace=\"riffradar\"})", "legend": "desired"}
+          ]
+        },
+        {
+          "title": "Restarts per hour",
+          "description": "Container restarts in the namespace over the last hour. RiffRadarRestartLoop fires from this same counter, so a non-zero line is the leading edge of that page.",
+          "unit": "short",
+          "type": "timeseries",
+          "row": "Resources",
+          "targets": [
+            {"expr": "sum by (pod, container) (increase(kube_pod_container_status_restarts_total{namespace=\"riffradar\"}[1h]))", "legend": "{{pod}}/{{container}}"}
+          ]
+        }
+      ]
+    },
+    {
       "output": "infrastructure/auth/auth-dashboard-configmap.yaml",
       "namespace": "auth",
       "title": "auth — Authentik Identity",
@@ -730,6 +905,444 @@
       "uid": "observability-slos",
       "description": "SLOs and error budgets for Open WebUI, Hindsight API and Grafana, generated from scripts/dashboards/manifest.json.",
       "slo": true
+    },
+    {
+      "output": "infrastructure/observability/dashboards/observability-overview-dashboard-configmap.yaml",
+      "namespace": "Observability",
+      "k8sNamespace": "observability",
+      "configmapName": "observability-overview-dashboard",
+      "key": "observability-overview.json",
+      "folder": "observability",
+      "title": "Observability — Pipeline health",
+      "uid": "observability-overview",
+      "platform": true,
+      "description": "The telemetry pipeline itself: what the OpenTelemetry Collector accepts, exports and fails to send, how full its queue is, and whether the components behind it are up. Generated from scripts/dashboards/manifest.json.",
+      "overview": "Where telemetry is lost. The receiver counters are what applications hand the collector; the exporter counters are what actually reaches Loki, Tempo and Prometheus. A board that is green on pod readiness and red here is the failure class this dashboard exists for: every pod is ready and the data still stops.",
+      "services": [
+        {"pod": "opentelemetry-collector", "label": "collector"},
+        {"pod": "loki", "label": "loki"},
+        {"pod": "tempo", "label": "tempo"},
+        {"pod": "prometheus-stack-kube-prom-prometheus", "label": "prometheus"},
+        {"pod": "grafana", "label": "grafana", "pvc": "grafana"}
+      ],
+      "panels": [
+        {
+          "title": "Telemetry accepted per second",
+          "description": "Collector receiver throughput by signal, from otelcol_receiver_accepted_spans, _metric_points and _log_records. These counters carry no _total suffix on the :8888 scrape endpoint.",
+          "unit": "reqps",
+          "targets": [
+            {"expr": "sum(rate(otelcol_receiver_accepted_spans[5m]))", "legend": "spans"},
+            {"expr": "sum(rate(otelcol_receiver_accepted_metric_points[5m]))", "legend": "metric points"},
+            {"expr": "sum(rate(otelcol_receiver_accepted_log_records[5m]))", "legend": "log records"}
+          ]
+        },
+        {
+          "title": "Telemetry exported per second",
+          "description": "Collector exporter throughput by signal, from otelcol_exporter_sent_*. Compare with the accepted panel: a widening gap is data the pipeline took and did not deliver.",
+          "unit": "reqps",
+          "targets": [
+            {"expr": "sum(rate(otelcol_exporter_sent_spans[5m]))", "legend": "spans"},
+            {"expr": "sum(rate(otelcol_exporter_sent_metric_points[5m]))", "legend": "metric points"},
+            {"expr": "sum(rate(otelcol_exporter_sent_log_records[5m]))", "legend": "log records"}
+          ]
+        },
+        {
+          "title": "Export failures per second",
+          "description": "Rate of otelcol_exporter_send_failed_*, the batch the collector dropped for good. Any sustained non-zero value here means the backends are rejecting or unreachable.",
+          "unit": "reqps",
+          "targets": [
+            {"expr": "sum(rate(otelcol_exporter_send_failed_metric_points[5m]))", "legend": "metric points"},
+            {"expr": "sum(rate(otelcol_exporter_send_failed_log_records[5m]))", "legend": "log records"}
+          ]
+        },
+        {
+          "title": "Exporter queue fill",
+          "description": "otelcol_exporter_queue_size as a percentage of otelcol_exporter_queue_capacity. This is the one number that says the collector is falling behind before it starts dropping batches.",
+          "unit": "percent",
+          "targets": [
+            {"expr": "100 * sum(otelcol_exporter_queue_size) / sum(otelcol_exporter_queue_capacity)", "legend": "queue fill"}
+          ]
+        },
+        {
+          "title": "Receiver throughput by signal",
+          "description": "Per-signal receiver throughput on a timeline, so a single exporter failing does not hide behind the sum of the other two.",
+          "unit": "reqps",
+          "type": "timeseries",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "sum(rate(otelcol_receiver_accepted_spans[5m]))", "legend": "spans"},
+            {"expr": "sum(rate(otelcol_receiver_accepted_metric_points[5m]))", "legend": "metric points"},
+            {"expr": "sum(rate(otelcol_receiver_accepted_log_records[5m]))", "legend": "log records"}
+          ]
+        },
+        {
+          "title": "Exporter throughput by signal",
+          "description": "Per-signal exporter throughput on a timeline. Read it against the receiver panel above it: the two lines should track each other.",
+          "unit": "reqps",
+          "type": "timeseries",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "sum(rate(otelcol_exporter_sent_spans[5m]))", "legend": "spans"},
+            {"expr": "sum(rate(otelcol_exporter_sent_metric_points[5m]))", "legend": "metric points"},
+            {"expr": "sum(rate(otelcol_exporter_sent_log_records[5m]))", "legend": "log records"}
+          ]
+        },
+        {
+          "title": "Exporter send failures",
+          "description": "Failed exports per second over time, split by signal, so a backend outage is visible as a shape rather than a single number.",
+          "unit": "reqps",
+          "type": "timeseries",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "sum(rate(otelcol_exporter_send_failed_metric_points[5m]))", "legend": "metric points"},
+            {"expr": "sum(rate(otelcol_exporter_send_failed_log_records[5m]))", "legend": "log records"}
+          ]
+        },
+        {
+          "title": "Exporter queue depth vs capacity",
+          "description": "Queue size and capacity as two lines. Capacity is flat, so the gap closing is the collector running out of headroom.",
+          "unit": "short",
+          "type": "timeseries",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "sum(otelcol_exporter_queue_size)", "legend": "queued items"},
+            {"expr": "sum(otelcol_exporter_queue_capacity)", "legend": "capacity"}
+          ]
+        },
+        {
+          "title": "Refused telemetry per second",
+          "description": "otelcol_receiver_refused_*: data the collector rejected before it ever reached a queue. Memory limits and malformed batches both show up here.",
+          "unit": "reqps",
+          "type": "timeseries",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "sum(rate(otelcol_receiver_refused_spans[5m]))", "legend": "spans"},
+            {"expr": "sum(rate(otelcol_receiver_refused_metric_points[5m]))", "legend": "metric points"},
+            {"expr": "sum(rate(otelcol_receiver_refused_log_records[5m]))", "legend": "log records"}
+          ]
+        },
+        {
+          "title": "Collector process memory",
+          "description": "otelcol_process_memory_rss for the collector. The queue lives in memory, so this is the ceiling that turns a slow backend into dropped data.",
+          "unit": "bytes",
+          "targets": [
+            {"expr": "sum(otelcol_process_memory_rss)", "legend": "rss"}
+          ]
+        },
+        {
+          "title": "Backend pods ready",
+          "description": "Ready pods behind the pipeline: Loki, Tempo and Prometheus. When this drops, the export failure panels above are the symptom and this is the cause.",
+          "unit": "short",
+          "targets": [
+            {"expr": "sum(kube_pod_status_ready{namespace=\"observability\",pod=~\"loki.*\",condition=\"true\"})", "legend": "loki"},
+            {"expr": "sum(kube_pod_status_ready{namespace=\"observability\",pod=~\"tempo.*\",condition=\"true\"})", "legend": "tempo"},
+            {"expr": "sum(kube_pod_status_ready{namespace=\"observability\",pod=~\"prometheus.*\",condition=\"true\"})", "legend": "prometheus"}
+          ]
+        }
+      ]
+    },
+    {
+      "output": "infrastructure/observability/dashboards/kube-flux-overview-dashboard-configmap.yaml",
+      "namespace": "Homelab",
+      "k8sNamespace": "flux-system",
+      "configmapName": "kube-flux-overview-dashboard",
+      "key": "kube-flux-overview.json",
+      "folder": "Homelab",
+      "title": "Homelab — Flux reconciliation and nodes",
+      "uid": "kube-flux-overview",
+      "platform": true,
+      "description": "GitOps health for the cluster: flux controller reconciliations, stuck HelmReleases and Kustomizations, and the node pressure underneath them. Generated from scripts/dashboards/manifest.json.",
+      "overview": "Does the cluster still converge? Reconciliation rate and duration are on top, stuck objects next, then node CPU, memory and disk. A dashboard that is green on application pods and red here means main is merged and not applied.",
+      "services": [
+        {"pod": "source-controller", "label": "source-controller"},
+        {"pod": "kustomize-controller", "label": "kustomize-controller"},
+        {"pod": "helm-controller", "label": "helm-controller"},
+        {"pod": "notification-controller", "label": "notification-controller"}
+      ],
+      "panels": [
+        {
+          "title": "Flux pod restarts (5m)",
+          "description": "Controller restarts in flux-system over five minutes. A controller that restarts silently stops reconciling, which looks identical to a quiet cluster.",
+          "unit": "short",
+          "targets": [
+            {"expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"flux-system\"}[5m]))", "legend": "restarts"}
+          ]
+        },
+        {
+          "title": "Flux reconciliations per minute",
+          "description": "gotk_reconcile_duration_seconds_count as a per-minute rate: how much work the controllers are actually doing.",
+          "unit": "short",
+          "targets": [
+            {"expr": "sum(rate(gotk_reconcile_duration_seconds_count[1m])) * 60", "legend": "reconciliations/min"}
+          ]
+        },
+        {
+          "title": "Stuck HelmReleases",
+          "description": "HelmReleases reporting ready=False in gotk_resource_info. Each one is a release that will not converge until someone looks.",
+          "unit": "short",
+          "targets": [
+            {"expr": "count(gotk_resource_info{customresource_kind=\"HelmRelease\",ready=\"False\"})", "legend": "stuck"}
+          ]
+        },
+        {
+          "title": "Stuck Kustomizations",
+          "description": "Kustomizations reporting ready=False. This is the count that explains why a merged manifest never reached the cluster.",
+          "unit": "short",
+          "targets": [
+            {"expr": "count(gotk_resource_info{customresource_kind=\"Kustomization\",ready=\"False\"})", "legend": "stuck"}
+          ]
+        },
+        {
+          "title": "Reconcile duration p50 / p95 / p99",
+          "description": "Quantiles of gotk_reconcile_duration_seconds by kind. Reconciling is allowed to be slow; growing slowly forever is how a cluster falls behind main.",
+          "unit": "s",
+          "type": "timeseries",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "histogram_quantile(0.50, sum(rate(gotk_reconcile_duration_seconds_bucket[5m])) by (le, kind))", "legend": "p50 {{kind}}"},
+            {"expr": "histogram_quantile(0.95, sum(rate(gotk_reconcile_duration_seconds_bucket[5m])) by (le, kind))", "legend": "p95 {{kind}}"},
+            {"expr": "histogram_quantile(0.99, sum(rate(gotk_reconcile_duration_seconds_bucket[5m])) by (le, kind))", "legend": "p99 {{kind}}"}
+          ]
+        },
+        {
+          "title": "Controller CPU against limit",
+          "description": "Controller CPU usage next to the limit it is allowed, from kube_pod_container_resource_limits. A controller throttled at its limit reconciles late, not never.",
+          "unit": "cores",
+          "type": "timeseries",
+          "row": "Resources",
+          "targets": [
+            {"expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"flux-system\",container!=\"\"}[5m]))", "legend": "{{pod}} used"},
+            {"expr": "sum by (pod) (kube_pod_container_resource_limits{namespace=\"flux-system\",resource=\"cpu\",container!=\"\"})", "legend": "{{pod}} limit"}
+          ]
+        },
+        {
+          "title": "Node status",
+          "description": "Nodes reporting Ready against the number of nodes the API server knows about.",
+          "unit": "short",
+          "targets": [
+            {"expr": "sum(kube_node_status_condition{condition=\"Ready\",status=\"true\"})", "legend": "ready"},
+            {"expr": "count(kube_node_info)", "legend": "total"}
+          ]
+        },
+        {
+          "title": "Node CPU utilisation",
+          "description": "Idle CPU inverted, per instance, from node-exporter. The pressure that makes every controller above slow at once.",
+          "unit": "percent",
+          "type": "timeseries",
+          "row": "Resources",
+          "targets": [
+            {"expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{job=\"node-exporter\",mode=\"idle\"}[5m])) * 100)", "legend": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Node memory utilisation",
+          "description": "Memory in use per instance on the timeline. Higher memory delays every reconcile without failing any of them.",
+          "unit": "percent",
+          "type": "timeseries",
+          "row": "Resources",
+          "targets": [
+            {"expr": "100 * (1 - (node_memory_MemAvailable_bytes{job=\"node-exporter\"} / node_memory_MemTotal_bytes{job=\"node-exporter\"}))", "legend": "{{instance}}"}
+          ]
+        }
+      ]
+    },
+    {
+      "output": "infrastructure/observability/dashboards/homelab-gpu-power-dashboard-configmap.yaml",
+      "namespace": "Homelab",
+      "k8sNamespace": "observability",
+      "configmapName": "homelab-gpu-power-dashboard",
+      "key": "homelab-gpu-power.json",
+      "folder": "Homelab",
+      "title": "Homelab — Power and thermals",
+      "uid": "homelab-gpu-power",
+      "platform": true,
+      "description": "What the homelab host is doing to its own silicon: package temperature, RAPL power draw, thermal zones and fans from node-exporter. Generated from scripts/dashboards/manifest.json.",
+      "overview": "Thermals and power for the physical host. Temperatures and fan speeds come from node-exporter hwmon and thermal zones, draw from the RAPL energy counters. Rising package power at flat temperature is work; flat power at rising temperature is airflow.",
+      "services": [],
+      "panels": [
+        {
+          "title": "CPU package temperature",
+          "description": "The coretemp package sensor from node_hwmon_temp_celsius. This is the number that decides whether the host throttles.",
+          "unit": "celsius",
+          "targets": [
+            {"expr": "node_hwmon_temp_celsius{job=\"node-exporter\",chip=~\"platform_coretemp.*\",sensor=~\"temp1\"}", "legend": "{{chip}}"}
+          ]
+        },
+        {
+          "title": "CPU package power",
+          "description": "RAPL package energy converted to watts. The same series the existing power board has always reported, now generated.",
+          "unit": "watt",
+          "targets": [
+            {"expr": "rate(node_rapl_package_joules_total{job=\"node-exporter\"}[5m])", "legend": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Hottest sensor",
+          "description": "Maximum of every hwmon temperature on the host, so a single hot sensor cannot hide behind an average.",
+          "unit": "celsius",
+          "targets": [
+            {"expr": "max(node_hwmon_temp_celsius{job=\"node-exporter\"})", "legend": "hottest"}
+          ]
+        },
+        {
+          "title": "Thermal zones",
+          "description": "ACPI thermal zone temperatures, which on this host is where the NVMe and board sensors show up.",
+          "unit": "celsius",
+          "type": "timeseries",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "node_thermal_zone_temp{job=\"node-exporter\"}", "legend": "{{zone}}"}
+          ]
+        },
+        {
+          "title": "Fan speeds",
+          "description": "node_hwmon_fan_rpm per fan. A fan reading zero at high package temperature is the failure this board exists to catch.",
+          "unit": "short",
+          "type": "timeseries",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "node_hwmon_fan_rpm{job=\"node-exporter\"}", "legend": "{{chip}}"}
+          ]
+        },
+        {
+          "title": "Load average",
+          "description": "node_load1 for the host. Work is what makes power draw go up, so this is the explanation for the panels above.",
+          "unit": "short",
+          "type": "timeseries",
+          "row": "Resources",
+          "targets": [
+            {"expr": "node_load1{job=\"node-exporter\"}", "legend": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Memory utilisation",
+          "description": "Memory in use on the host. Sustained high memory is the other half of load: it is why a machine that is idle on CPU is still doing work.",
+          "unit": "percent",
+          "type": "timeseries",
+          "row": "Resources",
+          "targets": [
+            {"expr": "100 * (1 - (node_memory_MemAvailable_bytes{job=\"node-exporter\"} / node_memory_MemTotal_bytes{job=\"node-exporter\"}))", "legend": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Filesystem utilisation",
+          "description": "Used space per mountpoint, tmpfs and overlay excluded. A full disk raises the temperature of nothing and breaks everything.",
+          "unit": "percent",
+          "type": "timeseries",
+          "row": "Resources",
+          "targets": [
+            {"expr": "100 - ((node_filesystem_avail_bytes{job=\"node-exporter\",fstype!=\"tmpfs\",fstype!=\"overlay\"} * 100) / node_filesystem_size_bytes{job=\"node-exporter\",fstype!=\"tmpfs\",fstype!=\"overlay\"})", "legend": "{{mountpoint}}"}
+          ]
+        }
+      ]
+    },
+    {
+      "output": "infrastructure/observability/dashboards/homelab-system-load-dashboard-configmap.yaml",
+      "namespace": "Homelab",
+      "k8sNamespace": "observability",
+      "configmapName": "homelab-system-load-dashboard",
+      "key": "homelab-system-load.json",
+      "folder": "Homelab",
+      "title": "Homelab — System load and pressure",
+      "uid": "homelab-system-load",
+      "platform": true,
+      "description": "Host and pod pressure in one place: load, CPU, memory, disk I/O, network and the busiest containers by CPU and memory. Generated from scripts/dashboards/manifest.json.",
+      "overview": "Which resource is short. Host load, CPU, memory and disk first, then the containers responsible for it. Every panel is derived, not hand-written: re-rendering reproduces this file byte for byte.",
+      "services": [],
+      "panels": [
+        {
+          "title": "Load average per host",
+          "description": "node_load1 and node_load5 on the same axis. Load above the core count is a queue, and on this host the queue is usually disk rather than CPU.",
+          "unit": "short",
+          "targets": [
+            {"expr": "node_load1{job=\"node-exporter\"}", "legend": "load1 {{instance}}"},
+            {"expr": "node_load5{job=\"node-exporter\"}", "legend": "load5 {{instance}}"}
+          ]
+        },
+        {
+          "title": "CPU utilisation per host",
+          "description": "Idle CPU inverted, per instance, from node-exporter. The same series node CPU alerts fire on.",
+          "unit": "percent",
+          "targets": [
+            {"expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{job=\"node-exporter\",mode=\"idle\"}[5m])) * 100)", "legend": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Memory used per host",
+          "description": "Memory in use per instance from MemAvailable against MemTotal. Swap pressure starts well before this reaches 100.",
+          "unit": "percent",
+          "targets": [
+            {"expr": "100 * (1 - (node_memory_MemAvailable_bytes{job=\"node-exporter\"} / node_memory_MemTotal_bytes{job=\"node-exporter\"}))", "legend": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Filesystem used per mountpoint",
+          "description": "Used space per mountpoint, tmpfs and overlay excluded. The homelab has several NFS exports, so the mountpoint label is the whole story.",
+          "unit": "percent",
+          "targets": [
+            {"expr": "100 - ((node_filesystem_avail_bytes{job=\"node-exporter\",fstype!=\"tmpfs\",fstype!=\"overlay\"} * 100) / node_filesystem_size_bytes{job=\"node-exporter\",fstype!=\"tmpfs\",fstype!=\"overlay\"})", "legend": "{{mountpoint}}"}
+          ]
+        },
+        {
+          "title": "Disk I/O utilisation",
+          "description": "Percentage of wall time each device spent serving I/O. This is usually the real explanation for load on this host.",
+          "unit": "percent",
+          "type": "timeseries",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "100 * rate(node_disk_io_time_seconds_total{job=\"node-exporter\"}[5m])", "legend": "{{device}}"}
+          ]
+        },
+        {
+          "title": "Network receive per interface",
+          "description": "Inbound bytes per second per physical interface. veth and loopback are excluded so container churn does not dominate the graph.",
+          "unit": "Bps",
+          "type": "timeseries",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "rate(node_network_receive_bytes_total{job=\"node-exporter\",device!~\"lo|veth.*|docker.*|br-.*\"}[5m])", "legend": "{{device}}"}
+          ]
+        },
+        {
+          "title": "Network transmit per interface",
+          "description": "Outbound bytes per second per physical interface, same exclusions as the receive panel.",
+          "unit": "Bps",
+          "type": "timeseries",
+          "row": "Golden signals",
+          "targets": [
+            {"expr": "rate(node_network_transmit_bytes_total{job=\"node-exporter\",device!~\"lo|veth.*|docker.*|br-.*\"}[5m])", "legend": "{{device}}"}
+          ]
+        },
+        {
+          "title": "Top pods by CPU",
+          "description": "The ten containers using the largest share of their CPU limit, from container_cpu_usage_seconds_total against kube_pod_container_resource_limits. Expressed against the limit so a hot pod is comparable to a cold one.",
+          "unit": "percent",
+          "type": "timeseries",
+          "row": "Resources",
+          "targets": [
+            {"expr": "topk(10, 100 * (sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!=\"\"}[5m])) / sum by (namespace, pod) (kube_pod_container_resource_limits{resource=\"cpu\",container!=\"\"})))", "legend": "{{namespace}}/{{pod}}"}
+          ]
+        },
+        {
+          "title": "Top pods by memory",
+          "description": "The ten containers using the largest share of their memory limit. Memory pressure on this host comes from a handful of pods, not from the sum.",
+          "unit": "percent",
+          "type": "timeseries",
+          "row": "Resources",
+          "targets": [
+            {"expr": "topk(10, 100 * (sum by (namespace, pod) (container_memory_working_set_bytes{container!=\"\"}) / sum by (namespace, pod) (kube_pod_container_resource_limits{resource=\"memory\",container!=\"\"})))", "legend": "{{namespace}}/{{pod}}"}
+          ]
+        },
+        {
+          "title": "Nodes ready",
+          "description": "Nodes reporting Ready against the number of nodes the API server knows about.",
+          "unit": "short",
+          "targets": [
+            {"expr": "sum(kube_node_status_condition{condition=\"Ready\",status=\"true\"})", "legend": "ready"},
+            {"expr": "count(kube_node_info)", "legend": "total"}
+          ]
+        }
+      ]
     }
   ]
 }
