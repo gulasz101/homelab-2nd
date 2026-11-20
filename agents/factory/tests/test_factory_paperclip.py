@@ -58,6 +58,11 @@ class State:
         self.interactions = []
         self.agents = {}
         self.runs = {}
+        # GUL-1943: every status change the stub ever made, in order — a settle may
+        # not walk a parked stage through `in_progress` on its way to `cancelled`.
+        self.transitions = []
+        # ...and every blockers-resolved wake it emitted. A wake starts a run.
+        self.wakes = []
         # projects and their workspaces: the factory resolves a work order's
         # checkout from the repo its spec names (GUL-1389)
         self.projects = {}
@@ -255,6 +260,22 @@ def make_handler(state):
                 issue = state.issues.get(parts[2])
                 if not issue:
                     return self._send(404, {"error": "not found"})
+                # GUL-1943: Paperclip refuses a *status* write while a blocker edge is
+                # still open ("Issue follow-up blocked by unresolved blockers") — this is
+                # the 409 that killed PATCH GUL-1925 {"status":"cancelled"} — and
+                # cancelling a blocker wakes its parked dependents: the blockers-resolved
+                # wake puts the dependent back `in_progress` with a fresh execution run,
+                # which on an escalated work order starts the fix round the PM refused
+                # (GUL-1932). Both are modelled here, so a settle that gets the order or
+                # the disarm wrong fails this case the way it failed GUL-1758 by hand.
+                before = issue.get("status")
+                wanted = body.get("status")
+                if wanted and wanted != before:
+                    open_edges = [i for i in (issue.get("blockedByIssueIds") or [])
+                                  if (state.issues.get(i) or {}).get("status") not in ("done", "cancelled")]
+                    if open_edges:
+                        return self._send(409, {"error": "Issue follow-up blocked by unresolved blockers",
+                                                "blockedByIssueIds": open_edges})
                 # Paperclip refuses to *enter* blocked without something it can route to
                 # (GUL-898): an unresolved blocker edge, a pending interaction/approval, or
                 # an unblockDescriptor whose owner is the authenticated agent. Copied here
@@ -330,6 +351,26 @@ def make_handler(state):
                     issue["executionState"] = None
                 if clear_state:
                     issue["executionState"] = None
+                if issue.get("status") != before:
+                    state.transitions.append({"issueId": issue["id"], "from": before,
+                                              "to": issue.get("status")})
+                    # GUL-1943: a retired blocker wakes whatever was waiting on it.
+                    if issue.get("status") in ("done", "cancelled"):
+                        for other in list(state.issues.values()):
+                            edges = other.get("blockedByIssueIds") or []
+                            if (other["id"] == issue["id"] or other.get("status") != "blocked"
+                                    or issue["id"] not in edges):
+                                continue
+                            if any((state.issues.get(i) or {}).get("status")
+                                   not in ("done", "cancelled") for i in edges):
+                                continue
+                            state.wakes.append({"issueId": other["id"], "because": issue["id"]})
+                            state.transitions.append({"issueId": other["id"], "from": other["status"],
+                                                      "to": "in_progress"})
+                            other["status"] = "in_progress"
+                            other["executionState"] = {"status": "running"}
+                            state.runs.setdefault(other["id"], []).append(
+                                {"id": str(uuid.uuid4()), "status": "running"})
                 if body.get("comment"):
                     state.comments.append({"issueId": issue["id"], "body": body["comment"]})
                 return self._send(200, issue)
@@ -2627,6 +2668,111 @@ def case_tick_settles_an_escalated_merge(stub):
     stub.state.issues[wo["id"]]["status"] = "done"
 
 
+def parked_stage(stub, parent, title, stage_id):
+    """One stage issue of an escalated round, as the park leaves it: `blocked`,
+    its execution policy still naming the stage, `executionState` still pointing
+    at it. That state is the trap (GUL-1760): a PATCH that carries no policy is
+    resolved against the stored one and refused, so the settle has to disarm."""
+    stage = stage_issue(stub, parent, title, status="blocked")
+    row = stub.state.issues[stage["id"]]
+    row["executionPolicy"] = {
+        "mode": "normal", "commentRequired": True,
+        "stages": [{"id": stage_id, "type": "work",
+                    "participants": [{"id": "p-%s" % stage_id, "type": "agent",
+                                      "agentId": MAJSTER}]}]}
+    row["executionState"] = {"status": "pending", "currentStageId": stage_id,
+                             "completedStageIds": [], "changesRequestedCount": 0}
+    return stage
+
+
+def escalated_two_stage_work_order(stub, repo, identifier, pr_number, base="base-sha"):
+    """A work order escalated with two parked stages, one blocking the other.
+
+    GUL-1943, the GUL-1758 shape: `verify:r2` parked `blocked`, `gate:r2` parked
+    `blocked` *by* `verify:r2`, the work order blocked by its own gate stage.
+    Walking the ledger alphabetically cancels `gate:r2` first, which Paperclip
+    refuses (409: follow-up blocked by an unresolved blocker); cancelling
+    `verify:r2` then wakes the gate, and a woken stage starts a run.
+    """
+    wo = base_work_order(stub, base, repo, identifier=identifier)
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": pr_number,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/%d" % pr_number}
+    ledger["outcome"] = "escalate"
+    ledger["escalated"] = "third fix round: the PM refused another one (GUL-1932)"
+    verify = parked_stage(stub, wo, "[verify:r2] %s - Verify the second round" % identifier,
+                          "stage-verify-r2")
+    gate = parked_stage(stub, wo, "[gate:r2] %s - Merge the second round" % identifier,
+                        "stage-gate-r2")
+    stub.state.issues[gate["id"]]["blockedByIssueIds"] = [verify["id"]]
+    ledger["stages"] = {
+        "verify:r2": {"issueId": verify["id"], "identifier": verify["identifier"],
+                      "round": 2, "attempts": 0, "sha": None},
+        "gate:r2": {"issueId": gate["id"], "identifier": gate["identifier"],
+                    "round": 2, "attempts": 0, "sha": None},
+    }
+    write_ledger(stub, wo, ledger)
+    issue = stub.state.issues[wo["id"]]
+    issue["status"] = "blocked"
+    issue["executionPolicy"] = None
+    issue["blockedByIssueIds"] = [gate["id"]]
+    issue["unblockDescriptor"] = {"owner": {"type": "agent", "agentId": MAJSTER},
+                                  "action": "the PM decides in the 05:30 review"}
+    return wo, {"verify": verify, "gate": gate}, ledger
+
+
+def case_tick_settles_two_parked_stages(stub):
+    """GUL-1943: one `tick --apply` settles a work order parked with two stages.
+
+    `cancel_parked_stages` walked `sorted(ledger["stages"])`, so on the GUL-1758
+    shape it cancelled `gate:r2` before `verify:r2`. Paperclip refuses to cancel an
+    issue whose blocker is still open — 409 "Issue follow-up blocked by unresolved
+    blockers" — and the wake that follows `verify:r2`'s cancel put the gate back
+    `in_progress` with a fresh run: on an escalated work order that is the third fix
+    round the PM refused in GUL-1932. The settle must park every stage first, then
+    cancel in dependency order, and never walk a stage through `in_progress`.
+    """
+    repo, _base = make_repo("tick-two-parked-repo")
+    wo, stages, ledger = escalated_two_stage_work_order(stub, repo, "GUL-961", 161)
+    ident = ["-c", "user.email=t@example.com", "-c", "user.name=T"]
+    branch = ledger["branch"]
+    git(repo, "checkout", "-q", "-b", branch)
+    with open(os.path.join(repo, "tests", "ac.sh"), "a") as fh:
+        fh.write("# the round the gate judged\n")
+    git(repo, *ident, "commit", "-qam", "the round")
+    round_head = git_out(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-q", "main")
+    git(repo, *ident, "merge", "--no-ff", "-q", "-m", "Merge the round", branch)
+    merge_sha = git_out(repo, "rev-parse", "HEAD")
+    ledger["pr"]["head"] = round_head
+    write_ledger(stub, wo, ledger)
+
+    code, out, raw = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "two-parked-merged", {"state": "MERGED", "mergedAt": "2026-11-20T00:11:00Z",
+                              "mergeCommit": {"oid": merge_sha}}))
+
+    verify_id, gate_id = stages["verify"]["id"], stages["gate"]["id"]
+    states = {name: stub.state.issues[stage["id"]]["status"] for name, stage in stages.items()}
+    done = stub.state.issues[wo["id"]]["status"]
+    woken = [t for t in stub.state.transitions
+             if t["issueId"] in (verify_id, gate_id) and t["to"] == "in_progress"]
+    runs = {name: stub.state.runs.get(stage["id"]) or [] for name, stage in stages.items()}
+    check("two parked stages: tick --apply settles the work order in one pass "
+          "(both stages cancelled, work order done)",
+          code == 0 and done == "done"
+          and states == {"verify": "cancelled", "gate": "cancelled"},
+          "status=%s stages=%s" % (done, json.dumps(states)))
+    check("two parked stages: no stage is walked through in_progress during the settle",
+          not woken and not stub.state.wakes,
+          "woken=%s" % json.dumps(woken + stub.state.wakes))
+    check("two parked stages: a cancelled stage starts no execution run",
+          not any(runs.values()), json.dumps(runs))
+    check("two parked stages: the settle writes no 403/409",
+          "409" not in raw and "403" not in raw and "unresolved blocker" not in raw,
+          raw[-500:])
+    stub.state.issues[wo["id"]]["status"] = "done"
+
+
 def case_merge_contains_a_squash_merge(stub):
     """GUL-1812 AC-2: a squash merge is landed when it carries the round's hunks.
 
@@ -2895,6 +3041,7 @@ def main():
             case_tick_settles_on_the_latest_gate_round(stub, base_sha, repo)
             case_tick_settles_a_squash_merge(stub)
             case_tick_settles_an_escalated_merge(stub)
+            case_tick_settles_two_parked_stages(stub)
             case_merge_contains_a_squash_merge(stub)
         finally:
             stub.close()
