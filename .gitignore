@@ -17,6 +17,13 @@
 # the main checkout dirty and the next work order refuses to start. Never committed.
 /agents/factory/cache/
 
+# Paperclip's own reserved runtime directory. The server creates
+# `.paperclip-runtime/` inside whichever checkout a run uses and keeps detached
+# repository snapshots in `detached-repositories/`, so leaving it untracked makes
+# the checkout dirty and `factory start` refuses every work order (ADR-095) — the
+# same failure mode as the factory cache above. Never committed.
+/.paperclip-runtime/
+
 # Python bytecode from the repo's scripts (the archive manifest tool excludes it too)
 __pycache__/
 *.pyc
