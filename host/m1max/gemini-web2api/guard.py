@@ -631,15 +631,21 @@ def same_db(recorded, current):
         return False
 
 
-def db_decision(st, current):
+def db_decision(st, current, n_valid=0):
     """Should this tick touch the pool? The cookie DB FILE decides, not the cookie hash.
 
     Returns (import_needed, why, skipped_reason):
       - no `import_db` in the state file (every pre-change state) -> baseline only, no import;
-      - DB identical to the recorded `import_db` -> skip the whole import block, silently;
+      - DB identical to the recorded `import_db` -> skip the whole import block, silently,
+        UNLESS the pool is empty: a dead pool is its own reason to import (GUL-1313), and
+        waiting for Firefox to write the DB again leaves the proxy without a login for hours;
       - DB changed -> True, the caller imports exactly as before and records the new identity.
     An active DB with no `import_db` still gets a reason recorded, so the next tick is provably
     an unchanged one and cannot mistake a missing baseline for a fresh login.
+
+    `n_valid` is the number of enabled pool entries. Without it a frozen DB gated the whole
+    import block, `import_decision()` and all, so the GUL-1313 pool-empty import was
+    unreachable and the proxy stayed dead until Firefox happened to write the DB again.
     """
     recorded = st.get("import_db")
     if current is None:
@@ -650,6 +656,10 @@ def db_decision(st, current):
             "firefox DB adopted as the import baseline (cookies.sqlite mtime %d, size %d): "
             "baseline recorded, no import" % (int(current["mtime"]), int(current["size"])))
     if same_db(recorded, current):
+        if not n_valid:
+            # GUL-1313: the DB has not moved but the pool has nothing left — re-importing the
+            # same session is the only path back, and the file is not the blocker here.
+            return True, "pool-empty", None
         return False, "frozen", (
             "firefox DB unchanged since the last import (cookies.sqlite mtime %d, size %d): "
             "import skipped, no pool write" % (int(recorded["mtime"]), int(recorded["size"])))
@@ -764,7 +774,7 @@ def main():
     # what note_import() records; it just no longer decides.
     db = cookie_db()
     db_now = db_identity(db) if db else None
-    need_import, why, skipped = db_decision(st, db_now)
+    need_import, why, skipped = db_decision(st, db_now, n_valid)
     if skipped:
         st["import_skipped_reason"] = skipped
     do_import = False

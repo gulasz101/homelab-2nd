@@ -84,6 +84,9 @@ no alarm — and the run only records an `import_skipped_reason`:
   naming the frozen DB in its own state and carries on with the availability and canary checks.
   A stale DB is silent and it never alarms: the "browser session expired" line is for a DB the
   file says has changed.
+- unchanged **but the pool is empty** → the import still runs (GUL-1313). A dead pool is its own
+  reason to touch the pool, and waiting for Firefox to write `cookies.sqlite` again leaves the
+  proxy with no login for hours. The DB file gates a healthy pool, never an empty one.
 - changed `mtime`/`size` → import exactly as before: post the candidate first, `/check` it,
   retire the older entries only once it validates, then record the new `mtime`/`size` in
   `import_db`. A failed `/check` keeps both the previous pool entry and the previous `import_db`,
