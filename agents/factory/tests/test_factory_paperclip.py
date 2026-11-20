@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -58,6 +59,11 @@ class State:
         self.interactions = []
         self.agents = {}
         self.runs = {}
+        # GUL-1943: every status change the stub ever made, in order — a settle may
+        # not walk a parked stage through `in_progress` on its way to `cancelled`.
+        self.transitions = []
+        # ...and every blockers-resolved wake it emitted. A wake starts a run.
+        self.wakes = []
         # projects and their workspaces: the factory resolves a work order's
         # checkout from the repo its spec names (GUL-1389)
         self.projects = {}
@@ -75,6 +81,10 @@ class State:
         # who GET /agents/me answers: the factory runs on Majster's key, and an
         # agent may only name itself as an unblock owner (GUL-898)
         self.me = {"id": MAJSTER, "name": "Majster"}
+        # the live company issue list is a page (default 500, cap 1000); set this
+        # to make the stub return only the first N rows, so a lookup that still
+        # scans the list is caught here instead of on the board (GUL-1944)
+        self.list_limit = None
 
     def add_issue(self, **kw):
         ident = kw.pop("identifier", None)
@@ -142,12 +152,28 @@ def make_handler(state):
         def _parts(self):
             return [p for p in self.path.split("?")[0].split("/") if p]
 
+        def _query(self):
+            raw = self.path.split("?", 1)[1] if "?" in self.path else ""
+            return urllib.parse.parse_qs(raw)
+
         def do_GET(self):
             parts = self._parts()
             if parts[:3] == ["api", "companies", COMPANY] and parts[3:] == ["issues"]:
-                return self._send(200, list(state.issues.values()))
+                rows = list(state.issues.values())
+                parent = (self._query().get("parentId") or [None])[0]
+                if parent:
+                    rows = [i for i in rows if i.get("parentId") == parent]
+                if state.list_limit:
+                    rows = rows[:state.list_limit]
+                return self._send(200, rows)
             if parts[:2] == ["api", "issues"] and len(parts) == 3:
+                # /issues/{id or identifier}: the live route rewrites an
+                # identifier to its uuid, so the stub accepts both (GUL-1944)
                 issue = state.issues.get(parts[2])
+                if issue is None:
+                    wanted = parts[2].upper()
+                    issue = next((i for i in state.issues.values()
+                                  if (i.get("identifier") or "").upper() == wanted), None)
                 return self._send(200, issue) if issue else self._send(404, {"error": "not found"})
             if parts[:2] == ["api", "issues"] and len(parts) == 5 and parts[3] == "documents":
                 doc = state.documents.get((parts[2], parts[4]))
@@ -255,6 +281,22 @@ def make_handler(state):
                 issue = state.issues.get(parts[2])
                 if not issue:
                     return self._send(404, {"error": "not found"})
+                # GUL-1943: Paperclip refuses a *status* write while a blocker edge is
+                # still open ("Issue follow-up blocked by unresolved blockers") — this is
+                # the 409 that killed PATCH GUL-1925 {"status":"cancelled"} — and
+                # cancelling a blocker wakes its parked dependents: the blockers-resolved
+                # wake puts the dependent back `in_progress` with a fresh execution run,
+                # which on an escalated work order starts the fix round the PM refused
+                # (GUL-1932). Both are modelled here, so a settle that gets the order or
+                # the disarm wrong fails this case the way it failed GUL-1758 by hand.
+                before = issue.get("status")
+                wanted = body.get("status")
+                if wanted and wanted != before:
+                    open_edges = [i for i in (issue.get("blockedByIssueIds") or [])
+                                  if (state.issues.get(i) or {}).get("status") not in ("done", "cancelled")]
+                    if open_edges:
+                        return self._send(409, {"error": "Issue follow-up blocked by unresolved blockers",
+                                                "blockedByIssueIds": open_edges})
                 # Paperclip refuses to *enter* blocked without something it can route to
                 # (GUL-898): an unresolved blocker edge, a pending interaction/approval, or
                 # an unblockDescriptor whose owner is the authenticated agent. Copied here
@@ -330,6 +372,26 @@ def make_handler(state):
                     issue["executionState"] = None
                 if clear_state:
                     issue["executionState"] = None
+                if issue.get("status") != before:
+                    state.transitions.append({"issueId": issue["id"], "from": before,
+                                              "to": issue.get("status")})
+                    # GUL-1943: a retired blocker wakes whatever was waiting on it.
+                    if issue.get("status") in ("done", "cancelled"):
+                        for other in list(state.issues.values()):
+                            edges = other.get("blockedByIssueIds") or []
+                            if (other["id"] == issue["id"] or other.get("status") != "blocked"
+                                    or issue["id"] not in edges):
+                                continue
+                            if any((state.issues.get(i) or {}).get("status")
+                                   not in ("done", "cancelled") for i in edges):
+                                continue
+                            state.wakes.append({"issueId": other["id"], "because": issue["id"]})
+                            state.transitions.append({"issueId": other["id"], "from": other["status"],
+                                                      "to": "in_progress"})
+                            other["status"] = "in_progress"
+                            other["executionState"] = {"status": "running"}
+                            state.runs.setdefault(other["id"], []).append(
+                                {"id": str(uuid.uuid4()), "status": "running"})
                 if body.get("comment"):
                     state.comments.append({"issueId": issue["id"], "body": body["comment"]})
                 return self._send(200, issue)
@@ -1568,6 +1630,50 @@ def case_write_document_carries_revision(stub):
           and pc.Api._wall(403, Blocked.PAGE) and pc.Api._wall(0, ""))
 
 
+def case_by_identifier_is_a_lookup(stub):
+    """GUL-1944: an identifier resolves even when the company list omits the issue.
+
+    The live company list is a page (default 500, hard cap 1000) in no
+    documented order, and the issue the calling run holds can be off it — that
+    is how `factory start GUL-1937` died with "issue GUL-1937 not found in
+    company". `by_identifier` asks `/issues/<identifier>` instead, which the
+    server resolves against the identifier column. The stub truncates the list
+    here, so a regression back to scanning a page fails in this suite.
+    """
+    model = stub.state.add_issue(identifier="GUL-11944", title="model")
+    stub.state.add_issue(identifier="GUL-11945", title="on the page")
+    held = stub.state.add_issue(identifier="GUL-11946", title="past the page",
+                                parentId=model["id"], status="in_progress",
+                                executionPolicy={"mode": "normal",
+                                                 "stages": [{"id": "red"}]},
+                                executionState={"currentStageId": "red"})
+    api = pc.Api(key="test-key-not-a-secret", run_id="test-run-id", base=stub.url)
+    stub.state.list_limit = 1
+    try:
+        page = api.issues(COMPANY)
+        check("by_identifier: the stub page really omits the issue (the bug is live here)",
+              all(i["id"] != held["id"] for i in page), page)
+        got = api.by_identifier(COMPANY, held["identifier"])
+        check("by_identifier: an issue off the company page is still found",
+              isinstance(got, dict) and got.get("id") == held["id"], got)
+        check("by_identifier: a lowercase identifier resolves",
+              (api.by_identifier(COMPANY, held["identifier"].lower()) or {}).get("id") == held["id"])
+        check("by_identifier: the single read is unmasked (executionPolicy survives)",
+              bool((got or {}).get("executionPolicy")), got)
+        check("by_identifier: an unknown identifier is None, not an exception",
+              api.by_identifier(COMPANY, "GUL-99999") is None)
+        check("by_identifier: another company's identifier is not returned",
+              api.by_identifier("00000000-0000-4000-8000-000000000000",
+                                held["identifier"]) is None)
+        kids = api.children_of(COMPANY, model["id"])
+        check("children_of: children come back filtered by parentId, off the page",
+              [k["id"] for k in kids] == [held["id"]], kids)
+    finally:
+        stub.state.list_limit = None
+        for issue in (model, held):
+            issue["status"] = "done"
+
+
 def case_edge_block_falls_back(stub):
     """GUL-496: an inherited public URL that Cloudflare blocks does not kill the run."""
     edge = Blocked()
@@ -2627,6 +2733,111 @@ def case_tick_settles_an_escalated_merge(stub):
     stub.state.issues[wo["id"]]["status"] = "done"
 
 
+def parked_stage(stub, parent, title, stage_id):
+    """One stage issue of an escalated round, as the park leaves it: `blocked`,
+    its execution policy still naming the stage, `executionState` still pointing
+    at it. That state is the trap (GUL-1760): a PATCH that carries no policy is
+    resolved against the stored one and refused, so the settle has to disarm."""
+    stage = stage_issue(stub, parent, title, status="blocked")
+    row = stub.state.issues[stage["id"]]
+    row["executionPolicy"] = {
+        "mode": "normal", "commentRequired": True,
+        "stages": [{"id": stage_id, "type": "work",
+                    "participants": [{"id": "p-%s" % stage_id, "type": "agent",
+                                      "agentId": MAJSTER}]}]}
+    row["executionState"] = {"status": "pending", "currentStageId": stage_id,
+                             "completedStageIds": [], "changesRequestedCount": 0}
+    return stage
+
+
+def escalated_two_stage_work_order(stub, repo, identifier, pr_number, base="base-sha"):
+    """A work order escalated with two parked stages, one blocking the other.
+
+    GUL-1943, the GUL-1758 shape: `verify:r2` parked `blocked`, `gate:r2` parked
+    `blocked` *by* `verify:r2`, the work order blocked by its own gate stage.
+    Walking the ledger alphabetically cancels `gate:r2` first, which Paperclip
+    refuses (409: follow-up blocked by an unresolved blocker); cancelling
+    `verify:r2` then wakes the gate, and a woken stage starts a run.
+    """
+    wo = base_work_order(stub, base, repo, identifier=identifier)
+    ledger = ledger_of(stub, wo)
+    ledger["pr"] = {"number": pr_number,
+                    "url": "https://github.com/gulasz101/homelab-2nd/pull/%d" % pr_number}
+    ledger["outcome"] = "escalate"
+    ledger["escalated"] = "third fix round: the PM refused another one (GUL-1932)"
+    verify = parked_stage(stub, wo, "[verify:r2] %s - Verify the second round" % identifier,
+                          "stage-verify-r2")
+    gate = parked_stage(stub, wo, "[gate:r2] %s - Merge the second round" % identifier,
+                        "stage-gate-r2")
+    stub.state.issues[gate["id"]]["blockedByIssueIds"] = [verify["id"]]
+    ledger["stages"] = {
+        "verify:r2": {"issueId": verify["id"], "identifier": verify["identifier"],
+                      "round": 2, "attempts": 0, "sha": None},
+        "gate:r2": {"issueId": gate["id"], "identifier": gate["identifier"],
+                    "round": 2, "attempts": 0, "sha": None},
+    }
+    write_ledger(stub, wo, ledger)
+    issue = stub.state.issues[wo["id"]]
+    issue["status"] = "blocked"
+    issue["executionPolicy"] = None
+    issue["blockedByIssueIds"] = [gate["id"]]
+    issue["unblockDescriptor"] = {"owner": {"type": "agent", "agentId": MAJSTER},
+                                  "action": "the PM decides in the 05:30 review"}
+    return wo, {"verify": verify, "gate": gate}, ledger
+
+
+def case_tick_settles_two_parked_stages(stub):
+    """GUL-1943: one `tick --apply` settles a work order parked with two stages.
+
+    `cancel_parked_stages` walked `sorted(ledger["stages"])`, so on the GUL-1758
+    shape it cancelled `gate:r2` before `verify:r2`. Paperclip refuses to cancel an
+    issue whose blocker is still open — 409 "Issue follow-up blocked by unresolved
+    blockers" — and the wake that follows `verify:r2`'s cancel put the gate back
+    `in_progress` with a fresh run: on an escalated work order that is the third fix
+    round the PM refused in GUL-1932. The settle must park every stage first, then
+    cancel in dependency order, and never walk a stage through `in_progress`.
+    """
+    repo, _base = make_repo("tick-two-parked-repo")
+    wo, stages, ledger = escalated_two_stage_work_order(stub, repo, "GUL-961", 161)
+    ident = ["-c", "user.email=t@example.com", "-c", "user.name=T"]
+    branch = ledger["branch"]
+    git(repo, "checkout", "-q", "-b", branch)
+    with open(os.path.join(repo, "tests", "ac.sh"), "a") as fh:
+        fh.write("# the round the gate judged\n")
+    git(repo, *ident, "commit", "-qam", "the round")
+    round_head = git_out(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-q", "main")
+    git(repo, *ident, "merge", "--no-ff", "-q", "-m", "Merge the round", branch)
+    merge_sha = git_out(repo, "rev-parse", "HEAD")
+    ledger["pr"]["head"] = round_head
+    write_ledger(stub, wo, ledger)
+
+    code, out, raw = run(stub, ["tick", "--apply"], extra_env=merge_env(
+        "two-parked-merged", {"state": "MERGED", "mergedAt": "2026-11-20T00:11:00Z",
+                              "mergeCommit": {"oid": merge_sha}}))
+
+    verify_id, gate_id = stages["verify"]["id"], stages["gate"]["id"]
+    states = {name: stub.state.issues[stage["id"]]["status"] for name, stage in stages.items()}
+    done = stub.state.issues[wo["id"]]["status"]
+    woken = [t for t in stub.state.transitions
+             if t["issueId"] in (verify_id, gate_id) and t["to"] == "in_progress"]
+    runs = {name: stub.state.runs.get(stage["id"]) or [] for name, stage in stages.items()}
+    check("two parked stages: tick --apply settles the work order in one pass "
+          "(both stages cancelled, work order done)",
+          code == 0 and done == "done"
+          and states == {"verify": "cancelled", "gate": "cancelled"},
+          "status=%s stages=%s" % (done, json.dumps(states)))
+    check("two parked stages: no stage is walked through in_progress during the settle",
+          not woken and not stub.state.wakes,
+          "woken=%s" % json.dumps(woken + stub.state.wakes))
+    check("two parked stages: a cancelled stage starts no execution run",
+          not any(runs.values()), json.dumps(runs))
+    check("two parked stages: the settle writes no 403/409",
+          "409" not in raw and "403" not in raw and "unresolved blocker" not in raw,
+          raw[-500:])
+    stub.state.issues[wo["id"]]["status"] = "done"
+
+
 def case_merge_contains_a_squash_merge(stub):
     """GUL-1812 AC-2: a squash merge is landed when it carries the round's hunks.
 
@@ -2872,6 +3083,7 @@ def main():
             case_half_applied_escalation_reparks(stub, base_sha, repo)
             case_tick(stub, base_sha, repo)
             case_write_document_carries_revision(stub)
+            case_by_identifier_is_a_lookup(stub)
             case_blocked_needs_a_descriptor(stub)
             case_park_sends_a_dissolving_policy(stub)
             case_edge_block_falls_back(stub)
@@ -2895,6 +3107,7 @@ def main():
             case_tick_settles_on_the_latest_gate_round(stub, base_sha, repo)
             case_tick_settles_a_squash_merge(stub)
             case_tick_settles_an_escalated_merge(stub)
+            case_tick_settles_two_parked_stages(stub)
             case_merge_contains_a_squash_merge(stub)
         finally:
             stub.close()

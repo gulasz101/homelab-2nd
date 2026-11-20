@@ -71,6 +71,36 @@ round-trip and one pool churn per tick (GUL-1280). `gemini-guard-check.sh` now f
 fingerprint's allowed list grows a rotating name back; that check reads the `STABLE` list, not the
 file, because the harvest list has to keep all nine names.
 
+### The cookie DB file decides an import
+
+The cookie hash does not decide whether to touch the pool. What decides is the Firefox cookie DB
+itself — `cookies.sqlite` in the profile the guard reads — identified by its `mtime` and `size`
+and recorded in the state file as `import_db`. The DB file, not the cookie hash, is what says
+"the browser has written a new login". A DB that has not moved is silent — no output on stdout,
+no alarm — and the run only records an `import_skipped_reason`:
+
+- unchanged `mtime`/`size` since `import_db` → the import block is skipped entirely: no pool
+  write, no `/check` round-trip, nothing on stdout. The run records an `import_skipped_reason`
+  naming the frozen DB in its own state and carries on with the availability and canary checks.
+  A stale DB is silent and it never alarms: the "browser session expired" line is for a DB the
+  file says has changed.
+- unchanged **but the pool is empty** → the import still runs (GUL-1313). A dead pool is its own
+  reason to touch the pool, and waiting for Firefox to write `cookies.sqlite` again leaves the
+  proxy with no login for hours. The DB file gates a healthy pool, never an empty one.
+- changed `mtime`/`size` → import exactly as before: post the candidate first, `/check` it,
+  retire the older entries only once it validates, then record the new `mtime`/`size` in
+  `import_db`. A failed `/check` keeps both the previous pool entry and the previous `import_db`,
+  so the next tick tries that same DB again instead of silently skipping it.
+- no `import_db` in the state file (every pre-change state) → adopt the current DB as the
+  baseline, import nothing, stay quiet. The next unchanged run is a plain skip.
+
+Why: with Firefox quit, `cookies.sqlite` freezes while the proxy keeps rotating its own copy of
+the pair, so the harvested fingerprint diverges from `cookie_hash` permanently (GUL-1387,
+2026-11-11 21:51Z). A hash-first guard reads that divergence as a fresh login, re-imports the
+frozen pair, the candidate fails `/check`, and that failure path retires the entry that is the
+only owner of the live cookie. The file cannot lie that way — it only moves when the browser
+writes it.
+
 **Do not move it back under `~/.hermes`.** ADR-128 retired Hermes on the Max, and `~/.hermes`
 there is a read-only tombstone *file*: the guard ran from that path for 30 ticks and failed with
 `[Errno 20] Not a directory` (GUL-1279). `host/m1max/tests/gemini-guard-check.sh` now fails CI if
