@@ -17,6 +17,7 @@ API and is remembered for the rest of the run (GUL-496).
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 
 DEFAULT_BASE = "http://127.0.0.1:3100/api"
@@ -168,13 +169,49 @@ class Api:
         return self.get(f"/issues/{issue_id}")
 
     def by_identifier(self, company_id, identifier):
-        for item in self.issues(company_id):
-            if item.get("identifier") == identifier:
-                return item
-        return None
+        """One issue by identifier, in a single request (GUL-1944).
+
+        The company issue list is a *page* (server default 500, hard cap 1000)
+        in no documented order, so scanning it is not a lookup: an issue the
+        calling run holds can be off the page entirely, which is exactly how
+        `factory start` failed to find GUL-1937. `/issues/<ID>` is resolved
+        server-side against the identifier column, and a single-issue read is
+        unmasked — it carries the `executionState` the list zeroes out
+        (GUL-1128), so this is a better answer than the list row ever was.
+        (An issue's stage policy lives in its `ledger` document either way.)
+        """
+        wanted = (identifier or "").strip().upper()
+        if not wanted:
+            return None
+        try:
+            payload = self.get("/issues/" + urllib.parse.quote(wanted, safe="-"))
+        except ApiError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        issue = payload.get("issue") if isinstance(payload, dict) else None
+        if not isinstance(issue, dict):
+            issue = payload if isinstance(payload, dict) else None
+        if not isinstance(issue, dict):
+            return None
+        if (issue.get("identifier") or "").upper() != wanted:
+            return None
+        if company_id and issue.get("companyId") and issue["companyId"] != company_id:
+            return None
+        return issue
 
     def children_of(self, company_id, parent_id):
-        return [i for i in self.issues(company_id) if i.get("parentId") == parent_id]
+        """Children of one issue, filtered by the server (GUL-1944).
+
+        Same defect as `by_identifier`: the unfiltered company list is a page,
+        so a work order's stages can simply be absent from it. `parentId` is a
+        supported list filter and stays far below the page cap.
+        """
+        payload = self.get(f"/companies/{company_id}/issues?parentId={parent_id}&limit=1000")
+        if isinstance(payload, dict):
+            payload = payload.get("issues") or payload.get("items") or []
+        items = payload if isinstance(payload, list) else []
+        return [i for i in items if i.get("parentId") == parent_id]
 
     def document(self, issue_id, key):
         try:
