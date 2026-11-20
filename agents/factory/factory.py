@@ -790,12 +790,13 @@ def settle_merge(api, work_order: dict, ledger: dict, pr: dict, view: dict,
         # GUL-1888: an escalated work order settles with its gate parked `blocked`.
         # Nothing else would ever move that stage, so cancel it here.
         parked = cancel_parked_stages(api, ledger,
-                                      work_order.get("identifier") or work_order["id"], number)
+                                      work_order.get("identifier") or work_order["id"], number,
+                                      work_order=work_order)
         if parked:
             note += " %d parked stage issue(s) cancelled (%s)." % (len(parked), ", ".join(parked))
         try:
             api.patch_issue(work_order["id"], {
-                "status": "done", "executionPolicy": None,
+                "status": "done", "executionPolicy": None, "blockedByIssueIds": [],
                 "comment": ("PR #%s is merged in `%s` (%s). No card: the factory read "
                             "the merge on GitHub and moved this work order on.%s"
                             % (number, commit or "?", merged_at or "?", note)),
@@ -2076,16 +2077,25 @@ def archive_ledger(doc: dict, ledger, path: str, cwd: str) -> None:
         raise SetupError("cannot archive the old ledger to %s: %s" % (path, exc))
 
 
-def cancel_parked_stages(api, ledger: dict, identifier: str, number) -> list:
+def cancel_parked_stages(api, ledger: dict, identifier: str, number, work_order=None) -> list:
     """Cancel the stage issues a settled work order leaves parked (GUL-1888).
 
     An escalated work order settles with its gate still `blocked`: the factory put
     it there and nothing else will ever move it, so it would sit in the queue for
     ever as a dead end. Cancel it, with the merge as the reason. Never let one
     unreadable stage stop the settle — the work order is already done by then.
+
+    GUL-1943: a work order escalated with two or more parked stages broke this.
+    Walking `sorted(ledger["stages"])` cancelled `gate:r2` before the `verify:r2`
+    it is blocked by, and the server refuses to cancel an issue whose blocker is
+    still open (`409 Issue follow-up blocked by unresolved blockers`); then
+    cancelling `verify:r2` woke the gate (blockers-resolved) into `in_progress`
+    with a fresh run. On an escalated work order that wake is the next fix round —
+    the one the PM refused in GUL-1932. So: disarm *every* stage first, then
+    cancel in dependency order, and only then let the caller close the work order.
     """
     import pc
-    cancelled = []
+    rows = []
     for key in sorted(ledger.get("stages") or {}):
         row = ledger["stages"].get(key) or {}
         issue_id = row.get("issueId")
@@ -2101,21 +2111,112 @@ def cancel_parked_stages(api, ledger: dict, identifier: str, number) -> list:
             continue
         if not issue or issue.get("status") in ("done", "cancelled"):
             continue
-        body: dict = {
-            "status": "cancelled",
-            "comment": ("cancelled: PR #%s is merged, so %s is done. This stage was "
-                        "parked and decides nothing any more." % (number, identifier)),
-        }
+        rows.append({"key": key, "label": label, "id": issue_id, "issue": issue})
+    if not rows:
+        return []
+
+    doomed = set(row["id"] for row in rows)
+
+    # 0. The work order itself may still name one of these stages as its blocker
+    #    (GUL-1758: `blocked by unresolved blocker GUL-1925`). Retiring the gate
+    #    then wakes the work order — `in_progress` with a fresh run — which is the
+    #    round the PM refused. The edge is a dead end too, so drop it first.
+    if work_order:
+        try:
+            fresh = api.issue(work_order["id"]) or work_order
+        except pc.ApiError:
+            fresh = work_order
+        edges = [i for i in (fresh.get("blockedByIssueIds") or []) if i not in doomed]
+        wo_body: dict = {}
+        if len(edges) != len(fresh.get("blockedByIssueIds") or []):
+            wo_body["blockedByIssueIds"] = edges
+        wo_policy = _park_policy(fresh)
+        if wo_policy["stages"]:
+            wo_body["executionPolicy"] = wo_policy
+        if wo_body:
+            try:
+                api.patch_issue(work_order["id"], wo_body)
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write("factory tick: %s: cannot clear the work order's dead "
+                                 "blocker edge: %s\n" % (identifier, str(exc)[:200]))
+
+    # 1. Disarm every stage before anything moves. The park drops the stage id, so
+    #    the live `executionState` points at a stage the policy no longer has —
+    #    that is the branch that keeps the status the write asks for. An edge to a
+    #    stage this pass is about to cancel goes with it: it is a dead end, and
+    #    leaving it makes the server refuse the cancel AND wake the dependent.
+    for row in rows:
+        issue = row["issue"]
+        body: dict = {}
         policy = _park_policy(issue)
         if policy["stages"]:
             body["executionPolicy"] = policy
-        try:
-            api.patch_issue(issue_id, body)
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write("factory tick: %s: cannot cancel stage %s: %s\n"
-                             % (identifier, label, str(exc)[:200]))
+        edges = [i for i in (issue.get("blockedByIssueIds") or []) if i not in doomed]
+        if len(edges) != len(issue.get("blockedByIssueIds") or []):
+            body["blockedByIssueIds"] = edges
+        if not body:
             continue
-        cancelled.append(label)
+        try:
+            api.patch_issue(row["id"], body)
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write("factory tick: %s: cannot park stage %s before the cancel: %s\n"
+                             % (identifier, row["label"], str(exc)[:200]))
+
+    # 2. Cancel in dependency order, and repeat until nothing moves: a stage that a
+    #    stage still in this pass blocks goes last. The policy travels with the
+    #    cancel — a bare `{"status": "cancelled"}` is resolved against the stored
+    #    stage and re-arms the stage agent instead of cancelling it (GUL-969).
+    cancelled = []
+    pending = list(rows)
+    while pending:
+        progressed = False
+        for row in list(pending):
+            try:
+                issue = api.issue(row["id"]) or {}
+            except pc.ApiError as exc:
+                if exc.status != 404:
+                    sys.stderr.write("factory tick: %s: cannot read stage %s: %s\n"
+                                     % (identifier, row["label"], str(exc)[:200]))
+                pending.remove(row)
+                continue
+            if issue.get("status") in ("done", "cancelled"):
+                pending.remove(row)
+                progressed = True
+                if issue.get("status") == "cancelled":
+                    cancelled.append(row["label"])
+                continue
+            waiting_on = [i for i in (issue.get("blockedByIssueIds") or [])
+                          if any(other["id"] == i for other in pending)]
+            if waiting_on:
+                continue
+            body = {
+                "status": "cancelled",
+                "comment": ("cancelled: PR #%s is merged, so %s is done. This stage was "
+                            "parked and decides nothing any more." % (number, identifier)),
+            }
+            policy = _park_policy(issue)
+            if policy["stages"]:
+                body["executionPolicy"] = policy
+            try:
+                api.patch_issue(row["id"], body)
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write("factory tick: %s: cannot cancel stage %s: %s\n"
+                                 % (identifier, row["label"], str(exc)[:200]))
+                continue
+            after = api.issue(row["id"]) or {}
+            if after.get("status") == "cancelled":
+                cancelled.append(row["label"])
+                pending.remove(row)
+                progressed = True
+                continue
+            # It went somewhere else (the server woke it, or a reviewer re-armed
+            # it) — say so and leave it; the work order's own close will report it.
+            sys.stderr.write("factory tick: %s: stage %s did not stay cancelled (%r)\n"
+                             % (identifier, row["label"], after.get("status")))
+            pending.remove(row)
+            progressed = True
+        if not progressed:
+            break
     return cancelled
 
 
