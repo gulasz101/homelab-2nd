@@ -106,6 +106,20 @@ one and are rendered here now. An app's directory `kustomization.yaml` must list
 rendered `*-dashboard-configmap.yaml`, otherwise Flux never applies it and AC-2 of
 `scripts/tests/dashboard-standard-check.sh` says so by name.
 
+Three of those four are wired that way today — `apps/host-watch`, `apps/riffradar` and
+`apps/openchamber` are nested kustomizations, listed as `- <app>/` in
+`apps/kustomization.yaml`. `apps/karakeep` was not: its 21 manifests are enumerated one by
+one in `apps/kustomization.yaml` (lines 158-185), so nothing there reads
+`apps/karakeep/kustomization.yaml`. GUL-1600 added that nested kustomization (all 21
+manifests plus the dashboard, `kubectl kustomize apps/karakeep` renders and carries
+`ConfigMap/karakeep-dashboard`), and the dashboard is applied as soon as that enumeration
+is replaced by `- karakeep/`. Until then Flux does not apply `karakeep-dashboard`, and the
+`grafana_dashboard` ConfigMap is present in the repo but missing from the cluster. The
+switch edits `apps/kustomization.yaml`, which this work order's `allowedPaths` does not
+cover, so it is a one-line follow-up: replace lines 158-185 with `- karakeep/` — replace,
+not add, because listing a directory *and* its files registers every object twice and
+`kubectl kustomize ./apps` then refuses the whole root.
+
 ## Adding or changing a dashboard
 
 1. Edit or add the entry in `scripts/dashboards/manifest.json` (or change the generator if

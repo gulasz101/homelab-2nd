@@ -1,0 +1,46 @@
+---
+# Karakeep — keep.voitech.dev (bookmarks, full-text search, AI tagging).
+#
+# Nested kustomization, same shape as apps/host-watch, apps/riffradar,
+# apps/openchamber, apps/freellmapi: the file list lives next to the files
+# instead of being enumerated in apps/kustomization.yaml.
+#
+# GUL-1600: the Grafana dashboard below is generated from
+# scripts/dashboards/manifest.json by scripts/render_dashboards.sh, so it is a
+# resource of this directory and not a hand-written ConfigMap. It is listed here
+# so that whatever reads this directory applies it — see docs/dashboards.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: karakeep
+resources:
+  - namespace.yaml
+  # SOPS-encrypted secrets
+  - karakeep-app-secrets.sops.yaml
+  - karakeep-oidc-client.sops.yaml
+  - karakeep-minio-assets.sops.yaml
+  - karakeep-tunnel-token.sops.yaml
+  - karakeep-litellm-key.sops.yaml
+  - karakeep-minio-backup-creds.sops.yaml
+  - karakeep-mattermost-webhook-url.sops.yaml
+  # OMV NFS PV + pre-provisioned StatefulSet data PVC for Karakeep working data
+  - karakeep-data-pv.yaml
+  - data-karakeep-0-pvc.yaml
+  # HelmForge repository + Karakeep HelmRelease
+  - karakeep-helm-repository.yaml
+  - karakeep-helm-release.yaml
+  # Cloudflare Tunnel for keep.voitech.dev
+  - cloudflared-karakeep-deployment.yaml
+  - karakeep-tunnel-ingress-configmap.yaml
+  # Prometheus scraping
+  - service-monitor.yaml
+  # Custom summary prompt in git + the one-shot Job that converges Karakeep onto it
+  - karakeep-prompt-configmap.yaml
+  - karakeep-prompt-job.yaml
+  # Daily Karakeep SQLite backup to MinIO
+  - karakeep-backup-cronjob.yaml
+  # Alerts: backup freshness + Karakeep inference health, routed to Mattermost
+  - karakeep-prometheus-rules.yaml
+  - karakeep-alertmanager-config.yaml
+  # Grafana dashboard, generated from scripts/dashboards/manifest.json (GUL-1598, GUL-1600)
+  - karakeep-dashboard-configmap.yaml
