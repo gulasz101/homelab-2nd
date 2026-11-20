@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -80,6 +81,10 @@ class State:
         # who GET /agents/me answers: the factory runs on Majster's key, and an
         # agent may only name itself as an unblock owner (GUL-898)
         self.me = {"id": MAJSTER, "name": "Majster"}
+        # the live company issue list is a page (default 500, cap 1000); set this
+        # to make the stub return only the first N rows, so a lookup that still
+        # scans the list is caught here instead of on the board (GUL-1944)
+        self.list_limit = None
 
     def add_issue(self, **kw):
         ident = kw.pop("identifier", None)
@@ -147,12 +152,28 @@ def make_handler(state):
         def _parts(self):
             return [p for p in self.path.split("?")[0].split("/") if p]
 
+        def _query(self):
+            raw = self.path.split("?", 1)[1] if "?" in self.path else ""
+            return urllib.parse.parse_qs(raw)
+
         def do_GET(self):
             parts = self._parts()
             if parts[:3] == ["api", "companies", COMPANY] and parts[3:] == ["issues"]:
-                return self._send(200, list(state.issues.values()))
+                rows = list(state.issues.values())
+                parent = (self._query().get("parentId") or [None])[0]
+                if parent:
+                    rows = [i for i in rows if i.get("parentId") == parent]
+                if state.list_limit:
+                    rows = rows[:state.list_limit]
+                return self._send(200, rows)
             if parts[:2] == ["api", "issues"] and len(parts) == 3:
+                # /issues/{id or identifier}: the live route rewrites an
+                # identifier to its uuid, so the stub accepts both (GUL-1944)
                 issue = state.issues.get(parts[2])
+                if issue is None:
+                    wanted = parts[2].upper()
+                    issue = next((i for i in state.issues.values()
+                                  if (i.get("identifier") or "").upper() == wanted), None)
                 return self._send(200, issue) if issue else self._send(404, {"error": "not found"})
             if parts[:2] == ["api", "issues"] and len(parts) == 5 and parts[3] == "documents":
                 doc = state.documents.get((parts[2], parts[4]))
@@ -1609,6 +1630,50 @@ def case_write_document_carries_revision(stub):
           and pc.Api._wall(403, Blocked.PAGE) and pc.Api._wall(0, ""))
 
 
+def case_by_identifier_is_a_lookup(stub):
+    """GUL-1944: an identifier resolves even when the company list omits the issue.
+
+    The live company list is a page (default 500, hard cap 1000) in no
+    documented order, and the issue the calling run holds can be off it — that
+    is how `factory start GUL-1937` died with "issue GUL-1937 not found in
+    company". `by_identifier` asks `/issues/<identifier>` instead, which the
+    server resolves against the identifier column. The stub truncates the list
+    here, so a regression back to scanning a page fails in this suite.
+    """
+    model = stub.state.add_issue(identifier="GUL-11944", title="model")
+    stub.state.add_issue(identifier="GUL-11945", title="on the page")
+    held = stub.state.add_issue(identifier="GUL-11946", title="past the page",
+                                parentId=model["id"], status="in_progress",
+                                executionPolicy={"mode": "normal",
+                                                 "stages": [{"id": "red"}]},
+                                executionState={"currentStageId": "red"})
+    api = pc.Api(key="test-key-not-a-secret", run_id="test-run-id", base=stub.url)
+    stub.state.list_limit = 1
+    try:
+        page = api.issues(COMPANY)
+        check("by_identifier: the stub page really omits the issue (the bug is live here)",
+              all(i["id"] != held["id"] for i in page), page)
+        got = api.by_identifier(COMPANY, held["identifier"])
+        check("by_identifier: an issue off the company page is still found",
+              isinstance(got, dict) and got.get("id") == held["id"], got)
+        check("by_identifier: a lowercase identifier resolves",
+              (api.by_identifier(COMPANY, held["identifier"].lower()) or {}).get("id") == held["id"])
+        check("by_identifier: the single read is unmasked (executionPolicy survives)",
+              bool((got or {}).get("executionPolicy")), got)
+        check("by_identifier: an unknown identifier is None, not an exception",
+              api.by_identifier(COMPANY, "GUL-99999") is None)
+        check("by_identifier: another company's identifier is not returned",
+              api.by_identifier("00000000-0000-4000-8000-000000000000",
+                                held["identifier"]) is None)
+        kids = api.children_of(COMPANY, model["id"])
+        check("children_of: children come back filtered by parentId, off the page",
+              [k["id"] for k in kids] == [held["id"]], kids)
+    finally:
+        stub.state.list_limit = None
+        for issue in (model, held):
+            issue["status"] = "done"
+
+
 def case_edge_block_falls_back(stub):
     """GUL-496: an inherited public URL that Cloudflare blocks does not kill the run."""
     edge = Blocked()
@@ -3018,6 +3083,7 @@ def main():
             case_half_applied_escalation_reparks(stub, base_sha, repo)
             case_tick(stub, base_sha, repo)
             case_write_document_carries_revision(stub)
+            case_by_identifier_is_a_lookup(stub)
             case_blocked_needs_a_descriptor(stub)
             case_park_sends_a_dissolving_policy(stub)
             case_edge_block_falls_back(stub)
