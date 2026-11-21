@@ -30,9 +30,16 @@
 # GUL-1596 AC-5). Its labels are service / span_name / span_kind / status_code,
 # with SPAN_KIND_SERVER and STATUS_CODE_ERROR, and its latency bucket boundaries
 # are in SECONDS (0.002 ... 16.384, Grafana Tempo docs). That is why the latency
-# thresholds below are bucket boundaries (1.024, 2.048) and not a round "1":
-# `le="1"` is not a series that exists, and a rule selecting it records nothing
-# and never fires - the silent-rule trap GUL-1593 forbids.
+# thresholds below are bucket boundaries (1.024, 2.048) and not a round "1".
+#
+# Grafana is the third latency source and it is NOT a span metric: its own
+# request histogram publishes its boundaries as 0.5, 1.0, 2.5, 5.0, 10.0 (read
+# off the live Prometheus, /api/v1/label/le/values for
+# grafana_http_request_duration_seconds_bucket), so its selector has to say
+# le="1.0" for the one-second bucket. A bucket label no exporter publishes is
+# not an error anywhere: the ratio is empty, the recording rule records nothing
+# and the Grafana burn-rate alerts can never fire - the silent-rule trap
+# GUL-1593 forbids (GUL-1962).
 #
 # Availability is the share of SERVER spans that are not STATUS_CODE_ERROR;
 # latency is the share of SERVER spans that finished inside the threshold. Both
@@ -61,6 +68,36 @@ metadata:
     release: prometheus-stack
 spec:
   groups:
+    # --- coverage: the recording series themselves --------------------------
+    #
+    # The 42 recorded series ARE the SLO. Rename a service label, drop a window
+    # or move a rule group and one of them stops being recorded - and no burn
+    # rate can fire on a series that does not exist, so the SLO is gone and the
+    # silence looks exactly like health. This is the only alert here that reads
+    # the recording rules instead of their output (GUL-1962).
+    - name: slo-recording-coverage
+      interval: 30s
+      rules:
+        - alert: SLORecordingSeriesMissing
+          # count() over every recorded series name, `or vector(0)` so the count
+          # is a VALUE when nothing is recorded instead of an absent expression
+          # (which would evaluate to empty and stay silent in exactly the case
+          # this alert exists for), compared with the 42 the rules define.
+          expr: |
+            (
+              count({__name__=~"slo:sli_error:ratio_rate.+"})
+              or
+              vector(0)
+            ) < 42
+          for: 15m
+          labels:
+            severity: warning
+            alertgroup: slo
+            namespace: observability
+          annotations:
+            summary: "Only {{ $value }} of the 42 SLO recording series exist"
+            description: "{{ $value }} of the 42 recording series (3 services x 2 SLIs x 7 windows) are being recorded. The series behind the two error budgets - 0.005 of the 99.5 % target for Open WebUI and Hindsight API, 0.05 of the 95 % target for Grafana - are the whole SLO: a window that stopped recording records nothing for its burn rate, so no alert fires while the SLO is unobserved. Check first that the PrometheusRule is loaded (kubectl -n observability get prometheusrule slo-recording-and-burn-rate -o yaml, and the Prometheus CR's ruleSelector still matches release=prometheus-stack), then the rule file infrastructure/observability/slo/slo-prometheus-rules.yaml: a renamed `service` or `slo` label on a recording rule is the usual cause. The label pair to compare against is service in (open-webui, hindsight-api, grafana) and slo in (availability, latency): query count by (service, slo) ({__name__=~\"slo:sli_error:ratio_rate.+\"}). Runbook: infrastructure/observability/slo/README.md."
+
     # The four workbook burn rates, one alert per service and rate. A single
     # alert covers both SLIs of a service: the recording series are reduced
     # `by (slo)`, so a firing instance names the SLI in $labels.slo and the
@@ -713,7 +750,7 @@ spec:
         - record: slo:sli_error:ratio_rate5m
           expr: |
             1 - (
-              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[5m]))
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1.0"}[5m]))
               /
               sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[5m]))
             )
@@ -723,7 +760,7 @@ spec:
         - record: slo:sli_error:ratio_rate30m
           expr: |
             1 - (
-              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[30m]))
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1.0"}[30m]))
               /
               sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[30m]))
             )
@@ -733,7 +770,7 @@ spec:
         - record: slo:sli_error:ratio_rate1h
           expr: |
             1 - (
-              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[1h]))
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1.0"}[1h]))
               /
               sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[1h]))
             )
@@ -743,7 +780,7 @@ spec:
         - record: slo:sli_error:ratio_rate2h
           expr: |
             1 - (
-              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[2h]))
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1.0"}[2h]))
               /
               sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[2h]))
             )
@@ -753,7 +790,7 @@ spec:
         - record: slo:sli_error:ratio_rate6h
           expr: |
             1 - (
-              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[6h]))
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1.0"}[6h]))
               /
               sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[6h]))
             )
@@ -763,7 +800,7 @@ spec:
         - record: slo:sli_error:ratio_rate1d
           expr: |
             1 - (
-              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[1d]))
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1.0"}[1d]))
               /
               sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[1d]))
             )
@@ -773,10 +810,11 @@ spec:
         - record: slo:sli_error:ratio_rate3d
           expr: |
             1 - (
-              sum(rate(grafana_http_request_duration_seconds_bucket{le="1"}[3d]))
+              sum(rate(grafana_http_request_duration_seconds_bucket{le="1.0"}[3d]))
               /
               sum(rate(grafana_http_request_duration_seconds_bucket{le="+Inf"}[3d]))
             )
           labels:
             service: grafana
             slo: latency
+

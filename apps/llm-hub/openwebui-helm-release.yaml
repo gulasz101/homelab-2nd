@@ -274,6 +274,38 @@ spec:
       type: ClusterIP
       port: 8080
 
+    # Probes (GUL-1962). The chart's own documented probes: liveness asks the
+    # process (/health), readiness asks the DB lane (/health/db). A pod whose
+    # Postgres is gone answers /health and 500s every request, so a /health
+    # readiness probe keeps a broken pod in the Service and the SLO
+    # availability SLI reads it as healthy. Startup gives the first migration
+    # run room without tripping liveness. Port `http` is the chart's container
+    # port name (8080), not a pinned number.
+    readinessProbe:
+      httpGet:
+        path: /health/db
+        port: http
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: http
+      initialDelaySeconds: 30
+      periodSeconds: 20
+      timeoutSeconds: 5
+      failureThreshold: 3
+    startupProbe:
+      httpGet:
+        path: /health
+        port: http
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 30
+
     resources:
       requests:
         cpu: 50m
