@@ -97,3 +97,93 @@ def test_pass_one_json_is_parsed_not_guessed(tmp_path):
     assert "-23" in pass2 and "-33" in pass2
     assert "input_i" not in pass2, "the raw pass-1 JSON must not leak into pass 2"
     assert CANNED_LOUDNORM.strip().splitlines()[0] not in pass2
+
+
+# --------------------------------------------------------------------------- #
+# AC-1: pass 1 must only measure                                             #
+# --------------------------------------------------------------------------- #
+
+def _outputs(cmd):
+    """Split one ffmpeg argv into (mapped label, argv tail) per output.
+
+    Every output of a pass starts at its `-map`, so the `-map` positions are the
+    output boundaries and the argument right after each is the label it maps.
+    """
+    cmd = [str(part) for part in cmd]
+    maps = [index for index, part in enumerate(cmd) if part == "-map"]
+    assert maps, f"no -map in the ffmpeg command: {cmd}"
+    ends = maps[1:] + [len(cmd)]
+    return [(cmd[start + 1], cmd[start + 2:stop]) for start, stop in zip(maps, ends)]
+
+
+def _labels_fed_by(graph, needle):
+    """The output labels of the filter chains in `graph` that name `needle`."""
+    labels = set()
+    for node in graph.split(";"):
+        if needle not in node:
+            continue
+        match = re.search(r"\[([^\]]+)\]\s*$", node)
+        if match:
+            labels.add(match.group(1))
+    return labels
+
+
+def _output_format(tail):
+    """The `-f` format of an output tail, or None when it is inferred."""
+    if "-f" in tail:
+        position = tail.index("-f")
+        if position + 1 < len(tail):
+            return tail[position + 1]
+    return None
+
+
+def test_pass1_measures_only_and_leaves_the_intermediate_wav_plain(tmp_path):
+    """AC-1: the intermediate WAV is the plain concat, and the loudnorm branch is
+    discarded with -f null, so pass 2 applies the measurement to unnormalised
+    audio instead of normalising the same audio twice."""
+    _, commands = _commands(tmp_path)
+    cmd1 = [str(part) for part in commands[0]]
+    graph = cmd1[cmd1.index("-filter_complex") + 1]
+
+    assert "print_format=json" in graph, (
+        f"pass 1 must still ask loudnorm for the measurement JSON: {graph}"
+    )
+    assert "measured_I" not in " ".join(cmd1), (
+        "pass 1 measures; it must not carry the values it is supposed to produce"
+    )
+
+    loudnorm_labels = _labels_fed_by(graph, "loudnorm")
+    assert loudnorm_labels, f"pass 1 has no loudnorm measurement branch: {graph}"
+
+    outputs = _outputs(cmd1)
+    assert len(outputs) == 2, (
+        "pass 1 must write exactly two outputs - the plain concat to the intermediate "
+        f"WAV and the loudnorm measurement to -f null - got {outputs!r}"
+    )
+    measured = [tail for label, tail in outputs if label in loudnorm_labels]
+    plain = [(label, tail) for label, tail in outputs if label not in loudnorm_labels]
+    assert len(measured) == 1, (
+        f"the loudnorm branch must feed exactly one output: {outputs!r}"
+    )
+    assert len(plain) == 1, (
+        "the intermediate WAV must be written from the concat branch, which must not "
+        f"pass through loudnorm: {outputs!r} (loudnorm feeds {sorted(loudnorm_labels)})"
+    )
+
+    measured_tail = measured[0]
+    assert _output_format(measured_tail) == "null", (
+        "the loudnorm branch must be thrown away with -f null instead of being written "
+        f"to the intermediate WAV: {measured_tail!r}"
+    )
+    assert measured_tail[-1] in ("-", "/dev/null"), (
+        f"the -f null measurement needs a discard sink, got {measured_tail[-1]!r}"
+    )
+
+    _, plain_tail = plain[0]
+    assert _output_format(plain_tail) != "null", (
+        f"the plain concat branch must be written to a real file: {plain_tail!r}"
+    )
+    assert plain_tail[-1].endswith(".wav"), (
+        "the intermediate WAV must come from the plain concat branch, got "
+        f"{plain_tail[-1]!r}"
+    )
