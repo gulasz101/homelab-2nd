@@ -332,8 +332,11 @@ def _parse_loudnorm(stderr):
 
 def assemble(audio_paths, paragraph_ids, config, out_path, work_dir, run=None):
     """Concatenate the chunk WAVs with the configured silence, then normalise in
-    two ffmpeg passes: pass 1 measures, pass 2 applies those measurements and
-    encodes the MP3. Returns the argv lists it ran."""
+    two ffmpeg passes: pass 1 only measures (the plain concat is written to the
+    intermediate WAV while the loudnorm branch is measured and thrown away), pass
+    2 applies those measurements and encodes the MP3. Measuring unnormalised audio
+    is what keeps pass 2 from normalising the same audio twice. Returns the argv
+    lists it ran."""
     run = run or _default_run
     audio_paths = [pathlib.Path(p) for p in audio_paths]
     paragraph_ids = list(paragraph_ids)
@@ -368,11 +371,18 @@ def assemble(audio_paths, paragraph_ids, config, out_path, work_dir, run=None):
     streams = "".join(f"[{index}:a]" for index in range(len(order)))
     graph1 = (
         f"{streams}concat=n={len(order)}:v=0:a=1[joined];"
-        f"[joined]loudnorm={LOUDNORM_TARGET}:print_format=json[out]"
+        "[joined]asplit=2[plain][measure];"
+        f"[measure]loudnorm={LOUDNORM_TARGET}:print_format=json[0];"
+        # The measurement branch has no output of its own: drain it so the graph
+        # is complete and nothing loudnorm-normalised reaches assembled.wav.
+        "[0]anullsink"
     )
     cmd1 += [
-        "-filter_complex", graph1, "-map", "[out]",
-        "-ar", str(rate), "-ac", "1", str(paused),
+        "-filter_complex", graph1,
+        # Output 1: the plain concat, untouched, as the intermediate WAV.
+        "-map", "[plain]", "-ar", str(rate), "-ac", "1", str(paused),
+        # Output 2: the discard sink pass 1 must expose for its measurement side.
+        "-map", "0", "-f", "null", "-",
     ]
     proc1 = _ffmpeg(run(cmd1), "ffmpeg pass 1 (concat + loudnorm measurement)")
     measured = _parse_loudnorm(getattr(proc1, "stderr", "") or "")
@@ -511,6 +521,23 @@ class Pipeline:
 
         manifest_path = work_dir / "manifest.json"
         entries = self._read_manifest(manifest_path)
+
+        # AC-2: a shorter script in the same work dir must not inherit entries (or
+        # orphaned WAVs) for chunk indexes this run does not have.
+        current = {chunk.index for chunk in chunks}
+        stale = [index for index in entries if index not in current]
+        if stale:
+            for index in sorted(stale):
+                entry = entries.pop(index)
+                name = str(entry.get("file") or f"{index:04d}.wav")
+                orphan = work_dir / name if pathlib.PurePath(name).name == name else None
+                if orphan is not None:
+                    try:
+                        orphan.unlink()
+                    except OSError:
+                        pass
+            self._write_manifest(manifest_path, entries)
+
         audio_paths, paragraph_ids = [], []
         generated = skipped = 0
         audio_seconds = generation_seconds = 0.0
