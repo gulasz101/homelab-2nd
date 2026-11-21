@@ -71,3 +71,44 @@ def test_resume_skips_finished_chunks_and_regenerates_a_changed_one(tmp_path):
         f"{engine3.calls!r}"
     )
     assert "zupełnie innej przyszłości" in engine3.calls[0], engine3.calls[0]
+
+
+# --------------------------------------------------------------------------- #
+# AC-2: a shorter re-run prunes the manifest                                  #
+# --------------------------------------------------------------------------- #
+
+SHORT = "Krótkie zdanie o rynku i o ludziach."
+
+
+def test_a_shorter_rerun_prunes_stale_manifest_entries(tmp_path):
+    """AC-2: after re-running a shorter script in the same work dir, manifest.json
+    lists only the current chunk indexes; the longer run's entries are gone."""
+    import conftest
+
+    cfg = podcast_tts.load_config(conftest.write_config(tmp_path))
+    max_chars = int(field(cfg, "max_chunk_chars"))
+    long_chunks = podcast_tts.chunk_text(ARTICLE, max_chunk_chars=max_chars)
+    short_chunks = podcast_tts.chunk_text(SHORT, max_chunk_chars=max_chars)
+    assert len(short_chunks) < len(long_chunks), (
+        f"the short script must need fewer chunks: {len(short_chunks)} vs {len(long_chunks)}"
+    )
+
+    _run(tmp_path, conftest.FakeEngine(), conftest.FakeRunner(), ARTICLE, "long")
+    work_dir = tmp_path / "work"
+    before = {field(entry, "index") for entry in _manifest(work_dir)}
+    assert before == set(range(len(long_chunks))), (
+        f"the first run's manifest lists {sorted(before)}, expected {sorted(range(len(long_chunks)))}"
+    )
+
+    engine = conftest.FakeEngine()
+    _run(tmp_path, engine, conftest.FakeRunner(), SHORT, "short")
+    assert len(engine.calls) == len(short_chunks), (
+        f"the shorter run synthesised {len(engine.calls)} chunks, expected {len(short_chunks)}"
+    )
+
+    after = {field(entry, "index") for entry in _manifest(work_dir)}
+    expected = set(range(len(short_chunks)))
+    assert after == expected, (
+        f"manifest.json lists {sorted(after)} after the shorter re-run; it must only hold "
+        f"the current chunk indexes {sorted(expected)}"
+    )
