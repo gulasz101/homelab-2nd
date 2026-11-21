@@ -20,6 +20,16 @@
 # protocol, agents/factory/CONTRACT.md point 2); per-assertion detail goes to
 # stderr so stdout stays parseable. Exit 0 only when every AC passes.
 #
+# AC-6..AC-9 (GUL-1962: the rules stopped matching their telemetry). The spec of
+# that work order assigns exactly those four ids to this one command, and the
+# protocol forbids printing a line for an AC the command was not assigned, so
+# the earlier delivery contract above (AC-1..AC-5: the 42 series, the burn-rate
+# pairs, the Mattermost routing, the dashboard standard, the ADR) now runs as
+# per-assertion detail on stderr only - where it still explains a regression -
+# and the verdict is AC-6..AC-9. The parts of it that matter here are re-asserted
+# inside them: AC-6 checks the rule file is a PrometheusRule with the release
+# label, AC-8 that the 42 series the new alert counts actually exist.
+#
 # Structural greps use `^[[:space:]]*` because re-indenting the YAML must not
 # break the check; PrometheusRule bodies are parsed per `- record:` / `- alert:`
 # block instead of one global grep, so a label belonging to the wrong rule
@@ -62,9 +72,9 @@ N_COMBOS=$(( ${#SERVICES[@]} * ${#SLIS[@]} * ${#WINDOWS[@]} ))
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# Per-AC verdict. Index 1..5 so the arrays read like the AC ids; 0 is unused.
-AC_FAIL=(0 0 0 0 0 0)
-AC_WHY=("" "" "" "" "" "")
+# Per-AC verdict. Index 1..9 so the arrays read like the AC ids; 0 is unused.
+AC_FAIL=(0 0 0 0 0 0 0 0 0 0)
+AC_WHY=("" "" "" "" "" "" "" "" "" "")
 
 ok() { printf '  ok    %s\n' "$1" >&2; }
 
@@ -699,10 +709,389 @@ else
   fi
 fi
 
+# --- AC-6: the Grafana latency bucket -------------------------------------
+#
+# Grafana's request histogram is the one latency SLI that does not come from the
+# Tempo span metrics, and its bucket boundaries are not the span-metric ones.
+# `le="1"` does not name a bucket boundary the exporter publishes: the ratio is
+# empty, the recording series records nothing and the Grafana burn-rate alerts
+# can never fire. That is the silent-rule trap GUL-1593 forbids, so the selector
+# has to say le="1.0" - the 1 s threshold, spelled the way the bucket is.
+printf '\n== AC-6: Grafana latency SLI selects le="1.0", never le="1"\n' >&2
+
+GL_DIR="$WORK/grafana-latency"
+mkdir -p "$GL_DIR"
+n_gl=0
+n_gl_bad=0
+if [ ! -f "$RULE_FILE" ]; then
+  fail_ac 6 "$RULE_FILE missing"
+else
+  req 6 "rule file is a PrometheusRule" \
+    grep -qE '^kind:[[:space:]]*PrometheusRule[[:space:]]*$' "$RULE_FILE"
+  # The Prometheus CR's ruleSelector is {matchLabels: {release: prometheus-stack}}.
+  req 6 "carries label release: prometheus-stack (the Prometheus ruleSelector)" \
+    grep -qE '^[[:space:]]*release:[[:space:]]*prometheus-stack[[:space:]]*$' "$RULE_FILE"
+  # One file per `- record:` block, numbered: the 42 series reuse seven names, so
+  # a name-keyed split would keep only the last of each and hide six sevenths.
+  awk -v dir="$GL_DIR" '
+    /^[[:space:]]*-[[:space:]]*alert:/ { if (f != "") { close(f); f = "" } }
+    /^[[:space:]]*-[[:space:]]*record:/ { if (f != "") close(f); n++; f = dir "/" n }
+    f != "" { print >> f }
+  ' "$RULE_FILE"
+  while IFS= read -r blk; do
+    [ -n "$blk" ] || continue
+    [ "$(label_val "$blk" service)" = "grafana" ] || continue
+    [ "$(label_val "$blk" slo)" = "latency" ] || continue
+    grep -q 'grafana_http_request_duration_seconds_bucket' "$blk" || continue
+    n_gl=$((n_gl + 1))
+    if grep -qE 'le="1\.0"' "$blk"; then
+      ok "  $(label_val "$blk" record) selects le=\"1.0\""
+    else
+      n_gl_bad=$((n_gl_bad + 1))
+      fail_ac 6 "a grafana latency rule selects no le=\"1.0\" bucket - le=\"1\" is not a bucket Grafana's histogram publishes, so the series is empty"
+    fi
+  done <<EOF
+$(block_files "$GL_DIR")
+EOF
+  if [ "$n_gl" -eq 0 ]; then
+    fail_ac 6 "no grafana latency recording rule reads grafana_http_request_duration_seconds_bucket"
+  elif [ "$n_gl_bad" -eq 0 ]; then
+    ok "all $n_gl grafana latency rules select le=\"1.0\""
+  fi
+  # ...and nothing anywhere in the file may still ask for the bare `le="1"`.
+  if grep -qE "le=\"1\"|le='1'" "$RULE_FILE"; then
+    fail_ac 6 "the rule file still selects le=\"1\" (line $(grep -nE "le=\"1\"|le='1'" "$RULE_FILE" | head -1 | cut -d: -f1)) - the 1 s bucket boundary is 1.0"
+  else
+    ok "no rule selects le=\"1\""
+  fi
+fi
+
+# --- AC-7: Open WebUI's probes, and it is still traced ---------------------
+#
+# The SLO rules read Open WebUI through Tempo span metrics filtered on
+# span_kind="SPAN_KIND_SERVER", and a pod that is up but whose DB lane is dead
+# reports healthy on /health while every request 500s. Readiness therefore has
+# to watch /health/db, and the OTel env has to survive the probe patch - drop
+# ENABLE_OTEL_TRACES and the SERVER spans stop arriving, which empties the
+# availability SLI without a single error in Prometheus.
+printf '\n== AC-7: Open WebUI probes on /health and /health/db, still traced\n' >&2
+
+WEBUI="apps/llm-hub/openwebui-helm-release.yaml"
+if [ ! -f "$WEBUI" ]; then
+  fail_ac 7 "$WEBUI missing"
+else
+  cat > "$WORK/ac7.py" <<'PY'
+import re
+import sys
+
+WEBUI = "apps/llm-hub/openwebui-helm-release.yaml"
+PROBES = ("readinessProbe", "livenessProbe", "startupProbe")
+
+lines = open(WEBUI, encoding="utf-8").read().splitlines()
+problems = []
+
+
+def ok(msg):
+    sys.stderr.write("  ok    %s\n" % msg)
+
+
+def bad(msg):
+    problems.append(msg)
+    sys.stderr.write("  FAIL  %s\n" % msg)
+
+
+def probe_block(name):
+    """The lines of one <name>: mapping, by indentation."""
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s*)-?\s*%s\s*:\s*(.*?)\s*$" % name, line)
+        if not m:
+            continue
+        indent = len(m.group(1))
+        if m.group(2):                      # inline map on the same line
+            return [m.group(2)]
+        block = []
+        for later in lines[i + 1:]:
+            if later.strip() and (len(later) - len(later.lstrip())) <= indent:
+                break
+            block.append(later)
+        return block
+    return None
+
+
+paths = {}
+for name in PROBES:
+    block = probe_block(name)
+    if block is None:
+        bad("%s is missing on the HelmRelease - the pod is never asked where the DB lane stands" % name)
+        continue
+    body = "\n".join(block)
+    if not re.search(r"httpGet\s*:", body):
+        bad("%s is not an httpGet probe - a tcpSocket probe cannot tell /health from /health/db" % name)
+        continue
+    found = [p for p in re.findall(r"path\s*:\s*[\"']?([^\"'\s]+)", body)
+             if p.startswith("/health")]
+    if not found:
+        bad("%s probes no /health path" % name)
+        continue
+    if len(set(found)) > 1:
+        bad("%s probes more than one path (%s)" % (name, ", ".join(sorted(set(found)))))
+        continue
+    if not re.search(r"port\s*:\s*\S", body):
+        bad("%s has no port" % name)
+        continue
+    paths[name] = found[0]
+    ok("%s on %s" % (name, found[0]))
+
+covered = set(paths.values())
+for wanted in ("/health", "/health/db"):
+    if wanted in covered:
+        ok("a probe hits %s" % wanted)
+    else:
+        bad("no probe hits %s - process liveness and DB readiness are different failures" % wanted)
+
+# The env list: `- name: X` followed by `value: Y`. A valueFrom entry is left out.
+values = {}
+current = None
+for line in lines:
+    m = re.match(r"\s*-\s*name:\s*(\w+)\s*$", line)
+    if m:
+        current = m.group(1)
+        continue
+    if current:
+        m2 = re.match(r"\s*value:\s*(.*?)\s*$", line)
+        if m2:
+            value = m2.group(1)
+            value = re.sub(r"^[\"']|[\"']$", "", value)
+            values[current] = value
+        current = None
+
+for flag in ("ENABLE_OTEL", "ENABLE_OTEL_TRACES"):
+    if values.get(flag, "").lower() == "true":
+        ok("%s=true" % flag)
+    else:
+        bad("%s is %r - without traces there are no SERVER spans and the availability SLI is empty"
+            % (flag, values.get(flag)))
+if values.get("OTEL_SERVICE_NAME") == "open-webui":
+    ok("OTEL_SERVICE_NAME=open-webui (the service label the SLO rules match)")
+else:
+    bad("OTEL_SERVICE_NAME is %r, the SLO rules filter service=\"open-webui\""
+        % (values.get("OTEL_SERVICE_NAME"),))
+if "opentelemetry" in values.get("OTEL_EXPORTER_OTLP_ENDPOINT", ""):
+    ok("OTEL_EXPORTER_OTLP_ENDPOINT still points at the collector")
+else:
+    bad("OTEL_EXPORTER_OTLP_ENDPOINT is %r - the spans never reach Tempo"
+        % (values.get("OTEL_EXPORTER_OTLP_ENDPOINT"),))
+
+sys.exit(1 if problems else 0)
+PY
+  if python3 -I "$WORK/ac7.py"; then
+    :
+  else
+    fail_ac 7 "the Open WebUI HelmRelease does not carry the probes and the tracing AC-7 requires (see the FAIL lines above)"
+  fi
+fi
+
+# --- AC-8: the missing-series alert ---------------------------------------
+#
+# The 42 recording series are the whole SLO: rename a service label, drop a
+# window, and every rule over it records nothing. No burn rate fires for an
+# empty series - the SLO is gone and the silence looks exactly like health. The
+# alert has to count the series that exist (or vector(0), so zero is a value and
+# not an absent expression) and fire below 42.
+printf '\n== AC-8: SLORecordingSeriesMissing fires below 42 series, including zero\n' >&2
+
+N_SERIES=42
+if [ "$have_rules" -eq 1 ]; then
+  n_series=$(awk -F'\t' '$2 != "" && $3 != ""' "$REC_TSV" | wc -l | tr -d '[:space:]')
+  n_pairs=$(awk -F'\t' '$2 != "" && $3 != "" { print $2 ":" $3 }' "$REC_TSV" | sort -u | wc -l | tr -d '[:space:]')
+  if [ "$n_series" -eq "$N_SERIES" ]; then
+    ok "the rule file defines $n_series SLO series - the threshold $N_SERIES is reality"
+  else
+    fail_ac 8 "the rule file defines $n_series SLO series, not $N_SERIES - an alert on < $N_SERIES would miss the point (or fire forever)"
+  fi
+  if [ "$n_pairs" -eq 6 ]; then
+    ok "3 services x 2 SLIs = 6 service/slo pairs"
+  else
+    fail_ac 8 "$n_pairs service/slo pairs, expected 6 (open-webui, hindsight-api and grafana, availability and latency)"
+  fi
+fi
+
+MISSING_ALERT="$ALERT_DIR/SLORecordingSeriesMissing"
+if [ "$have_rules" -eq 0 ]; then
+  fail_ac 8 "$RULE_FILE missing"
+elif [ ! -f "$MISSING_ALERT" ]; then
+  fail_ac 8 "no SLORecordingSeriesMissing alert in $RULE_FILE - a wrong service label silently empties the SLI and nothing notices"
+else
+  f=$(flatten "$MISSING_ALERT")
+  if printf '%s' "$f" | grep -qE 'count\('; then
+    ok "counts the series it expects"
+  else
+    fail_ac 8 "SLORecordingSeriesMissing does not count anything - use count(...)"
+  fi
+  if printf '%s' "$f" | grep -q 'slo:sli_error:ratio_rate'; then
+    ok "counts the slo:sli_error:ratio_rate* series"
+  else
+    fail_ac 8 "SLORecordingSeriesMissing counts no slo:sli_error:ratio_rate* series"
+  fi
+  # `or vector(0)` is what makes zero an observable value: without it the
+  # comparison is simply empty and the alert stays silent exactly when the SLO
+  # is fully gone - which is the case it exists for.
+  if printf '%s' "$f" | grep -qE 'or[[:space:]]+vector\(0\)'; then
+    ok "or vector(0): zero series is a value, not an absent expression"
+  else
+    fail_ac 8 "SLORecordingSeriesMissing has no 'or vector(0)' - with zero series the expression is empty and the alert never fires"
+  fi
+  if printf '%s' "$f" | grep -qE '<[[:space:]]*42([^0-9.]|$)'; then
+    ok "fires below 42 series"
+  else
+    fail_ac 8 "SLORecordingSeriesMissing does not compare against < 42"
+  fi
+  if has_label "$MISSING_ALERT" alertgroup slo; then
+    ok "  carries alertgroup: slo (the routing contract)"
+  else
+    fail_ac 8 "SLORecordingSeriesMissing carries no alertgroup: slo - the AlertmanagerConfig routes on it"
+  fi
+  if [ -f "$AM_FILE" ]; then
+    am_ns=$(label_val "$AM_FILE" namespace)
+    a_ns=$(label_val "$MISSING_ALERT" namespace)
+    if [ -n "$am_ns" ] && [ -n "$a_ns" ] && [ "$a_ns" != "$am_ns" ]; then
+      fail_ac 8 "SLORecordingSeriesMissing labels namespace=$a_ns but the AlertmanagerConfig is in $am_ns - it would never route"
+    fi
+  fi
+fi
+
+# --- AC-9: one error budget per service and per SLI -----------------------
+#
+# A single "error budget left" stat per service hides which SLI is spending it:
+# an availability burn and a latency burn have different causes and different
+# first checks. The dashboard therefore needs a budget panel per (service, SLI)
+# pair - six of them, each selecting the service and the slo label.
+printf '\n== AC-9: one error budget per service and per SLI on the SLO dashboard\n' >&2
+
+if [ ! -f "$DASH_FILE" ]; then
+  fail_ac 9 "$DASH_FILE missing"
+else
+  cat > "$WORK/ac9.py" <<'PY'
+import json
+import re
+import sys
+
+DASH = "infrastructure/observability/dashboards/slo-dashboard-configmap.yaml"
+SERVICES = (("open-webui", r"open[-_]?webui"),
+            ("hindsight-api", r"hindsight[-_]?api"),
+            ("grafana", r"grafana"))
+SLIS = ("availability", "latency")
+
+problems = []
+
+
+def ok(msg):
+    sys.stderr.write("  ok    %s\n" % msg)
+
+
+def bad(msg):
+    problems.append(msg)
+    sys.stderr.write("  FAIL  %s\n" % msg)
+
+
+try:
+    configmap = json.load(open(DASH, encoding="utf-8"))
+except ValueError as exc:
+    bad("%s is not JSON: %s" % (DASH, exc))
+    sys.exit(1)
+
+data = configmap.get("data") if isinstance(configmap, dict) else None
+if not isinstance(data, dict) or not data:
+    bad("%s has no ConfigMap data" % DASH)
+    sys.exit(1)
+
+dash = None
+for key in data:
+    value = data[key]
+    try:
+        dash = value if isinstance(value, dict) else json.loads(value)
+    except ValueError:
+        dash = None
+    break
+if not isinstance(dash, dict):
+    bad("%s carries no parsed dashboard" % DASH)
+    sys.exit(1)
+
+panels = []
+
+
+def walk(items):
+    for panel in items or []:
+        if isinstance(panel, dict):
+            panels.append(panel)
+            walk(panel.get("panels"))
+
+
+walk(dash.get("panels"))
+
+
+def panel_text(panel):
+    """Title, description and every target expression - prose included."""
+    parts = [panel.get("title") or "", panel.get("description") or ""]
+    for target in panel.get("targets") or []:
+        if isinstance(target, dict):
+            parts.append(target.get("expr") or "")
+    return "\n".join(parts)
+
+
+def panel_query(panel):
+    """Title and expressions only: the description is prose and must not decide
+    what a panel *is* - every SLI stat panel's description mentions the error
+    budget, and counting those would make this AC pass on nothing."""
+    parts = [panel.get("title") or ""]
+    for target in panel.get("targets") or []:
+        if isinstance(target, dict):
+            parts.append(target.get("expr") or "")
+    return "\n".join(parts)
+
+
+covered = set()
+for panel in panels:
+    if not re.search(r"budget", panel_query(panel), re.I):
+        continue
+    blob = panel_text(panel)
+    repeat = re.sub(r"[\"'\s]", "", str(panel.get("repeat") or ""))
+    for label, pattern in SERVICES:
+        if not re.search(r"service\s*=~?\s*\"%s\"" % pattern, blob):
+            continue
+        for sli in SLIS:
+            by_label = re.search(r"slo\s*=~?\s*\"%s" % sli, blob)
+            by_repeat = repeat == "slo" and re.search(r"\$\{?slo\}?", blob)
+            if by_label or by_repeat:
+                covered.add((label, sli))
+                ok("panel %r carries the %s error budget for %s"
+                   % (panel.get("title"), sli, label))
+
+missing = [(label, sli) for label, _ in SERVICES for sli in SLIS
+           if (label, sli) not in covered]
+for label, sli in missing:
+    bad("no error-budget panel scoped to %s / %s" % (label, sli))
+
+if missing:
+    ok("detail: %d of %d service/SLI budget panels present"
+       % (len(covered), len(SERVICES) * len(SLIS)))
+
+sys.exit(1 if problems else 0)
+PY
+  if python3 -I "$WORK/ac9.py"; then
+    :
+  else
+    fail_ac 9 "the SLO dashboard has no error budget for every service and SLI (see the FAIL lines above)"
+  fi
+fi
+
 # --- verdict ---------------------------------------------------------------
+#
+# Only the ACs this work order's spec assigns to this command: a line for any
+# other id is a setup error (CONTRACT.md point 2), so AC-1..AC-5 stay on stderr.
 printf '\n' >&2
 rc=0
-for n in 1 2 3 4 5; do
+for n in 6 7 8 9; do
   if [ "${AC_FAIL[$n]}" -eq 1 ]; then
     printf 'AC-%s: FAIL %s\n' "$n" "${AC_WHY[$n]}"
     rc=1

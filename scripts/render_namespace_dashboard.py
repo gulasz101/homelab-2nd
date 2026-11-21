@@ -635,6 +635,13 @@ class Dashboard:
         the 30-day error ratio when traffic is steady, and the same series the
         burn rates are computed from. `[30d]` is in the query rather than in a
         hidden recording rule.
+
+        Four stats per service, one pair per SLI: the 30-day SLI and that SLI's
+        own error budget. One "budget left" figure per service hides which of
+        the two is being spent, and the pair is what the alerts are split on:
+        an availability burn is errors, a latency burn is saturation, so a
+        service can be out of budget on one SLI while the other is fine
+        (GUL-1962).
         """
         self.row(ROW_ORDER[0])
         y = self.y
@@ -661,36 +668,46 @@ class Dashboard:
                             "refId": "A",
                         },
                     ],
-                    8 * index, y, w=8, h=4,
+                    6 * index, y, w=6, h=4,
                     thresholds=[
                         {"color": "red", "value": None},
                         {"color": "green", "value": target},
                     ],
                 )
-            self.stat(
-                "%s error budget left — 30d" % label,
-                "How much of %s's 30-day error budget is unspent, in percent. "
-                "100 %% means nothing spent, 0 %% means the %s %% target has been "
-                "missed; the budget is %s (1 - target). Under 25 %% the service "
-                "pages at the fast burn rate within hours, under 50 %% the ticket "
-                "alerts start." % (label, target, budget),
-                "percent",
-                [
-                    {
-                        "expr": '100 * (1 - (avg_over_time(slo:sli_error:ratio_rate1d'
-                                '{service="%s"}[30d]) / %s))' % (service, budget),
-                        "instant": True,
-                        "legendFormat": "{{slo}}",
-                        "refId": "A",
-                    },
-                ],
-                16, y, w=8, h=4,
-                thresholds=[
-                    {"color": "red", "value": None},
-                    {"color": "yellow", "value": 25},
-                    {"color": "green", "value": 50},
-                ],
-            )
+            # The same budget number, once per SLI: the panel selects the pair,
+            # so a reader can see which half of the service is spending it
+            # without swapping a legend entry. 25 % / 50 % are the page and
+            # ticket boundaries the burn-rate alerts use.
+            for index, sli in enumerate(SLO_SLIS):
+                self.stat(
+                    "%s %s error budget left — 30d" % (label, sli),
+                    "How much of %s's 30-day %s error budget is unspent, in "
+                    "percent. 100 %% means nothing spent, 0 %% means the %s %% "
+                    "target has been missed; the budget is %s (1 - target). One "
+                    "budget per SLI: an availability burn is errors, a latency "
+                    "burn is saturation, so the two are checked differently once "
+                    "one of them runs out. Under 25 %% the service pages at the "
+                    "fast burn rate within hours, under 50 %% the ticket alerts "
+                    "start."
+                    % (label, sli, ("%.1f" % target).rstrip("0").rstrip("."), budget),
+                    "percent",
+                    [
+                        {
+                            "expr": '100 * (1 - (avg_over_time(slo:sli_error:ratio_rate1d'
+                                    '{service="%s",slo="%s"}[30d]) / %s))'
+                                    % (service, sli, budget),
+                            "instant": True,
+                            "legendFormat": sli,
+                            "refId": "A",
+                        },
+                    ],
+                    6 * (len(SLO_SLIS) + index), y, w=6, h=4,
+                    thresholds=[
+                        {"color": "red", "value": None},
+                        {"color": "yellow", "value": 25},
+                        {"color": "green", "value": 50},
+                    ],
+                )
             y += 4
 
             targets = []
