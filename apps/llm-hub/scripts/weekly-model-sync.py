@@ -2,8 +2,10 @@
 """Weekly sync of Ollama Cloud and OpenCode Go model lists into the homelab LiteLLM hub.
 
 GitOps-native: edits the repo, commits, pushes, and lets Flux reconcile. New models are
-probed with a real chat completion before being added. Stale models are only removed when
-explicitly allowed and after confirming no consumer references them.
+probed with a real chat completion before being added. Every route the hub already advertises
+is audited the same way: a permanent upstream refusal (400/403/404/410) archives the route and
+writes it to `apps/llm-hub/retired-models.yaml`, because a name nobody can call is a trap, not
+inventory (GUL-2009). Quota and 5xx never remove anything.
 
 `main` carries the `protect-main` ruleset, so the sync cannot push to it. When that push is
 rejected it leaves the commit on a dated branch with a PR open and exits 4 (awaiting the
@@ -13,6 +15,8 @@ owner's merge) instead of dying half-way through the release (GUL-721).
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import io
 import json
 import os
 import re
@@ -31,10 +35,16 @@ from ruamel.yaml import YAML
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-REPO = Path.home() / "Projects" / "homelab-2nd"
+# Derived from this file's own location (apps/llm-hub/scripts/<file>) so a git
+# worktree runs the sync against ITS OWN checkout instead of the primary clone.
+REPO = Path(__file__).resolve().parents[3]
 LITELLM_RELEASE = REPO / "apps" / "llm-hub" / "litellm-helm-release.yaml"
 PROVISIONER_CM = REPO / "apps" / "llm-hub" / "litellm-key-provisioner-configmap.yaml"
 OPENWEBUI_RELEASE = REPO / "apps" / "llm-hub" / "openwebui-helm-release.yaml"
+# Append-only record of every route the hub has retired or refused, with the full
+# previous entry, so a model can be explained or restored months later (GUL-2009).
+RETIRED_LEDGER = REPO / "apps" / "llm-hub" / "retired-models.yaml"
+RETIRED_DOCS = REPO / "docs" / "llm-hub-retired-models.md"
 
 CACHE_DIR = Path.home() / ".cache" / "weekly-model-sync"
 BACKUP_DIR = CACHE_DIR / "backups"
@@ -54,6 +64,23 @@ GO_BARE_ROUTES = {"deepseek-v4.1-flash", "qwen3.8-flash"}
 
 # Derived / purpose-built Go routes that are not generated from the upstream catalogue.
 GO_DERIVED_ROUTES = {"hindsight-consolidation-go"}
+
+# ---------------------------------------------------------------------------
+# Route audit (GUL-2009)
+# ---------------------------------------------------------------------------
+# A route the upstream refuses is not inventory, it is a trap: `/v1/models`
+# keeps advertising it and the 403 lands on whoever calls it. The sync now
+# probes every route it already advertises and ARCHIVES the ones the provider
+# refuses permanently - no --allow-removals flag needed, because keeping a dead
+# name has never fixed a caller.
+#
+# The split matters: quota must never delete the catalogue. A 429 (OpenCode Go
+# monthly, Ollama weekly) or a 5xx/timeout is "could not check", not "gone".
+PERMANENT_FAILURE_CODES = {400, 401, 403, 404, 405, 410, 422}
+TRANSIENT_FAILURE_CODES = {408, 429, 500, 502, 503, 504}
+# model_name -> why a chat probe failing is expected. Keep empty unless a route
+# is deliberately not a chat model; a comment per entry, never a silent pass.
+ROUTE_AUDIT_EXEMPT: dict[str, str] = {}
 
 # DeepSeek's own API (api.deepseek.com) routes end in `-ds`. DeepSeek publishes
 # only a handful of ids and they do NOT follow the local route name, so the
@@ -232,6 +259,13 @@ def load_yaml(path: Path, *, backup: bool = True) -> tuple[dict, Path | None]:
 def save_yaml(data, path: Path) -> None:
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(data, f)
+
+
+def dump_yaml(data) -> str:
+    """Same writer, into a string (the ledger is a generated file, not a release)."""
+    buffer = io.StringIO()
+    yaml.dump(data, buffer)
+    return buffer.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -430,9 +464,15 @@ def compute_provisioner_desired(
     retires or failed to verify, and add back only the verified additions.
     """
     routed = {_bare_model_id(m) for m in routed_models}
-    kept = {m for m in provisioner_current if _bare_model_id(m) in routed}
+    # Compare removals on the bare id too: the allowlist stores some ids with an
+    # `openai/` prefix, so subtracting the route names directly leaves a retired
+    # route's permission behind (found by the allowlist check, GUL-2009).
+    removed = {_bare_model_id(m) for m in safe_removals}
+    kept = {
+        m for m in provisioner_current
+        if _bare_model_id(m) in routed and _bare_model_id(m) not in removed
+    }
     kept -= failed_additions
-    kept -= safe_removals
     kept |= verified_additions
     return kept
 
@@ -673,7 +713,9 @@ def upstream_id_for_model(
     return None
 
 
-def probe_model(model_name: str, upstream_id: str, provider: str, key: str) -> dict:
+def probe_model(
+    model_name: str, upstream_id: str, provider: str, key: str, *, max_tokens: int = 400, timeout: int = 120
+) -> dict:
     """Probe the upstream provider directly with a real chat completion."""
     if provider == "ollama":
         url = "https://ollama.com/v1/chat/completions"
@@ -703,17 +745,17 @@ def probe_model(model_name: str, upstream_id: str, provider: str, key: str) -> d
     payload = json.dumps({
         "model": upstream_id,
         "messages": [{"role": "user", "content": f"Say exactly: {model_name} is online"}],
-        "max_tokens": 400,
+        "max_tokens": max_tokens,
     }).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
 
     start = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = json.loads(resp.read().decode("utf-8"))
             msg = body.get("choices", [{}])[0].get("message", {})
-            content = msg.get("content", "").strip()
-            reasoning = msg.get("reasoning", "").strip() or msg.get("reasoning_content", "").strip()
+            content = (msg.get("content") or "").strip()
+            reasoning = (msg.get("reasoning") or "").strip() or (msg.get("reasoning_content") or "").strip()
             latency = int((time.time() - start) * 1000)
             return {
                 "ok": bool(content or reasoning),
@@ -857,6 +899,258 @@ def update_openwebui_pins(data, newly_added: set[str]) -> set[str]:
 # ---------------------------------------------------------------------------
 # Flux / verification
 # ---------------------------------------------------------------------------
+def _plain(obj):
+    """CommentedMap -> plain struct, so the ledger dump carries no ruamel types."""
+    if isinstance(obj, dict):
+        return {str(k): _plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_plain(v) for v in obj]
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    return str(obj)
+
+
+# ---------------------------------------------------------------------------
+# Route audit + retirement ledger (GUL-2009)
+# ---------------------------------------------------------------------------
+LEDGER_HEADER = """\
+# Routes the LLM hub has retired, or refused to add, and why.
+#
+# Written by apps/llm-hub/scripts/weekly-model-sync.py - never edit by hand.
+# Read by humans at docs/llm-hub-retired-models.md (regenerated from this file).
+#
+# `entry` is the exact model_list entry that was removed, so a route can be
+# pasted back into litellm-helm-release.yaml when the upstream serves it again.
+# Three states:
+#   retired  - was advertised by the hub, the upstream refused it permanently
+#   rejected - never added: the catalogue offered it, the probe refused it
+#   revoked  - retired after the upstream dropped it from the catalogue
+"""
+
+
+def route_probe_target(entry: dict) -> tuple[str, str] | None:
+    """(upstream_id, provider) for a configured route, read from its own litellm_params.
+
+    Read from the entry, never from the catalogue: a route that 403s is usually
+    still listed upstream, and the hand-written routes have no catalogue entry
+    at all. A base we do not own (local LM Studio, in-cluster services) returns
+    None and is left strictly alone.
+    """
+    params = entry.get("litellm_params") or {}
+    model = str(params.get("model") or "")
+    if not model:
+        return None
+    upstream_id = model.split("/", 1)[-1]
+    base = str(params.get("api_base") or "")
+    if "ollama.com" in base:
+        return upstream_id, "ollama"
+    if "opencode.ai" in base:
+        return upstream_id, "go"
+    if not base and model.startswith("deepseek/"):
+        return upstream_id, "ds"
+    return None
+
+
+def _probe_key(provider_keys: dict[str, str], provider: str) -> str:
+    return provider_keys.get(
+        {"ollama": "OLLAMA_API_KEY", "ds": "DEEPSEEK_API_KEY"}.get(provider, "OPENCODE_GO_SUBSCRIPTION_API_KEY"),
+        "",
+    )
+
+
+def reason_class(status_code: int | None, error: str | None) -> str:
+    """Short, stable bucket for a refusal, so the ledger can be counted."""
+    low = str(error or "").lower()
+    if "model access is disabled" in low or "permission_error" in low or status_code == 403:
+        return "access_disabled"
+    if status_code == 410 or "deprecat" in low or "retired" in low or "no longer" in low:
+        return "deprecated"
+    if status_code == 400 and ("not included" in low or "plan" in low or "not supported" in low):
+        return "not_in_plan"
+    return f"http_{status_code}" if status_code else "unreachable"
+
+
+def _classify_probe(result: dict) -> tuple[str, int | None, str]:
+    """ok | permanent | transient, plus the HTTP code and the reason text.
+
+    permanent = the provider will not serve this name at all (400/403/404/410).
+    transient = we could not tell (429 quota, 5xx, timeout, network).
+    """
+    if result.get("ok"):
+        return "ok", None, ""
+    error = str(result.get("error") or "") or "no response"
+    match = re.search(r"HTTP (\d{3})", error)
+    code = int(match.group(1)) if match else None
+    if code is None:
+        return "transient", None, error[:300]
+    if code in PERMANENT_FAILURE_CODES:
+        return "permanent", code, error[:300]
+    if code in TRANSIENT_FAILURE_CODES:
+        return "transient", code, error[:300]
+    if 400 <= code < 500:
+        return "permanent", code, error[:300]
+    return "transient", code, error[:300]
+
+
+def audit_routes(data, provider_keys: dict[str, str], *, workers: int = 8) -> list[dict]:
+    """Probe every route the hub advertises, read-only, and classify the answer.
+
+    Parallel (a refusal is fast, a working route is the slow one) and capped in
+    tokens: this runs against the owner's own subscription every week, so it
+    must cost one short completion per route and nothing more.
+    """
+    entries = data["spec"]["values"]["proxy_config"]["model_list"]
+    plans: list[tuple[str, tuple[str, str] | None, str | None]] = []
+    for entry in entries:
+        name = entry["model_name"]
+        exempt = ROUTE_AUDIT_EXEMPT.get(name)
+        if not exempt and name in GO_DERIVED_ROUTES:
+            # Purpose-built route: it may ride its own fallback, so a probe of the
+            # upstream says nothing about the route. Left to the reference check.
+            exempt = "derived route with fallbacks - audit it through the hub, not the upstream"
+        plans.append((name, route_probe_target(entry), exempt))
+
+    def audit_one(plan: tuple[str, tuple[str, str] | None, str | None]) -> dict:
+        name, target, exempt = plan
+        if exempt:
+            return {"model_name": name, "status": "exempt", "code": None, "reason": exempt,
+                    "upstream_id": None, "provider": None, "latency_ms": 0}
+        if target is None:
+            return {"model_name": name, "status": "unprobeable", "code": None,
+                    "reason": "not a hosted provider route (local or in-cluster api_base)",
+                    "upstream_id": None, "provider": None, "latency_ms": 0}
+        upstream_id, provider = target
+        result = probe_model(
+            name, upstream_id, provider, _probe_key(provider_keys, provider), max_tokens=16, timeout=90
+        )
+        status, code, reason = _classify_probe(result)
+        return {"model_name": name, "status": status, "code": code, "reason": reason,
+                "upstream_id": upstream_id, "provider": provider,
+                "latency_ms": result.get("latency_ms", 0)}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(audit_one, plans))
+    return sorted(results, key=lambda r: r["model_name"])
+
+
+def report_route_audit(results: list[dict]) -> None:
+    """Print the lane table. Loud for anything the caller cannot use."""
+    ok = [r for r in results if r["status"] == "ok"]
+    permanent = [r for r in results if r["status"] == "permanent"]
+    transient = [r for r in results if r["status"] == "transient"]
+    unprobeable = [r for r in results if r["status"] == "unprobeable"]
+    exempt = [r for r in results if r["status"] == "exempt"]
+
+    print("\n-- Route audit (every advertised route, one short completion each) --")
+    print(f"  answers:        {len(ok)}")
+    print(f"  refused:        {len(permanent)}  <- archived this run")
+    print(f"  unverified:     {len(transient)}  (quota/5xx/timeout: kept, never archived)")
+    print(f"  not probed:     {len(unprobeable) + len(exempt)}  (local/in-cluster/exempt: left alone)")
+    for r in permanent:
+        print(f"  RETIRE {r['model_name']}  ({r['provider']}/{r['upstream_id']})  "
+              f"{r['code']}: {reason_class(r['code'], r['reason'])}")
+    for r in transient:
+        print(f"  KEEP   {r['model_name']}  unverified: {r['reason'][:90]}")
+
+
+def load_ledger() -> dict:
+    if not RETIRED_LEDGER.exists():
+        return {"retired": []}
+    data = YAML(typ="safe").load(RETIRED_LEDGER.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("retired", [])
+    return data
+
+
+def record_ledger(records: list[dict]) -> list[str]:
+    """Append or refresh ledger entries. Returns the affected model names.
+
+    Deduplicated by (model_name, state, reason_class): a model that fails the
+    same way for six weeks is one row with a `count`, not six rows of noise.
+    """
+    if not records:
+        return []
+    ledger = load_ledger()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    touched: list[str] = []
+    for rec in records:
+        name = rec["model_name"]
+        state = rec.get("state", "retired")
+        klass = rec.get("reason_class") or reason_class(rec.get("code"), rec.get("reason", ""))
+        existing = next(
+            (e for e in ledger["retired"]
+             if e.get("model_name") == name and e.get("state") == state and e.get("reason_class") == klass),
+            None,
+        )
+        if existing:
+            existing["last_seen"] = today
+            existing["count"] = int(existing.get("count") or 1) + 1
+            existing["status"] = rec.get("code")
+            existing["reason"] = rec.get("reason", existing.get("reason"))
+            touched.append(name)
+            continue
+        entry = {
+            "model_name": name,
+            "state": state,
+            "provider": rec.get("provider"),
+            "upstream_id": rec.get("upstream_id"),
+            "reason_class": klass,
+            "status": rec.get("code"),
+            "reason": rec.get("reason", ""),
+            "first_seen": today,
+            "last_seen": today,
+            "count": 1,
+        }
+        if rec.get("entry"):
+            entry["entry"] = rec["entry"]
+        ledger["retired"].append(entry)
+        touched.append(name)
+
+    RETIRED_LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    RETIRED_LEDGER.write_text(LEDGER_HEADER + dump_yaml(ledger), encoding="utf-8")
+    render_retired_docs(ledger)
+    return touched
+
+
+def render_retired_docs(ledger: dict) -> None:
+    """Regenerate the human-readable table from the ledger (docs, not a source of truth)."""
+    rows = sorted(ledger.get("retired", []), key=lambda e: (str(e.get("last_seen", "")), e.get("model_name", "")), reverse=True)
+    lines = [
+        "# Retired LLM hub routes",
+        "",
+        "Generated by `apps/llm-hub/scripts/weekly-model-sync.py` from",
+        "`apps/llm-hub/retired-models.yaml` - do not edit either by hand.",
+        "",
+        "A route is retired when the upstream refuses it permanently (400, 403, 404, 410).",
+        "A 429 (quota) or a 5xx never retires anything, because that is *could not check*, not *gone*:",
+        "the sync reports those and leaves the route where it is.",
+        "",
+        "**Why this file exists:** a retired route that stays in `/v1/models` is a trap. Clients pick it",
+        "from the list, the call comes back 403, and the caller has no way to know the model is switched",
+        "off upstream rather than broken in the hub.",
+        "",
+        "**To restore a model:** the full previous `model_list` entry is kept in the YAML ledger under",
+        "`entry`. Paste it back into `apps/llm-hub/litellm-helm-release.yaml`, and the next sync keeps it",
+        "if the probe answers. For quota-driven states, just wait for the reset: a rejected candidate is",
+        "re-probed every week and adds itself once the provider serves it.",
+        "",
+        "| model | state | provider | last seen | status | why |",
+        "|---|---|---|---|---|---|",
+    ]
+    for e in rows:
+        why = str(e.get("reason") or "").replace("|", "/").replace("\n", " ")[:140]
+        lines.append(
+            f"| `{e.get('model_name')}` | {e.get('state')} | {e.get('provider') or '-'} | "
+            f"{e.get('last_seen') or '-'} | {e.get('status') or '-'} | {why} |"
+        )
+    if not rows:
+        lines.append("| - | - | - | - | - | nothing retired yet |")
+    lines.append("")
+    RETIRED_DOCS.parent.mkdir(parents=True, exist_ok=True)
+    RETIRED_DOCS.write_text("\n".join(lines), encoding="utf-8")
+
+
 def flux_reconcile() -> None:
     ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     run(kubectl("-n", "flux-system",
@@ -906,6 +1200,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Weekly LLM model-list sync")
     parser.add_argument("--dry-run", action="store_true", help="Show diff but do not commit or mutate cluster")
     parser.add_argument("--allow-removals", action="store_true", help="Allow removal of unreferenced stale models")
+    parser.add_argument(
+        "--skip-route-audit",
+        action="store_true",
+        help="Do not probe the routes the hub already advertises (skips forced archival of refused routes)",
+    )
+    parser.add_argument(
+        "--commit-only",
+        action="store_true",
+        help="Apply the mutation and commit on the CURRENT branch; no push, no PR, no Flux, no proxy check",
+    )
     args = parser.parse_args()
 
     print(f"=== Weekly LLM model-list sync — {'DRY-RUN' if args.dry_run else 'LIVE'} ===")
@@ -917,7 +1221,7 @@ def main() -> int:
     # ------------------------------------------------------------------
     # Preflight: the sync owns the commit and the push to main
     # ------------------------------------------------------------------
-    if not args.dry_run and not preflight():
+    if not args.dry_run and not args.commit_only and not preflight():
         return 1
 
     # ------------------------------------------------------------------
@@ -959,8 +1263,31 @@ def main() -> int:
         print("!! Pick a new default in apps/llm-hub/openwebui-helm-release.yaml.")
 
     def exit_code() -> int:
-        """3 when a dead upstream reference or a dead Open WebUI default survived the run."""
-        return 3 if (dead_upstreams or dead_defaults) else 0
+        """3 when something still needs the owner: a dead upstream reference, a dead
+        Open WebUI default, or a hand-written route the upstream refuses."""
+        return 3 if (dead_upstreams or dead_defaults or refused_handwritten) else 0
+
+    # ------------------------------------------------------------------
+    # Route audit (GUL-2009): probe what the hub already advertises
+    # ------------------------------------------------------------------
+    # The catalogue questions ("is this model still offered?") never asked
+    # whether a route ANSWERS. This one does, and the owner's rule is blunt: a
+    # route the provider refuses permanently is archived from the hub, because
+    # leaving it there only moves the 403 onto the next caller.
+    audit_results: list[dict] = []
+    # Snapshot the entries BEFORE anything is removed: the ledger keeps the exact
+    # model_list entry of a retired route so it can be pasted back later.
+    entry_snapshot = {
+        entry["model_name"]: _plain(entry)
+        for entry in litellm_data["spec"]["values"]["proxy_config"]["model_list"]
+    }
+    if args.skip_route_audit:
+        print("\n-- Route audit skipped (--skip-route-audit) --")
+    else:
+        audit_results = audit_routes(litellm_data, provider_keys)
+        report_route_audit(audit_results)
+
+    refused_routes = {r["model_name"] for r in audit_results if r["status"] == "permanent"}
 
     # Preserve non-Ollama/non-Go routes in the LiteLLM model list (z.ai, OpenRouter, Gemini, etc.)
     litellm_desired = upstream_desired | {m for m in current if not (is_ollama_model(m) or is_go_model(m))}
@@ -1055,6 +1382,39 @@ def main() -> int:
         print("Removals disabled (use --allow-removals to enable). Stale models kept in config.")
         safe_removals = set()
 
+    # A route the upstream refuses is archived whether or not --allow-removals was
+    # passed, and a consumer pin does NOT block it: the pin does not fix the 403,
+    # it only guarantees the consumer keeps eating one. The pin is reported so the
+    # consumer gets fixed; the name leaves the catalogue either way.
+    # Only what the sync itself generated may be archived without a human. A
+    # hand-written route (GO_DERIVED_ROUTES) may be riding an intentional fallback,
+    # and deleting it would remove working behaviour, so it is reported and left
+    # alone (GUL-105). `litellm_removals` is the current-but-no-longer-catalogued
+    # set: still sync-generated, just stale, so a refusal there is a probe finding
+    # and not an --allow-removals decision.
+    sync_owned_routes = (upstream_desired | GO_BARE_ROUTES | set(litellm_removals)) - GO_DERIVED_ROUTES
+    refused_handwritten = refused_routes - sync_owned_routes
+    if refused_handwritten:
+        print("\n!! Hand-written route(s) refused by the upstream - NOT archived, decide by hand:")
+        for name in sorted(refused_handwritten):
+            row = next(r for r in audit_results if r["model_name"] == name)
+            print(f"!!   {name}: {row['code']} {row['reason'][:120]}")
+
+    forced_removals = {m for m in refused_routes if m in current and m in sync_owned_routes}
+    if forced_removals:
+        print(f"Forced archival - upstream refuses these ({len(forced_removals)}): "
+              + ", ".join(sorted(forced_removals)))
+        for m in sorted(forced_removals):
+            blocked_removals.pop(m, None)
+        safe_removals |= forced_removals
+
+    pinned_to_dead = sorted(
+        m for m in protected if m in (forced_removals | set(blocked_removals) | safe_removals)
+    )
+    if pinned_to_dead:
+        print("Consumer pins pointing at routes leaving the hub - fix the consumer: "
+              + ", ".join(pinned_to_dead))
+
     routes_after = (current | verified_additions) - safe_removals
     stale_pins = {
         m for m in (v.strip() for v in str((_openwebui_env(openwebui_data, "DEFAULT_PINNED_MODELS") or {}).get("value", "")).split(","))
@@ -1071,6 +1431,10 @@ def main() -> int:
         print("\n-- DRY-RUN diff summary --")
         print(f"Would add:    {sorted(verified_additions)}")
         print(f"Would remove: {sorted(safe_removals)}")
+        if forced_removals:
+            print(f"Would archive (upstream refuses, not a flag decision): {sorted(forced_removals)}")
+        if pinned_to_dead:
+            print(f"Would report as a broken consumer pin: {pinned_to_dead}")
         print(f"Would skip (failed probe): {sorted(failed_additions)}")
         print(f"Would skip (protected):    {sorted(blocked_removals)}")
         print(f"Would unpin in Open WebUI: {sorted(stale_pins)}")
@@ -1101,6 +1465,37 @@ def main() -> int:
     )
     new_provisioner_text = update_key_provisioner(provisioner_text, new_provisioner_desired)
 
+    ledger_records: list[dict] = []
+    for r in audit_results:
+        if r["status"] != "permanent" or r["model_name"] not in forced_removals:
+            continue
+        ledger_records.append({
+            "model_name": r["model_name"],
+            "state": "retired",
+            "provider": r["provider"],
+            "upstream_id": r["upstream_id"],
+            "code": r["code"],
+            "reason_class": reason_class(r["code"], r["reason"]),
+            "reason": r["reason"],
+            "entry": entry_snapshot.get(r["model_name"]),
+        })
+    for name, error in failed_additions.items():
+        target = upstream_id_for_model(name, ollama_ids, go_ids, ds_ids)
+        klass_status, code, reason = _classify_probe({"ok": False, "error": error})
+        ledger_records.append({
+            "model_name": name,
+            "state": "rejected",
+            "provider": target[1] if target else None,
+            "upstream_id": target[0] if target else None,
+            "code": code,
+            "reason_class": reason_class(code, error),
+            "reason": reason,
+        })
+    if ledger_records:
+        record_ledger(ledger_records)
+        print(f"\nLedger updated: {RETIRED_LEDGER.relative_to(REPO)} "
+              f"({len(ledger_records)} record(s)), docs regenerated")
+
     save_yaml(litellm_data, LITELLM_RELEASE)
     save_yaml(openwebui_data, OPENWEBUI_RELEASE)
     PROVISIONER_CM.write_text(new_provisioner_text, encoding="utf-8")
@@ -1113,8 +1508,10 @@ def main() -> int:
         return exit_code()
 
     commit_msg = f"feat(llm-hub): weekly model sync — add {len(verified_additions)} model(s)"
-    if safe_removals:
-        commit_msg += f", remove {len(safe_removals)} stale model(s)"
+    if forced_removals:
+        commit_msg += f", archive {len(forced_removals)} refused route(s)"
+    if safe_removals - forced_removals:
+        commit_msg += f", remove {len(safe_removals - forced_removals)} stale model(s)"
     if stale_pins:
         commit_msg += f", unpin {len(stale_pins)} dead Open WebUI pin(s)"
     commit_body = f"""Weekly sync against upstream catalogues.
@@ -1128,6 +1525,12 @@ Failed probes (kept out):
 Removals:
 {chr(10).join(f"- {m}" for m in sorted(safe_removals)) or "- none"}
 
+Archived because the upstream refuses them (probe, not a flag):
+{chr(10).join(f"- {r['model_name']}: {r['code']} {reason_class(r['code'], r['reason'])}" for r in audit_results if r['model_name'] in forced_removals) or "- none"}
+
+Consumer pins pointing at a route that left the hub (fix the consumer):
+{chr(10).join(f"- {m}" for m in pinned_to_dead) or "- none"}
+
 Blocked removals (still referenced):
 {chr(10).join(f"- {m}" for m in sorted(blocked_removals)) or "- none"}
 
@@ -1136,11 +1539,19 @@ Open WebUI pins dropped (no route):
 
 Co-Authored-By: Paperclip <noreply@paperclip.ing>
 """
-    # Stage only the three files this script owns. `git add -A` would sweep in
+    # Stage only the files this script owns. `git add -A` would sweep in
     # whatever WIP another agent left in the tree.
-    for path in (LITELLM_RELEASE, OPENWEBUI_RELEASE, PROVISIONER_CM):
+    owned = [LITELLM_RELEASE, OPENWEBUI_RELEASE, PROVISIONER_CM]
+    if ledger_records:
+        owned += [RETIRED_LEDGER, RETIRED_DOCS]
+    for path in owned:
         run(["git", "add", "--", str(path)], cwd=REPO, check=True)
     run(["git", "commit", "-m", commit_msg, "-m", commit_body], cwd=REPO, check=True)
+
+    if args.commit_only:
+        print("\n--commit-only: commit left on the current branch. No push, no PR, no cluster. --")
+        print(f"Committed: {commit_msg}")
+        return exit_code()
 
     # ------------------------------------------------------------------
     # Land it. `protect-main` requires the `check` status on main, so a direct push is
@@ -1190,6 +1601,12 @@ Co-Authored-By: Paperclip <noreply@paperclip.ing>
             print(f"  {m}: advertised ✓")
         else:
             print(f"  {m}: NOT advertised ✗", file=sys.stderr)
+
+    for m in sorted(forced_removals):
+        gone = not proxy_advertises(m, master_key)
+        print(f"  {m}: {'archived ✓' if gone else 'STILL ADVERTISED ✗'}")
+        if not gone:
+            print(f"    {m} is refused upstream but still in /v1/models", file=sys.stderr)
 
     print("\n=== Sync complete ===")
     return exit_code()
