@@ -1,0 +1,644 @@
+# Routes the LLM hub has retired, or refused to add, and why.
+#
+# Written by apps/llm-hub/scripts/weekly-model-sync.py - never edit by hand.
+# Read by humans at docs/llm-hub-retired-models.md (regenerated from this file).
+#
+# `entry` is the exact model_list entry that was removed, so a route can be
+# pasted back into litellm-helm-release.yaml when the upstream serves it again.
+# Three states:
+#   retired  - was advertised by the hub, the upstream refused it permanently
+#   rejected - never added: the catalogue offered it, the probe refused it
+#   revoked  - retired after the upstream dropped it from the catalogue
+retired:
+- model_name: deepseek-flash-go
+  state: retired
+  provider: go
+  upstream_id: deepseek-flash
+  reason_class: http_400
+  status: 400
+  reason: "HTTP 400: {\"error\":{\"type\":\"server_error\",\"message\":\"Model deepseek-flash
+    isn't included in OpenCode Go. See the models it includes at https://opencode.ai/console/go.\"\
+    }}"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: deepseek-flash-go
+    litellm_params:
+      model: openai/deepseek-flash
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: deepseek-v4-flash-0731-ollama
+  state: retired
+  provider: ollama
+  upstream_id: deepseek-v4-flash:0731
+  reason_class: deprecated
+  status: 410
+  reason: "HTTP 410: {\"error\":{\"message\":\"deepseek-v4-flash:0731 was retired
+    on September 25, 2026. Try glm-5.3-flash:cloud. (ref: b59c1e04-6b3c-4bd8-8116-48d033e5aca7)\"\
+    ,\"type\":\"api_error\",\"param\":null,\"code\":null}}\n"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: deepseek-v4-flash-0731-ollama
+    litellm_params:
+      model: "openai/deepseek-v4-flash:0731"
+      api_base: "https://ollama.com/v1"
+      api_key: "os.environ/OLLAMA_API_KEY"
+- model_name: deepseek-v4-flash-go
+  state: retired
+  provider: go
+  upstream_id: deepseek-v4-flash
+  reason_class: http_400
+  status: 400
+  reason: "HTTP 400: {\"error\":{\"type\":\"server_error\",\"message\":\"Model deepseek-v4-flash
+    isn't included in OpenCode Go. See the models it includes at https://opencode.ai/console/go.\"\
+    }}"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: deepseek-v4-flash-go
+    litellm_params:
+      model: openai/deepseek-v4-flash
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: deepseek-v4-flash-ollama
+  state: retired
+  provider: ollama
+  upstream_id: deepseek-v4-flash
+  reason_class: deprecated
+  status: 410
+  reason: "HTTP 410: {\"error\":{\"message\":\"deepseek-v4-flash:0731 was retired
+    on September 25, 2026. Try glm-5.3-flash:cloud. (ref: 43afb3c5-44d4-42bd-bfe0-aaf23555354f)\"\
+    ,\"type\":\"api_error\",\"param\":null,\"code\":null}}\n"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: deepseek-v4-flash-ollama
+    litellm_params:
+      model: openai/deepseek-v4-flash
+      api_base: "https://ollama.com/v1"
+      api_key: "os.environ/OLLAMA_API_KEY"
+- model_name: deepseek-v4-flash-vision-exp-go
+  state: retired
+  provider: go
+  upstream_id: deepseek-v4-flash-vision-exp
+  reason_class: http_400
+  status: 400
+  reason: "HTTP 400: {\"error\":{\"type\":\"server_error\",\"message\":\"Model deepseek-v4-flash-vision-exp
+    isn't included in OpenCode Go. See the models it includes at https://opencode.ai/console/go.\"\
+    }}"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: deepseek-v4-flash-vision-exp-go
+    litellm_params:
+      model: openai/deepseek-v4-flash-vision-exp
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: deepseek-v4-pro-go
+  state: retired
+  provider: go
+  upstream_id: deepseek-v4-pro
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: deepseek-v4-pro-go
+    litellm_params:
+      model: openai/deepseek-v4-pro
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: glm-5.1-go
+  state: retired
+  provider: go
+  upstream_id: glm-5.1
+  reason_class: deprecated
+  status: 410
+  reason: 'HTTP 410: {"type":"error","error":{"type":"ModelDeprecated","message":"Model
+    glm-5.1 has been deprecated. Use glm-5.3 instead."},"metadata":{"model":"glm-5.1","replacement":"glm-5.3"}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: glm-5.1-go
+    litellm_params:
+      model: openai/glm-5.1
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: glm-5.1-ollama
+  state: retired
+  provider: ollama
+  upstream_id: glm-5.1
+  reason_class: deprecated
+  status: 410
+  reason: "HTTP 410: {\"error\":{\"message\":\"glm-5.1 was retired on September 25,
+    2026. Try glm-5.3-flash:cloud. (ref: 0b44c9cb-5c43-49e1-ba31-a7bf20d2d21a)\",\"\
+    type\":\"api_error\",\"param\":null,\"code\":null}}\n"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: glm-5.1-ollama
+    litellm_params:
+      model: openai/glm-5.1
+      api_base: "https://ollama.com/v1"
+      api_key: "os.environ/OLLAMA_API_KEY"
+- model_name: glm-5.2-go
+  state: retired
+  provider: go
+  upstream_id: glm-5.2
+  reason_class: deprecated
+  status: 410
+  reason: 'HTTP 410: {"type":"error","error":{"type":"ModelDeprecated","message":"Model
+    glm-5.2 has been deprecated. Use glm-5.3 instead."},"metadata":{"model":"glm-5.2","replacement":"glm-5.3"}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: glm-5.2-go
+    litellm_params:
+      model: openai/glm-5.2
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: glm-5.3-go
+  state: retired
+  provider: go
+  upstream_id: glm-5.3
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: glm-5.3-go
+    litellm_params:
+      model: openai/glm-5.3
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: hy3-go
+  state: retired
+  provider: go
+  upstream_id: hy3
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: hy3-go
+    litellm_params:
+      model: openai/hy3
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: kimi-k2.6-go
+  state: retired
+  provider: go
+  upstream_id: kimi-k2.6
+  reason_class: deprecated
+  status: 410
+  reason: 'HTTP 410: {"type":"error","error":{"type":"ModelDeprecated","message":"Model
+    kimi-k2.6 has been deprecated."},"metadata":{"model":"kimi-k2.6"}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: kimi-k2.6-go
+    litellm_params:
+      model: openai/kimi-k2.6
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: kimi-k3-go
+  state: retired
+  provider: go
+  upstream_id: kimi-k3
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: kimi-k3-go
+    litellm_params:
+      model: openai/kimi-k3
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: longcat-2.0-go
+  state: retired
+  provider: go
+  upstream_id: longcat-2.0
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: longcat-2.0-go
+    litellm_params:
+      model: openai/longcat-2.0
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: longcat-2.5-preview-free-go
+  state: retired
+  provider: go
+  upstream_id: longcat-2.5-preview-free
+  reason_class: http_400
+  status: 400
+  reason: "HTTP 400: {\"error\":{\"type\":\"server_error\",\"message\":\"Model longcat-2.5-preview-free
+    isn't included in OpenCode Go. See the models it includes at https://opencode.ai/console/go.\"\
+    }}"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: longcat-2.5-preview-free-go
+    litellm_params:
+      model: openai/longcat-2.5-preview-free
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: mimo-v2.5-go
+  state: retired
+  provider: go
+  upstream_id: mimo-v2.5
+  reason_class: deprecated
+  status: 410
+  reason: 'HTTP 410: {"type":"error","error":{"type":"ModelDeprecated","message":"Model
+    mimo-v2.5 has been deprecated."},"metadata":{"model":"mimo-v2.5"}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: mimo-v2.5-go
+    litellm_params:
+      model: openai/mimo-v2.5
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: mimo-v2.5-pro-go
+  state: retired
+  provider: go
+  upstream_id: mimo-v2.5-pro
+  reason_class: deprecated
+  status: 410
+  reason: 'HTTP 410: {"type":"error","error":{"type":"ModelDeprecated","message":"Model
+    mimo-v2.5-pro has been deprecated."},"metadata":{"model":"mimo-v2.5-pro"}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: mimo-v2.5-pro-go
+    litellm_params:
+      model: openai/mimo-v2.5-pro
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: mimo-v2.6-flash-go
+  state: retired
+  provider: go
+  upstream_id: mimo-v2.6-flash
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: mimo-v2.6-flash-go
+    litellm_params:
+      model: openai/mimo-v2.6-flash
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: mimo-v2.6-pro-go
+  state: retired
+  provider: go
+  upstream_id: mimo-v2.6-pro
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: mimo-v2.6-pro-go
+    litellm_params:
+      model: openai/mimo-v2.6-pro
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: minimax-m2.5-go
+  state: retired
+  provider: go
+  upstream_id: minimax-m2.5
+  reason_class: http_400
+  status: 400
+  reason: "HTTP 400: {\"error\":{\"type\":\"server_error\",\"message\":\"Model minimax-m2.5
+    isn't included in OpenCode Go. See the models it includes at https://opencode.ai/console/go.\"\
+    }}"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: minimax-m2.5-go
+    litellm_params:
+      model: openai/minimax-m2.5
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: minimax-m2.7-ollama
+  state: retired
+  provider: ollama
+  upstream_id: minimax-m2.7
+  reason_class: deprecated
+  status: 410
+  reason: "HTTP 410: {\"error\":{\"message\":\"minimax-m2.7 was retired on November
+    9, 2026. Try glm-5.3-flash:cloud. (ref: 06d5c646-dbc7-4993-85c6-3cabcf6b7dda)\"\
+    ,\"type\":\"api_error\",\"param\":null,\"code\":null}}\n"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: minimax-m2.7-ollama
+    litellm_params:
+      model: openai/minimax-m2.7
+      api_base: "https://ollama.com/v1"
+      api_key: "os.environ/OLLAMA_API_KEY"
+- model_name: minimax-m3-go
+  state: retired
+  provider: go
+  upstream_id: minimax-m3
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: minimax-m3-go
+    litellm_params:
+      model: openai/minimax-m3
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: mistral-large-3-675b-ollama
+  state: retired
+  provider: ollama
+  upstream_id: mistral-large-3:675b
+  reason_class: deprecated
+  status: 410
+  reason: "HTTP 410: {\"error\":{\"message\":\"mistral-large-3:675b was retired on
+    November 9, 2026. Try glm-5.3-flash:cloud. (ref: 6aaa0a71-9878-4a89-8f78-064037888552)\"\
+    ,\"type\":\"api_error\",\"param\":null,\"code\":null}}\n"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: mistral-large-3-675b-ollama
+    litellm_params:
+      model: openai/mistral-large-3:675b
+      api_base: "https://ollama.com/v1"
+      api_key: "os.environ/OLLAMA_API_KEY"
+- model_name: nemotron-3-nano-30b-ollama
+  state: retired
+  provider: ollama
+  upstream_id: nemotron-3-nano:30b
+  reason_class: deprecated
+  status: 410
+  reason: "HTTP 410: {\"error\":{\"message\":\"nemotron-3-nano:30b was retired on
+    November 9, 2026. Try glm-5.3-flash:cloud. (ref: c0e955b8-80a6-4b27-8008-357676ef1a9a)\"\
+    ,\"type\":\"api_error\",\"param\":null,\"code\":null}}\n"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: nemotron-3-nano-30b-ollama
+    litellm_params:
+      model: openai/nemotron-3-nano:30b
+      api_base: "https://ollama.com/v1"
+      api_key: "os.environ/OLLAMA_API_KEY"
+- model_name: omen-alpha-go
+  state: retired
+  provider: go
+  upstream_id: omen-alpha
+  reason_class: http_400
+  status: 400
+  reason: "HTTP 400: {\"error\":{\"type\":\"server_error\",\"message\":\"Model omen-alpha
+    isn't included in OpenCode Go. See the models it includes at https://opencode.ai/console/go.\"\
+    }}"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: omen-alpha-go
+    litellm_params:
+      model: openai/omen-alpha
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: qwen3.5-397b-ollama
+  state: retired
+  provider: ollama
+  upstream_id: qwen3.5:397b
+  reason_class: deprecated
+  status: 410
+  reason: "HTTP 410: {\"error\":{\"message\":\"qwen3.5:397b was retired on September
+    25, 2026. Try glm-5.3-flash:cloud. (ref: ff1addd4-48c1-47a9-b3f0-ba59462d2d5b)\"\
+    ,\"type\":\"api_error\",\"param\":null,\"code\":null}}\n"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: qwen3.5-397b-ollama
+    litellm_params:
+      model: "openai/qwen3.5:397b"
+      api_base: "https://ollama.com/v1"
+      api_key: "os.environ/OLLAMA_API_KEY"
+- model_name: qwen3.6-plus-go
+  state: retired
+  provider: go
+  upstream_id: qwen3.6-plus
+  reason_class: http_400
+  status: 400
+  reason: "HTTP 400: {\"error\":{\"type\":\"server_error\",\"message\":\"Model qwen3.6-plus
+    isn't included in OpenCode Go. See the models it includes at https://opencode.ai/console/go.\"\
+    }}"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: qwen3.6-plus-go
+    litellm_params:
+      model: openai/qwen3.6-plus
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: qwen3.7-max-go
+  state: retired
+  provider: go
+  upstream_id: qwen3.7-max
+  reason_class: deprecated
+  status: 410
+  reason: 'HTTP 410: {"type":"error","error":{"type":"ModelDeprecated","message":"Model
+    qwen3.7-max has been deprecated. Use qwen3.8-max instead."},"metadata":{"model":"qwen3.7-max","replacement":"qwen3.8-max"}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: qwen3.7-max-go
+    litellm_params:
+      model: openai/qwen3.7-max
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: qwen3.7-plus-go
+  state: retired
+  provider: go
+  upstream_id: qwen3.7-plus
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: qwen3.7-plus-go
+    litellm_params:
+      model: openai/qwen3.7-plus
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: qwen3.8-max-go
+  state: retired
+  provider: go
+  upstream_id: qwen3.8-max
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: qwen3.8-max-go
+    litellm_params:
+      model: openai/qwen3.8-max
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      drop_params: true
+- model_name: space-bunny-free-go
+  state: retired
+  provider: go
+  upstream_id: space-bunny-free
+  reason_class: http_400
+  status: 400
+  reason: "HTTP 400: {\"error\":{\"type\":\"server_error\",\"message\":\"Model space-bunny-free
+    isn't included in OpenCode Go. See the models it includes at https://opencode.ai/console/go.\"\
+    }}"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+  entry:
+    model_name: space-bunny-free-go
+    litellm_params:
+      model: openai/space-bunny-free
+      api_base: "https://opencode.ai/zen/go/v1"
+      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+- model_name: claude-haiku-5-5-go
+  state: rejected
+  provider: go
+  upstream_id: claude-haiku-5-5
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: clef-27b-ollama
+  state: rejected
+  provider: ollama
+  upstream_id: clef:27b
+  reason_class: http_400
+  status: 400
+  reason: "HTTP 400: {\"error\":{\"message\":\"clef:27b is a decision model and only
+    supports /v1/systemone (ref: 500dd8b0-e069-4e4d-988e-48fb18c476c1)\",\"type\"\
+    :\"invalid_request_error\",\"param\":null,\"code\":null}}\n"
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: gemini-4-argon-go
+  state: rejected
+  provider: go
+  upstream_id: gemini-4-argon
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: gpt-5.6-luna-go
+  state: rejected
+  provider: go
+  upstream_id: gpt-5.6-luna
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: gpt-6-luna-go
+  state: rejected
+  provider: go
+  upstream_id: gpt-6-luna
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: grok-4.7-go
+  state: rejected
+  provider: go
+  upstream_id: grok-4.7
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: kimi-k3.1-pro-go
+  state: rejected
+  provider: go
+  upstream_id: kimi-k3.1-pro
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: muse-spark-1.2-contributor-go
+  state: rejected
+  provider: go
+  upstream_id: muse-spark-1.2-contributor
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
