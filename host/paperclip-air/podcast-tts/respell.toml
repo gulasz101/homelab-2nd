@@ -12,6 +12,9 @@
 # keys are plain words, values are what the voice should pronounce.
 
 [phrases]
+# Found by the digit guard on the first live run (GUL-1750): `V2X` is the only
+# token in the OSW article that still carried a digit after normalisation.
+"V2X" = "wi dwa iks"
 "science fiction" = "sajens fikszyn"
 "smart city" = "smart siti"
 "machine learning" = "maszyn lernin"
