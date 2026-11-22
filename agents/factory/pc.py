@@ -55,7 +55,12 @@ def credentials():
 
 class Api:
     def __init__(self, key=None, run_id=None, base=None):
-        self.key, self.run_id = (key, run_id) if key and run_id else credentials()
+        # run_id="" is an explicit "no heartbeat run": the factory engine runs
+        # from launchd with an agent key and no run (ENGINE.md, Credentials).
+        if key and (run_id or run_id == ""):
+            self.key, self.run_id = key, run_id
+        else:
+            self.key, self.run_id = credentials()
         self.base = (base or base_url()).rstrip("/")
 
     # -- transport -------------------------------------------------------
@@ -66,10 +71,11 @@ class Api:
         data = None
         headers = {
             "Authorization": "Bearer " + self.key,
-            "X-Paperclip-Run-Id": self.run_id,
             "Accept": "application/json",
             "User-Agent": USER_AGENT,
         }
+        if self.run_id:
+            headers["X-Paperclip-Run-Id"] = self.run_id
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -132,6 +138,9 @@ class Api:
 
     def put(self, path, body):
         return self._call("PUT", path, body)
+
+    def delete(self, path):
+        return self._call("DELETE", path, None, ok=(200, 201, 204))
 
     # -- endpoints the factory uses --------------------------------------
     def me(self):
