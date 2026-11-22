@@ -477,7 +477,10 @@ has "$API" 'HINDSIGHT_API_EMBEDDINGS_TEI_URL' && has "$API" 'HINDSIGHT_API_RERAN
 for kv in \
   'HINDSIGHT_API_LLM_PROVIDER: openai' \
   'HINDSIGHT_API_LLM_MODEL: auto' \
-  'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: auto' \
+  'HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: beam-ollama' \
+  'HINDSIGHT_API_CONSOLIDATION_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
+  'HINDSIGHT_API_RETAIN_LLM_MODEL: beam-ollama' \
+  'HINDSIGHT_API_RETAIN_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1' \
   'HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT: 210' \
   'HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT: 6' \
   'HINDSIGHT_API_RETAIN_LLM_TIMEOUT: 240' \
@@ -676,6 +679,20 @@ case "$GOSS_CHAIN" in
     ok "the gpt-oss-120b-ollama fallback chain has no paid -ds target - a wall degrades to the free pool, not to the wallet (GUL-1045)" ;;
 esac
 
+# GUL-2037: retain + consolidation ride `beam-ollama`, and the only thing that
+# keeps an Ollama Cloud 429 from stopping every memory write is this chain entry
+# into the free pool. A paid -ds target here would turn a wall into a bill.
+if grep -q '^ *- {"beam-ollama": \["auto-freellmapi"\]}$' "$LITELLM_HR" 2>/dev/null; then
+  ok "llm-hub routes beam-ollama -> auto-freellmapi on a 429 (GUL-2037)"
+else
+  bad "$LITELLM_HR has no 'beam-ollama -> auto-freellmapi' fallback - one Ollama Cloud wall stops every retain (GUL-2037)"
+fi
+if grep -q '^ *- model_name: auto-freellmapi$' "$LITELLM_HR" && grep -q '"auto-freellmapi"' "$ROOT/apps/llm-hub/litellm-key-provisioner-configmap.yaml"; then
+  ok "auto-freellmapi is routed and on the key provisioner list (GUL-2037)"
+else
+  bad "auto-freellmapi is not both routed in litellm-helm-release.yaml and listed in the key provisioner - the fallback hop dies at the key check (GUL-2037)"
+fi
+
 # The Service the reflect base URL names must exist in the repo: the chart's
 # release is litellm in namespace llm-hub, so its Service is litellm:4000 there.
 LITELLM_HR="$ROOT/apps/llm-hub/litellm-helm-release.yaml"
@@ -689,7 +706,7 @@ fi
 
 # The credential arrives through `hindsight-secrets` (envFrom), never as a
 # literal: an API key in a rendered container in a public repo is a leak.
-for k in HINDSIGHT_API_REFLECT_LLM_API_KEY HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_API_KEY; do
+for k in HINDSIGHT_API_REFLECT_LLM_API_KEY HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_API_KEY HINDSIGHT_API_RETAIN_LLM_API_KEY HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY; do
   v=$(env_value "$API" "$k")
   if [ -z "$v" ]; then
     ok "$k is absent from the render (it arrives via hindsight-secrets envFrom)"

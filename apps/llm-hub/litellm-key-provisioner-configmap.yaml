@@ -41,6 +41,8 @@ data:
         # Studio models; free tiers live in FreeLLMAPI (apps/freellmapi/).
         # ADR-091: one named free route into FreeLLMAPI's gpt-oss-120b pool.
         "gpt-oss-120b-freellmapi",
+        # GUL-2037: fallback target of beam-ollama (Hindsight retain/consolidation).
+        "auto-freellmapi",
         # Local LM Studio on the M1 Max: Qwen3.6-35B-A3B is the only model there
         # (GUL-1431; Gemma and the local Qwens were deleted on 2026-11-12).
         "qwen3.6-35b-a3b-local",
