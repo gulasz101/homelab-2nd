@@ -73,6 +73,9 @@ data:
         "muse-spark-open-ollama",
         "mimo-v2.6-flash-ollama",
         "mimo-v2.6-pro-ollama",
+        "hy4-ollama",
+        "inkling-2-small-ollama",
+        "kimi-k3.1-pro-ollama",
         # OpenCode Go subscription models (2026-10-02: 29 verified live
         # + deepseek-v4.1-flash OpenChamber native route; 7 endpoint ids
         # excluded - chat-completions 400s, see litellm-helm-release.yaml)
@@ -131,6 +134,9 @@ data:
         # litellm-helm-release.yaml, so the key must be able to call it or the
         # lane dies at the key check.
         "longcat-2.5-free-go",
+        "hy4-flash-free-go",
+        "hy4-go",
+        "qwen4-max-go",
     ]
 
     def expand_models(models):

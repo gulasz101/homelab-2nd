@@ -210,6 +210,21 @@ spec:
           model: openai/mimo-v2.6-pro
           api_base: https://ollama.com/v1
           api_key: os.environ/OLLAMA_API_KEY
+      - model_name: hy4-ollama
+        litellm_params:
+          model: openai/hy4
+          api_base: https://ollama.com/v1
+          api_key: os.environ/OLLAMA_API_KEY
+      - model_name: inkling-2-small-ollama
+        litellm_params:
+          model: openai/inkling-2-small
+          api_base: https://ollama.com/v1
+          api_key: os.environ/OLLAMA_API_KEY
+      - model_name: kimi-k3.1-pro-ollama
+        litellm_params:
+          model: openai/kimi-k3.1-pro
+          api_base: https://ollama.com/v1
+          api_key: os.environ/OLLAMA_API_KEY
       - model_name: iceman-contributor-free-go
         litellm_params:
           model: openai/iceman-contributor-free
@@ -242,6 +257,21 @@ spec:
           # model is `longcat-2.5-free`.
           num_retries: 0
           timeout: 60
+      - model_name: hy4-flash-free-go
+        litellm_params:
+          model: openai/hy4-flash-free
+          api_base: https://opencode.ai/zen/go/v1
+          api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
+      - model_name: hy4-go
+        litellm_params:
+          model: openai/hy4
+          api_base: https://opencode.ai/zen/go/v1
+          api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
+      - model_name: qwen4-max-go
+        litellm_params:
+          model: openai/qwen4-max
+          api_base: https://opencode.ai/zen/go/v1
+          api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
       - model_name: deepseek-v4.1-flash-1017-ds
         litellm_params:
           model: deepseek/deepseek-flash
@@ -900,7 +930,8 @@ spec:
         # GUL-1431 (2026-11-12, owner ruling): local first, then the Ollama
         # subscription, then the paid DeepSeek API as the last resort. The
         # first hop fires every time a local image job holds the GPU slot.
-        - {"qwen3.6-35b-a3b-local": ["deepseek-v4.1-flash-1017-ollama", "deepseek-v4.1-flash-ollama", "deepseek-v4.1-flash-1017-ds"]}
+        - {"qwen3.6-35b-a3b-local": ["deepseek-v4.1-flash-1017-ollama", "deepseek-v4.1-flash-ollama",
+            "deepseek-v4.1-flash-1017-ds"]}
         content_policy_fallbacks:
         - {"qwen3.8-flash": ["deepseek-v4.1-flash", "deepseek-v4.1-flash-ollama"]}
         - {"deepseek-v4.1-flash": ["deepseek-v4.1-flash-ollama"]}
