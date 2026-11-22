@@ -363,11 +363,6 @@ spec:
           model: openai/minimax-m3
           api_base: "https://ollama.com/v1"
           api_key: "os.environ/OLLAMA_API_KEY"
-      - model_name: deepseek-v4-pro-ollama
-        litellm_params:
-          model: openai/deepseek-v4-pro
-          api_base: "https://ollama.com/v1"
-          api_key: "os.environ/OLLAMA_API_KEY"
       - model_name: deepseek-v4.1-flash-ollama
         litellm_params:
           model: openai/deepseek-v4.1-flash

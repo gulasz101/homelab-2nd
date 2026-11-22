@@ -26,8 +26,8 @@ retired:
     model_name: deepseek-flash-go
     litellm_params:
       model: openai/deepseek-flash
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: deepseek-v4-flash-0731-ollama
   state: retired
   provider: ollama
@@ -43,9 +43,9 @@ retired:
   entry:
     model_name: deepseek-v4-flash-0731-ollama
     litellm_params:
-      model: "openai/deepseek-v4-flash:0731"
-      api_base: "https://ollama.com/v1"
-      api_key: "os.environ/OLLAMA_API_KEY"
+      model: openai/deepseek-v4-flash:0731
+      api_base: https://ollama.com/v1
+      api_key: os.environ/OLLAMA_API_KEY
 - model_name: deepseek-v4-flash-go
   state: retired
   provider: go
@@ -62,8 +62,8 @@ retired:
     model_name: deepseek-v4-flash-go
     litellm_params:
       model: openai/deepseek-v4-flash
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: deepseek-v4-flash-ollama
   state: retired
   provider: ollama
@@ -80,8 +80,8 @@ retired:
     model_name: deepseek-v4-flash-ollama
     litellm_params:
       model: openai/deepseek-v4-flash
-      api_base: "https://ollama.com/v1"
-      api_key: "os.environ/OLLAMA_API_KEY"
+      api_base: https://ollama.com/v1
+      api_key: os.environ/OLLAMA_API_KEY
 - model_name: deepseek-v4-flash-vision-exp-go
   state: retired
   provider: go
@@ -98,8 +98,8 @@ retired:
     model_name: deepseek-v4-flash-vision-exp-go
     litellm_params:
       model: openai/deepseek-v4-flash-vision-exp
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: deepseek-v4-pro-go
   state: retired
   provider: go
@@ -115,8 +115,8 @@ retired:
     model_name: deepseek-v4-pro-go
     litellm_params:
       model: openai/deepseek-v4-pro
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: glm-5.1-go
   state: retired
   provider: go
@@ -132,8 +132,8 @@ retired:
     model_name: glm-5.1-go
     litellm_params:
       model: openai/glm-5.1
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: glm-5.1-ollama
   state: retired
   provider: ollama
@@ -150,8 +150,8 @@ retired:
     model_name: glm-5.1-ollama
     litellm_params:
       model: openai/glm-5.1
-      api_base: "https://ollama.com/v1"
-      api_key: "os.environ/OLLAMA_API_KEY"
+      api_base: https://ollama.com/v1
+      api_key: os.environ/OLLAMA_API_KEY
 - model_name: glm-5.2-go
   state: retired
   provider: go
@@ -167,8 +167,8 @@ retired:
     model_name: glm-5.2-go
     litellm_params:
       model: openai/glm-5.2
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: glm-5.3-go
   state: retired
   provider: go
@@ -184,8 +184,8 @@ retired:
     model_name: glm-5.3-go
     litellm_params:
       model: openai/glm-5.3
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: hy3-go
   state: retired
   provider: go
@@ -201,8 +201,8 @@ retired:
     model_name: hy3-go
     litellm_params:
       model: openai/hy3
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: kimi-k2.6-go
   state: retired
   provider: go
@@ -218,8 +218,8 @@ retired:
     model_name: kimi-k2.6-go
     litellm_params:
       model: openai/kimi-k2.6
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: kimi-k3-go
   state: retired
   provider: go
@@ -235,8 +235,8 @@ retired:
     model_name: kimi-k3-go
     litellm_params:
       model: openai/kimi-k3
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: longcat-2.0-go
   state: retired
   provider: go
@@ -252,8 +252,8 @@ retired:
     model_name: longcat-2.0-go
     litellm_params:
       model: openai/longcat-2.0
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: longcat-2.5-preview-free-go
   state: retired
   provider: go
@@ -270,8 +270,8 @@ retired:
     model_name: longcat-2.5-preview-free-go
     litellm_params:
       model: openai/longcat-2.5-preview-free
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: mimo-v2.5-go
   state: retired
   provider: go
@@ -287,8 +287,8 @@ retired:
     model_name: mimo-v2.5-go
     litellm_params:
       model: openai/mimo-v2.5
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: mimo-v2.5-pro-go
   state: retired
   provider: go
@@ -304,8 +304,8 @@ retired:
     model_name: mimo-v2.5-pro-go
     litellm_params:
       model: openai/mimo-v2.5-pro
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: mimo-v2.6-flash-go
   state: retired
   provider: go
@@ -321,8 +321,8 @@ retired:
     model_name: mimo-v2.6-flash-go
     litellm_params:
       model: openai/mimo-v2.6-flash
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: mimo-v2.6-pro-go
   state: retired
   provider: go
@@ -338,8 +338,8 @@ retired:
     model_name: mimo-v2.6-pro-go
     litellm_params:
       model: openai/mimo-v2.6-pro
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: minimax-m2.5-go
   state: retired
   provider: go
@@ -356,8 +356,8 @@ retired:
     model_name: minimax-m2.5-go
     litellm_params:
       model: openai/minimax-m2.5
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: minimax-m2.7-ollama
   state: retired
   provider: ollama
@@ -374,8 +374,8 @@ retired:
     model_name: minimax-m2.7-ollama
     litellm_params:
       model: openai/minimax-m2.7
-      api_base: "https://ollama.com/v1"
-      api_key: "os.environ/OLLAMA_API_KEY"
+      api_base: https://ollama.com/v1
+      api_key: os.environ/OLLAMA_API_KEY
 - model_name: minimax-m3-go
   state: retired
   provider: go
@@ -391,8 +391,8 @@ retired:
     model_name: minimax-m3-go
     litellm_params:
       model: openai/minimax-m3
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: mistral-large-3-675b-ollama
   state: retired
   provider: ollama
@@ -409,8 +409,8 @@ retired:
     model_name: mistral-large-3-675b-ollama
     litellm_params:
       model: openai/mistral-large-3:675b
-      api_base: "https://ollama.com/v1"
-      api_key: "os.environ/OLLAMA_API_KEY"
+      api_base: https://ollama.com/v1
+      api_key: os.environ/OLLAMA_API_KEY
 - model_name: nemotron-3-nano-30b-ollama
   state: retired
   provider: ollama
@@ -427,8 +427,8 @@ retired:
     model_name: nemotron-3-nano-30b-ollama
     litellm_params:
       model: openai/nemotron-3-nano:30b
-      api_base: "https://ollama.com/v1"
-      api_key: "os.environ/OLLAMA_API_KEY"
+      api_base: https://ollama.com/v1
+      api_key: os.environ/OLLAMA_API_KEY
 - model_name: omen-alpha-go
   state: retired
   provider: go
@@ -445,8 +445,8 @@ retired:
     model_name: omen-alpha-go
     litellm_params:
       model: openai/omen-alpha
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: qwen3.5-397b-ollama
   state: retired
   provider: ollama
@@ -462,9 +462,9 @@ retired:
   entry:
     model_name: qwen3.5-397b-ollama
     litellm_params:
-      model: "openai/qwen3.5:397b"
-      api_base: "https://ollama.com/v1"
-      api_key: "os.environ/OLLAMA_API_KEY"
+      model: openai/qwen3.5:397b
+      api_base: https://ollama.com/v1
+      api_key: os.environ/OLLAMA_API_KEY
 - model_name: qwen3.6-plus-go
   state: retired
   provider: go
@@ -481,8 +481,8 @@ retired:
     model_name: qwen3.6-plus-go
     litellm_params:
       model: openai/qwen3.6-plus
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: qwen3.7-max-go
   state: retired
   provider: go
@@ -498,8 +498,8 @@ retired:
     model_name: qwen3.7-max-go
     litellm_params:
       model: openai/qwen3.7-max
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: qwen3.7-plus-go
   state: retired
   provider: go
@@ -515,8 +515,8 @@ retired:
     model_name: qwen3.7-plus-go
     litellm_params:
       model: openai/qwen3.7-plus
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: qwen3.8-max-go
   state: retired
   provider: go
@@ -532,8 +532,8 @@ retired:
     model_name: qwen3.8-max-go
     litellm_params:
       model: openai/qwen3.8-max
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
       drop_params: true
 - model_name: space-bunny-free-go
   state: retired
@@ -551,8 +551,8 @@ retired:
     model_name: space-bunny-free-go
     litellm_params:
       model: openai/space-bunny-free
-      api_base: "https://opencode.ai/zen/go/v1"
-      api_key: "os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY"
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_GO_SUBSCRIPTION_API_KEY
 - model_name: claude-haiku-5-5-go
   state: rejected
   provider: go
@@ -563,7 +563,7 @@ retired:
     disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
   first_seen: '2026-11-22'
   last_seen: '2026-11-22'
-  count: 1
+  count: 2
 - model_name: clef-27b-ollama
   state: rejected
   provider: ollama
@@ -571,11 +571,11 @@ retired:
   reason_class: http_400
   status: 400
   reason: "HTTP 400: {\"error\":{\"message\":\"clef:27b is a decision model and only
-    supports /v1/systemone (ref: 500dd8b0-e069-4e4d-988e-48fb18c476c1)\",\"type\"\
+    supports /v1/systemone (ref: 9c7c5349-f6c2-4839-8df2-2c844762b4b3)\",\"type\"\
     :\"invalid_request_error\",\"param\":null,\"code\":null}}\n"
   first_seen: '2026-11-22'
   last_seen: '2026-11-22'
-  count: 1
+  count: 2
 - model_name: gemini-4-argon-go
   state: rejected
   provider: go
@@ -586,7 +586,7 @@ retired:
     disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
   first_seen: '2026-11-22'
   last_seen: '2026-11-22'
-  count: 1
+  count: 2
 - model_name: gpt-5.6-luna-go
   state: rejected
   provider: go
@@ -597,7 +597,7 @@ retired:
     disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
   first_seen: '2026-11-22'
   last_seen: '2026-11-22'
-  count: 1
+  count: 2
 - model_name: gpt-6-luna-go
   state: rejected
   provider: go
@@ -608,7 +608,7 @@ retired:
     disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
   first_seen: '2026-11-22'
   last_seen: '2026-11-22'
-  count: 1
+  count: 2
 - model_name: grok-4.7-go
   state: rejected
   provider: go
@@ -619,7 +619,7 @@ retired:
     disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
   first_seen: '2026-11-22'
   last_seen: '2026-11-22'
-  count: 1
+  count: 2
 - model_name: kimi-k3.1-pro-go
   state: rejected
   provider: go
@@ -630,11 +630,121 @@ retired:
     disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
   first_seen: '2026-11-22'
   last_seen: '2026-11-22'
-  count: 1
+  count: 2
 - model_name: muse-spark-1.2-contributor-go
   state: rejected
   provider: go
   upstream_id: muse-spark-1.2-contributor
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 2
+- model_name: deepseek-v4-pro-go
+  state: rejected
+  provider: go
+  upstream_id: deepseek-v4-pro
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: glm-5.3-go
+  state: rejected
+  provider: go
+  upstream_id: glm-5.3
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: hy3-go
+  state: rejected
+  provider: go
+  upstream_id: hy3
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: kimi-k3-go
+  state: rejected
+  provider: go
+  upstream_id: kimi-k3
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: longcat-2.0-go
+  state: rejected
+  provider: go
+  upstream_id: longcat-2.0
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: mimo-v2.6-flash-go
+  state: rejected
+  provider: go
+  upstream_id: mimo-v2.6-flash
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: mimo-v2.6-pro-go
+  state: rejected
+  provider: go
+  upstream_id: mimo-v2.6-pro
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: minimax-m3-go
+  state: rejected
+  provider: go
+  upstream_id: minimax-m3
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: qwen3.7-plus-go
+  state: rejected
+  provider: go
+  upstream_id: qwen3.7-plus
+  reason_class: access_disabled
+  status: 403
+  reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is
+    disabled. Change model access at https://opencode.ai/console/wrk_01KXTGFFFC4XBA5T9P8TVVQTB8/go."}}'
+  first_seen: '2026-11-22'
+  last_seen: '2026-11-22'
+  count: 1
+- model_name: qwen3.8-max-go
+  state: rejected
+  provider: go
+  upstream_id: qwen3.8-max
   reason_class: access_disabled
   status: 403
   reason: 'HTTP 403: {"error":{"type":"permission_error","message":"Model access is

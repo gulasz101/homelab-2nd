@@ -28,7 +28,6 @@ data:
         "kimi-k2.6-ollama",
         "kimi-k3-ollama",
         "minimax-m3-ollama",
-        "deepseek-v4-pro-ollama",
         "deepseek-v4.1-flash-ollama",
         "gemma4-31b-ollama",
         "nemotron-3-super-ollama",
