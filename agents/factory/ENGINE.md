@@ -58,7 +58,7 @@ Rules:
   "retainBank": "coding-agent::{repoName}",
   "hindsightUrl": "http://192.168.1.179:30239",
   "docsUrl": "http://192.168.1.179:6280",
-  "lodgeUrl": "https://lodge.voitech.dev",
+  "lodgeUrl": "http://192.168.1.179:30260",
   "autoPickup": false
 }
 ```
@@ -69,11 +69,11 @@ self-test: `FACTORY_ENGINE_CONFIG` (path of the config), `FACTORY_ENGINE_STATE` 
 
 ## Credentials (never in the repo)
 
-- Paperclip: `PAPERCLIP_API_KEY` from the environment, else the file
-  `FACTORY_ENGINE_KEY_FILE` (default `~/.paperclip/factory-engine.key`, mode 600): an agent key of
-  the supervisor agent (Majster, kept `paused` so it never runs a model). Outside a heartbeat run
-  there is no run id: `pc.Api` must accept `run_id=""` and then send no `X-Paperclip-Run-Id`
-  header. Everything else in `pc.py` stays as it is.
+- Paperclip: only the file `FACTORY_ENGINE_KEY_FILE` (default `~/.paperclip/factory-engine-board.key`,
+  mode 600): a named **board** API key `factory-engine (GUL-2037)`. An agent key does not work: outside a
+  heartbeat run Paperclip answers 403 to every cross-issue write. The engine ignores
+  `PAPERCLIP_API_KEY`, so it never acts as the agent whose run happens to call it. `pc.Api` runs with
+  `run_id=""` and then sends no `X-Paperclip-Run-Id` header.
 - Hindsight: `HINDSIGHT_API_TOKEN`, else `apiToken` from `~/.hindsight/coding-agent.json`.
 - Lodge: `~/.config/sou/<lodge name>.token` (mode 600), one per stage agent.
 - `gh`: the host login, as today.
@@ -111,7 +111,7 @@ recorded. A later edit of the Paperclip `spec` does not change a running order (
 
 | Subcommand | Does |
 |---|---|
-| `start GUL-N [--dry-run]` | lint the spec (`factory.py lint-spec`), refuse a bad one (exit 1). Refuse if a state file exists (idempotent: exit 0, `"already": true`). Write state with `phase: queued`. Assign the work order to the supervisor agent and set it `in_progress` with one comment. The next `tick` does the rest. `--dry-run` prints the plan and writes nothing |
+| `start GUL-N [--dry-run]` | lint the spec (`factory.py lint-spec`), refuse a bad one (exit 1). Refuse if a state file exists (idempotent: exit 0, `"already": true`). Write state with `phase: queued`. Set the work order `todo` with one comment and **no assignee**: Paperclip refuses to assign a paused agent (409), an active one would wake a model, and `in_progress` needs an assignee (422). The order's real phase is its `engine-state` document. The next `tick` does the rest. `--dry-run` prints the plan and writes nothing |
 | `tick [--apply]` | one supervisor pass over every state file (below). Without `--apply` it prints what it would do and writes nothing anywhere |
 | `status [GUL-N]` | one JSON line per order: phase, round, current stage issue, attempt, age in minutes, flags |
 | `inventory --repo DIR --spec FILE` | the Librarian's lockfile/version table as JSON (used by `tick` and by the tests) |
@@ -155,7 +155,8 @@ every other subcommand.
 
 **Creating a stage issue** (any stage):
 - Refuse to create it while the stage agent is `paused` or `terminated`: the order stays in its
-  phase with the flag `agent-paused`, nothing is written. (The crew is paused until burn-in; this
+  phase with no issue and the flag `agent-paused`; no stage issue is filed (the phase move, worktree,
+  workspace and `docs-ready` doc are already written). (The crew is paused until burn-in; this
   makes that state visible instead of filing issues nobody runs.)
 - `POST /companies/<company>/issues` with `parentId` = work order, `projectId`,
   `projectWorkspaceId`, `assigneeAgentId` = the stage agent, `status: todo`, the work order's

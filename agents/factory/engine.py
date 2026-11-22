@@ -173,14 +173,16 @@ def read_secret_file(path: str) -> str:
 
 
 def paperclip_api() -> "pc.Api":
-    key = os.environ.get("PAPERCLIP_API_KEY") or ""
-    run_id = os.environ.get("PAPERCLIP_RUN_ID") or "" if key else ""
+    # The engine runs from launchd, outside any heartbeat run. An agent key without a run id gets
+    # 403 on every cross-issue write, so the engine uses its own named board API key
+    # ("factory-engine (GUL-2037)", revocable with DELETE /api/board-api-keys/<id>). It never
+    # uses PAPERCLIP_API_KEY: inside an agent's run that would make the engine act as that agent.
+    path = (os.environ.get("FACTORY_ENGINE_KEY_FILE")
+            or os.path.expanduser("~/.paperclip/factory-engine-board.key"))
+    key = read_secret_file(path)
     if not key:
-        key = read_secret_file(os.environ.get("FACTORY_ENGINE_KEY_FILE")
-                               or os.path.expanduser("~/.paperclip/factory-engine.key"))
-    if not key:
-        raise SetupError("no Paperclip key: set PAPERCLIP_API_KEY or create the engine key file")
-    return pc.Api(key=key, run_id=run_id)
+        raise SetupError("no Paperclip key: create the engine key file %s (mode 600)" % path)
+    return pc.Api(key=key, run_id="")
 
 
 def hindsight_token() -> str:
@@ -656,7 +658,7 @@ def recall_section(cfg: dict, st: dict, stage: str, spec: dict) -> str:
             lines.append("From %s: recall unavailable (%s)" % (bank, type(exc).__name__))
             continue
         if not 200 <= status < 300:
-            lines.append("From %s: recall unavailable (HTTP %d)" % (bank, status))
+            lines.append("From %s: recall unavailable (%d)" % (bank, status))
             continue
         results = as_list(payload, "results", "memories", "items")[:8]
         lines.append("From %s:" % bank)
@@ -1473,7 +1475,10 @@ def cmd_start(args) -> int:
                                  "plan": {"branch": st["branch"], "repo": st["repo"], "base": st["base"]}},
              "engine-start: %s would be queued on %s" % (wo, st["branch"]))
         return 0
-    api.patch_issue(issue["id"], {"assigneeAgentId": cfg["supervisorAgentId"], "status": "in_progress",
+    # No assignee: Paperclip refuses (409) to assign a paused agent, an active one would wake a model,
+    # and `in_progress` requires an assignee (422). So the work order stays `todo`, unassigned; its
+    # real phase is the `engine-state` document.
+    api.patch_issue(issue["id"], {"status": "todo",
                                   "comment": "The factory engine took this work order. Branch `%s`; "
                                   "the next tick starts it when a slot is free." % st["branch"]})
     write_text_atomic(st["specFile"], body)
@@ -1497,8 +1502,11 @@ def cmd_tick(args) -> int:
     if args.apply:
         os.makedirs(folder, exist_ok=True)
     lock = None
-    if os.path.isdir(folder):
-        lock = open(os.path.join(folder, "engine.lock"), "a")
+    lock_path = os.path.join(folder, "engine.lock")
+    # A dry tick writes nothing anywhere, not even the lock file: it locks one
+    # that already exists and otherwise runs unlocked (it changes nothing).
+    if args.apply or os.path.exists(lock_path):
+        lock = open(lock_path, "a" if args.apply else "r")
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
