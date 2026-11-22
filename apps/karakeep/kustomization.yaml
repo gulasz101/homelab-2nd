@@ -34,9 +34,6 @@ resources:
   - karakeep-tunnel-ingress-configmap.yaml
   # Prometheus scraping
   - service-monitor.yaml
-  # Custom summary prompt in git + the one-shot Job that converges Karakeep onto it
-  - karakeep-prompt-configmap.yaml
-  - karakeep-prompt-job.yaml
   # Daily Karakeep SQLite backup to MinIO
   - karakeep-backup-cronjob.yaml
   # Alerts: backup freshness + Karakeep inference health, routed to Mattermost

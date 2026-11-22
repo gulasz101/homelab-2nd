@@ -154,35 +154,21 @@ resources:
   - gpu-embedding/gpu-embedding-prometheus-rules.yaml
   - gpu-embedding/gpu-embedding-loki-rule.yaml
   - gpu-embedding/gpu-embedding-dashboard-configmap.yaml
-  # Karakeep namespace
-  - karakeep/namespace.yaml
-  # SOPS-encrypted secrets
-  - karakeep/karakeep-app-secrets.sops.yaml
-  - karakeep/karakeep-oidc-client.sops.yaml
-  - karakeep/karakeep-minio-assets.sops.yaml
-  - karakeep/karakeep-tunnel-token.sops.yaml
-  - karakeep/karakeep-litellm-key.sops.yaml
-  - karakeep/karakeep-minio-backup-creds.sops.yaml
-  - karakeep/karakeep-mattermost-webhook-url.sops.yaml
-  # OMV NFS PV + pre-provisioned StatefulSet data PVC for Karakeep working data
-  - karakeep/karakeep-data-pv.yaml
-  - karakeep/data-karakeep-0-pvc.yaml
-  # HelmForge repository + Karakeep HelmRelease
-  - karakeep/karakeep-helm-repository.yaml
-  - karakeep/karakeep-helm-release.yaml
-  # Cloudflare Tunnel for keep.voitech.dev
-  - karakeep/cloudflared-karakeep-deployment.yaml
-  - karakeep/karakeep-tunnel-ingress-configmap.yaml
-  # Prometheus scraping
-  - karakeep/service-monitor.yaml
-  # Custom summary prompt in git + the one-shot Job that converges Karakeep onto it
+  # Karakeep namespace — nested kustomization (GUL-1993). The file list lives in
+  # apps/karakeep/kustomization.yaml, exactly like arr-stack/, zigbee/ and the
+  # other nested groups. It used to be enumerated here one manifest at a time,
+  # which is why apps/karakeep/karakeep-dashboard-configmap.yaml was rendered by
+  # nothing: the root never read the nested file list that carries it. Replace,
+  # never add: listing a directory and its files registers every object twice and
+  # `kubectl kustomize ./apps` refuses the whole root.
+  - karakeep/
+  # The summary-prompt ConfigMap and the one-shot Job that converges Karakeep
+  # onto it stay root-level entries, and the nested list above leaves them out:
+  # apps/karakeep/tests/prompt-job-check.sh AC-6 reads them out of this file, and
+  # kustomize refuses to apply one object twice, so a file may be listed in
+  # exactly one of the two places.
   - karakeep/karakeep-prompt-configmap.yaml
   - karakeep/karakeep-prompt-job.yaml
-  # Daily Karakeep SQLite backup to MinIO
-  - karakeep/karakeep-backup-cronjob.yaml
-  # Alerts: backup freshness + Karakeep inference health, routed to Mattermost
-  - karakeep/karakeep-prometheus-rules.yaml
-  - karakeep/karakeep-alertmanager-config.yaml
   # Nextcloud namespace
   - nextcloud/namespace.yaml
   # SOPS-encrypted secrets

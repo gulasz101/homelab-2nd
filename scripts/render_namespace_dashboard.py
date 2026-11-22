@@ -196,6 +196,28 @@ def pod_selector(namespace, prefix, exclude=()):
     return selector
 
 
+def container_selector(service):
+    """The container matchers of one manifest service (GUL-1993).
+
+    A service is a *workload*, not a pod: openchamber's syncthing runs as a
+    container inside the web pod, so `pod=~"openchamber-syncthing.*"` matches
+    nothing at all. `container:` names the sidecar a service is (`syncthing`),
+    and `excludeContainers:` keeps that sidecar out of the parent's own panels,
+    which would otherwise sum it a second time. `container!=""` stays on every
+    query so pause containers and pod-level series never leak in.
+    """
+    matchers = ['container!=""']
+    wanted = service.get("container")
+    if isinstance(wanted, str) and wanted:
+        matchers.append('container="%s"' % wanted)
+    excluded = service.get("excludeContainers") or ()
+    if isinstance(excluded, str):
+        excluded = [excluded]
+    for name in excluded:
+        matchers.append('container!="%s"' % name)
+    return ",".join(matchers)
+
+
 def pvc_selector(pvc):
     """A PVC name as a selector. `name-*` means "<name>, any instance number".
 
@@ -444,29 +466,35 @@ class Dashboard:
             pod_ns = self.service_namespace(service)
             excluded = service.get("exclude") or ()
             selector = pod_selector(pod_ns, pod, excluded)
+            containers = container_selector(service)
+            # A pod without a CPU limit (prometheus here) can never answer its
+            # limit query, so the manifest may say why through `cpuDescription`
+            # instead of leaving an empty series looking like a broken panel.
+            cpu_description = service.get("cpuDescription") or (
+                "CPU used by %s pods next to their request and limit, in cores." % label)
 
             self.stat(
                 "%s CPU" % label,
-                "CPU used by %s pods next to their request and limit, in cores." % label,
+                cpu_description,
                 "cores",
                 [
                     {
-                        "expr": 'sum(rate(container_cpu_usage_seconds_total{%s,container!=""}[5m]))'
-                                % selector,
+                        "expr": 'sum(rate(container_cpu_usage_seconds_total{%s,%s}[5m]))'
+                                % (selector, containers),
                         "instant": True,
                         "legendFormat": "usage",
                         "refId": "A",
                     },
                     {
-                        "expr": 'sum(kube_pod_container_resource_requests{%s,resource="cpu",container!=""})'
-                                % selector,
+                        "expr": 'sum(kube_pod_container_resource_requests{%s,resource="cpu",%s})'
+                                % (selector, containers),
                         "instant": True,
                         "legendFormat": "request",
                         "refId": "B",
                     },
                     {
-                        "expr": 'sum(kube_pod_container_resource_limits{%s,resource="cpu",container!=""})'
-                                % selector,
+                        "expr": 'sum(kube_pod_container_resource_limits{%s,resource="cpu",%s})'
+                                % (selector, containers),
                         "instant": True,
                         "legendFormat": "limit",
                         "refId": "C",
@@ -480,22 +508,22 @@ class Dashboard:
                 "bytes",
                 [
                     {
-                        "expr": 'sum(container_memory_working_set_bytes{%s,container!=""})'
-                                % selector,
+                        "expr": 'sum(container_memory_working_set_bytes{%s,%s})'
+                                % (selector, containers),
                         "instant": True,
                         "legendFormat": "usage",
                         "refId": "A",
                     },
                     {
-                        "expr": 'sum(kube_pod_container_resource_requests{%s,resource="memory",container!=""})'
-                                % selector,
+                        "expr": 'sum(kube_pod_container_resource_requests{%s,resource="memory",%s})'
+                                % (selector, containers),
                         "instant": True,
                         "legendFormat": "request",
                         "refId": "B",
                     },
                     {
-                        "expr": 'sum(kube_pod_container_resource_limits{%s,resource="memory",container!=""})'
-                                % selector,
+                        "expr": 'sum(kube_pod_container_resource_limits{%s,resource="memory",%s})'
+                                % (selector, containers),
                         "instant": True,
                         "legendFormat": "limit",
                         "refId": "C",
@@ -504,8 +532,11 @@ class Dashboard:
                 8, y,
             )
             if pvc:
+                # A claim panel is not a container panel: if the service renders
+                # one, `pvcLabel` names it so it does not read as another
+                # "<label>" panel that ought to carry the container matchers.
                 self.stat(
-                    "%s PVC" % label,
+                    "%s PVC" % (service.get("pvcLabel") or label),
                     "Used and capacity bytes of the %s persistent volume claim." % pvc,
                     "bytes",
                     [

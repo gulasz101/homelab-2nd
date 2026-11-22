@@ -806,11 +806,11 @@
       "title": "openchamber — Workspaces, sync and the agent runner",
       "uid": "openchamber-dashboard",
       "services": [
-        {"pod": "openchamber", "label": "openchamber web", "pvc": "openchamber-storage", "exclude": ["openchamber-oauth2-proxy", "openchamber-itsaplan-runner", "openchamber-itsaplan-sou-runner", "openchamber-syncthing"]},
+        {"pod": "openchamber", "label": "openchamber web", "pvc": "openchamber-storage", "pvcLabel": "openchamber workspace", "exclude": ["openchamber-oauth2-proxy", "openchamber-itsaplan-runner", "openchamber-itsaplan-sou-runner", "openchamber-syncthing"], "excludeContainers": ["syncthing"]},
         {"pod": "openchamber-oauth2-proxy", "label": "oauth2 proxy"},
         {"pod": "openchamber-itsaplan-runner", "label": "itsaplan runner"},
         {"pod": "openchamber-itsaplan-sou-runner", "label": "itsaplan sourcer"},
-        {"pod": "openchamber-syncthing", "label": "syncthing"},
+        {"pod": "openchamber", "label": "syncthing", "container": "syncthing"},
         {"pod": "cloudflared-openchamber", "label": "tunnel"}
       ],
       "panels": [
@@ -922,7 +922,7 @@
         {"pod": "opentelemetry-collector", "label": "collector"},
         {"pod": "loki", "label": "loki"},
         {"pod": "tempo", "label": "tempo"},
-        {"pod": "prometheus-stack-kube-prom-prometheus", "label": "prometheus"},
+        {"pod": "prometheus-prometheus-stack-kube-prom-prometheus", "label": "prometheus", "cpuDescription": "CPU used by the prometheus pod next to its request and limit, in cores. The pod sets no CPU limit (only a memory limit), so the limit series is expected to stay empty rather than being a defect."},
         {"pod": "grafana", "label": "grafana", "pvc": "grafana"}
       ],
       "panels": [
