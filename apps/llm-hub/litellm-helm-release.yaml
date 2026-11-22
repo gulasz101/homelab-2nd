@@ -479,6 +479,19 @@ spec:
           api_key: "os.environ/FREELLMAPI_API_KEY"
           timeout: 150
           num_retries: 0
+      # GUL-2037 (2026-11-22): FreeLLMAPI's virtual model `auto` (ranks every
+      # enabled free model, fails over inside the pool). It is the fallback
+      # target of `beam-ollama`, so when Ollama Cloud answers 429 Hindsight's
+      # retain and consolidation land on the lane they used from ADR-085 until
+      # today instead of failing. Free lane rescuing a subscription lane, never
+      # a paid one (GUL-1045 rule).
+      - model_name: auto-freellmapi
+        litellm_params:
+          model: openai/auto
+          api_base: "http://freellmapi.freellmapi.svc.cluster.local:3001/v1"
+          api_key: "os.environ/FREELLMAPI_API_KEY"
+          timeout: 150
+          num_retries: 0
 
         # ── OpenCode Go subscription models (all with -go suffix) ──────
         # Line-up refreshed 2026-10-02 against the LIVE endpoint
@@ -676,6 +689,9 @@ spec:
         - {"deepseek-v4.1-flash-go": ["deepseek-v4.1-flash-ollama"]}
         - {"qwen3.8-flash-go": ["deepseek-v4.1-flash-ollama"]}
         - {"hindsight-consolidation-go": ["deepseek-v4.1-flash-go", "deepseek-v4.1-flash-ollama"]}
+        # GUL-2037: Hindsight retain + consolidation (and Bill's Hermes profile,
+        # ADR-113) run on beam-ollama. A 429 from ollama.com hops to the free pool.
+        - {"beam-ollama": ["auto-freellmapi"]}
         # GUL-783 (2026-11-02): the fleet's executor primary is
         # deepseek-v4.1-flash-1017-ollama (GUL-769) and it appeared in no chain at
         # all, as a source or as a target. So Ollama unloads the model, the
