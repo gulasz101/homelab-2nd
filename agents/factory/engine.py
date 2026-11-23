@@ -955,6 +955,14 @@ class Engine:
         return int(self.cfg.get("maxAttempts", 3))
 
     def create_stage_issue(self, st: dict, stage: str):
+        # Checked here too, not only at the start of step_stage: a stage's own check can
+        # remove the worktree, and the next attempt was then created in the same tick with
+        # no worktree; its agent fell back to the shared clone (GUL-2083, 2026-11-23).
+        problem = self.worktree_problem(st)
+        if problem:
+            self.flag("worktree-missing")
+            self.stall(st, problem + " No stage runs until it is back; no attempt was used.")
+            return None
         agent_id = self.stage_agent(st, stage)
         agent = unwrap(self.api.agent(agent_id), "agent")
         if agent.get("status") in ("paused", "terminated"):
@@ -1532,6 +1540,7 @@ class Engine:
         self.would("stall: %s" % sentence)
         st["phase"] = "stalled"
         st["stallReason"] = sentence
+        self.halt_open_attempts(st)
         # Paperclip refuses (422) `blocked` with no blocker, interaction or unblockDescriptor.
         # The engine's board key may name any agent as the owner: the stall owner (Claude Code,
         # the last step of the stall ladder) decides what happens next.
@@ -1546,6 +1555,25 @@ class Engine:
         self.save(st)
         self.note("stalled")
         self.finish(st)
+
+    def halt_open_attempts(self, st: dict) -> None:
+        """A stalled order runs no agent. An attempt that is still open is unassigned and
+        cancelled, and recorded as `halted`: not a failure, so it uses no attempt. A
+        finished attempt (done / in_review) stays pending, to be judged after the stall."""
+        for row in st.get("stages") or []:
+            if row.get("result") != "pending":
+                continue
+            issue = unwrap(self.api.issue(row["issueId"]), "issue")
+            if issue.get("status") in ("done", "in_review"):
+                continue
+            self.would("halt %s (the order stalled)" % row["identifier"])
+            if issue.get("status") != "cancelled":
+                self.api.patch_issue(row["issueId"], {"assigneeAgentId": None, "status": "cancelled"})
+                self.comment(row["issueId"], "engine: the work order stalled, so this attempt is "
+                             "stopped. It does not count as a failed attempt.")
+            row.update({"result": "halted", "reasons": ["the work order stalled"],
+                        "commented": True, "finishedAt": iso()})
+        self.save(st)
 
     def finish(self, st: dict) -> None:
         """Retain, clean up, tell the work order. Each part runs once and is

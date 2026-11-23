@@ -582,6 +582,37 @@ class TickFlow(EngineCase):
         self.assertTrue(titles[0].startswith("[red] GUL-304"), titles)
         self.assertTrue(titles[1].startswith("[stall] GUL-304"), "the owner is woken: %s" % titles)
 
+    def test_06c_stall_halts_an_open_attempt(self):
+        # GUL-2083, 2026-11-23: the order stalled, but its open green attempt kept its
+        # assignee, and the agent wrote into the shared clone. A stall stops it.
+        self.start(305, "Halt on stall")
+        self.tick()
+        st = self.load("GUL-305")
+        row = st["stages"][0]
+        self.issue_of(row)["status"] = "in_progress"
+        subprocess.run(["git", "-C", self.clone, "worktree", "remove", "--force", st["worktree"]],
+                       check=True)
+        self.tick()
+        st = self.load("GUL-305")
+        self.assertEqual(st["phase"], "stalled", self.last_err)
+        row = st["stages"][0]
+        self.assertEqual(row["result"], "halted", "stopped, not counted as a failure")
+        issue = self.issue_of(row)
+        self.assertEqual(issue["status"], "cancelled")
+        self.assertIsNone(issue.get("assigneeAgentId"), "no agent keeps running it")
+        path = "/pc/api/issues/%s" % row["issueId"]
+        patch = [n for n, r in enumerate(FAKE.requests) if r[0] == "PATCH" and r[1] == path
+                 and r[2].get("status") == "cancelled"]
+        comment = [n for n, r in enumerate(FAKE.requests) if r[0] == "POST" and r[1] == path + "/comments"]
+        self.assertEqual(len(patch), 1)
+        self.assertEqual(len(comment), 1)
+        self.assertLess(patch[0], comment[0], "unassigned before the comment (GUL-2074)")
+        # the worktree comes back and the order is resumed: a new attempt, not attempt 3 of 3
+        self.tick()
+        self.assertEqual(len([p for p in FAKE.stage_issue_posts() if p[2]["title"].startswith("[red")]), 1,
+                         "a stalled order creates no attempt")
+        self.assert_no_blocked_stage_issue()
+
     def test_07_08_09_failed_attempts_stall_recall_retain(self):
         FAKE.recall_status["hermes-andrzej"] = 500
         self.start(401, "Failing order")
