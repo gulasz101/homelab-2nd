@@ -857,6 +857,10 @@ class Engine:
             self.step_gate(st)
         elif phase == "awaiting_merge":
             self.step_merge(st)
+        elif phase == "deploy_check":
+            self.step_deploy(st)
+        elif phase == "reverting":
+            self.step_revert(st)
         else:
             self.finish(st)
 
@@ -1378,6 +1382,16 @@ class Engine:
             lines.append("- %s" % note)
         return "\n".join(lines)
 
+    def app_env(self, st: dict):
+        """(env with the App's installation token, None) or (None, sentence)."""
+        try:
+            token = ghapp.installation_token(self.cfg, st["repo"], state_dir())
+        except ghapp.AppError as exc:
+            return None, "no GitHub App token (%s)." % exc
+        env = dict(os.environ, GH_TOKEN=token)
+        env.pop("GITHUB_TOKEN", None)
+        return env, ""
+
     def auto_merge(self, st: dict, safety: list, note):
         """Merge the PR as the GitHub App when nothing SAFETY is touched.
 
@@ -1395,12 +1409,9 @@ class Engine:
         if not self.apply:
             self.would("auto-merge PR #%s as the GitHub App" % pr["number"])
             return False, "dry run."
-        try:
-            token = ghapp.installation_token(self.cfg, st["repo"], state_dir())
-        except ghapp.AppError as exc:
-            return False, "no GitHub App token (%s)." % exc
-        env = dict(os.environ, GH_TOKEN=token)
-        env.pop("GITHUB_TOKEN", None)
+        env, err = self.app_env(st)
+        if env is None:
+            return False, err
         body = self.self_approvals(st, note)
         com = subprocess.run([factory.gh_bin(), "pr", "comment", str(pr["number"]), "--repo", st["repo"],
                               "--body", body], env=env, stdout=subprocess.PIPE,
@@ -1415,12 +1426,136 @@ class Engine:
             return False, "`gh pr merge` failed: %s" % mrg.stderr.strip()[:200]
         return True, "Self-approvals are listed in a comment on the PR."
 
+    # -- catch-up: "the head branch is not up to date" -------------------------------
+    def catch_up(self, st: dict, view: dict) -> None:
+        """The ruleset wants the PR branch up to date with `main`. When `main` moved after
+        the gate, the App's merge is refused. Then the engine asks GitHub to merge `main`
+        into the PR branch ("Update branch"), and merges only if the new head is exactly
+        the checked head + a commit of `main`, and CI passes on it. Every failure leaves
+        the merge to the owner, with a comment. It never stalls.
+        """
+        gate = st.get("gate") or {}
+        if (gate.get("autoMerge") or {}).get("merged") or gate.get("safety") or not self.cfg.get("autoMerge"):
+            return
+        pr = st.get("pr") or {}
+        cu = st.setdefault("catchUp", {"count": 0})
+        if cu.get("gaveUp"):
+            return
+        number, repo = pr.get("number"), st["repo"]
+        live_head = str(view.get("headRefOid") or "")
+        pending = cu.get("pending")
+        if not pending:
+            if str(view.get("mergeStateStatus") or "").upper() != "BEHIND":
+                return
+            if live_head != pr.get("head"):
+                self.give_up_catch_up(st, "the PR head moved to %s, not the head the stages checked."
+                                      % live_head[:12])
+                return
+            if cu["count"] >= int(self.cfg.get("maxCatchUps", 3)):
+                self.give_up_catch_up(st, "the branch was updated %d times and `main` keeps moving."
+                                      % cu["count"])
+                return
+            if not self.apply:
+                self.would("update PR #%s with main as the GitHub App" % number)
+                return
+            env, err = self.app_env(st)
+            if env is None:
+                self.give_up_catch_up(st, err)
+                return
+            upd = subprocess.run([factory.gh_bin(), "api", "-X", "PUT",
+                                  "repos/%s/pulls/%s/update-branch" % (repo, number),
+                                  "-f", "expected_head_sha=%s" % pr["head"]], env=env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if upd.returncode != 0:
+                self.give_up_catch_up(st, "GitHub refused \"Update branch\": %s"
+                                      % (upd.stderr.strip() or upd.stdout.strip())[:200])
+                return
+            cu["pending"] = {"from": pr["head"], "at": iso()}
+            self.save(st)
+            self.note("catch-up", "merge")
+            return
+        # an update is on its way: wait for the new head, prove its shape, wait for CI
+        if live_head == pending["from"]:
+            if minutes_since(pending["at"]) > float(self.cfg.get("catchUpWaitMinutes", 15)):
+                self.give_up_catch_up(st, "GitHub accepted \"Update branch\" but the head did not move.")
+            return
+        env, err = self.app_env(st)
+        if env is None:
+            self.give_up_catch_up(st, err)
+            return
+        shape = self.catch_up_shape(repo, live_head, pending["from"], env)
+        if shape:
+            self.give_up_catch_up(st, shape)
+            return
+        try:
+            ci = check_run_state(gh_pr_checks(repo, number))
+        except SetupError as exc:
+            warn("%s: %s" % (st["workOrder"], exc))
+            return
+        if ci == "pending":
+            if minutes_since(pending["at"]) > float(self.cfg.get("gateCiWaitMinutes", 60)):
+                self.give_up_catch_up(st, "CI on the updated head %s did not finish in time." % live_head[:12])
+            return
+        if ci != "pass":
+            self.give_up_catch_up(st, "CI `check` failed on the updated head %s (the change + newest `main`)."
+                                  % live_head[:12])
+            return
+        cu["count"] += 1
+        cu.pop("pending", None)
+        cu.setdefault("heads", []).append({"from": pending["from"], "to": live_head, "at": iso()})
+        pr["checkedHead"] = pr.get("checkedHead") or pending["from"]
+        pr["head"] = live_head
+        why_note = ("branch updated with `main`: %s = checked head %s + `main`, CI `check` passed again"
+                    % (live_head[:12], pending["from"][:12]))
+        merged, why = self.auto_merge(st, [], why_note)
+        st.setdefault("gate", {})["autoMerge"] = {"merged": merged, "why": why, "afterCatchUp": True}
+        link = pr.get("url") or "#%s" % number
+        if merged:
+            comment = ("PR %s was behind `main`. The factory updated the branch, CI passed again, and it "
+                       "merged it (squash). %s" % (link, why))
+        else:
+            comment = ("PR %s was behind `main`. The factory updated the branch and CI passed, but did not "
+                       "merge it: %s Merge it on GitHub." % (link, why))
+        self.api.patch_issue(st["workOrderId"], {"comment": comment})
+        self.save(st)
+        self.note("pass" if merged else "waiting", "merge")
+
+    def catch_up_shape(self, repo: str, new_head: str, old_head: str, env: dict) -> str:
+        """'' when new_head is a merge of old_head (first parent) and a commit of `main`."""
+        def api(path):
+            proc = subprocess.run([factory.gh_bin(), "api", path], env=env, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True)
+            if proc.returncode != 0:
+                raise SetupError(proc.stderr.strip()[:200])
+            return json.loads(proc.stdout)
+        try:
+            parents = [p.get("sha") for p in (api("repos/%s/commits/%s" % (repo, new_head)).get("parents") or [])]
+            if len(parents) != 2 or parents[0] != old_head:
+                return ("the new head %s is not a merge of the checked head %s and `main` (parents: %s)."
+                        % (new_head[:12], old_head[:12], ", ".join(p[:12] for p in parents) or "none"))
+            status = api("repos/%s/compare/%s...main" % (repo, parents[1])).get("status")
+        except (SetupError, ValueError) as exc:
+            return "could not read the new head %s: %s" % (new_head[:12], exc)
+        if status not in ("identical", "ahead"):
+            return "the new head merged in %s, which is not on `main` (%s)." % (parents[1][:12], status)
+        return ""
+
+    def give_up_catch_up(self, st: dict, why: str) -> None:
+        cu = st.setdefault("catchUp", {"count": 0})
+        cu["gaveUp"] = why
+        cu.pop("pending", None)
+        pr = st.get("pr") or {}
+        self.api.patch_issue(st["workOrderId"], {
+            "comment": "PR %s is behind `main` and the factory could not update it: %s Merge it on GitHub."
+                       % (pr.get("url") or "#%s" % pr.get("number"), why)})
+        self.save(st)
+
     # -- awaiting_merge -----------------------------------------------------------
     def step_merge(self, st: dict) -> None:
         pr = st.get("pr") or {}
         try:
             view = factory.gh_json(["pr", "view", str(pr.get("number")), "--repo", st["repo"],
-                                    "--json", "state,mergedAt,mergeCommit,headRefOid"])
+                                    "--json", "state,mergedAt,mergeCommit,headRefOid,mergeStateStatus"])
         except SetupError as exc:
             self.flag("merge-unknown")
             warn("%s: %s" % (st["workOrder"], exc))
@@ -1428,6 +1563,7 @@ class Engine:
         state = str((view or {}).get("state") or "").upper()
         self.note("waiting", "merge")
         if state == "OPEN":
+            self.catch_up(st, view or {})
             self.flag("pr-open")
             return
         number = pr.get("number")
@@ -1457,11 +1593,228 @@ class Engine:
         if not landed:
             self.stall(st, factory.unlanded_reason(number, head, merge_sha))
             return
+        if self.cfg.get("postMergeCheck"):
+            st["phase"] = "deploy_check"
+            st["deploy"] = {"sha": merge_sha, "since": iso(), "reconcileRequested": False}
+            self.save(st)
+            self.note("deploy-check", "merge")
+            return
         st["phase"] = "done"
         st["notice"] = {"status": "done", "comment": "PR #%s is merged in %s" % (number, merge_sha)}
         self.save(st)
         self.note("done", "merge")
         self.finish(st)
+
+    # -- deploy_check: the check after the merge (phase 4, decision 8) -------------
+    def kubectl(self, *args: str):
+        binary = os.environ.get("FACTORY_KUBECTL") or self.cfg.get("kubectl") or "kubectl"
+        try:
+            return subprocess.run([binary] + list(args), stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return subprocess.CompletedProcess([binary], 127, "", str(exc))
+
+    def flux_kustomizations(self) -> list:
+        """[(name, ready True/False/None, applied sha, attempted sha, message)] or raises."""
+        ns = self.cfg.get("fluxNamespace", "flux-system")
+        proc = self.kubectl("get", "kustomizations.kustomize.toolkit.fluxcd.io", "-n", ns, "-o", "json")
+        if proc.returncode != 0:
+            raise SetupError("kubectl get kustomizations failed: %s" % proc.stderr.strip()[:200])
+        rows = []
+        for item in (json.loads(proc.stdout or "{}").get("items") or []):
+            status = item.get("status") or {}
+            ready, message = None, ""
+            for cond in status.get("conditions") or []:
+                if cond.get("type") == "Ready":
+                    ready = {"True": True, "False": False}.get(cond.get("status"))
+                    message = one_line(cond.get("message") or "", 200)
+            sha = lambda rev: (rev or "").rsplit(":", 1)[-1] if "sha1:" in (rev or "") else ""  # noqa: E731
+            rows.append(((item.get("metadata") or {}).get("name") or "?", ready,
+                         sha(status.get("lastAppliedRevision")),
+                         sha(status.get("lastAttemptedRevision")), message))
+        if not rows:
+            raise SetupError("no Flux Kustomizations in namespace %s" % ns)
+        return rows
+
+    def contains(self, st: dict, merge_sha: str, sha: str) -> bool:
+        """Is the merge commit in `sha`'s history (Flux applied our commit or a later one)?"""
+        # plain ancestry, not factory.merge_contains: its squash-merge heuristics (same files,
+        # same content) would call an older commit "containing" the merge
+        if not sha:
+            return False
+        clone = self.repo_cfg(st)["clone"]
+
+        def ancestor() -> int:
+            return subprocess.run(["git", "-C", clone, "merge-base", "--is-ancestor", merge_sha, sha],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+
+        rc = ancestor()
+        if rc not in (0, 1):  # an object is missing: fetch once, then ask again
+            git(clone, "fetch", "--quiet", "origin", check=False)
+            rc = ancestor()
+        return rc == 0
+
+    def step_deploy(self, st: dict) -> None:
+        dep = st["deploy"]
+        sha = dep["sha"]
+        self.note("waiting", "deploy")
+        if not dep.get("reconcileRequested"):
+            # ask Flux to fetch now instead of waiting for its interval; harmless if it fails
+            self.would("ask Flux to reconcile the git source")
+            ns = self.cfg.get("fluxNamespace", "flux-system")
+            self.kubectl("annotate", "--overwrite", "gitrepository/%s" % self.cfg.get("fluxSource", "flux-system"),
+                         "-n", ns, "reconcile.fluxcd.io/requestedAt=%s" % iso())
+            dep["reconcileRequested"] = True
+            self.save(st)
+        try:
+            rows = self.flux_kustomizations()
+        except (SetupError, ValueError) as exc:
+            self.flag("flux-unknown")
+            warn("%s: %s" % (st["workOrder"], exc))
+            rows = None
+        waited = minutes_since(dep["since"])
+        limit = float(self.cfg.get("deployWaitMinutes", 30))
+        if rows is not None:
+            if "brokenBefore" not in dep:
+                # a Kustomization that already failed on an older commit is not this merge's fault:
+                # it never triggers a revert, it only holds the order until the time limit
+                dep["brokenBefore"] = [r[0] for r in rows if r[1] is False and not self.contains(st, sha, r[3])]
+                self.save(st)
+            failed = [r for r in rows if r[1] is False and r[0] not in dep["brokenBefore"]
+                      and self.contains(st, sha, r[3])]
+            if failed:
+                self.post_merge_failed(st, "Flux could not apply the merge: %s" % "; ".join(
+                    "%s: %s" % (r[0], r[4]) for r in failed[:3]))
+                return
+            pending = [r for r in rows if not (r[1] is True and self.contains(st, sha, r[2]))]
+            if pending:
+                if waited < limit:
+                    self.flag("flux-pending")
+                    return
+                self.stall(st, "Flux did not apply merge %s within %d minutes (%s). Nothing points at "
+                               "the merge yet, so the factory did not revert it." % (
+                                   sha[:12], limit, ", ".join(r[0] for r in pending[:5])))
+                return
+        elif waited < limit:
+            return
+        else:
+            self.stall(st, "The engine could not read Flux for %d minutes after merge %s, so the check "
+                           "after the merge did not run." % (limit, sha[:12]))
+            return
+        dep["fluxReadyAt"] = iso()
+        failures = self.run_live_checks(st, sha)
+        dep["liveChecks"] = failures
+        if failures:
+            self.post_merge_failed(st, "live check failed: %s" % "; ".join(failures[:3]))
+            return
+        n = len(self.spec(st).get("liveChecks") or [])
+        st["phase"] = "done"
+        st["notice"] = {"status": "done", "comment": (
+            "PR #%s is merged in %s. Flux applied it (all Kustomizations Ready) and %d live check(s) "
+            "passed." % (st["pr"]["number"], sha, n))}
+        self.save(st)
+        self.note("done", "deploy")
+        self.finish(st)
+
+    def run_live_checks(self, st: dict, sha: str) -> list:
+        checks = self.spec(st).get("liveChecks") or []
+        if not checks:
+            return []
+        self.would("run %d live check(s) at %s" % (len(checks), sha[:12]))
+        wt = st.get("worktree")
+        if not (wt and os.path.isdir(wt)):
+            return ["the worktree %s is missing, so no live check could run" % wt]
+        git(wt, "fetch", "--quiet", "origin")
+        git(wt, "checkout", "--quiet", "--detach", sha)
+        failures = []
+        timeout = float(self.cfg.get("liveCheckTimeoutSeconds", 600))
+        for lc in checks:
+            try:
+                proc = subprocess.run(["bash", "-c", lc["check"]], cwd=wt, stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, text=True, timeout=timeout)
+                if proc.returncode != 0:
+                    failures.append("%s exit %d: %s" % (lc["id"], proc.returncode,
+                                                        one_line(proc.stdout[-300:], 300)))
+            except subprocess.TimeoutExpired:
+                failures.append("%s timed out after %ds" % (lc["id"], timeout))
+        return failures
+
+    def post_merge_failed(self, st: dict, why: str) -> None:
+        """Open a revert PR as the App, then the `reverting` phase merges it when CI passes."""
+        dep = st["deploy"]
+        dep["failure"] = why
+        self.would("open a revert PR for %s" % dep["sha"][:12])
+        try:
+            token = ghapp.installation_token(self.cfg, st["repo"], state_dir())
+        except ghapp.AppError as exc:
+            self.stall(st, "The check after the merge failed (%s), and the factory could not revert it: "
+                           "no GitHub App token (%s). Revert %s by hand." % (why, exc, dep["sha"][:12]))
+            return
+        wt = st.get("worktree")
+        branch = "revert-%s" % st["workOrder"].lower()
+        try:
+            if not (wt and os.path.isdir(wt)):
+                raise SetupError("the worktree %s is missing" % wt)
+            git(wt, "fetch", "--quiet", "origin")
+            git(wt, "checkout", "--quiet", "-B", branch, "origin/%s" % st.get("base", "main"))
+            git(wt, "revert", "--no-edit", dep["sha"])
+            git(wt, "push", "--quiet", "origin", "HEAD:refs/heads/%s" % branch)
+            head = git(wt, "rev-parse", "HEAD").strip()
+        except SetupError as exc:
+            self.stall(st, "The check after the merge failed (%s), and the revert failed: %s. Revert %s "
+                           "by hand." % (why, exc, dep["sha"][:12]))
+            return
+        env = dict(os.environ, GH_TOKEN=token)
+        env.pop("GITHUB_TOKEN", None)
+        body = ("The check after the merge of PR #%s failed: %s\n\nThe factory reverts merge %s. "
+                "Opened by the engine (GUL-2037 phase 4, decision 8)." % (st["pr"]["number"], why, dep["sha"]))
+        proc = subprocess.run([factory.gh_bin(), "pr", "create", "--repo", st["repo"], "--base",
+                               st.get("base", "main"), "--head", branch, "--title",
+                               "revert: %s (the check after the merge failed)" % st["workOrder"],
+                               "--body", body], env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True)
+        m = re.search(r"/pull/([0-9]+)", proc.stdout or "")
+        if proc.returncode != 0 or not m:
+            self.stall(st, "The check after the merge failed (%s). The revert branch %s is pushed, but "
+                           "opening its PR failed: %s" % (why, branch, proc.stderr.strip()[:200]))
+            return
+        st["revert"] = {"branch": branch, "number": int(m.group(1)), "url": proc.stdout.strip(),
+                        "head": head, "since": iso()}
+        st["phase"] = "reverting"
+        self.save(st)
+        self.note("reverting", "deploy")
+
+    def step_revert(self, st: dict) -> None:
+        rev, why = st["revert"], st["deploy"].get("failure", "")
+        self.note("waiting", "revert")
+        state = check_run_state(gh_pr_checks(st["repo"], rev["number"]))
+        if state == "pending" and minutes_since(rev["since"]) < float(self.cfg.get("gateCiWaitMinutes", 60)):
+            self.flag("ci-pending")
+            return
+        if state != "pass":
+            self.stall(st, "The check after the merge failed (%s). Revert PR %s has CI `check` %s, so the "
+                           "factory did not merge it. Merge or fix it by hand." % (why, rev["url"], state))
+            return
+        self.would("merge revert PR #%s as the GitHub App" % rev["number"])
+        try:
+            token = ghapp.installation_token(self.cfg, st["repo"], state_dir())
+        except ghapp.AppError as exc:
+            self.stall(st, "The check after the merge failed (%s). Merge revert PR %s by hand: no GitHub "
+                           "App token (%s)." % (why, rev["url"], exc))
+            return
+        env = dict(os.environ, GH_TOKEN=token)
+        env.pop("GITHUB_TOKEN", None)
+        mrg = subprocess.run([factory.gh_bin(), "pr", "merge", str(rev["number"]), "--repo", st["repo"],
+                              "--squash", "--match-head-commit", rev["head"]], env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if mrg.returncode != 0:
+            self.stall(st, "The check after the merge failed (%s). Merging revert PR %s failed: %s. Merge "
+                           "it by hand." % (why, rev["url"], mrg.stderr.strip()[:200]))
+            return
+        rev["merged"] = True
+        # a revert always wakes the stall owner: the order did not ship
+        self.stall(st, "The check after the merge failed (%s). The factory reverted it: PR %s is merged."
+                   % (why, rev["url"]))
 
     # -- the stall ladder (phase 3) -----------------------------------------------
     def escalate(self, st: dict, stage: str, sentence: str) -> None:

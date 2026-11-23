@@ -8,7 +8,8 @@ the JWT is signed with `openssl`, because this host has no `cryptography`.
 Where the key lives (never in the repo):
 - the macOS keychain, generic password, service `factory-github-app`, account
   `<appId>`, value = the PEM file base64-encoded on one line;
-- or `FACTORY_GH_APP_KEY_FILE` (a PEM file, tests only).
+- or `FACTORY_GH_APP_KEY_FILE` (a PEM file, mode 600). The engine loop on the Air uses
+  this one: it runs outside a login session, so it cannot reach the login keychain.
 
 `installation_token(cfg, repo, state_dir)` returns a token scoped to that ONE
 repository with contents + pull_requests write, or raises `AppError` with one

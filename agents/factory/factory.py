@@ -317,7 +317,9 @@ def validate_spec(value, is_lint: bool) -> list:
     if not isinstance(value, dict):
         return ["spec: top level must be a JSON object"]
     expected = {"repo", "base", "kind", "allowedPaths", "acs", "maxDiffLines"}
-    extra = sorted(set(value) - expected)
+    # optional (GUL-2037 phase 4, decision 8): checks the engine runs on `main` after the merge
+    optional = {"liveChecks"}
+    extra = sorted(set(value) - expected - optional)
     missing = sorted(expected - set(value))
     if extra:
         reasons.append("spec: unknown keys %s" % extra)
@@ -363,6 +365,31 @@ def validate_spec(value, is_lint: bool) -> list:
         elif (is_lint and isinstance(aid, str) and re.match(r"^AC-[1-9][0-9]*$", aid)
               and not (_check_reports(chk, aid) or _SCRIPT_CHECK.match(chk.strip()))):
             reasons.append(_silent_check_reason(aid, chk))
+    reasons.extend(_live_check_reasons(value.get("liveChecks")))
+    return reasons
+
+
+def _live_check_reasons(live) -> list:
+    """`liveChecks`: optional list of {id: LIVE-<n>, check: one command}. The engine runs
+    them from the repo root at the merge commit, after Flux reports Ready; exit 0 = pass."""
+    if live is None:
+        return []
+    if not isinstance(live, list):
+        return ["spec: liveChecks must be a list"]
+    reasons, seen = [], set()
+    for lc in live:
+        if not isinstance(lc, dict) or set(lc) != {"id", "check"}:
+            reasons.append("spec: each liveCheck must be exactly {id, check}: %r" % (lc,))
+            continue
+        lid = lc["id"]
+        if not (isinstance(lid, str) and re.match(r"^LIVE-[1-9][0-9]*$", lid)):
+            reasons.append("spec: liveCheck id %r must be LIVE-<n>" % (lid,))
+        elif lid in seen:
+            reasons.append("spec: duplicate liveCheck id %r" % lid)
+        seen.add(lid)
+        chk = lc["check"]
+        if not (isinstance(chk, str) and chk.strip() and "\n" not in chk):
+            reasons.append("spec: %s: check must be one single-line command" % lid)
     return reasons
 
 
