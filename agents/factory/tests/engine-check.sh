@@ -6,5 +6,9 @@
 # Exit 0 only if every case passes. Picked up by scripts/check.sh's
 # */tests/*-check.sh discovery.
 set -u
+# GUL-2080: an inherited GIT_DIR (a git hook, a parent tool) made the fixture repos
+# below write into the real checkout. Drop every repo-locating git variable first.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX GIT_CONFIG GIT_CONFIG_GLOBAL
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 exec python3 "$ROOT/agents/factory/tests/test_engine.py"

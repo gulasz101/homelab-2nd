@@ -11,6 +11,10 @@
 #   4. a tooling copy with local edits, or a missing tooling copy, is exit 2
 #      with a message — never a silent run of an old copy.
 set -u
+# GUL-2080: an inherited GIT_DIR (a git hook, a parent tool) made the fixture repos
+# below write into the real checkout. Drop every repo-locating git variable first.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX GIT_CONFIG GIT_CONFIG_GLOBAL
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 RUNNER="$ROOT/agents/factory/factory-run.sh"
 TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/factory-runner-XXXXXX")" && pwd -P)"

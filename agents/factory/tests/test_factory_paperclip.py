@@ -27,6 +27,13 @@ FACTORY = os.path.abspath(os.path.join(HERE, "..", "factory.py"))
 sys.path.insert(0, os.path.dirname(FACTORY))
 import pc  # noqa: E402  the factory's own client, for unit-level cases (GUL-496)
 import factory  # noqa: E402  the kernel itself, for the park wire-body cases (GUL-1128)
+
+# GUL-2080: an inherited GIT_DIR made fixture repos write into the real checkout.
+for _var in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+             "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+             "GIT_NAMESPACE", "GIT_PREFIX", "GIT_CONFIG", "GIT_CONFIG_GLOBAL"):
+    os.environ.pop(_var, None)
+
 MAJSTER = "2df240b5-a5ea-4ebf-81ff-bf96758e8f80"
 COMPANY = "c0000000-0000-4000-8000-000000000001"
 PROJECT = "p0000000-0000-4000-8000-000000000001"
