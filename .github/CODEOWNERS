@@ -1,0 +1,19 @@
+# GUL-2037 phase 4 (plan decision 7). Wojtek owns every factory never-path.
+# Source of truth: agents/factory/never-paths.json. Keep both lists in step.
+# GitHub enforces this only when the ruleset on main requires code-owner review.
+# The factory GitHub App is not on the bypass list, so it cannot merge these alone.
+
+/.sops.yaml                @gulasz101
+**/.sops.yaml              @gulasz101
+**/*.sops.yaml             @gulasz101
+/clusters/                 @gulasz101
+**/AGENTS.md               @gulasz101
+**/SOUL.md                 @gulasz101
+/agents/factory-guard/     @gulasz101
+/agents/factory/           @gulasz101
+/.github/                  @gulasz101
+**/cloudflared-*.yaml      @gulasz101
+**/cloudflared-*.yml       @gulasz101
+**/*tunnel*.yaml           @gulasz101
+**/*tunnel*.yml            @gulasz101
+/docs/adr/                 @gulasz101
