@@ -81,7 +81,14 @@ self-test: `FACTORY_ENGINE_CONFIG` (path of the config), `FACTORY_ENGINE_STATE` 
   `run_id=""` and then sends no `X-Paperclip-Run-Id` header.
 - Hindsight: `HINDSIGHT_API_TOKEN`, else `apiToken` from `~/.hindsight/coding-agent.json`.
 - Lodge: `~/.config/sou/<lodge name>.token` (mode 600), one per stage agent.
-- `gh`: the host login, as today.
+- `gh`: the host login for every read and for open-pr / push, as today.
+- GitHub App `gulasz101-factory` (App ID in `githubApp.appId`), used only to merge: the macOS keychain
+  item service `factory-github-app`, account `<appId>`, value = the PEM private key base64-encoded on
+  one line (`FACTORY_GH_APP_KEY_FILE` overrides, tests only). `ghapp.py` signs the JWT with `openssl`
+  and asks for an installation token scoped to the order's one repository (contents + pull_requests
+  write), cached in `<state>/ghapp-token.json` (mode 600) until 5 minutes before it expires. A missing
+  key, a GitHub error or a refused merge is never a stall: the owner merges, and the work-order comment
+  says why.
 - A missing Hindsight or Lodge credential is not an error: the engine writes "recall unavailable:
   no token" into the brief, or skips the Lodge post. A missing Paperclip key is exit 2.
 
@@ -194,7 +201,7 @@ every other subcommand.
 | green | `factory.py check-green --repo <wt> --red <redSha> --spec <specFile>` | `commit --stage green`; round 1: `open-pr --repo <wt> --issue GUL-N --title "factory(GUL-N): <title>"` (draft), record `pr`; later rounds: `push`, record `pr.head`; go to review |
 | review | the issue's `findings` document → temp file → `check-findings --repo <wt> --base <baseSha> --findings <file>` | store `findings`. Empty list → gate. Else → verify |
 | verify | the issue's `verdicts` document → `check-verdicts --findings <f> --verdicts <v>` | `blockingConfirmed` empty → gate. Else: round + 1 (≤ `maxFixRounds` + 1) and go to green with the findings block; over the limit → stalled |
-| gate | `gh pr checks <n> --repo <repo> --json name,state`: the `check` run still pending → wait (no attempt spent) until `gateCiWaitMinutes`; then `factory.py check-gate --pr <repo>#<n> --spec <specFile>` | `awaiting_merge`: work order `in_review`, one comment with the PR link and "merge it on GitHub" (phase 4 adds the auto-merge) |
+| gate | `gh pr checks <n> --repo <repo> --json name,state`: the `check` run still pending → wait (no attempt spent) until `gateCiWaitMinutes`; then `factory.py check-gate --pr <repo>#<n> --spec <specFile>` | `check-gate` runs with `--split-safety`: a never path is reported under `safety`, not as a failure. Then **auto-merge** (below). Either way `awaiting_merge`: work order `in_review`, one comment with the PR link and either "the factory merged it" or "merge it on GitHub" plus the reason |
 
 The librarian **never** stops an order: an invalid or missing `docs-ready` document, a timeout or a
 failed attempt each pass with rows `{"indexed": false, "note": "no docs: <reason>"}`. It gets one
@@ -248,6 +255,15 @@ order holds no slot. Once per stall the engine wakes the stall owner: one issue
 `[stall] GUL-N <title>` assigned to `stallOwnerAgentId`, at most `maxStallWakesPerDay` (3) a day
 (counted in `<state>/stall-wakes.json`). Over the limit no issue is filed
 (`"wake": {"sent": false, ...}`) and the stall waits for the 05:30 round.
+
+**Auto-merge** (phase 4, decisions 1 and 7), right after a passing gate. The factory merges only when
+all of these hold, else the owner merges and the comment names the first that failed:
+`autoMerge` is true in `engine.json`; `safety` is empty; `pr.head` is recorded; the tick runs with
+`--apply`; the App token works. Then, as the App: `gh pr comment` with the self-approvals (every
+passed stage row, every investigation verdict, the finding counts, the gate, the size note), then
+`gh pr merge <n> --squash --match-head-commit <pr.head>`, so GitHub merges exactly the commit the stages
+checked or nothing. The ruleset on `main` stays the second line: the App is not on its bypass list, and
+`CODEOWNERS` makes the owner the required reviewer of the never paths.
 
 **awaiting_merge** — each tick `gh pr view <n> --repo <repo> --json state,mergedAt,mergeCommit,headRefOid`:
 - `OPEN` → nothing.

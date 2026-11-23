@@ -37,6 +37,7 @@ FACTORY_PY = os.path.join(HERE, "factory.py")
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import factory  # noqa: E402
+import ghapp  # noqa: E402
 import pc  # noqa: E402
 
 SetupError = factory.SetupError
@@ -1339,19 +1340,80 @@ class Engine:
                 return
         self.would("run factory.py check-gate on PR #%s" % pr["number"])
         res = run_factory(["check-gate", "--pr", "%s#%s" % (st["repo"], pr["number"]),
-                           "--spec", st["specFile"]]).require_json()
-        st["gate"] = {"result": "pass" if res.ok else "fail", "reasons": res.reasons, "at": iso()}
+                           "--spec", st["specFile"], "--split-safety"]).require_json()
+        safety = list((res.parsed or {}).get("safety") or [])
+        st["gate"] = {"result": "pass" if res.ok else "fail", "reasons": res.reasons,
+                      "safety": safety, "at": iso()}
         if not res.ok:
             self.stall(st, "The gate failed on PR #%s: %s." % (pr["number"], "; ".join(res.reasons[:3])))
             return
         note = (res.parsed or {}).get("sizeNote")
-        comment = "PR %s passed the gate: merge it on GitHub." % (pr.get("url") or "#%s" % pr["number"])
+        link = pr.get("url") or "#%s" % pr["number"]
+        merged, why = self.auto_merge(st, safety, note)
+        st["gate"]["autoMerge"] = {"merged": merged, "why": why}
+        if merged:
+            comment = "PR %s passed the gate, and the factory merged it (squash). %s" % (link, why)
+        else:
+            comment = "PR %s passed the gate: merge it on GitHub. Not merged by the factory: %s" % (link, why)
         if note:
             comment = note + "\n\n" + comment
         self.api.patch_issue(st["workOrderId"], {"status": "in_review", "comment": comment})
         st["phase"] = "awaiting_merge"
         self.save(st)
         self.note("pass", "gate")
+
+    # -- auto-merge (phase 4, decisions 1 and 7) ----------------------------------
+    def self_approvals(self, st: dict, note) -> str:
+        lines = ["**Factory self-approvals** (GUL-2037 phase 4, run mode `auto`):"]
+        for row in st.get("stages") or []:
+            if row.get("result") == "pass":
+                lines.append("- %s: %s passed the engine check" % (row.get("stage"), row.get("identifier")))
+        for inv in st.get("investigations") or []:
+            if inv.get("verdict"):
+                lines.append("- investigation %s: %s" % (inv.get("identifier"), inv.get("verdict")))
+        lines.append("- review findings: %d, blocking confirmed by verify: %d"
+                     % (len(st.get("findings") or []), len(st.get("blockingConfirmed") or [])))
+        lines.append("- gate: CI `check` SUCCESS, no never path touched")
+        if note:
+            lines.append("- %s" % note)
+        return "\n".join(lines)
+
+    def auto_merge(self, st: dict, safety: list, note):
+        """Merge the PR as the GitHub App when nothing SAFETY is touched.
+
+        Returns (merged, sentence). Every failure here means "the owner merges",
+        never a stall: the order already passed every check.
+        """
+        pr = st["pr"]
+        if not self.cfg.get("autoMerge"):
+            return False, "auto-merge is off in engine.json."
+        if safety:
+            return False, "SAFETY: %s. Only the owner merges this." % "; ".join(safety[:3])
+        head = pr.get("head") or ""
+        if not head:
+            return False, "the engine has no recorded head commit for the PR."
+        if not self.apply:
+            self.would("auto-merge PR #%s as the GitHub App" % pr["number"])
+            return False, "dry run."
+        try:
+            token = ghapp.installation_token(self.cfg, st["repo"], state_dir())
+        except ghapp.AppError as exc:
+            return False, "no GitHub App token (%s)." % exc
+        env = dict(os.environ, GH_TOKEN=token)
+        env.pop("GITHUB_TOKEN", None)
+        body = self.self_approvals(st, note)
+        com = subprocess.run([factory.gh_bin(), "pr", "comment", str(pr["number"]), "--repo", st["repo"],
+                              "--body", body], env=env, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+        if com.returncode != 0:
+            return False, "posting the self-approvals failed: %s" % com.stderr.strip()[:200]
+        # --match-head-commit: merge exactly the head that the stages checked, or nothing
+        mrg = subprocess.run([factory.gh_bin(), "pr", "merge", str(pr["number"]), "--repo", st["repo"],
+                              "--squash", "--match-head-commit", head], env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if mrg.returncode != 0:
+            return False, "`gh pr merge` failed: %s" % mrg.stderr.strip()[:200]
+        return True, "Self-approvals are listed in a comment on the PR."
 
     # -- awaiting_merge -----------------------------------------------------------
     def step_merge(self, st: dict) -> None:

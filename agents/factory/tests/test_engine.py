@@ -171,6 +171,12 @@ def route(method, raw_path, body):
         if tail == "memories" and method == "POST":
             return FAKE.retain_status, {"ok": FAKE.retain_status == 200}
         return 404, {"error": "no route"}
+    if path.startswith("/gh/"):
+        if path == "/gh/repos/%s/installation" % REPO and method == "GET":
+            return 200, {"id": 77}
+        if path == "/gh/app/installations/77/access_tokens" and method == "POST":
+            return 201, {"token": "ghs_fake_installation_token"}
+        return 404, {"message": "Not Found"}
     if path == "/docs/api/listLibraries" and method == "GET":
         return 200, {"result": {"data": {"json": FAKE.docs}}}
     if path.startswith("/docsdown/"):
@@ -749,6 +755,124 @@ class TickFlow(EngineCase):
         self.assertEqual(st["phase"], "closed")
         self.assertTrue(st["noticeSent"])
         self.assertEqual(wo["status"], "cancelled")
+        self.assert_no_blocked_stage_issue()
+
+    # -- phase 4: auto-merge ---------------------------------------------------
+    FAKE_GH = r"""#!%(py)s
+import json, os, sys
+a = sys.argv[1:]
+with open(%(log)r, "a") as fh:
+    fh.write(json.dumps({"argv": a, "token": os.environ.get("GH_TOKEN", "")}) + "\n")
+files = json.loads(os.environ.get("FAKE_GH_FILES", '["README.md"]'))
+if a[:2] == ["pr", "checks"]:
+    print(json.dumps([{"name": "check", "state": "SUCCESS"}])); sys.exit(0)
+if a[:2] == ["pr", "view"] and "headRefOid,baseRefOid,additions,deletions,files,mergeable,isDraft" in a:
+    print(json.dumps({"headRefOid": "h" * 40, "baseRefOid": "b" * 40, "additions": 3,
+                      "deletions": 1, "mergeable": "MERGEABLE", "isDraft": False,
+                      "files": [{"path": f, "changeType": "MODIFIED"} for f in files]}))
+    sys.exit(0)
+if a[:2] == ["pr", "view"]:
+    print(json.dumps({"state": "OPEN", "mergedAt": None, "mergeCommit": None, "headRefOid": "h" * 40}))
+    sys.exit(0)
+if a[:2] == ["pr", "comment"]:
+    sys.exit(0)
+if a[:2] == ["pr", "merge"]:
+    rc = int(os.environ.get("FAKE_GH_MERGE_RC", "0"))
+    if rc:
+        sys.stderr.write("GraphQL: Repository rule violations found\n")
+    sys.exit(rc)
+sys.stderr.write("fake gh: no route %%r\n" %% (a,)); sys.exit(1)
+"""
+
+    def gate_order(self, number, **cfg):
+        self.write_config(**cfg)
+        self.start(number, "Auto merge")
+        self.tick()
+        st = self.load("GUL-%d" % number)
+        st.update({"phase": "gate", "pr": {"number": 12, "url": "https://github.com/x/y/pull/12",
+                                          "head": "h" * 40}})
+        st["stages"].append({"stage": "review", "identifier": "GUL-990", "result": "pass"})
+        with open(os.path.join(self.state, "GUL-%d.json" % number), "w") as fh:
+            json.dump(st, fh)
+        with open(self.gh, "w") as fh:
+            fh.write(self.FAKE_GH % {"py": sys.executable, "log": self.gh_log})
+        os.chmod(self.gh, 0o755)
+        self.app_key = os.path.join(self.tmp, "app.pem")
+        subprocess.run(["openssl", "genrsa", "-out", self.app_key, "2048"], check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return "GUL-%d" % number
+
+    def gh_calls(self):
+        if not os.path.exists(self.gh_log):
+            return []
+        with open(self.gh_log) as fh:
+            return [json.loads(ln) for ln in fh if ln.startswith("{")]
+
+    def app_env(self, **over):
+        env = {"FACTORY_GH_APP_KEY_FILE": self.app_key, "FACTORY_GITHUB_API": self.base + "/gh"}
+        env.update(over)
+        return env
+
+    def test_14_auto_merge_as_the_app(self):
+        wo = self.gate_order(1401, autoMerge=True, githubApp={"appId": 5893473})
+        rc, out = self.tick(**self.app_env())
+        self.assertEqual(rc, 0, (out, self.last_err))
+        st = self.load(wo)
+        self.assertEqual(st["phase"], "awaiting_merge", self.last_err)
+        self.assertTrue(st["gate"]["autoMerge"]["merged"], st["gate"])
+        merges = [c for c in self.gh_calls() if c["argv"][:2] == ["pr", "merge"]]
+        self.assertEqual(len(merges), 1)
+        self.assertIn("--squash", merges[0]["argv"])
+        self.assertEqual(merges[0]["argv"][merges[0]["argv"].index("--match-head-commit") + 1], "h" * 40)
+        self.assertEqual(merges[0]["token"], "ghs_fake_installation_token")
+        comments = [c for c in self.gh_calls() if c["argv"][:2] == ["pr", "comment"]]
+        self.assertEqual(len(comments), 1)
+        self.assertIn("review: GUL-990 passed", comments[0]["argv"][-1])
+        # the JWT is RS256, iss = the App id, and verifies against the key
+        auth = [r for r in FAKE.requests if r[1] == "/gh/repos/%s/installation" % REPO][0][3]
+        jwt = auth.get("Authorization", "").split(" ", 1)[1]
+        head, payload, sig = jwt.split(".")
+        pad = lambda x: x + "=" * (-len(x) % 4)  # noqa: E731
+        import base64
+        self.assertEqual(json.loads(base64.urlsafe_b64decode(pad(payload)))["iss"], "5893473")
+        pub = os.path.join(self.tmp, "pub.pem")
+        subprocess.run(["openssl", "rsa", "-in", self.app_key, "-pubout", "-out", pub], check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        sigf = os.path.join(self.tmp, "sig")
+        with open(sigf, "wb") as fh:
+            fh.write(base64.urlsafe_b64decode(pad(sig)))
+        ver = subprocess.run(["openssl", "dgst", "-sha256", "-verify", pub, "-signature", sigf],
+                             input=("%s.%s" % (head, payload)).encode(), stdout=subprocess.PIPE)
+        self.assertEqual(ver.returncode, 0, ver.stdout)
+        token_req = [r for r in FAKE.requests if r[1].endswith("/access_tokens")][0]
+        self.assertEqual(token_req[2]["repositories"], ["homelab-2nd"])
+        self.assertIn("merged it (squash)", FAKE.comments[-1][1] if FAKE.comments else
+                      json.dumps(FAKE.requests[-5:]))
+
+    def test_15_never_path_is_left_to_the_owner(self):
+        wo = self.gate_order(1402, autoMerge=True, githubApp={"appId": 5893473})
+        rc, out = self.tick(**self.app_env(FAKE_GH_FILES='["agents/factory/engine.py"]'))
+        self.assertEqual(rc, 0, (out, self.last_err))
+        st = self.load(wo)
+        self.assertEqual(st["phase"], "awaiting_merge", self.last_err)
+        self.assertEqual(st["gate"]["result"], "pass")
+        self.assertIn("never path (glob): agents/factory/engine.py", st["gate"]["safety"])
+        self.assertFalse(st["gate"]["autoMerge"]["merged"])
+        self.assertIn("SAFETY", st["gate"]["autoMerge"]["why"])
+        self.assertEqual([c for c in self.gh_calls() if c["argv"][:2] in (["pr", "merge"], ["pr", "comment"])], [])
+
+    def test_16_no_key_or_refused_merge_never_stalls(self):
+        wo = self.gate_order(1403, autoMerge=True, githubApp={"appId": 5893473})
+        rc, out = self.tick(**self.app_env(FACTORY_GH_APP_KEY_FILE=os.path.join(self.tmp, "nope.pem")))
+        st = self.load(wo)
+        self.assertEqual(st["phase"], "awaiting_merge", self.last_err)
+        self.assertIn("no GitHub App token", st["gate"]["autoMerge"]["why"])
+        self.assertEqual([c for c in self.gh_calls() if c["argv"][:2] == ["pr", "merge"]], [])
+        wo = self.gate_order(1404, autoMerge=True, githubApp={"appId": 5893473})
+        rc, out = self.tick(**self.app_env(FAKE_GH_MERGE_RC="1"))
+        st = self.load(wo)
+        self.assertEqual(st["phase"], "awaiting_merge", self.last_err)
+        self.assertIn("Repository rule violations", st["gate"]["autoMerge"]["why"])
         self.assert_no_blocked_stage_issue()
 
     def ladder_config(self, **over):
