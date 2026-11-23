@@ -765,14 +765,28 @@ with open(%(log)r, "a") as fh:
     fh.write(json.dumps({"argv": a, "token": os.environ.get("GH_TOKEN", "")}) + "\n")
 files = json.loads(os.environ.get("FAKE_GH_FILES", '["README.md"]'))
 if a[:2] == ["pr", "checks"]:
-    print(json.dumps([{"name": "check", "state": "SUCCESS"}])); sys.exit(0)
+    print(json.dumps([{"name": "check", "state": os.environ.get("FAKE_GH_CHECK", "SUCCESS")}])); sys.exit(0)
+if a[:1] == ["api"] and a[1:3] == ["-X", "PUT"]:
+    rc = int(os.environ.get("FAKE_GH_UPD_RC", "0"))
+    if rc:
+        sys.stderr.write("HTTP 422: merge conflict\n")
+    else:
+        print(json.dumps({"message": "Updating pull request branch."}))
+    sys.exit(rc)
+if a[:1] == ["api"] and "/commits/" in a[1]:
+    parents = json.loads(os.environ.get("FAKE_GH_PARENTS", "[]"))
+    print(json.dumps({"parents": [{"sha": x} for x in parents]})); sys.exit(0)
+if a[:1] == ["api"] and "/compare/" in a[1]:
+    print(json.dumps({"status": os.environ.get("FAKE_GH_CMP", "ahead")})); sys.exit(0)
 if a[:2] == ["pr", "view"] and "headRefOid,baseRefOid,additions,deletions,files,mergeable,isDraft" in a:
     print(json.dumps({"headRefOid": "h" * 40, "baseRefOid": "b" * 40, "additions": 3,
                       "deletions": 1, "mergeable": "MERGEABLE", "isDraft": False,
                       "files": [{"path": f, "changeType": "MODIFIED"} for f in files]}))
     sys.exit(0)
 if a[:2] == ["pr", "view"]:
-    print(json.dumps({"state": "OPEN", "mergedAt": None, "mergeCommit": None, "headRefOid": "h" * 40}))
+    print(json.dumps({"state": "OPEN", "mergedAt": None, "mergeCommit": None,
+                      "headRefOid": os.environ.get("FAKE_GH_HEAD", "h" * 40),
+                      "mergeStateStatus": os.environ.get("FAKE_GH_MSS", "CLEAN")}))
     sys.exit(0)
 if a[:2] == ["pr", "comment"]:
     sys.exit(0)
@@ -886,7 +900,19 @@ if a[:2] == ["pr", "view"]:
                       "mergeCommit": {"oid": os.environ["FAKE_MERGE_SHA"]},
                       "headRefOid": os.environ["FAKE_MERGE_SHA"]})); sys.exit(0)
 if a[:2] == ["pr", "checks"]:
-    print(json.dumps([{"name": "check", "state": "SUCCESS"}])); sys.exit(0)
+    print(json.dumps([{"name": "check", "state": os.environ.get("FAKE_GH_CHECK", "SUCCESS")}])); sys.exit(0)
+if a[:1] == ["api"] and a[1:3] == ["-X", "PUT"]:
+    rc = int(os.environ.get("FAKE_GH_UPD_RC", "0"))
+    if rc:
+        sys.stderr.write("HTTP 422: merge conflict\n")
+    else:
+        print(json.dumps({"message": "Updating pull request branch."}))
+    sys.exit(rc)
+if a[:1] == ["api"] and "/commits/" in a[1]:
+    parents = json.loads(os.environ.get("FAKE_GH_PARENTS", "[]"))
+    print(json.dumps({"parents": [{"sha": x} for x in parents]})); sys.exit(0)
+if a[:1] == ["api"] and "/compare/" in a[1]:
+    print(json.dumps({"status": os.environ.get("FAKE_GH_CMP", "ahead")})); sys.exit(0)
 if a[:2] == ["pr", "create"]:
     print("https://github.com/gulasz101/homelab-2nd/pull/77"); sys.exit(0)
 if a[:2] == ["pr", "merge"]:
@@ -1024,6 +1050,67 @@ print(json.dumps({"items": items}))
         rc, out = self.start(2001, "Bad live check", spec_body=bad)
         self.assertNotEqual(rc, 0)
         self.assertIn("liveCheck", json.dumps(out))
+
+    def test_24_behind_main_is_updated_then_merged(self):
+        wo = self.gate_order(2401, autoMerge=True, githubApp={"appId": 5893473})
+        # the App's first merge is refused: the branch is behind `main`
+        self.tick(**self.app_env(FAKE_GH_MERGE_RC="1"))
+        st = self.load(wo)
+        self.assertEqual(st["phase"], "awaiting_merge", self.last_err)
+        self.assertFalse(st["gate"]["autoMerge"]["merged"])
+        # next tick: GitHub says BEHIND -> the engine asks for "Update branch" with the checked head
+        self.tick(**self.app_env(FAKE_GH_MSS="BEHIND"))
+        upd = [c for c in self.gh_calls() if c["argv"][:3] == ["api", "-X", "PUT"]]
+        self.assertEqual(len(upd), 1, self.gh_calls())
+        self.assertIn("expected_head_sha=" + "h" * 40, upd[0]["argv"])
+        self.assertEqual(upd[0]["token"], "ghs_fake_installation_token")
+        self.assertEqual(self.load(wo)["catchUp"]["pending"]["from"], "h" * 40)
+        # the head has not moved yet: nothing else happens
+        self.tick(**self.app_env(FAKE_GH_MSS="BEHIND"))
+        self.assertEqual(len([c for c in self.gh_calls() if c["argv"][:3] == ["api", "-X", "PUT"]]), 1)
+        # new head = checked head + a commit of main, CI pending: wait
+        new = "n" * 40
+        shape = dict(FAKE_GH_HEAD=new, FAKE_GH_MSS="BLOCKED",
+                     FAKE_GH_PARENTS=json.dumps(["h" * 40, "m" * 40]), FAKE_GH_CMP="ahead")
+        merges_before = len([c for c in self.gh_calls() if c["argv"][:2] == ["pr", "merge"]])
+        self.tick(**self.app_env(FAKE_GH_CHECK="IN_PROGRESS", **shape))
+        self.assertEqual(len([c for c in self.gh_calls() if c["argv"][:2] == ["pr", "merge"]]), merges_before)
+        # CI passes: merged as the App, pinned to the new head
+        self.tick(**self.app_env(**shape))
+        st = self.load(wo)
+        merges = [c for c in self.gh_calls() if c["argv"][:2] == ["pr", "merge"]]
+        self.assertEqual(len(merges), merges_before + 1)
+        self.assertEqual(merges[-1]["argv"][merges[-1]["argv"].index("--match-head-commit") + 1], new)
+        self.assertTrue(st["gate"]["autoMerge"]["merged"], st["gate"])
+        self.assertEqual(st["pr"]["head"], new)
+        self.assertEqual(st["pr"]["checkedHead"], "h" * 40)
+        self.assertEqual(st["catchUp"]["count"], 1)
+        self.assertNotIn("gaveUp", st["catchUp"])
+        approvals = [c for c in self.gh_calls() if c["argv"][:2] == ["pr", "comment"]][-1]["argv"][-1]
+        self.assertIn("branch updated with `main`", approvals)
+        self.assertIn("was behind `main`", FAKE.comments[-1][1])
+        self.assert_no_blocked_stage_issue()
+
+    def test_25_catch_up_refuses_a_foreign_head(self):
+        wo = self.gate_order(2501, autoMerge=True, githubApp={"appId": 5893473})
+        self.tick(**self.app_env(FAKE_GH_MERGE_RC="1"))
+        self.tick(**self.app_env(FAKE_GH_MSS="BEHIND"))
+        # someone else pushed: first parent is not the checked head
+        self.tick(**self.app_env(FAKE_GH_HEAD="x" * 40, FAKE_GH_MSS="BLOCKED",
+                                 FAKE_GH_PARENTS=json.dumps(["y" * 40, "m" * 40])))
+        st = self.load(wo)
+        self.assertIn("not a merge of the checked head", st["catchUp"]["gaveUp"])
+        self.assertEqual(st["phase"], "awaiting_merge")
+        self.assertFalse(st["gate"]["autoMerge"]["merged"])
+        merges = [c for c in self.gh_calls() if c["argv"][:2] == ["pr", "merge"]]
+        self.assertEqual(len(merges), 1)  # only the first, refused one
+        self.assertIn("could not update it", FAKE.comments[-1][1])
+        # a merge of main that is not on main is refused too; a refused update gives up at once
+        wo = self.gate_order(2502, autoMerge=True, githubApp={"appId": 5893473})
+        self.tick(**self.app_env(FAKE_GH_MERGE_RC="1"))
+        self.tick(**self.app_env(FAKE_GH_MSS="BEHIND", FAKE_GH_UPD_RC="1"))
+        self.assertIn("merge conflict", self.load(wo)["catchUp"]["gaveUp"])
+        self.assert_no_blocked_stage_issue()
 
     def ladder_config(self, **over):
         FAKE.agents[INVESTIGATOR] = {"id": INVESTIGATOR, "status": "idle"}
