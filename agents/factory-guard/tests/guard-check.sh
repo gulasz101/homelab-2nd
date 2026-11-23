@@ -42,6 +42,14 @@ else
   ROLES="$ROLES_REQUESTED"
 fi
 
+# GUL-2091: a dead TMPDIR left TMP empty and the fixtures below ran git in the
+# caller's checkout. Checked up front, before
+# the unit tests, so a dead TMPDIR is exit 2 even where pi is missing. Stop before any git command.
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/factory-guard-live-XXXXXX")" \
+  || { echo "ENV: mktemp -d failed (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
+[ -d "$TMP" ] || { echo "ENV: mktemp -d gave no directory (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
+trap 'rm -rf "$TMP"' EXIT
+
 FAIL=0
 
 echo "== [1/3] unit tests (node --test) =="
@@ -60,15 +68,13 @@ if ! command -v pi >/dev/null 2>&1; then
 fi
 
 EXT_DIR="$PWD"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/factory-guard-live-XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT
 
 # fresh git repo with the fixtures the matrix needs (all content is fake)
 make_fixture() {
   local repo="$1"
   mkdir -p "$repo/src" "$repo/tests"
   (
-    cd "$repo"
+    cd "$repo" || exit 1
     printf 'creation_rules:\n  - path: ^secrets/\n    age: AGEX1PLACEHOLDERNOTAREALKEY\n' > .sops.yaml
     printf '# Agents\nkeep calm and build\n' > AGENTS.md
     printf '# Readme\nfixture\n' > README.md
@@ -83,7 +89,7 @@ make_fixture() {
 # $1=role $2=repo $3=script.json $4=blocklog $5=run-tmp-dir
 run_pi() {
   (
-    cd "$2"
+    cd "$2" || exit 1
     PI_CODING_AGENT_DIR="$5/agentdir" \
     FACTORY_GUARD_BLOCK_LOG="$4" \
     PAPERCLIP_RUN_SCRATCH_DIR="$5/scratch" \
@@ -317,7 +323,7 @@ if echo " $ROLES " | grep -q " executor "; then
   REPO2="$TMP/repo2"
   mkdir -p "$REPO2/.github/workflows" "$REPO2/src" "$TMP/agentdir2" "$TMP/scratch2"
   (
-    cd "$REPO2"
+    cd "$REPO2" || exit 1
     git init -q -b main .
     git config user.email test@example.invalid
     git config user.name "factory-guard test"
@@ -348,7 +354,7 @@ if echo " $ROLES " | grep -q " executor "; then
 EOF
 
   (
-    cd "$REPO2"
+    cd "$REPO2" || exit 1
     PI_CODING_AGENT_DIR="$TMP/agentdir2" \
     FACTORY_GUARD_BLOCK_LOG="$TMP/blocks2.jsonl" \
     PAPERCLIP_RUN_SCRATCH_DIR="$TMP/scratch2" \

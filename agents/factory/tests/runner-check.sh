@@ -17,7 +17,12 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
   GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX GIT_CONFIG GIT_CONFIG_GLOBAL
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 RUNNER="$ROOT/agents/factory/factory-run.sh"
-TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/factory-runner-XXXXXX")" && pwd -P)"
+# GUL-2091: a dead TMPDIR left TMP empty and the fixtures below ran git in the
+# caller's checkout. Stop before any git command.
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/factory-runner-XXXXXX")" \
+  || { echo "ENV: mktemp -d failed (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
+[ -d "$TMP" ] || { echo "ENV: mktemp -d gave no directory (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
+TMP="$(cd "$TMP" && pwd -P)" || exit 2
 trap 'rm -rf "$TMP"' EXIT
 
 PASS_N=0

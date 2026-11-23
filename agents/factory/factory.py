@@ -858,7 +858,22 @@ def cmd_lint_spec(args) -> int:
     return 0
 
 
+def tmpdir_problem() -> str | None:
+    """GUL-2091: a TMPDIR that is set but gone made the self-tests' fixture repos
+    run git in the work-order checkout. Returns the ENV reason, or None if fine."""
+    t = os.environ.get("TMPDIR")
+    if t is None:
+        return None
+    if not (os.path.isdir(t) and os.access(t, os.W_OK | os.X_OK)):
+        return "ENV: TMPDIR %s does not exist or is not writable" % t
+    return None
+
+
 def cmd_check_red(args) -> int:
+    env = tmpdir_problem()
+    if env:
+        emit(False, "check-red", [env])
+        return 2
     spec = load_spec(args.spec)
     touched = diff_touched(args.repo, args.base)
     reasons: list = []
@@ -879,6 +894,10 @@ def cmd_check_red(args) -> int:
 
 
 def cmd_check_green(args) -> int:
+    env = tmpdir_problem()
+    if env:
+        emit(False, "check-green", [env])
+        return 2
     spec = load_spec(args.spec)
     touched = diff_touched(args.repo, args.red)
     # GUL-1801: main's own commits reach this branch through an update-branch

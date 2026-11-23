@@ -9,7 +9,12 @@
 # local config and the worktree list did not change. bash 3.2-safe.
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/git-isolation-XXXXXX")" && pwd -P)"
+# GUL-2091: a dead TMPDIR left TMP empty and the fixtures below ran git in the
+# caller's checkout. Stop before any git command.
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/git-isolation-XXXXXX")" \
+  || { echo "ENV: mktemp -d failed (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
+[ -d "$TMP" ] || { echo "ENV: mktemp -d gave no directory (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
+TMP="$(cd "$TMP" && pwd -P)" || exit 2
 trap 'rm -rf "$TMP"' EXIT
 
 fail=0
@@ -46,6 +51,32 @@ after="$(snapshot)"
 [ "$before" = "$after" ] && ok "outer repo refs, config and worktrees unchanged" \
   || { bad "outer repo changed:"; diff <(printf '%s\n' "$before") <(printf '%s\n' "$after"); }
 [ -d "$TMP/wt" ] && ok "worktree still exists" || bad "worktree was removed"
+
+# ---- case 2 (GUL-2089/GUL-2091): a dead TMPDIR ----
+# mktemp failed, TMP was empty, and the fixture subshells' failed `cd` left git
+# running in the caller's worktree: a "base" commit on the branch and
+# user.name=factory test in the clone's config. Same scratch setup, fresh clone.
+( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+  git clone -q "$TMP/outer" "$TMP/clone"
+  git -C "$TMP/clone" config user.name clone
+  git -C "$TMP/clone" config user.email clone@example.invalid
+  git -C "$TMP/clone" worktree add -q -b wo-dead-tmp "$TMP/wt2" )
+snapshot2() {
+  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+    git -C "$TMP/wt2" rev-parse HEAD
+    git -C "$TMP/clone" for-each-ref --format='%(refname) %(objectname)'
+    git -C "$TMP/clone" config --local --list
+    git -C "$TMP/clone" worktree list --porcelain )
+}
+before2="$(snapshot2)"
+( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+  cd "$TMP/wt2" || exit 1
+  TMPDIR=/nonexistent/gul-2089 bash "$ROOT/agents/factory/tests/factory-check.sh" > "$TMP/run2.out" 2>&1 )
+after2="$(snapshot2)"
+[ "$before2" = "$after2" ] && ok "dead TMPDIR: branch head, refs, clone config and worktrees unchanged" \
+  || { bad "dead TMPDIR: the run wrote into the scratch checkout:"; diff <(printf '%s\n' "$before2") <(printf '%s\n' "$after2"); }
+grep -q '^ENV:' "$TMP/run2.out" && ok "dead TMPDIR: run printed an ENV: line" \
+  || { bad "dead TMPDIR: no ENV: line in the output"; tail -5 "$TMP/run2.out"; }
 
 [ "$fail" = 0 ] && echo "git-isolation-check: ALL PASS" || echo "git-isolation-check: FAIL"
 exit "$fail"
