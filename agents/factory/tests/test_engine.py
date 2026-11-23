@@ -559,6 +559,29 @@ class TickFlow(EngineCase):
         self.assertEqual(len(FAKE.workspaces), 2)
         self.assertNotEqual(self.load("GUL-301")["worktree"], self.load("GUL-302")["worktree"])
 
+    def test_06b_missing_worktree_stalls_without_an_attempt(self):
+        # GUL-2026 replay, 2026-11-23: the state named a worktree that did not exist, the
+        # check ran in an empty path and the agent fell back to the shared clone.
+        self.start(304, "Lost worktree")
+        self.tick()
+        st = self.load("GUL-304")
+        self.assertEqual(st["phase"], "red")
+        row = st["stages"][0]
+        self.issue_of(row)["status"] = "done"
+        subprocess.run(["git", "-C", self.clone, "worktree", "remove", "--force", st["worktree"]],
+                       check=True)
+        rc, out = self.tick()
+        st = self.load("GUL-304")
+        self.assertEqual(st["phase"], "stalled", self.last_err)
+        self.assertTrue(st["stallReason"].startswith("ENV: the worktree "), st["stallReason"])
+        self.assertIn("worktree-missing", self.order_line(out, "GUL-304")["flags"])
+        self.assertEqual(len(st["stages"]), 1, "no new attempt")
+        self.assertEqual(st["stages"][0]["result"], "pending", "the red attempt was not judged")
+        titles = [p[2]["title"] for p in FAKE.stage_issue_posts()]
+        self.assertEqual(len(titles), 2, titles)
+        self.assertTrue(titles[0].startswith("[red] GUL-304"), titles)
+        self.assertTrue(titles[1].startswith("[stall] GUL-304"), "the owner is woken: %s" % titles)
+
     def test_07_08_09_failed_attempts_stall_recall_retain(self):
         FAKE.recall_status["hermes-andrzej"] = 500
         self.start(401, "Failing order")

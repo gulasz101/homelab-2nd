@@ -1061,8 +1061,27 @@ class Engine:
         }
 
     # -- waiting on a stage issue -----------------------------------------------
+    def worktree_problem(self, st: dict):
+        """None when the order's worktree exists and is on its branch, else one sentence.
+
+        Without this guard a missing worktree burns attempts: the check runs in an empty
+        path (every test fails in 0 s) and the agent's Paperclip workspace falls back to
+        the shared clone (GUL-2026 replay, 2026-11-23)."""
+        wt = st.get("worktree")
+        if not wt or not os.path.isdir(wt):
+            return "ENV: the worktree %s does not exist." % (wt or "(none)")
+        head = git(wt, "rev-parse", "--abbrev-ref", "HEAD", check=False).strip()
+        if head != st["branch"]:
+            return "ENV: the worktree %s is on %r, not %s." % (wt, head, st["branch"])
+        return None
+
     def step_stage(self, st: dict) -> None:
         stage = st["phase"]
+        problem = self.worktree_problem(st)
+        if problem:
+            self.flag("worktree-missing")
+            self.stall(st, problem + " No stage runs until it is back; no attempt was used.")
+            return
         row = self.current_row(st, stage)
         if row is not None and row["result"] in FAILED:
             failed = [r for r in self.rows(st, stage, st["round"]) if r["result"] in FAILED]
