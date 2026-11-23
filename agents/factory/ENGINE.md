@@ -1,4 +1,4 @@
-# Factory engine contract (GUL-2037 phase 2)
+# Factory engine contract (GUL-2037 phases 2 and 3)
 
 This file is the law for `agents/factory/engine.py`. If the code and this file disagree, the code
 is wrong. `CONTRACT.md` still rules the stage **checks** (`lint-spec`, `check-*`, `commit`, `push`,
@@ -37,17 +37,21 @@ Rules:
   "maxActiveOrders": 2,
   "maxAttempts": 3,
   "maxFixRounds": 2,
-  "stageTimeoutMinutes": {"librarian": 20, "red": 90, "green": 90, "review": 60, "verify": 60},
+  "stageTimeoutMinutes": {"librarian": 20, "red": 90, "green": 90, "review": 60, "verify": 60, "investigate": 45},
   "idleMinutes": 15,
   "gateCiWaitMinutes": 60,
   "supervisorAgentId": "2df240b5-a5ea-4ebf-81ff-bf96758e8f80",
   "stallOwnerAgentId": "97efeb2d-5b3a-4110-b893-6cbcbb29164c",
+  "maxInvestigations": 2,
+  "maxStallWakesPerDay": 3,
+  "strongAgents": {"green": "fe548bc3-278d-408c-8b16-1ce6346f82e9"},
   "stages": {
     "librarian": {"agentId": "4dc8b6a7-f155-4539-9a74-2f600391a5d9", "lodge": "librarian"},
     "red":    {"agentId": "e0dd70fa-3e08-4d42-b226-0e58b0b59639", "lodge": "tester"},
     "green":  {"agentId": "6786758e-5db9-4f0f-a7df-b42adeede465", "lodge": "builder"},
     "review": {"agentId": "51c624e7-5018-4f22-a23c-dd4911e44a61", "lodge": "reviewer"},
-    "verify": {"agentId": "974c23c8-f6b1-4afa-8073-79aa352c6358", "lodge": "verifier"}
+    "verify": {"agentId": "974c23c8-f6b1-4afa-8073-79aa352c6358", "lodge": "verifier"},
+    "investigate": {"agentId": "012858d4-bf56-4f5d-9840-da0207cf54bb", "lodge": "investigator"}
   },
   "repos": {
     "gulasz101/homelab-2nd": {
@@ -93,8 +97,8 @@ Paperclip document `engine-state` (markdown + one fenced `json` block, with `bas
 {"version": 1, "workOrder": "GUL-N", "workOrderId": "...", "title": "...", "projectId": "...",
  "repo": "owner/name", "base": "main", "baseSha": "...", "branch": "gul-N-slug",
  "worktree": "/abs/path", "workspaceId": "...", "specFile": "<state>/GUL-N.spec.md",
- "specRevisionId": "...", "phase": "queued|librarian|red|green|review|verify|gate|awaiting_merge|done|closed|stalled",
- "round": 1,
+ "specRevisionId": "...", "phase": "queued|librarian|red|green|review|verify|investigate|gate|awaiting_merge|done|closed|stalled",
+ "round": 1, "ladder": 0, "strongStage": null, "investigations": [], "wake": null,
  "docsReady": [{"library": "...", "version": "...", "indexed": true, "note": "..."}],
  "stages": [{"stage": "red", "round": 1, "attempt": 1, "issueId": "...", "identifier": "GUL-M",
              "createdAt": "...", "result": "pending|pass|fail|timeout", "reasons": [],
@@ -203,13 +207,47 @@ gives the same answer).
 fingerprint = sha1 of the sorted, whitespace-normalised `reasons` of the check JSON. Comment on the
 old issue: `engine check: FAIL — <first reason>. Next attempt: <GUL-M>`, then create the next
 attempt. Leave the worktree as it is (the next attempt starts from the same files). After
-`maxAttempts` failed attempts of one stage in one round → **stalled**.
+`maxAttempts` failed attempts of one stage in one round, or when verify still confirms blocking
+findings after the last fix round → **the stall ladder** (below).
 
-**Stalled** (phase 2; phase 3 replaces this with the stall ladder): `stallReason` = one plain
+### The stall ladder (phase 3)
+
+Rung 1 is the attempts above: the same agent, with `## Last attempt failed` and, when the
+fingerprint repeats, `SAME FAILURE as attempt <k>`.
+
+Rung 2, **investigate**: the order enters phase `investigate` (an active phase, it holds its slot).
+`ladder` + 1, so every stage counts its attempts again from 1 in the new ladder step, and titles
+carry `L<n>` (`[investigate L1] GUL-N ...`, `[red L1 a2] GUL-N ...`). The stage issue goes to
+`stages.investigate.agentId` (the Investigator: read-only, a different model). Its brief has
+`## The stuck stage`: the engine's sentence, and the check line plus output tail of every failed
+attempt (for a fix-round limit: the blocking findings verify confirmed). It writes the document
+`investigation`: one fenced json object
+`{"verdict": "CODE-WRONG|TEST-WRONG|SPEC-WRONG|ENV", "cause": "...", "advice": "...", "amend": "AMEND: ..."}`
+(`amend` required for SPEC-WRONG). An invalid or missing document is a failed attempt; the
+Investigator gets `INVESTIGATE_ATTEMPTS` = 2, then the order stalls.
+
+Rung 3, the verdict:
+| Verdict | The engine does |
+|---|---|
+| `TEST-WRONG` | only while the stuck stage is red or green and no PR exists (green pushed nothing): `git stash push --include-untracked` the leftovers (kept, never dropped), then **red** again. Red edits the tests on top of the old red commit; `check-red` still diffs against `baseSha`, so the tests must fail on the base code. Green then starts from attempt 1. With a PR open → stall (red cannot rewrite tests under pushed code without a force-push). |
+| `CODE-WRONG` | the stuck stage once more (`max_attempts` = 1), on `strongAgents[stage]` when set, else the same agent, with `## The Investigator looked at the last failures` (verdict, cause, advice) in the brief. After a fix-round limit: round + 1 first. |
+| `SPEC-WRONG` | stall; the sentence names the `investigation` document with the proposed `AMEND:` block. A person decides: the frozen spec is never changed by a model. |
+| `ENV` | stall with the Investigator's cause. |
+
+At most `maxInvestigations` (2) per order. The next escalation after that stalls with
+`The stall ladder is spent (<n> investigation(s)).` The librarian and the investigate stage
+themselves never escalate.
+
+Rung 4, **a human**: the stall below wakes `stallOwnerAgentId` (Claude Code).
+
+**Stalled**: `stallReason` = one plain
 sentence; work order `blocked` with `"executionPolicy": null` in the same PATCH, that sentence as
 the comment, and an `unblockDescriptor` owned by `stallOwnerAgentId` (Paperclip refuses a `blocked`
 write with no blocker, interaction or descriptor: 422); the worktree and the workspace stay for the investigation. Retain (below). A stalled
-order holds no slot.
+order holds no slot. Once per stall the engine wakes the stall owner: one issue
+`[stall] GUL-N <title>` assigned to `stallOwnerAgentId`, at most `maxStallWakesPerDay` (3) a day
+(counted in `<state>/stall-wakes.json`). Over the limit no issue is filed
+(`"wake": {"sent": false, ...}`) and the stall waits for the 05:30 round.
 
 **awaiting_merge** — each tick `gh pr view <n> --repo <repo> --json state,mergedAt,mergeCommit,headRefOid`:
 - `OPEN` → nothing.

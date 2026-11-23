@@ -12,6 +12,7 @@ environment, and the pc.py fallback URL points at the fake too.
     python3 agents/factory/tests/test_engine.py      (stdlib only)
 """
 
+import datetime
 import fcntl
 import json
 import os
@@ -39,6 +40,8 @@ COMPANY = "c0000000-0000-4000-8000-0000000000e1"
 PROJECT = "p0000000-0000-4000-8000-0000000000e1"
 SUPERVISOR = "a0000000-0000-4000-8000-00000000000s"
 STALL_OWNER = "a0000000-0000-4000-8000-0000000000pm"
+INVESTIGATOR = "a0000000-0000-4000-8000-0000000000iv"
+STRONG = "a0000000-0000-4000-8000-0000000000st"
 AGENTS = {stage: "a0000000-0000-4000-8000-0000000000%02d" % i
           for i, stage in enumerate(("librarian", "red", "green", "review", "verify"), 1)}
 LODGE = {"librarian": "librarian", "red": "tester", "green": "builder",
@@ -556,6 +559,60 @@ class TickFlow(EngineCase):
         self.assertEqual(len(FAKE.workspaces), 2)
         self.assertNotEqual(self.load("GUL-301")["worktree"], self.load("GUL-302")["worktree"])
 
+    def test_06b_missing_worktree_stalls_without_an_attempt(self):
+        # GUL-2026 replay, 2026-11-23: the state named a worktree that did not exist, the
+        # check ran in an empty path and the agent fell back to the shared clone.
+        self.start(304, "Lost worktree")
+        self.tick()
+        st = self.load("GUL-304")
+        self.assertEqual(st["phase"], "red")
+        row = st["stages"][0]
+        self.issue_of(row)["status"] = "done"
+        subprocess.run(["git", "-C", self.clone, "worktree", "remove", "--force", st["worktree"]],
+                       check=True)
+        rc, out = self.tick()
+        st = self.load("GUL-304")
+        self.assertEqual(st["phase"], "stalled", self.last_err)
+        self.assertTrue(st["stallReason"].startswith("ENV: the worktree "), st["stallReason"])
+        self.assertIn("worktree-missing", self.order_line(out, "GUL-304")["flags"])
+        self.assertEqual(len(st["stages"]), 1, "no new attempt")
+        self.assertEqual(st["stages"][0]["result"], "pending", "the red attempt was not judged")
+        titles = [p[2]["title"] for p in FAKE.stage_issue_posts()]
+        self.assertEqual(len(titles), 2, titles)
+        self.assertTrue(titles[0].startswith("[red] GUL-304"), titles)
+        self.assertTrue(titles[1].startswith("[stall] GUL-304"), "the owner is woken: %s" % titles)
+
+    def test_06c_stall_halts_an_open_attempt(self):
+        # GUL-2083, 2026-11-23: the order stalled, but its open green attempt kept its
+        # assignee, and the agent wrote into the shared clone. A stall stops it.
+        self.start(305, "Halt on stall")
+        self.tick()
+        st = self.load("GUL-305")
+        row = st["stages"][0]
+        self.issue_of(row)["status"] = "in_progress"
+        subprocess.run(["git", "-C", self.clone, "worktree", "remove", "--force", st["worktree"]],
+                       check=True)
+        self.tick()
+        st = self.load("GUL-305")
+        self.assertEqual(st["phase"], "stalled", self.last_err)
+        row = st["stages"][0]
+        self.assertEqual(row["result"], "halted", "stopped, not counted as a failure")
+        issue = self.issue_of(row)
+        self.assertEqual(issue["status"], "cancelled")
+        self.assertIsNone(issue.get("assigneeAgentId"), "no agent keeps running it")
+        path = "/pc/api/issues/%s" % row["issueId"]
+        patch = [n for n, r in enumerate(FAKE.requests) if r[0] == "PATCH" and r[1] == path
+                 and r[2].get("status") == "cancelled"]
+        comment = [n for n, r in enumerate(FAKE.requests) if r[0] == "POST" and r[1] == path + "/comments"]
+        self.assertEqual(len(patch), 1)
+        self.assertEqual(len(comment), 1)
+        self.assertLess(patch[0], comment[0], "unassigned before the comment (GUL-2074)")
+        # the worktree comes back and the order is resumed: a new attempt, not attempt 3 of 3
+        self.tick()
+        self.assertEqual(len([p for p in FAKE.stage_issue_posts() if p[2]["title"].startswith("[red")]), 1,
+                         "a stalled order creates no attempt")
+        self.assert_no_blocked_stage_issue()
+
     def test_07_08_09_failed_attempts_stall_recall_retain(self):
         FAKE.recall_status["hermes-andrzej"] = 500
         self.start(401, "Failing order")
@@ -596,6 +653,16 @@ class TickFlow(EngineCase):
         self.assertTrue(old_comments[0].startswith("engine check: FAIL — "))
         self.assertTrue(old_comments[0].endswith("Next attempt: %s" % a2["identifier"]))
         self.assertEqual(self.issue_of(a1)["status"], "done", "the old attempt stays done")
+        # unassigned before the engine's comment, so Paperclip cannot reopen it and
+        # wake its agent next to the new attempt (GUL-2074)
+        a1_path = "/pc/api/issues/%s" % a1["issueId"]
+        unassign = [n for n, r in enumerate(FAKE.requests) if r[0] == "PATCH" and r[1] == a1_path
+                    and "assigneeAgentId" in r[2] and r[2]["assigneeAgentId"] is None]
+        comment = [n for n, r in enumerate(FAKE.requests) if r[0] == "POST"
+                   and r[1] == a1_path + "/comments"]
+        self.assertEqual(len(unassign), 1, [r for r in FAKE.requests if r[1] == a1_path])
+        self.assertEqual(len(comment), 1)
+        self.assertLess(unassign[0], comment[0], "unassign comes first")
 
         # the same failure again: attempt 3's brief says so first
         self.issue_of(a2)["status"] = "done"
@@ -683,6 +750,121 @@ class TickFlow(EngineCase):
         self.assertTrue(st["noticeSent"])
         self.assertEqual(wo["status"], "cancelled")
         self.assert_no_blocked_stage_issue()
+
+    def ladder_config(self, **over):
+        FAKE.agents[INVESTIGATOR] = {"id": INVESTIGATOR, "status": "idle"}
+        FAKE.agents[STRONG] = {"id": STRONG, "status": "idle"}
+        stages = {s: {"agentId": AGENTS[s], "lodge": LODGE[s]} for s in AGENTS}
+        stages["investigate"] = {"agentId": INVESTIGATOR, "lodge": "investigator"}
+        self.write_config(stages=stages, strongAgents={"red": STRONG}, maxInvestigations=2, **over)
+
+    def fail_red_until_escalated(self, wo_id, n):
+        for _ in range(n):
+            st = self.load(wo_id)
+            self.issue_of(st["stages"][-1])["status"] = "done"  # done with no tests: check-red fails
+            self.tick()
+
+    def investigate(self, st, verdict_json):
+        row = st["stages"][-1]
+        self.assertEqual(row["stage"], "investigate")
+        FAKE.documents[(row["issueId"], "investigation")] = {
+            "body": "# Investigation\n\n```json\n%s\n```\n" % json.dumps(verdict_json),
+            "latestRevisionId": "rev-inv-%s" % row["identifier"]}
+        self.issue_of(row)["status"] = "done"
+        return self.tick()
+
+    def test_12_stall_ladder(self):
+        self.ladder_config()
+        self.start(801, "Ladder")
+        self.tick()
+        self.fail_red_until_escalated("GUL-801", 3)
+        st = self.load("GUL-801")
+        self.assertEqual(st["phase"], "investigate", self.last_err)
+        self.assertEqual(st["ladder"], 1)
+        inv_row = st["stages"][-1]
+        inv_issue = self.issue_of(inv_row)
+        self.assertEqual(inv_issue["title"], "[investigate L1] GUL-801 Ladder")
+        self.assertEqual(inv_issue["assigneeAgentId"], INVESTIGATOR)
+        self.assertIn("## The stuck stage", inv_issue["description"])
+        self.assertIn("### Attempt 3", inv_issue["description"])
+        self.assertIn("TEST-WRONG", inv_issue["description"])
+        self.assertNotEqual(FAKE.by_ident("GUL-801")["status"], "blocked", "no stall yet")
+
+        # a bad document is a failed attempt, not a verdict
+        rc, out = self.investigate(st, {"verdict": "MAYBE", "cause": "x"})
+        st = self.load("GUL-801")
+        self.assertEqual(st["stages"][-1]["stage"], "investigate")
+        self.assertEqual(st["stages"][-1]["attempt"], 2)
+        self.assertIn("verdict must be one of", st["stages"][-2]["reasons"][0])
+
+        # TEST-WRONG: the leftovers are stashed (kept), red runs again with the advice
+        with open(os.path.join(st["worktree"], "leftover.sh"), "w") as fh:
+            fh.write("echo half-done\n")
+        rc, out = self.investigate(st, {"verdict": "TEST-WRONG", "cause": "tests/ac.sh calls the "
+                                        "script with a flag the AC never names", "advice": "drop the flag"})
+        st = self.load("GUL-801")
+        self.assertEqual(st["phase"], "red", self.last_err)
+        self.assertFalse(os.path.exists(os.path.join(st["worktree"], "leftover.sh")))
+        stash = subprocess.run(["git", "-C", st["worktree"], "stash", "list"], stdout=subprocess.PIPE,
+                               text=True, env=dict(os.environ, **GIT_ENV)).stdout
+        self.assertIn("factory GUL-801: before red reruns (TEST-WRONG", stash)
+        red = st["stages"][-1]
+        self.assertEqual((red["stage"], red["ladder"], red["attempt"]), ("red", 1, 1))
+        red_issue = self.issue_of(red)
+        self.assertEqual(red_issue["title"], "[red L1] GUL-801 Ladder")
+        self.assertEqual(red_issue["assigneeAgentId"], AGENTS["red"])
+        self.assertIn("Verdict **TEST-WRONG**", red_issue["description"])
+        self.assertIn("drop the flag", red_issue["description"])
+
+        # red fails 3 more times -> second investigation; CODE-WRONG -> one attempt on the strong agent
+        self.fail_red_until_escalated("GUL-801", 3)
+        st = self.load("GUL-801")
+        self.assertEqual((st["phase"], st["ladder"]), ("investigate", 2), self.last_err)
+        self.investigate(st, {"verdict": "CODE-WRONG", "cause": "c", "advice": "a"})
+        st = self.load("GUL-801")
+        strong = st["stages"][-1]
+        self.assertEqual(self.issue_of(strong)["assigneeAgentId"], STRONG)
+        self.assertEqual(st["strongStage"], "red")
+
+        # the strong attempt fails once -> the ladder is spent (2 investigations) -> stall + wake
+        self.fail_red_until_escalated("GUL-801", 1)
+        st = self.load("GUL-801")
+        self.assertEqual(st["phase"], "stalled", self.last_err)
+        self.assertIn("The stall ladder is spent (2 investigation(s))", st["stallReason"])
+        wo = FAKE.by_ident("GUL-801")
+        self.assertEqual(wo["status"], "blocked")
+        self.assertEqual(wo["unblockDescriptor"]["owner"], {"agentId": STALL_OWNER})
+        wakes = [i for i in FAKE.issues.values() if i["title"].startswith("[stall] GUL-801")]
+        self.assertEqual(len(wakes), 1)
+        self.assertEqual(wakes[0]["assigneeAgentId"], STALL_OWNER)
+        self.assertEqual(st["wake"]["sent"], True)
+        self.tick()
+        self.assertEqual(len([i for i in FAKE.issues.values() if i["title"].startswith("[stall]")]), 1,
+                         "one wake per stall")
+        self.assert_no_blocked_stage_issue()
+
+    def test_13_spec_wrong_stalls_and_wake_limit(self):
+        self.ladder_config(maxStallWakesPerDay=1)
+        os.makedirs(self.state, exist_ok=True)
+        with open(os.path.join(self.state, "stall-wakes.json"), "w") as fh:
+            json.dump({datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"): 1}, fh)
+        self.start(802, "Spec wrong")
+        self.tick()
+        self.fail_red_until_escalated("GUL-802", 3)
+        st = self.load("GUL-802")
+        # SPEC-WRONG needs an AMEND: block
+        self.investigate(st, {"verdict": "SPEC-WRONG", "cause": "AC-1 contradicts itself"})
+        st = self.load("GUL-802")
+        self.assertEqual(st["phase"], "investigate")
+        self.investigate(st, {"verdict": "SPEC-WRONG", "cause": "AC-1 contradicts itself",
+                              "amend": "AMEND: AC-1 prints 9, not 10."})
+        st = self.load("GUL-802")
+        self.assertEqual(st["phase"], "stalled", self.last_err)
+        self.assertIn("SPEC-WRONG: AC-1 contradicts itself", st["stallReason"])
+        self.assertIn("Proposed AMEND block", st["stallReason"])
+        self.assertEqual(st["wake"], {"sent": False, "reason": "daily wake limit (1) reached"})
+        self.assertEqual([i for i in FAKE.issues.values() if i["title"].startswith("[stall]")], [])
+        self.assertEqual(FAKE.by_ident("GUL-802")["status"], "blocked")
 
     def test_11_dry_tick_writes_nothing(self):
         self.start(501, "Dry run")
