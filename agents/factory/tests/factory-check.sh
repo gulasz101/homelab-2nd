@@ -11,7 +11,11 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 FACTORY="$ROOT/agents/factory/factory.py"
 PC="$ROOT/agents/factory/pc.py"
 PY="python3 -I"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/factory-check-XXXXXX")"
+# GUL-2091: a dead TMPDIR left TMP empty and the fixtures below ran git in the
+# caller's checkout. Stop before any git command.
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/factory-check-XXXXXX")" \
+  || { echo "ENV: mktemp -d failed (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
+[ -d "$TMP" ] || { echo "ENV: mktemp -d gave no directory (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
 trap 'rm -rf "$TMP"' EXIT
 
 PASS_N=0
@@ -48,7 +52,7 @@ sys.exit(0 if str(d)==sys.argv[3] else 1)' "$LAST_OUT" "$2" "$3"
 new_repo() { # $1 dir — git repo with a base commit
   local r="$1"
   mkdir -p "$r/src"
-  ( cd "$r"
+  ( cd "$r" || exit 1
     git init -q -b main .
     git config user.email test@example.invalid
     git config user.name "factory test"
@@ -206,7 +210,7 @@ cat > "$G/tests/ac.sh" <<'AC'
 #!/bin/bash
 if grep -q "fixed" src/a.py; then echo "AC-1: PASS"; exit 0; else echo "AC-1: FAIL broken"; exit 1; fi
 AC
-( cd "$G" && git add -A && git commit -qm "red: failing test" )
+( cd "$G" || exit 1; git add -A && git commit -qm "red: failing test" )
 RED_SHA="$(git -C "$G" rev-parse HEAD)"
 # Builder: source-only change in the working tree, tests untouched since red
 printf 'print("a")\nprint("fixed")\n' > "$G/src/a.py"
@@ -272,7 +276,7 @@ expect_rc "green (GUL-1801): main's version restored -> PASS again" 0 "$LAST_RC"
 echo "== check-findings =="
 FR="$TMP/find"
 new_repo "$FR"
-( cd "$FR" && printf 'print("changed")\n' > src/a.py )
+( cd "$FR" || exit 1; printf 'print("changed")\n' > src/a.py )
 cat > "$FR/findings-ok.md" <<'EOF'
 review notes for humans
 ```json
@@ -464,7 +468,7 @@ echo "== check-gate: pin vs cluster =="
 GATE_REPO="$TMP/gate-repo"
 mkdir -p "$GATE_REPO/scripts" "$GATE_REPO/apps/llm-hub"
 cp "$ROOT/scripts/helmrelease-pin-vs-cluster.sh" "$GATE_REPO/scripts/"
-( cd "$GATE_REPO"
+( cd "$GATE_REPO" || exit 1
   git init -q -b main .
   git config user.email test@example.invalid
   git config user.name "gate test"
@@ -561,7 +565,7 @@ new_repo "$O"
 git -C "$O" remote add origin "$TMP/origin.git"
 git -C "$O" checkout -qb gul-436-work
 printf 'print("pr me")\n' > "$O/src/pr.py"
-( cd "$O" && git add -A && git commit -qm "work" )
+( cd "$O" || exit 1; git add -A && git commit -qm "work" )
 run env FACTORY_GH="$GHSTUB/gh" $PY "$FACTORY" open-pr --repo "$O" --issue GUL-436 --title "Factory test PR"
 expect_rc "open-pr: pushes branch and prints url" 0 "$LAST_RC"
 expect_json_field x "url" "https://github.example/gulasz101/homelab-2nd/pull/999" && ok "open-pr url field" || bad "open-pr url"
