@@ -8,11 +8,12 @@ if ! command -v node >/dev/null 2>&1; then echo "SKIP claude-hook: node not inst
 case "$(node -p 'process.versions.node.split(".")[0]')" in
   1[0-9]|2[0-2]) echo "SKIP claude-hook: node < 23 cannot run .ts"; exit 0 ;;
 esac
-if [ -z "${TMPDIR:-}" ] || [ ! -d "${TMPDIR:-/nonexistent}" ]; then
-  echo "ENV: TMPDIR '${TMPDIR:-}' is missing, refusing to run"; exit 1
-fi
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
-WS=$(mktemp -d) || { echo "ENV: mktemp failed"; exit 1; }
+# Same rule as the factory self-tests (GUL-2091): unset TMPDIR (GitHub's runner) -> /tmp;
+# a TMPDIR that is set but dead stops the test before any git command.
+WS="$(mktemp -d "${TMPDIR:-/tmp}/claude-hook-check-XXXXXX")" \
+  || { echo "ENV: mktemp -d failed (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
+[ -d "$WS" ] || { echo "ENV: mktemp -d gave no directory (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
 trap 'rm -rf "$WS"' EXIT
 git -C "$WS" init -q
 printf 'x\n' > "$WS/README.md"
