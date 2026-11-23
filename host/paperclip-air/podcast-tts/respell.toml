@@ -27,6 +27,12 @@
 "itp." = "i tym podobne"
 "km" = "kilometrów"
 "GB" = "gigabajtów"
+# GUL-2079 (variant B): the four foreign tokens the reader mangled in the live
+# OSW article. Respelled the way a Pole reads them, one take per chunk.
+"Intelligent and Connected Vehicles" = "inteligent end konektyd wijikls"
+"zhineng wanglian qiche" = "czyneng wanglian czicze"
+"ICV" = "i si wi"
+"BeiDou" = "bejdou"
 
 [words]
 # Empty on purpose -- every entry here must be confirmed by listening.
