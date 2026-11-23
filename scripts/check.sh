@@ -33,7 +33,13 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT" || exit 1
 
-WORK=$(mktemp -d)
+# GUL-2091: with a dead TMPDIR the self-tests' fixture repos ran git in this
+# checkout. Refuse to run anything until mktemp -d works (exit 2 = setup error).
+# The template is explicit: macOS `mktemp -d` alone silently skips a dead TMPDIR.
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/check-XXXXXX" 2>/dev/null) && [ -d "$WORK" ] || {
+  printf 'ENV: TMPDIR %s is not writable (mktemp -d failed); fix TMPDIR and rerun\n' "${TMPDIR:-unset}" >&2
+  exit 2
+}
 trap 'rm -rf "$WORK"' EXIT
 
 # Same tool versions as the Air (see .github/workflows/check.yaml).

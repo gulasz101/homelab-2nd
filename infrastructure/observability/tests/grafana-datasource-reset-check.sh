@@ -44,6 +44,13 @@ MANIFEST_REL="infrastructure/observability/grafana-helm-release.yaml"
 # cut point with `git merge-base HEAD origin/main` and fails honestly if it cannot.
 BASE_SHA_DEFAULT="06636e63fb03fb75d155316c65369e6c51b4f303"
 
+# GUL-2091: --self-test builds a throwaway git repo in a temp dir. A dead TMPDIR
+# must stop the run (exit 2) before any git command.
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/gul1693-probe-XXXXXX")" \
+  || { echo "ENV: mktemp -d failed (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
+[ -d "$TMP" ] || { echo "ENV: mktemp -d gave no directory (TMPDIR=${TMPDIR:-unset})" >&2; exit 2; }
+rmdir "$TMP"
+
 python3 -I - "$ROOT" "$MANIFEST_REL" "$BASE_SHA_DEFAULT" "$@" <<'PY'
 import os
 import re
