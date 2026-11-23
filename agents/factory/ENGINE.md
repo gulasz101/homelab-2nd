@@ -104,7 +104,7 @@ Paperclip document `engine-state` (markdown + one fenced `json` block, with `bas
 {"version": 1, "workOrder": "GUL-N", "workOrderId": "...", "title": "...", "projectId": "...",
  "repo": "owner/name", "base": "main", "baseSha": "...", "branch": "gul-N-slug",
  "worktree": "/abs/path", "workspaceId": "...", "specFile": "<state>/GUL-N.spec.md",
- "specRevisionId": "...", "phase": "queued|librarian|red|green|review|verify|investigate|gate|awaiting_merge|done|closed|stalled",
+ "specRevisionId": "...", "phase": "queued|librarian|red|green|review|verify|investigate|gate|awaiting_merge|deploy_check|reverting|done|closed|stalled",
  "round": 1, "ladder": 0, "strongStage": null, "investigations": [], "wake": null,
  "docsReady": [{"library": "...", "version": "...", "indexed": true, "note": "..."}],
  "stages": [{"stage": "red", "round": 1, "attempt": 1, "issueId": "...", "identifier": "GUL-M",
@@ -267,11 +267,36 @@ checked or nothing. The ruleset on `main` stays the second line: the App is not 
 
 **awaiting_merge** — each tick `gh pr view <n> --repo <repo> --json state,mergedAt,mergeCommit,headRefOid`:
 - `OPEN` → nothing.
-- `MERGED` and `factory.merge_contains(<clone>, <head>, <merge sha>)` → `merge` record, phase
-  `done`, retain, clean up, work order `done` with comment `PR #N is merged in <sha>`.
+- `MERGED` and `factory.merge_contains(<clone>, <head>, <merge sha>)` → `merge` record. With
+  `postMergeCheck` true in `engine.json`: phase `deploy_check` (below). Without it: phase `done`,
+  retain, clean up, work order `done` with comment `PR #N is merged in <sha>`.
 - `MERGED` but not landed → stalled with the CONTRACT.md "unlanded" sentence.
 - `CLOSED` → phase `closed`, retain, clean up, work order `cancelled`: `PR #N was closed without a
   merge, so nothing shipped.`
+
+**deploy_check** (phase 4, decision 8). Once: `kubectl annotate gitrepository/<fluxSource>
+reconcile.fluxcd.io/requestedAt=<now>` so Flux fetches at once. Each tick:
+`kubectl get kustomizations -n <fluxNamespace> -o json`. "Contains the merge" means plain
+`git merge-base --is-ancestor <merge sha> <revision sha>` (not `merge_contains`).
+- First read: every Kustomization that is `Ready=False` on a revision without the merge goes into
+  `deploy.brokenBefore`. Those never trigger a revert.
+- A Kustomization not in `brokenBefore`, `Ready=False`, whose `lastAttemptedRevision` contains the
+  merge → revert (below).
+- Any Kustomization not `Ready=True` on a `lastAppliedRevision` that contains the merge → wait, up to
+  `deployWaitMinutes` (30); then stalled, no revert ("Nothing points at the merge yet").
+- kubectl unreadable for `deployWaitMinutes` → stalled, no revert.
+- All Ready on the merge → each spec `liveChecks` entry runs with `bash -c` in the order's worktree,
+  detached at the merge commit, timeout `liveCheckTimeoutSeconds` (600). All exit 0 → phase `done`,
+  work order `done`: `PR #N is merged in <sha>. Flux applied it ... and K live check(s) passed.` Any
+  failure → revert.
+
+**Revert** (as the App): branch `revert-<gul-n>` from `origin/<base>` in the worktree,
+`git revert --no-edit <merge sha>`, push, `gh pr create` with the App token → phase `reverting`.
+Each tick: CI `check` on the revert PR; pending waits up to `gateCiWaitMinutes`; SUCCESS →
+`gh pr merge --squash --match-head-commit <revert head>` as the App, then stalled ("The factory
+reverted it"), which wakes the stall owner. Every failure on the way (no token, git, CI, merge) is a
+stall that says what to revert by hand. A revert never touches a never path the merge did not, so the
+ruleset lets the App merge it.
 
 **Clean up**: `DELETE /projects/<projectId>/workspaces/<workspaceId>`; then
 `git -C <clone> worktree remove <worktree>` only when `git status --porcelain` in it is empty —

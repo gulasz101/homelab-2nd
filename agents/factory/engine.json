@@ -31,5 +31,11 @@
   "lodgeUrl": "http://192.168.1.179:30260",
   "autoPickup": false,
   "autoMerge": true,
-  "githubApp": {"appId": 5893473}
+  "githubApp": {"appId": 5893473},
+  "postMergeCheck": true,
+  "deployWaitMinutes": 30,
+  "liveCheckTimeoutSeconds": 600,
+  "kubectl": "/Users/paperclip/.local/bin/kubectl",
+  "fluxNamespace": "flux-system",
+  "fluxSource": "flux-system"
 }
