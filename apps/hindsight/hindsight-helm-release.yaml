@@ -147,7 +147,25 @@ spec:
         # GUL-122 (2026-10-24): consolidation follows retain onto free-openrouter
         # (route timeout 120 s, below the 210 s budget here).
         # GUL-123: consolidation follows retain onto FreeLLMAPI `auto`.
-        HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: auto
+        # GUL-2037 (2026-11-22, owner ruling): retain (fact extraction) and
+        # consolidation move back into LiteLLM, onto `beam-ollama` (beam on the
+        # Ollama Cloud subscription). Done with the per-operation RETAIN_* and
+        # CONSOLIDATION_* settings, so the global LLM_* block above stays on
+        # FreeLLMAPI `auto` as the default for any other call. The key is the
+        # GitOps-managed `hindsight-reflect` LiteLLM key (its value copied into
+        # hindsight-secrets as RETAIN_/CONSOLIDATION_LLM_API_KEY; the key's model
+        # list already holds `beam-ollama`). Measured 2026-11-22 from this pod
+        # with that key: 6/6 x 200 with valid JSON (strict json_schema and
+        # json_object), 1.0-2.6 s. Honest caveat: with no system prompt asking
+        # for JSON, beam answered prose once - the schema is not enforced
+        # upstream, Hindsight's own prompts are what keep it valid.
+        # The October rejection of Ollama Cloud (rate limits, H2-284) is why
+        # `beam-ollama` now has a fallback in apps/llm-hub: on a 429 the router
+        # hops to `auto-freellmapi`, which is exactly the old lane.
+        HINDSIGHT_API_RETAIN_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
+        HINDSIGHT_API_RETAIN_LLM_MODEL: beam-ollama
+        HINDSIGHT_API_CONSOLIDATION_LLM_BASE_URL: http://litellm.llm-hub.svc.cluster.local:4000/v1
+        HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: beam-ollama
         # GUL-263 (2026-10-27): reflect and the background mental-model refresh
         # left the FreeLLMAPI pool and now ride LiteLLM's paid route
         # `gpt-oss-120b-ollama`. The pin they leave behind was GUL-182's
