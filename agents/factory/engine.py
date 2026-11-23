@@ -1294,7 +1294,9 @@ class Engine:
         if state == "CLOSED":
             self.would("settle closed PR #%s" % number)
             st["phase"] = "closed"
-            st["notice"] = {"status": "blocked", "executionPolicy": None,
+            # `cancelled`, not `blocked`: the order is over and nobody has to act. Paperclip also
+            # refuses (422) a `blocked` write with no blocker, interaction or unblockDescriptor.
+            st["notice"] = {"status": "cancelled", "executionPolicy": None,
                             "comment": "PR #%s was closed without a merge, so nothing shipped." % number}
             self.save(st)
             self.note("closed", "merge")
@@ -1326,7 +1328,15 @@ class Engine:
         self.would("stall: %s" % sentence)
         st["phase"] = "stalled"
         st["stallReason"] = sentence
-        st["notice"] = {"status": "blocked", "executionPolicy": None, "comment": sentence}
+        # Paperclip refuses (422) `blocked` with no blocker, interaction or unblockDescriptor.
+        # The engine's board key may name any agent as the owner: the stall owner (Claude Code,
+        # the last step of the stall ladder) decides what happens next.
+        owner = self.cfg.get("stallOwnerAgentId")
+        if not owner:
+            raise SetupError("engine.json has no stallOwnerAgentId")
+        st["notice"] = {"status": "blocked", "executionPolicy": None, "comment": sentence,
+                        "unblockDescriptor": {"owner": {"agentId": owner}, "action": (
+                            "Decide the stalled work order %s: %s" % (st["workOrder"], sentence))[:500]}}
         self.save(st)
         self.note("stalled")
         self.finish(st)

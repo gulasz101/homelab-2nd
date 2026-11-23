@@ -31,6 +31,7 @@ ENGINE = os.path.abspath(os.path.join(HERE, "..", "engine.py"))
 COMPANY = "c0000000-0000-4000-8000-0000000000e1"
 PROJECT = "p0000000-0000-4000-8000-0000000000e1"
 SUPERVISOR = "a0000000-0000-4000-8000-00000000000s"
+STALL_OWNER = "a0000000-0000-4000-8000-0000000000pm"
 AGENTS = {stage: "a0000000-0000-4000-8000-0000000000%02d" % i
           for i, stage in enumerate(("librarian", "red", "green", "review", "verify"), 1)}
 LODGE = {"librarian": "librarian", "red": "tester", "green": "builder",
@@ -182,6 +183,12 @@ def paperclip(method, parts, query, body):
         if n == 2 and method == "GET":
             return 200, issue
         if n == 2 and method == "PATCH":
+            # the real server's rule (server/src/routes/issues.ts): entering `blocked` needs a
+            # blocker edge, a pending interaction or an unblockDescriptor
+            if (body.get("status") == "blocked" and issue.get("status") != "blocked"
+                    and not body.get("blockedByIssueIds") and not body.get("unblockDescriptor")):
+                return 422, {"error": "Entering blocked requires unresolved blockers, a pending "
+                                      "interaction/approval, or unblockDescriptor"}
             for key, value in body.items():
                 if key == "comment":
                     FAKE.comments.append((iid, value))
@@ -310,6 +317,7 @@ class EngineCase(unittest.TestCase):
                "stageTimeoutMinutes": {"librarian": 20, "red": 90, "green": 90, "review": 60,
                                        "verify": 60},
                "idleMinutes": 15, "gateCiWaitMinutes": 60, "supervisorAgentId": SUPERVISOR,
+               "stallOwnerAgentId": STALL_OWNER,
                "stages": {s: {"agentId": AGENTS[s], "lodge": LODGE[s]} for s in AGENTS},
                "repos": {REPO: {"clone": self.clone, "worktrees": self.worktrees}},
                "recallBanks": ["coding-agent::{repoName}", "hermes-andrzej"],
@@ -608,6 +616,8 @@ class TickFlow(EngineCase):
         self.assertIn("executionPolicy", stall[0])
         self.assertIsNone(stall[0]["executionPolicy"])
         self.assertEqual(stall[0]["comment"].split("\n")[0], st["stallReason"])
+        self.assertEqual(stall[0]["unblockDescriptor"]["owner"], {"agentId": STALL_OWNER})
+        self.assertIn(st["stallReason"], stall[0]["unblockDescriptor"]["action"])
         self.assertEqual(wo["status"], "blocked")
         self.assertTrue(os.path.isdir(st["worktree"]), "the worktree stays for the investigation")
         self.assertIn(st["workspaceId"], FAKE.workspaces, "the workspace stays too")
@@ -646,6 +656,26 @@ class TickFlow(EngineCase):
         retains = [r for r in FAKE.requests if r[0] == "POST" and r[1].endswith("/memories")]
         self.assertEqual(len(retains), 3)
         self.assertFalse(st["retained"])
+
+    def test_09c_closed_pr_cancels_the_work_order(self):
+        wo = FAKE.issues[self.start(701, "Closed PR")[1] and FAKE.by_ident("GUL-701")["id"]]
+        self.tick()
+        path = os.path.join(self.state, "GUL-701.json")
+        st = self.load("GUL-701")
+        st["phase"] = "awaiting_merge"
+        st["pr"] = {"number": 9, "url": "https://github.com/x/y/pull/9", "head": "abc"}
+        with open(path, "w") as fh:
+            json.dump(st, fh)
+        with open(self.gh, "w") as fh:
+            fh.write('#!/bin/sh\necho \'{"state": "CLOSED", "mergedAt": null, "mergeCommit": null, '
+                     '"headRefOid": "abc"}\'\n')
+        rc, out = self.tick()
+        self.assertEqual(rc, 0, (out, self.last_err))
+        st = self.load("GUL-701")
+        self.assertEqual(st["phase"], "closed")
+        self.assertTrue(st["noticeSent"])
+        self.assertEqual(wo["status"], "cancelled")
+        self.assert_no_blocked_stage_issue()
 
     def test_11_dry_tick_writes_nothing(self):
         self.start(501, "Dry run")

@@ -41,6 +41,7 @@ Rules:
   "idleMinutes": 15,
   "gateCiWaitMinutes": 60,
   "supervisorAgentId": "2df240b5-a5ea-4ebf-81ff-bf96758e8f80",
+  "stallOwnerAgentId": "97efeb2d-5b3a-4110-b893-6cbcbb29164c",
   "stages": {
     "librarian": {"agentId": "4dc8b6a7-f155-4539-9a74-2f600391a5d9", "lodge": "librarian"},
     "red":    {"agentId": "e0dd70fa-3e08-4d42-b226-0e58b0b59639", "lodge": "tester"},
@@ -205,8 +206,9 @@ attempt. Leave the worktree as it is (the next attempt starts from the same file
 `maxAttempts` failed attempts of one stage in one round → **stalled**.
 
 **Stalled** (phase 2; phase 3 replaces this with the stall ladder): `stallReason` = one plain
-sentence; work order `blocked` with `"executionPolicy": null` in the same PATCH and that sentence as
-the comment; the worktree and the workspace stay for the investigation. Retain (below). A stalled
+sentence; work order `blocked` with `"executionPolicy": null` in the same PATCH, that sentence as
+the comment, and an `unblockDescriptor` owned by `stallOwnerAgentId` (Paperclip refuses a `blocked`
+write with no blocker, interaction or descriptor: 422); the worktree and the workspace stay for the investigation. Retain (below). A stalled
 order holds no slot.
 
 **awaiting_merge** — each tick `gh pr view <n> --repo <repo> --json state,mergedAt,mergeCommit,headRefOid`:
@@ -214,7 +216,7 @@ order holds no slot.
 - `MERGED` and `factory.merge_contains(<clone>, <head>, <merge sha>)` → `merge` record, phase
   `done`, retain, clean up, work order `done` with comment `PR #N is merged in <sha>`.
 - `MERGED` but not landed → stalled with the CONTRACT.md "unlanded" sentence.
-- `CLOSED` → phase `closed`, retain, clean up, work order `blocked`: `PR #N was closed without a
+- `CLOSED` → phase `closed`, retain, clean up, work order `cancelled`: `PR #N was closed without a
   merge, so nothing shipped.`
 
 **Clean up**: `DELETE /projects/<projectId>/workspaces/<workspaceId>`; then
