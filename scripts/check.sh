@@ -25,6 +25,10 @@
 #   `yq` reads the encrypted shape without decrypting.
 # ---------------------------------------------------------------------------
 set -uo pipefail
+# GUL-2080: tests build throwaway git repos; an inherited GIT_DIR (a hook, a parent
+# tool) would point them at the real checkout. Drop the repo-locating variables.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT" || exit 1

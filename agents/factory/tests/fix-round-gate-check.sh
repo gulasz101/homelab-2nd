@@ -6,6 +6,10 @@
 # Prints one AC line per acceptance criterion; exit 1 if any line says FAIL.
 # bash 3.2-safe (runs on the Air and in CI).
 set -u
+# GUL-2080: an inherited GIT_DIR (a git hook, a parent tool) made the fixture repos
+# below write into the real checkout. Drop every repo-locating git variable first.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX GIT_CONFIG GIT_CONFIG_GLOBAL
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 TESTS="$ROOT/agents/factory/tests/test_factory_paperclip.py"
 CONTRACT="$ROOT/agents/factory/CONTRACT.md"
