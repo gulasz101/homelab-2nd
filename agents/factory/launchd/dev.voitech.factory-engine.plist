@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Factory engine tick (agents/factory/ENGINE.md, "launchd"). Zero model, zero tokens.
+
+  Every 120 s: `factory engine tick --apply`. The wrapper moves the tooling copy to
+  origin/main first, so the tick always runs the engine on main. A STOP file or a
+  held lock makes the tick a no-op; an overlapping start is harmless.
+
+  A system LaunchDaemon with UserName=paperclip, like the guard self-test: this Mac
+  is a headless appliance and a gui/501 LaunchAgent does not run while nobody is
+  logged in.
+
+  No secrets here. The engine reads its Paperclip key from
+  ~/.paperclip/factory-engine.key (mode 600), the Hindsight token from
+  ~/.hindsight/coding-agent.json and the Lodge tokens from ~/.config/sou/.
+
+  Install (person, once, after the merge):
+    mkdir -p ~/factory/engine-state
+    git -C ~/factory/tooling show origin/main:agents/factory/launchd/dev.voitech.factory-engine.plist > /tmp/factory-engine.plist
+    sudo install -m 0644 -o root -g wheel /tmp/factory-engine.plist /Library/LaunchDaemons/dev.voitech.factory-engine.plist
+    sudo launchctl bootout system/dev.voitech.factory-engine 2>/dev/null || true
+    sudo launchctl bootstrap system /Library/LaunchDaemons/dev.voitech.factory-engine.plist
+  Result:
+    tail ~/factory/engine-state/tick.log
+    /Users/paperclip/factory/bin/factory engine status
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.voitech.factory-engine</string>
+  <key>UserName</key>
+  <string>paperclip</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/paperclip/factory/bin/factory</string>
+    <string>engine</string>
+    <string>tick</string>
+    <string>--apply</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/paperclip</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>120</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/paperclip/factory/engine-state/tick.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/paperclip/factory/engine-state/tick.log</string>
+</dict>
+</plist>

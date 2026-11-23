@@ -44,4 +44,11 @@ git -C "$TOOLING" -c advice.detachedHead=false checkout --quiet --detach \
 printf 'factory: tooling %s (%s)\n' \
     "$(git -C "$TOOLING" rev-parse --short=12 HEAD)" "$TOOLING" >&2
 
+# `factory engine <sub>` runs the model-free engine (ENGINE.md) from the same
+# refreshed copy of main.
+if [ "${1:-}" = "engine" ]; then
+    shift
+    exec python3 -I "$TOOLING/agents/factory/engine.py" "$@"
+fi
+
 exec python3 -I "$TOOLING/agents/factory/factory.py" "$@"
