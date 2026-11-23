@@ -622,6 +622,16 @@ class TickFlow(EngineCase):
         self.assertTrue(old_comments[0].startswith("engine check: FAIL — "))
         self.assertTrue(old_comments[0].endswith("Next attempt: %s" % a2["identifier"]))
         self.assertEqual(self.issue_of(a1)["status"], "done", "the old attempt stays done")
+        # unassigned before the engine's comment, so Paperclip cannot reopen it and
+        # wake its agent next to the new attempt (GUL-2074)
+        a1_path = "/pc/api/issues/%s" % a1["issueId"]
+        unassign = [n for n, r in enumerate(FAKE.requests) if r[0] == "PATCH" and r[1] == a1_path
+                    and "assigneeAgentId" in r[2] and r[2]["assigneeAgentId"] is None]
+        comment = [n for n, r in enumerate(FAKE.requests) if r[0] == "POST"
+                   and r[1] == a1_path + "/comments"]
+        self.assertEqual(len(unassign), 1, [r for r in FAKE.requests if r[1] == a1_path])
+        self.assertEqual(len(comment), 1)
+        self.assertLess(unassign[0], comment[0], "unassign comes first")
 
         # the same failure again: attempt 3's brief says so first
         self.issue_of(a2)["status"] = "done"

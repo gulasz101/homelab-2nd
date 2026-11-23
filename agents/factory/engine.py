@@ -984,6 +984,10 @@ class Engine:
         self.save(st)
         prev = rows[-1] if rows else None
         if prev and prev["result"] in FAILED and not prev.get("commented"):
+            # Unassign first. The engine posts as a board user, and Paperclip reopens a
+            # closed or blocked issue on a user comment when it has an assignee: the old
+            # attempt's agent then runs again next to the new one (GUL-2074, 2026-11-23).
+            self.api.patch_issue(prev["issueId"], {"assigneeAgentId": None})
             self.comment(prev["issueId"], "engine check: FAIL — %s. Next attempt: %s"
                          % (first_reason(prev.get("reasons")), row["identifier"]))
             prev["commented"] = True
