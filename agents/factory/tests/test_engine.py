@@ -875,6 +875,156 @@ sys.stderr.write("fake gh: no route %%r\n" %% (a,)); sys.exit(1)
         self.assertIn("Repository rule violations", st["gate"]["autoMerge"]["why"])
         self.assert_no_blocked_stage_issue()
 
+    # -- phase 4: the check after the merge (decision 8) ------------------------
+    DEPLOY_GH = r"""#!%(py)s
+import json, os, sys
+a = sys.argv[1:]
+with open(%(log)r, "a") as fh:
+    fh.write(json.dumps({"argv": a, "token": os.environ.get("GH_TOKEN", "")}) + "\n")
+if a[:2] == ["pr", "view"]:
+    print(json.dumps({"state": "MERGED", "mergedAt": "2026-11-23T20:00:00Z",
+                      "mergeCommit": {"oid": os.environ["FAKE_MERGE_SHA"]},
+                      "headRefOid": os.environ["FAKE_MERGE_SHA"]})); sys.exit(0)
+if a[:2] == ["pr", "checks"]:
+    print(json.dumps([{"name": "check", "state": "SUCCESS"}])); sys.exit(0)
+if a[:2] == ["pr", "create"]:
+    print("https://github.com/gulasz101/homelab-2nd/pull/77"); sys.exit(0)
+if a[:2] == ["pr", "merge"]:
+    sys.exit(0)
+sys.stderr.write("fake gh: no route %%r\n" %% (a,)); sys.exit(1)
+"""
+    FAKE_KUBECTL = r"""#!%(py)s
+import json, os, sys
+a = sys.argv[1:]
+with open(%(log)r, "a") as fh:
+    fh.write(json.dumps({"argv": a}) + "\n")
+if a[:1] == ["annotate"]:
+    sys.exit(0)
+with open(%(rows)r) as fh:
+    rows = json.load(fh)
+items = [{"metadata": {"name": r["name"]}, "status": {
+    "lastAppliedRevision": "main@sha1:" + r["applied"], "lastAttemptedRevision": "main@sha1:" + r["attempted"],
+    "conditions": [{"type": "Ready", "status": r["ready"], "message": r.get("message", "")}]}} for r in rows]
+print(json.dumps({"items": items}))
+"""
+
+    def merged_order(self, number, live_checks, **cfg):
+        spec = SPEC_BODY.replace('"maxDiffLines": 100}', '"maxDiffLines": 100,\n "liveChecks": %s}'
+                                 % json.dumps(live_checks))
+        self.write_config(autoMerge=True, githubApp={"appId": 5893473}, postMergeCheck=True, **cfg)
+        rc, out = self.start(number, "Deploy check", spec_body=spec)
+        self.assertEqual(rc, 0, out)
+        self.tick()
+        wo = "GUL-%d" % number
+        st = self.load(wo)
+        wt = st["worktree"]
+        self.base_sha = git_out("-C", self.origin, "rev-parse", "main")
+        with open(os.path.join(wt, "feature-%d.txt" % number), "w") as fh:
+            fh.write("shipped\n")
+        sh_git("add", "-A", cwd=wt)
+        sh_git("commit", "-qm", "the feature", cwd=wt)
+        sh_git("push", "-q", "origin", "HEAD:main", cwd=wt)
+        self.merge_sha = git_out("-C", wt, "rev-parse", "HEAD")
+        st.update({"phase": "awaiting_merge",
+                   "pr": {"number": 12, "url": "https://github.com/x/y/pull/12", "head": self.merge_sha}})
+        with open(os.path.join(self.state, wo + ".json"), "w") as fh:
+            json.dump(st, fh)
+        with open(self.gh, "w") as fh:
+            fh.write(self.DEPLOY_GH % {"py": sys.executable, "log": self.gh_log})
+        os.chmod(self.gh, 0o755)
+        self.kube_rows = os.path.join(self.tmp, "kube.json")
+        self.kube_log = os.path.join(self.tmp, "kube.log")
+        self.kube = os.path.join(self.tmp, "kubectl")
+        with open(self.kube, "w") as fh:
+            fh.write(self.FAKE_KUBECTL % {"py": sys.executable, "log": self.kube_log, "rows": self.kube_rows})
+        os.chmod(self.kube, 0o755)
+        self.app_key = os.path.join(self.tmp, "app.pem")
+        subprocess.run(["openssl", "genrsa", "-out", self.app_key, "2048"], check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return wo
+
+    def flux(self, *rows):
+        with open(self.kube_rows, "w") as fh:
+            json.dump([dict(zip(("name", "ready", "applied", "attempted", "message"), r)) for r in rows], fh)
+
+    def deploy_env(self, **over):
+        return self.app_env(FACTORY_KUBECTL=self.kube, FAKE_MERGE_SHA=self.merge_sha, **over)
+
+    def test_17_post_merge_waits_for_flux_then_live_checks_pass(self):
+        wo = self.merged_order(1701, [{"id": "LIVE-1", "check": "test -f feature-1701.txt"}])
+        self.flux(("apps", "True", self.base_sha, self.base_sha))
+        rc, out = self.tick(**self.deploy_env())
+        self.assertEqual(rc, 0, (out, self.last_err))
+        self.assertEqual(self.load(wo)["phase"], "deploy_check", self.last_err)
+        rc, out = self.tick(**self.deploy_env())
+        st = self.load(wo)
+        self.assertEqual(st["phase"], "deploy_check", "Flux has not applied the merge yet")
+        self.assertIn("flux-pending", self.order_line(out, wo)["flags"])
+        with open(self.kube_log) as fh:
+            self.assertEqual(sum(1 for ln in fh if '"annotate"' in ln), 1, "one reconcile request only")
+        self.flux(("apps", "True", self.merge_sha, self.merge_sha))
+        rc, out = self.tick(**self.deploy_env())
+        st = self.load(wo)
+        self.assertEqual(st["phase"], "done", self.last_err)
+        self.assertEqual(st["deploy"]["liveChecks"], [])
+        self.assertEqual(FAKE.by_ident(wo)["status"], "done")
+        self.assertIn("1 live check(s) passed", [b for _, b in FAKE.comments][-1])
+        self.assertEqual([c for c in self.gh_calls() if c["argv"][:2] == ["pr", "create"]], [])
+
+    def test_18_failed_live_check_reverts_as_the_app_and_wakes_the_owner(self):
+        wo = self.merged_order(1801, [{"id": "LIVE-1", "check": "echo broken; exit 3"}])
+        self.flux(("apps", "True", self.merge_sha, self.merge_sha))
+        self.tick(**self.deploy_env())
+        rc, out = self.tick(**self.deploy_env())
+        self.assertEqual(rc, 0, (out, self.last_err))
+        st = self.load(wo)
+        self.assertEqual(st["phase"], "reverting", self.last_err)
+        self.assertIn("LIVE-1 exit 3: broken", st["deploy"]["failure"])
+        rev = st["revert"]
+        self.assertEqual(rev["number"], 77)
+        # the revert branch is on origin, on top of main, and undoes the merge
+        self.assertEqual(git_out("-C", self.origin, "rev-parse", "revert-gul-1801"), rev["head"])
+        self.assertEqual(git_out("-C", self.origin, "rev-parse", "revert-gul-1801^"), self.merge_sha)
+        self.assertEqual(git_out("-C", self.origin, "ls-tree", "--name-only", rev["head"]), "README.md")
+        creates = [c for c in self.gh_calls() if c["argv"][:2] == ["pr", "create"]]
+        self.assertEqual(creates[0]["token"], "ghs_fake_installation_token")
+        rc, out = self.tick(**self.deploy_env())
+        st = self.load(wo)
+        self.assertEqual(st["phase"], "stalled", self.last_err)
+        self.assertTrue(st["revert"]["merged"])
+        merges = [c for c in self.gh_calls() if c["argv"][:2] == ["pr", "merge"]]
+        self.assertEqual(merges[-1]["argv"][2], "77")
+        self.assertEqual(merges[-1]["argv"][merges[-1]["argv"].index("--match-head-commit") + 1], rev["head"])
+        self.assertIn("The factory reverted it", st["stallReason"])
+        self.assertTrue(st["wake"]["sent"])
+        self.assertEqual(FAKE.by_ident(wo)["status"], "blocked")
+
+    def test_19_flux_failure_reverts_but_an_old_failure_does_not(self):
+        wo = self.merged_order(1901, [])
+        self.flux(("apps", "False", self.base_sha, self.merge_sha, "kustomize build failed"),
+                  ("infra", "True", self.merge_sha, self.merge_sha))
+        self.tick(**self.deploy_env())
+        self.tick(**self.deploy_env())
+        st = self.load(wo)
+        self.assertEqual(st["phase"], "reverting", self.last_err)
+        self.assertIn("apps: kustomize build failed", st["deploy"]["failure"])
+        # broken before the merge, still broken on an older commit: never a revert
+        wo = self.merged_order(1902, [], deployWaitMinutes=0)
+        self.flux(("apps", "False", self.base_sha, self.base_sha, "old breakage"),
+                  ("infra", "True", self.merge_sha, self.merge_sha))
+        self.tick(**self.deploy_env())
+        self.tick(**self.deploy_env())
+        st = self.load(wo)
+        self.assertEqual(st["phase"], "stalled", (st.get("deploy"), self.base_sha, self.merge_sha))
+        self.assertNotIn("revert", st)
+        self.assertIn("did not revert", st["stallReason"])
+
+    def test_20_live_checks_are_linted(self):
+        bad = SPEC_BODY.replace('"maxDiffLines": 100}', '"maxDiffLines": 100, "liveChecks": [{"id": "X"}]}')
+        rc, out = self.start(2001, "Bad live check", spec_body=bad)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("liveCheck", json.dumps(out))
+
     def ladder_config(self, **over):
         FAKE.agents[INVESTIGATOR] = {"id": INVESTIGATOR, "status": "idle"}
         FAKE.agents[STRONG] = {"id": STRONG, "status": "idle"}
