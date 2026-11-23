@@ -1382,6 +1382,16 @@ class Engine:
             lines.append("- %s" % note)
         return "\n".join(lines)
 
+    def app_env(self, st: dict):
+        """(env with the App's installation token, None) or (None, sentence)."""
+        try:
+            token = ghapp.installation_token(self.cfg, st["repo"], state_dir())
+        except ghapp.AppError as exc:
+            return None, "no GitHub App token (%s)." % exc
+        env = dict(os.environ, GH_TOKEN=token)
+        env.pop("GITHUB_TOKEN", None)
+        return env, ""
+
     def auto_merge(self, st: dict, safety: list, note):
         """Merge the PR as the GitHub App when nothing SAFETY is touched.
 
@@ -1399,12 +1409,9 @@ class Engine:
         if not self.apply:
             self.would("auto-merge PR #%s as the GitHub App" % pr["number"])
             return False, "dry run."
-        try:
-            token = ghapp.installation_token(self.cfg, st["repo"], state_dir())
-        except ghapp.AppError as exc:
-            return False, "no GitHub App token (%s)." % exc
-        env = dict(os.environ, GH_TOKEN=token)
-        env.pop("GITHUB_TOKEN", None)
+        env, err = self.app_env(st)
+        if env is None:
+            return False, err
         body = self.self_approvals(st, note)
         com = subprocess.run([factory.gh_bin(), "pr", "comment", str(pr["number"]), "--repo", st["repo"],
                               "--body", body], env=env, stdout=subprocess.PIPE,
@@ -1419,12 +1426,136 @@ class Engine:
             return False, "`gh pr merge` failed: %s" % mrg.stderr.strip()[:200]
         return True, "Self-approvals are listed in a comment on the PR."
 
+    # -- catch-up: "the head branch is not up to date" -------------------------------
+    def catch_up(self, st: dict, view: dict) -> None:
+        """The ruleset wants the PR branch up to date with `main`. When `main` moved after
+        the gate, the App's merge is refused. Then the engine asks GitHub to merge `main`
+        into the PR branch ("Update branch"), and merges only if the new head is exactly
+        the checked head + a commit of `main`, and CI passes on it. Every failure leaves
+        the merge to the owner, with a comment. It never stalls.
+        """
+        gate = st.get("gate") or {}
+        if (gate.get("autoMerge") or {}).get("merged") or gate.get("safety") or not self.cfg.get("autoMerge"):
+            return
+        pr = st.get("pr") or {}
+        cu = st.setdefault("catchUp", {"count": 0})
+        if cu.get("gaveUp"):
+            return
+        number, repo = pr.get("number"), st["repo"]
+        live_head = str(view.get("headRefOid") or "")
+        pending = cu.get("pending")
+        if not pending:
+            if str(view.get("mergeStateStatus") or "").upper() != "BEHIND":
+                return
+            if live_head != pr.get("head"):
+                self.give_up_catch_up(st, "the PR head moved to %s, not the head the stages checked."
+                                      % live_head[:12])
+                return
+            if cu["count"] >= int(self.cfg.get("maxCatchUps", 3)):
+                self.give_up_catch_up(st, "the branch was updated %d times and `main` keeps moving."
+                                      % cu["count"])
+                return
+            if not self.apply:
+                self.would("update PR #%s with main as the GitHub App" % number)
+                return
+            env, err = self.app_env(st)
+            if env is None:
+                self.give_up_catch_up(st, err)
+                return
+            upd = subprocess.run([factory.gh_bin(), "api", "-X", "PUT",
+                                  "repos/%s/pulls/%s/update-branch" % (repo, number),
+                                  "-f", "expected_head_sha=%s" % pr["head"]], env=env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if upd.returncode != 0:
+                self.give_up_catch_up(st, "GitHub refused \"Update branch\": %s"
+                                      % (upd.stderr.strip() or upd.stdout.strip())[:200])
+                return
+            cu["pending"] = {"from": pr["head"], "at": iso()}
+            self.save(st)
+            self.note("catch-up", "merge")
+            return
+        # an update is on its way: wait for the new head, prove its shape, wait for CI
+        if live_head == pending["from"]:
+            if minutes_since(pending["at"]) > float(self.cfg.get("catchUpWaitMinutes", 15)):
+                self.give_up_catch_up(st, "GitHub accepted \"Update branch\" but the head did not move.")
+            return
+        env, err = self.app_env(st)
+        if env is None:
+            self.give_up_catch_up(st, err)
+            return
+        shape = self.catch_up_shape(repo, live_head, pending["from"], env)
+        if shape:
+            self.give_up_catch_up(st, shape)
+            return
+        try:
+            ci = check_run_state(gh_pr_checks(repo, number))
+        except SetupError as exc:
+            warn("%s: %s" % (st["workOrder"], exc))
+            return
+        if ci == "pending":
+            if minutes_since(pending["at"]) > float(self.cfg.get("gateCiWaitMinutes", 60)):
+                self.give_up_catch_up(st, "CI on the updated head %s did not finish in time." % live_head[:12])
+            return
+        if ci != "pass":
+            self.give_up_catch_up(st, "CI `check` failed on the updated head %s (the change + newest `main`)."
+                                  % live_head[:12])
+            return
+        cu["count"] += 1
+        cu.pop("pending", None)
+        cu.setdefault("heads", []).append({"from": pending["from"], "to": live_head, "at": iso()})
+        pr["checkedHead"] = pr.get("checkedHead") or pending["from"]
+        pr["head"] = live_head
+        why_note = ("branch updated with `main`: %s = checked head %s + `main`, CI `check` passed again"
+                    % (live_head[:12], pending["from"][:12]))
+        merged, why = self.auto_merge(st, [], why_note)
+        st.setdefault("gate", {})["autoMerge"] = {"merged": merged, "why": why, "afterCatchUp": True}
+        link = pr.get("url") or "#%s" % number
+        if merged:
+            comment = ("PR %s was behind `main`. The factory updated the branch, CI passed again, and it "
+                       "merged it (squash). %s" % (link, why))
+        else:
+            comment = ("PR %s was behind `main`. The factory updated the branch and CI passed, but did not "
+                       "merge it: %s Merge it on GitHub." % (link, why))
+        self.api.patch_issue(st["workOrderId"], {"comment": comment})
+        self.save(st)
+        self.note("pass" if merged else "waiting", "merge")
+
+    def catch_up_shape(self, repo: str, new_head: str, old_head: str, env: dict) -> str:
+        """'' when new_head is a merge of old_head (first parent) and a commit of `main`."""
+        def api(path):
+            proc = subprocess.run([factory.gh_bin(), "api", path], env=env, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True)
+            if proc.returncode != 0:
+                raise SetupError(proc.stderr.strip()[:200])
+            return json.loads(proc.stdout)
+        try:
+            parents = [p.get("sha") for p in (api("repos/%s/commits/%s" % (repo, new_head)).get("parents") or [])]
+            if len(parents) != 2 or parents[0] != old_head:
+                return ("the new head %s is not a merge of the checked head %s and `main` (parents: %s)."
+                        % (new_head[:12], old_head[:12], ", ".join(p[:12] for p in parents) or "none"))
+            status = api("repos/%s/compare/%s...main" % (repo, parents[1])).get("status")
+        except (SetupError, ValueError) as exc:
+            return "could not read the new head %s: %s" % (new_head[:12], exc)
+        if status not in ("identical", "ahead"):
+            return "the new head merged in %s, which is not on `main` (%s)." % (parents[1][:12], status)
+        return ""
+
+    def give_up_catch_up(self, st: dict, why: str) -> None:
+        cu = st.setdefault("catchUp", {"count": 0})
+        cu["gaveUp"] = why
+        cu.pop("pending", None)
+        pr = st.get("pr") or {}
+        self.api.patch_issue(st["workOrderId"], {
+            "comment": "PR %s is behind `main` and the factory could not update it: %s Merge it on GitHub."
+                       % (pr.get("url") or "#%s" % pr.get("number"), why)})
+        self.save(st)
+
     # -- awaiting_merge -----------------------------------------------------------
     def step_merge(self, st: dict) -> None:
         pr = st.get("pr") or {}
         try:
             view = factory.gh_json(["pr", "view", str(pr.get("number")), "--repo", st["repo"],
-                                    "--json", "state,mergedAt,mergeCommit,headRefOid"])
+                                    "--json", "state,mergedAt,mergeCommit,headRefOid,mergeStateStatus"])
         except SetupError as exc:
             self.flag("merge-unknown")
             warn("%s: %s" % (st["workOrder"], exc))
@@ -1432,6 +1563,7 @@ class Engine:
         state = str((view or {}).get("state") or "").upper()
         self.note("waiting", "merge")
         if state == "OPEN":
+            self.catch_up(st, view or {})
             self.flag("pr-open")
             return
         number = pr.get("number")
