@@ -41,7 +41,7 @@ import pc  # noqa: E402
 
 SetupError = factory.SetupError
 
-STAGE_PHASES = ("librarian", "red", "green", "review", "verify")
+STAGE_PHASES = ("librarian", "red", "green", "review", "verify", "investigate")
 ACTIVE_PHASES = STAGE_PHASES + ("gate",)
 TERMINAL_PHASES = ("done", "closed", "stalled")
 LIVE_RUN_STATUSES = {"queued", "running", "starting"}
@@ -50,6 +50,9 @@ FAILED = ("fail", "timeout")
 TAIL_LINES = 60
 INVENTORY_MAX_ROWS = 25
 RETAIN_MAX_TRIES = 3
+# The stall ladder (phase 3): what the Investigator may say, and what each verdict does.
+VERDICTS = ("CODE-WRONG", "TEST-WRONG", "SPEC-WRONG", "ENV")
+INVESTIGATE_ATTEMPTS = 2
 
 
 class DryRun(Exception):
@@ -722,8 +725,25 @@ def lodge_event(cfg: dict, stage: str, detail: str, outcome: str) -> None:
 # the engine
 # --------------------------------------------------------------------------
 
+def validate_investigation(value) -> list:
+    if not isinstance(value, dict):
+        return ["investigation: the json block must be one object"]
+    reasons = []
+    if value.get("verdict") not in VERDICTS:
+        reasons.append("investigation: verdict must be one of %s" % ", ".join(VERDICTS))
+    if not isinstance(value.get("cause"), str) or not value["cause"].strip():
+        reasons.append("investigation: cause must be a non-empty string")
+    if not isinstance(value.get("advice", ""), str):
+        reasons.append("investigation: advice must be a string")
+    if value.get("verdict") == "SPEC-WRONG" and not str(value.get("amend") or "").strip().startswith("AMEND:"):
+        reasons.append("investigation: SPEC-WRONG needs an `amend` string that starts with `AMEND:`")
+    return reasons
+
+
 def stage_title(st: dict, stage: str, attempt: int) -> str:
     tags = [stage]
+    if st.get("ladder"):
+        tags.append("L%d" % st["ladder"])
     if st["round"] > 1:
         tags.append("r%d" % st["round"])
     if attempt > 1:
@@ -794,7 +814,10 @@ class Engine:
 
     @staticmethod
     def rows(st: dict, stage: str, rnd: int) -> list:
-        return [r for r in st.get("stages") or [] if r["stage"] == stage and r["round"] == rnd]
+        # `ladder` is the stall-ladder step: each investigation starts a fresh count of attempts.
+        lad = st.get("ladder") or 0
+        return [r for r in st.get("stages") or [] if r["stage"] == stage and r["round"] == rnd
+                and (r.get("ladder") or 0) == lad]
 
     def current_row(self, st: dict, stage: str):
         rows = self.rows(st, stage, st["round"])
@@ -913,8 +936,26 @@ class Engine:
             self.create_stage_issue(st, phase)
 
     # -- stage issues ---------------------------------------------------------
+    def stage_agent(self, st: dict, stage: str) -> str:
+        """The stage's agent; the stronger one for the one retry after a CODE-WRONG verdict."""
+        if st.get("strongStage") == stage:
+            strong = (self.cfg.get("strongAgents") or {}).get(stage)
+            if strong:
+                return strong
+        conf = (self.cfg.get("stages") or {}).get(stage)
+        if not conf or not conf.get("agentId"):
+            raise SetupError("engine.json has no agent for the %s stage" % stage)
+        return conf["agentId"]
+
+    def max_attempts(self, st: dict, stage: str) -> int:
+        if stage == "investigate":
+            return INVESTIGATE_ATTEMPTS
+        if st.get("strongStage") == stage:
+            return 1  # "a stronger model once" (the stall ladder)
+        return int(self.cfg.get("maxAttempts", 3))
+
     def create_stage_issue(self, st: dict, stage: str):
-        agent_id = self.cfg["stages"][stage]["agentId"]
+        agent_id = self.stage_agent(st, stage)
         agent = unwrap(self.api.agent(agent_id), "agent")
         if agent.get("status") in ("paused", "terminated"):
             self.flag("agent-paused")
@@ -935,7 +976,8 @@ class Engine:
                 raise SetupError("stage issue create returned no id")
         # The tiny window: a crash between the POST above and this save leaves an
         # issue the state does not know. find_open_child adopts it on the re-run.
-        row = {"stage": stage, "round": st["round"], "attempt": attempt, "issueId": issue["id"],
+        row = {"stage": stage, "round": st["round"], "ladder": st.get("ladder") or 0,
+               "attempt": attempt, "issueId": issue["id"],
                "identifier": issue.get("identifier") or issue["id"], "createdAt": iso(),
                "result": "pending", "reasons": [], "fingerprint": None, "sha": None}
         st.setdefault("stages", []).append(row)
@@ -971,6 +1013,9 @@ class Engine:
                          "them:\n\n" + inventory_table(st.get("inventory") or []))
         else:
             parts.append("## Docs ready\n" + docs_table(st.get("docsReady") or []))
+        ladder_part = self.investigation_section(st, stage)
+        if ladder_part:
+            parts.append(ladder_part)
         if rows:
             parts.append(self.last_failed_section(rows))
         if stage == "green" and st["round"] > 1:
@@ -1021,8 +1066,8 @@ class Engine:
         row = self.current_row(st, stage)
         if row is not None and row["result"] in FAILED:
             failed = [r for r in self.rows(st, stage, st["round"]) if r["result"] in FAILED]
-            if len(failed) >= int(self.cfg.get("maxAttempts", 3)):
-                self.stall(st, self.attempts_sentence(st, stage, failed))
+            if len(failed) >= self.max_attempts(st, stage):
+                self.escalate(st, stage, self.attempts_sentence(st, stage, failed))
                 return
         if row is None or row["result"] != "pending":
             self.create_stage_issue(st, stage)
@@ -1095,17 +1140,17 @@ class Engine:
         lodge_event(self.cfg, row["stage"], self.detail(st, row, result), result)
         self.note(result, row["stage"], row)
         failed = [r for r in self.rows(st, row["stage"], st["round"]) if r["result"] in FAILED]
-        if len(failed) >= int(self.cfg.get("maxAttempts", 3)):
-            self.stall(st, self.attempts_sentence(st, row["stage"], failed))
+        if len(failed) >= self.max_attempts(st, row["stage"]):
+            self.escalate(st, row["stage"], self.attempts_sentence(st, row["stage"], failed))
         else:
             self.create_stage_issue(st, row["stage"])
 
     def attempts_sentence(self, st: dict, stage: str, failed: list) -> str:
         last = failed[-1]
         if not last.get("commented"):
-            self.comment(last["issueId"], "engine check: FAIL — %s. No next attempt: %d attempts "
-                         "failed, so the work order is stalled." % (first_reason(last.get("reasons")),
-                                                                    len(failed)))
+            self.comment(last["issueId"], "engine check: FAIL — %s. No next attempt: %d attempt(s) "
+                         "failed, so the stall ladder takes over." % (first_reason(last.get("reasons")),
+                                                                      len(failed)))
             last["commented"] = True
         return ("The %s stage failed %d attempts in round %d, last: %s."
                 % (stage, len(failed), st["round"], first_reason(last.get("reasons"))))
@@ -1124,6 +1169,8 @@ class Engine:
     # -- judging ----------------------------------------------------------------
     def passed(self, st: dict, row: dict, sha=None) -> None:
         row.update({"result": "pass", "reasons": [], "sha": sha, "finishedAt": iso()})
+        if st.get("strongStage") == row["stage"]:
+            st["strongStage"] = None
         lodge_event(self.cfg, row["stage"], self.detail(st, row, "pass"), "pass")
 
     def judge_librarian(self, st: dict, row: dict) -> None:
@@ -1235,8 +1282,8 @@ class Engine:
             return
         max_rounds = int(self.cfg.get("maxFixRounds", 2)) + 1
         if st["round"] + 1 > max_rounds:
-            self.stall(st, "Verify confirmed blocking findings (%s) in round %d and the fix-round "
-                       "limit is spent." % (", ".join(st["blockingConfirmed"]), st["round"]))
+            self.escalate(st, "green", "Verify confirmed blocking findings (%s) in round %d and the "
+                          "fix-round limit is spent." % (", ".join(st["blockingConfirmed"]), st["round"]))
             return
         st["round"] += 1
         self.enter(st, "green")
@@ -1323,6 +1370,140 @@ class Engine:
         self.note("done", "merge")
         self.finish(st)
 
+    # -- the stall ladder (phase 3) -----------------------------------------------
+    def escalate(self, st: dict, stage: str, sentence: str) -> None:
+        """A stage ran out of attempts: ask the Investigator instead of stalling at once.
+
+        Ladder: same agent with the failure (the attempts) -> Investigator verdict ->
+        TEST-WRONG reruns red / CODE-WRONG gives the stage one attempt on the stronger
+        model -> a human. At most `maxInvestigations` per order, so it cannot loop.
+        """
+        done = [i for i in st.get("investigations") or [] if i.get("verdict")]
+        limit = int(self.cfg.get("maxInvestigations", 2))
+        if stage in ("investigate", "librarian") or "investigate" not in (self.cfg.get("stages") or {}):
+            self.stall(st, sentence)
+            return
+        if len(done) >= limit:
+            self.stall(st, "%s The stall ladder is spent (%d investigation(s))." % (sentence, len(done)))
+            return
+        self.would("escalate %s to the Investigator" % stage)
+        failed_rows = [r for r in self.rows(st, stage, st["round"]) if r["result"] in FAILED]
+        st.setdefault("investigations", []).append({
+            "stage": stage, "round": st["round"], "ladder": st.get("ladder") or 0,
+            "sentence": sentence, "fromVerify": stage == "green" and not failed_rows,
+            "failedRows": [r["identifier"] for r in failed_rows], "verdict": None})
+        st["ladder"] = (st.get("ladder") or 0) + 1
+        st["strongStage"] = None
+        self.enter(st, "investigate")
+
+    def investigation_section(self, st: dict, stage: str) -> str:
+        """For the Investigator: the stuck stage and its failed attempts. For the retried
+        stage: the verdict and the advice."""
+        inv = (st.get("investigations") or [None])[-1]
+        if not inv:
+            return ""
+        if stage == "investigate":
+            lines = ["## The stuck stage",
+                     "Stage `%s`, round %d. The engine says: %s" % (inv["stage"], inv["round"],
+                                                                     inv["sentence"])]
+            by_id = {r["identifier"]: r for r in st.get("stages") or []}
+            for ident in inv.get("failedRows") or []:
+                r = by_id.get(ident) or {}
+                lines += ["", "### Attempt %s (%s): `%s`" % (r.get("attempt"), ident, r.get("result")),
+                          "```", r.get("checkLine") or "(no check line)"]
+                if r.get("outputTail"):
+                    lines += [""] + list(r["outputTail"][-TAIL_LINES:])
+                lines.append("```")
+            if inv.get("fromVerify"):
+                lines += ["", "### Blocking findings that verify confirmed",
+                          "```json", json.dumps([f for f in st.get("findings") or []
+                                                 if f.get("id") in (st.get("blockingConfirmed") or [])],
+                                                indent=1, ensure_ascii=False), "```"]
+            return "\n".join(lines)
+        if inv.get("verdict") and inv.get("ladder", -1) + 1 == (st.get("ladder") or 0):
+            return "\n".join([
+                "## The Investigator looked at the last failures",
+                "Verdict **%s** (%s). Cause: %s" % (inv["verdict"], inv.get("identifier", ""),
+                                                   inv.get("cause", "")),
+                "", "What to do differently: %s" % (inv.get("advice") or "(no advice)")])
+        return ""
+
+    def judge_investigate(self, st: dict, row: dict) -> None:
+        self.would("judge %s (investigation)" % row["identifier"])
+        doc = self.api.document(row["issueId"], "investigation")
+        body = doc.get("body") if isinstance(doc, dict) else None
+        if not isinstance(body, str) or not body.strip():
+            self.fail_attempt(st, row, "fail", ["no investigation document on %s" % row["identifier"]])
+            return
+        value, reasons = factory.extract_json_block(body, "investigation")
+        if not reasons:
+            reasons = validate_investigation(value)
+        if reasons:
+            self.fail_attempt(st, row, "fail", reasons)
+            return
+        inv = st["investigations"][-1]
+        inv.update({"verdict": value["verdict"], "cause": one_line(value["cause"], 600),
+                    "advice": one_line(value.get("advice") or "", 1200),
+                    "amend": str(value.get("amend") or "")[:4000], "identifier": row["identifier"]})
+        self.passed(st, row)
+        verdict, stage = inv["verdict"], inv["stage"]
+        lodge_event(self.cfg, "investigate", self.detail(st, row, verdict), verdict)
+        if verdict in ("SPEC-WRONG", "ENV"):
+            extra = " Proposed AMEND block in the `investigation` document of %s." % row["identifier"] \
+                if verdict == "SPEC-WRONG" else ""
+            self.stall(st, "%s Investigator %s: %s: %s.%s" % (inv["sentence"], row["identifier"],
+                                                              verdict, inv["cause"], extra))
+            return
+        if verdict == "TEST-WRONG":
+            if stage not in ("red", "green") or (st.get("pr") or {}).get("number"):
+                self.stall(st, "%s Investigator %s: TEST-WRONG, but green already pushed code, so "
+                           "red cannot rewrite the tests on this branch: %s." % (
+                               inv["sentence"], row["identifier"], inv["cause"]))
+                return
+            self.set_aside_worktree(st, "before red reruns (TEST-WRONG, %s)" % row["identifier"])
+            self.enter(st, "red")
+            return
+        # CODE-WRONG: the stuck stage once more, on the stronger model, with the advice.
+        st["strongStage"] = stage
+        if inv.get("fromVerify"):
+            st["round"] += 1
+        self.enter(st, stage)
+
+    def set_aside_worktree(self, st: dict, why: str) -> None:
+        """Keep the failed attempts' leftovers in a stash (never deleted), so the next stage
+        starts from the last commit."""
+        wt = st["worktree"]
+        if git(wt, "status", "--porcelain").strip():
+            self.would("git stash the leftovers in %s" % wt)
+            git(wt, "stash", "push", "--include-untracked", "-m", "factory %s: %s" % (st["workOrder"], why))
+
+    def wake_owner(self, st: dict, sentence: str) -> None:
+        """A final stall wakes the stall owner with one issue, at most `maxStallWakesPerDay`
+        a day; after that the stall waits for the 05:30 round."""
+        owner = self.cfg.get("stallOwnerAgentId")
+        limit = int(self.cfg.get("maxStallWakesPerDay", 3))
+        path = os.path.join(state_dir(), "stall-wakes.json")
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                wakes = json.load(fh)
+        except (OSError, ValueError):
+            wakes = {}
+        today = iso()[:10]
+        if not owner or int(wakes.get(today) or 0) >= limit:
+            st["wake"] = {"sent": False, "reason": "daily wake limit (%d) reached" % limit}
+            return
+        self.would("wake the stall owner")
+        issue = unwrap(self.api.post("/companies/%s/issues" % st["companyId"], {
+            "title": "[stall] %s %s" % (st["workOrder"], st.get("title", "")[:110]),
+            "description": "The factory engine stalled **%s** and the stall ladder is spent.\n\n%s\n\n"
+                           "Decide: fix the spec, file a follow-up, or cancel the order. The work order "
+                           "is `blocked` with an unblock note owned by you." % (st["workOrder"], sentence),
+            "status": "todo", "priority": st.get("priority") or "medium",
+            "projectId": st["projectId"], "assigneeAgentId": owner}), "issue")
+        wakes = {today: int(wakes.get(today) or 0) + 1}
+        write_json_atomic(path, wakes)
+        st["wake"] = {"sent": True, "issue": issue.get("identifier") or issue.get("id")}
+
     # -- terminal phases ---------------------------------------------------------
     def stall(self, st: dict, sentence: str) -> None:
         self.would("stall: %s" % sentence)
@@ -1334,6 +1515,8 @@ class Engine:
         owner = self.cfg.get("stallOwnerAgentId")
         if not owner:
             raise SetupError("engine.json has no stallOwnerAgentId")
+        if not st.get("wake"):
+            self.wake_owner(st, sentence)
         st["notice"] = {"status": "blocked", "executionPolicy": None, "comment": sentence,
                         "unblockDescriptor": {"owner": {"agentId": owner}, "action": (
                             "Decide the stalled work order %s: %s" % (st["workOrder"], sentence))[:500]}}

@@ -12,6 +12,7 @@ environment, and the pc.py fallback URL points at the fake too.
     python3 agents/factory/tests/test_engine.py      (stdlib only)
 """
 
+import datetime
 import fcntl
 import json
 import os
@@ -39,6 +40,8 @@ COMPANY = "c0000000-0000-4000-8000-0000000000e1"
 PROJECT = "p0000000-0000-4000-8000-0000000000e1"
 SUPERVISOR = "a0000000-0000-4000-8000-00000000000s"
 STALL_OWNER = "a0000000-0000-4000-8000-0000000000pm"
+INVESTIGATOR = "a0000000-0000-4000-8000-0000000000iv"
+STRONG = "a0000000-0000-4000-8000-0000000000st"
 AGENTS = {stage: "a0000000-0000-4000-8000-0000000000%02d" % i
           for i, stage in enumerate(("librarian", "red", "green", "review", "verify"), 1)}
 LODGE = {"librarian": "librarian", "red": "tester", "green": "builder",
@@ -683,6 +686,121 @@ class TickFlow(EngineCase):
         self.assertTrue(st["noticeSent"])
         self.assertEqual(wo["status"], "cancelled")
         self.assert_no_blocked_stage_issue()
+
+    def ladder_config(self, **over):
+        FAKE.agents[INVESTIGATOR] = {"id": INVESTIGATOR, "status": "idle"}
+        FAKE.agents[STRONG] = {"id": STRONG, "status": "idle"}
+        stages = {s: {"agentId": AGENTS[s], "lodge": LODGE[s]} for s in AGENTS}
+        stages["investigate"] = {"agentId": INVESTIGATOR, "lodge": "investigator"}
+        self.write_config(stages=stages, strongAgents={"red": STRONG}, maxInvestigations=2, **over)
+
+    def fail_red_until_escalated(self, wo_id, n):
+        for _ in range(n):
+            st = self.load(wo_id)
+            self.issue_of(st["stages"][-1])["status"] = "done"  # done with no tests: check-red fails
+            self.tick()
+
+    def investigate(self, st, verdict_json):
+        row = st["stages"][-1]
+        self.assertEqual(row["stage"], "investigate")
+        FAKE.documents[(row["issueId"], "investigation")] = {
+            "body": "# Investigation\n\n```json\n%s\n```\n" % json.dumps(verdict_json),
+            "latestRevisionId": "rev-inv-%s" % row["identifier"]}
+        self.issue_of(row)["status"] = "done"
+        return self.tick()
+
+    def test_12_stall_ladder(self):
+        self.ladder_config()
+        self.start(801, "Ladder")
+        self.tick()
+        self.fail_red_until_escalated("GUL-801", 3)
+        st = self.load("GUL-801")
+        self.assertEqual(st["phase"], "investigate", self.last_err)
+        self.assertEqual(st["ladder"], 1)
+        inv_row = st["stages"][-1]
+        inv_issue = self.issue_of(inv_row)
+        self.assertEqual(inv_issue["title"], "[investigate L1] GUL-801 Ladder")
+        self.assertEqual(inv_issue["assigneeAgentId"], INVESTIGATOR)
+        self.assertIn("## The stuck stage", inv_issue["description"])
+        self.assertIn("### Attempt 3", inv_issue["description"])
+        self.assertIn("TEST-WRONG", inv_issue["description"])
+        self.assertNotEqual(FAKE.by_ident("GUL-801")["status"], "blocked", "no stall yet")
+
+        # a bad document is a failed attempt, not a verdict
+        rc, out = self.investigate(st, {"verdict": "MAYBE", "cause": "x"})
+        st = self.load("GUL-801")
+        self.assertEqual(st["stages"][-1]["stage"], "investigate")
+        self.assertEqual(st["stages"][-1]["attempt"], 2)
+        self.assertIn("verdict must be one of", st["stages"][-2]["reasons"][0])
+
+        # TEST-WRONG: the leftovers are stashed (kept), red runs again with the advice
+        with open(os.path.join(st["worktree"], "leftover.sh"), "w") as fh:
+            fh.write("echo half-done\n")
+        rc, out = self.investigate(st, {"verdict": "TEST-WRONG", "cause": "tests/ac.sh calls the "
+                                        "script with a flag the AC never names", "advice": "drop the flag"})
+        st = self.load("GUL-801")
+        self.assertEqual(st["phase"], "red", self.last_err)
+        self.assertFalse(os.path.exists(os.path.join(st["worktree"], "leftover.sh")))
+        stash = subprocess.run(["git", "-C", st["worktree"], "stash", "list"], stdout=subprocess.PIPE,
+                               text=True, env=dict(os.environ, **GIT_ENV)).stdout
+        self.assertIn("factory GUL-801: before red reruns (TEST-WRONG", stash)
+        red = st["stages"][-1]
+        self.assertEqual((red["stage"], red["ladder"], red["attempt"]), ("red", 1, 1))
+        red_issue = self.issue_of(red)
+        self.assertEqual(red_issue["title"], "[red L1] GUL-801 Ladder")
+        self.assertEqual(red_issue["assigneeAgentId"], AGENTS["red"])
+        self.assertIn("Verdict **TEST-WRONG**", red_issue["description"])
+        self.assertIn("drop the flag", red_issue["description"])
+
+        # red fails 3 more times -> second investigation; CODE-WRONG -> one attempt on the strong agent
+        self.fail_red_until_escalated("GUL-801", 3)
+        st = self.load("GUL-801")
+        self.assertEqual((st["phase"], st["ladder"]), ("investigate", 2), self.last_err)
+        self.investigate(st, {"verdict": "CODE-WRONG", "cause": "c", "advice": "a"})
+        st = self.load("GUL-801")
+        strong = st["stages"][-1]
+        self.assertEqual(self.issue_of(strong)["assigneeAgentId"], STRONG)
+        self.assertEqual(st["strongStage"], "red")
+
+        # the strong attempt fails once -> the ladder is spent (2 investigations) -> stall + wake
+        self.fail_red_until_escalated("GUL-801", 1)
+        st = self.load("GUL-801")
+        self.assertEqual(st["phase"], "stalled", self.last_err)
+        self.assertIn("The stall ladder is spent (2 investigation(s))", st["stallReason"])
+        wo = FAKE.by_ident("GUL-801")
+        self.assertEqual(wo["status"], "blocked")
+        self.assertEqual(wo["unblockDescriptor"]["owner"], {"agentId": STALL_OWNER})
+        wakes = [i for i in FAKE.issues.values() if i["title"].startswith("[stall] GUL-801")]
+        self.assertEqual(len(wakes), 1)
+        self.assertEqual(wakes[0]["assigneeAgentId"], STALL_OWNER)
+        self.assertEqual(st["wake"]["sent"], True)
+        self.tick()
+        self.assertEqual(len([i for i in FAKE.issues.values() if i["title"].startswith("[stall]")]), 1,
+                         "one wake per stall")
+        self.assert_no_blocked_stage_issue()
+
+    def test_13_spec_wrong_stalls_and_wake_limit(self):
+        self.ladder_config(maxStallWakesPerDay=1)
+        os.makedirs(self.state, exist_ok=True)
+        with open(os.path.join(self.state, "stall-wakes.json"), "w") as fh:
+            json.dump({datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"): 1}, fh)
+        self.start(802, "Spec wrong")
+        self.tick()
+        self.fail_red_until_escalated("GUL-802", 3)
+        st = self.load("GUL-802")
+        # SPEC-WRONG needs an AMEND: block
+        self.investigate(st, {"verdict": "SPEC-WRONG", "cause": "AC-1 contradicts itself"})
+        st = self.load("GUL-802")
+        self.assertEqual(st["phase"], "investigate")
+        self.investigate(st, {"verdict": "SPEC-WRONG", "cause": "AC-1 contradicts itself",
+                              "amend": "AMEND: AC-1 prints 9, not 10."})
+        st = self.load("GUL-802")
+        self.assertEqual(st["phase"], "stalled", self.last_err)
+        self.assertIn("SPEC-WRONG: AC-1 contradicts itself", st["stallReason"])
+        self.assertIn("Proposed AMEND block", st["stallReason"])
+        self.assertEqual(st["wake"], {"sent": False, "reason": "daily wake limit (1) reached"})
+        self.assertEqual([i for i in FAKE.issues.values() if i["title"].startswith("[stall]")], [])
+        self.assertEqual(FAKE.by_ident("GUL-802")["status"], "blocked")
 
     def test_11_dry_tick_writes_nothing(self):
         self.start(501, "Dry run")

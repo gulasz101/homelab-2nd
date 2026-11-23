@@ -2,17 +2,21 @@
   "maxActiveOrders": 2,
   "maxAttempts": 3,
   "maxFixRounds": 2,
-  "stageTimeoutMinutes": {"librarian": 20, "red": 90, "green": 90, "review": 60, "verify": 60},
+  "stageTimeoutMinutes": {"librarian": 20, "red": 90, "green": 90, "review": 60, "verify": 60, "investigate": 45},
   "idleMinutes": 15,
   "gateCiWaitMinutes": 60,
   "supervisorAgentId": "2df240b5-a5ea-4ebf-81ff-bf96758e8f80",
   "stallOwnerAgentId": "97efeb2d-5b3a-4110-b893-6cbcbb29164c",
+  "maxInvestigations": 2,
+  "maxStallWakesPerDay": 3,
+  "strongAgents": {"green": "fe548bc3-278d-408c-8b16-1ce6346f82e9"},
   "stages": {
     "librarian": {"agentId": "4dc8b6a7-f155-4539-9a74-2f600391a5d9", "lodge": "librarian"},
     "red":    {"agentId": "e0dd70fa-3e08-4d42-b226-0e58b0b59639", "lodge": "tester"},
     "green":  {"agentId": "6786758e-5db9-4f0f-a7df-b42adeede465", "lodge": "builder"},
     "review": {"agentId": "51c624e7-5018-4f22-a23c-dd4911e44a61", "lodge": "reviewer"},
-    "verify": {"agentId": "974c23c8-f6b1-4afa-8073-79aa352c6358", "lodge": "verifier"}
+    "verify": {"agentId": "974c23c8-f6b1-4afa-8073-79aa352c6358", "lodge": "verifier"},
+    "investigate": {"agentId": "012858d4-bf56-4f5d-9840-da0207cf54bb", "lodge": "investigator"}
   },
   "repos": {
     "gulasz101/homelab-2nd": {
