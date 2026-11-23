@@ -1200,6 +1200,11 @@ def cmd_check_gate(args) -> int:
     elif total > cap:
         size_note = "size note: %d lines > maxDiffLines %d" % (total, cap)
     cfg = load_never_paths()
+    # GUL-2037 phase 4: with --split-safety a never path is not a gate failure but
+    # a SAFETY flag. The gate passes, and the engine leaves the merge to the owner
+    # instead of merging it itself. Without the flag (the old factory) it still fails.
+    split = bool(getattr(args, "split_safety", False))
+    safety: list = []
     content_cache: dict = {}
 
     def pr_content_text(path: str, ref: str):
@@ -1235,7 +1240,8 @@ def cmd_check_gate(args) -> int:
             ref = head_oid if _status != "D" else base_oid
             return pr_content_text(_path, ref)
 
-        reasons.extend(never_path_reasons(cfg, path, status, provider))
+        hits = never_path_reasons(cfg, path, status, provider)
+        (safety if split else reasons).extend(hits)
     # ADR-097: a pin is a floor too. Any PR that touches a HelmRelease has to
     # pass the cluster comparison before the gate can pass (GUL-552).
     gate_repo = os.environ.get("FACTORY_GATE_REPO") or REPO_ROOT
@@ -1250,8 +1256,12 @@ def cmd_check_gate(args) -> int:
         if failed:
             reasons.append("PR #%s is still a draft and `gh pr ready` failed: %s"
                            % (num, failed))
-    emit(len(reasons) == 0, "check-gate", reasons,
-         {"sizeNote": size_note} if size_note else None)
+    extra: dict = {}
+    if size_note:
+        extra["sizeNote"] = size_note
+    if split:
+        extra["safety"] = safety
+    emit(len(reasons) == 0, "check-gate", reasons, extra or None)
     return 0 if not reasons else 1
 
 
@@ -3753,6 +3763,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("check-gate")
     s.add_argument("--pr", required=True, help="OWNER/REPO#N")
     s.add_argument("--spec", required=True)
+    s.add_argument("--split-safety", action="store_true",
+                   help="report never paths under `safety` instead of failing the gate")
     s.set_defaults(fn=cmd_check_gate)
 
     s = sub.add_parser("commit")

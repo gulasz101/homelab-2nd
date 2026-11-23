@@ -29,5 +29,7 @@
   "hindsightUrl": "http://192.168.1.179:30239",
   "docsUrl": "http://192.168.1.179:6280",
   "lodgeUrl": "http://192.168.1.179:30260",
-  "autoPickup": false
+  "autoPickup": false,
+  "autoMerge": true,
+  "githubApp": {"appId": 5893473}
 }
