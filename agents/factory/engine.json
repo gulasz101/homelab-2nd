@@ -10,11 +10,14 @@
   "maxInvestigations": 2,
   "maxStallWakesPerDay": 3,
   "strongAgents": {"green": "fe548bc3-278d-408c-8b16-1ce6346f82e9"},
+  "fallbackAgents": {"review": "51c624e7-5018-4f22-a23c-dd4911e44a61"},
+  "fallbackNames": {"review": "glm-5.3-flash-go"},
+  "claudeGuards": {"63cc632d-832e-4562-a4c9-0923be2990bf": "/Users/paperclip/paperclip-agents/reviewer-sonnet/settings.json"},
   "stages": {
     "librarian": {"agentId": "4dc8b6a7-f155-4539-9a74-2f600391a5d9", "lodge": "librarian"},
     "red":    {"agentId": "e0dd70fa-3e08-4d42-b226-0e58b0b59639", "lodge": "tester"},
     "green":  {"agentId": "6786758e-5db9-4f0f-a7df-b42adeede465", "lodge": "builder"},
-    "review": {"agentId": "51c624e7-5018-4f22-a23c-dd4911e44a61", "lodge": "reviewer"},
+    "review": {"agentId": "63cc632d-832e-4562-a4c9-0923be2990bf", "lodge": "reviewer"},
     "verify": {"agentId": "974c23c8-f6b1-4afa-8073-79aa352c6358", "lodge": "verifier"},
     "investigate": {"agentId": "012858d4-bf56-4f5d-9840-da0207cf54bb", "lodge": "investigator"}
   },
