@@ -171,13 +171,25 @@ If the newest canary row already names the cause, no chat request goes out:
 | `direct IP slot full` / a local refusal | the lane is saturated, not Google; retry later |
 | anything ambiguous or absent | fall back to one live chat probe |
 
-**Timeouts: the wrapper and the canary.** The canary's own `POST /v1/chat/completions` has a
-**120 s** ceiling. The Hermes cron wrapper that SSHes to the Max kills the whole guard run, so its
-outer ceiling must be **longer** than the guard's 120 s canary timeout plus the rest of the
-checks. If the wrapper kills at the same 120 s, a slow but working model looks inconclusive and a
-healthy session produces a false alarm. Keep the two in agreement: either raise the wrapper above
-the guard's own ceiling, or have the guard report its partial result before it is killed — never
-both.
+**Timeouts: the wrapper and the canary.** The canary's own `POST /v1/chat/completions` goes out
+with `canary_timeout_s()`: **300 s** by default, above the 251 s measured for a real
+`gemini-4-argon` reply, and overridable with `GUARD_CANARY_TIMEOUT_S` (an empty, non-numeric or
+non-positive value falls back to 300). The old **120 s** ceiling is what left a slow but working
+model inconclusive for ever — it killed the sample before the proxy could log what it served. The
+Hermes cron wrapper that SSHes to the Max kills the whole guard run, so its outer ceiling must be
+**longer** than the guard's canary timeout plus the rest of the checks:
+`wrapper_min_budget_s()` = canary timeout + 180 s (one image render) + 120 s margin, i.e. a
+**600 s minimum** for the Air cron and the SSH wrapper. Raising `GUARD_CANARY_TIMEOUT_S` raises
+that too (450 s → 750 s), so both move together. Never both: either raise the wrapper above the
+guard's own ceiling, or have the guard report its partial result before it is killed.
+
+**A slot-full refusal right after a killed canary is a slot leak, not a slow model.** A canary
+killed mid-flight does not give its `per_ip_concurrent` slot back (the limit is 2), so the next
+sample can be refused locally with `direct IP slot full`. That is our own dead request. When a
+slot-full refusal lands within 7200 s of a `canary_timeout_at`, the verdict is `slot_leak`: the
+last real entitlement stands, no inconclusive sample is recorded, and `slot_leak_until` = now +
+3600 s stops the canary entirely until the proxy frees the slot itself. Any real verdict clears
+both keys.
 
 ## Reading a failure — three classes, and only one of them is Google's
 
