@@ -53,6 +53,46 @@ REMIND_AFTER = 6 * 3600          # repeat an unresolved fault every 6 h
 DEGRADED_ALERT_S = 6 * 3600
 HEALTHY_CLEAR_S = 2 * 3600       # 2 quiet hours ends the streak (matches proxy_cooldown_min=120)
 
+# GUL-2167: the canary has to outlive a real reply. A real `gemini-4-argon` answer was measured at
+# 251 s, so the old 120 s ceiling killed every slow-but-working sample before the proxy could log
+# an answer and `entitlement` sat at `unknown` for ever. The wrapper that kills the whole run must
+# clear the canary's own budget plus the image check plus the rest of the checks, or it re-creates
+# the same bug one level up.
+CANARY_TIMEOUT_DEFAULT_S = 300
+CANARY_IMAGE_BUDGET_S = 180      # one image render holds its per_ip_concurrent slot for 20-43 s
+CANARY_WRAPPER_MARGIN_S = 120    # the rest of the checks plus the SSH round-trip
+SLOT_LEAK_WINDOW_S = 7200        # a local refusal this soon after a timeout is the leaked slot
+SLOT_LEAK_BACKOFF_S = 3600       # stop probing for an hour: the proxy frees the slot itself
+
+
+def canary_timeout_s():
+    """How long the canary's own `POST /v1/chat/completions` may take: 300 s by default.
+
+    `GUARD_CANARY_TIMEOUT_S` overrides it (the Max can be told to wait longer without a code
+    change). An empty, non-numeric or non-positive value falls back to the default: a zero
+    timeout would kill every sample instantly, which is the blind-guard failure this exists to
+    end.
+    """
+    value = int_or_none(str(os.environ.get("GUARD_CANARY_TIMEOUT_S", "")).strip())
+    return value if value and value > 0 else CANARY_TIMEOUT_DEFAULT_S
+
+
+def wrapper_min_budget_s():
+    """The outer ceiling the cron/SSH wrapper must allow, so it never kills a live canary.
+
+    canary timeout + one image render + the rest of the checks. 600 s by default, 750 s when
+    `GUARD_CANARY_TIMEOUT_S=450`. The README paragraph that documents this is what the Air cron
+    and the SSH wrapper are set from.
+    """
+    return canary_timeout_s() + CANARY_IMAGE_BUDGET_S + CANARY_WRAPPER_MARGIN_S
+
+
+def int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 
 def import_decision(h, st, n_valid):
     """Should this tick import the harvested cookie? Returns (do_import, why).
@@ -305,11 +345,61 @@ def log_first_cause(tok, st):
     return None, ""
 
 
+SLOT_REFUSED = re.compile(r"slot full|per_ip_concurrent|concurrent limit", re.I)
+TIMED_OUT = re.compile(r"timed out|timeout|deadline exceeded", re.I)
+
+
+def canary_error_status_text(e):
+    """(status, text) for a canary request that raised.
+
+    The proxy answers its own refusals with a code and a JSON body (429/502 and "direct IP slot
+    full: concurrent limit reached"), so the body is the evidence and the status is only a hint.
+    A client-side kill has neither: status 0 plus the exception.
+    """
+    if isinstance(e, urllib.error.HTTPError):
+        try:
+            body = e.read().decode()
+        except Exception:
+            body = ""
+        return int(getattr(e, "code", 0) or 0), body or str(e)
+    return 0, repr(e)
+
+
+def classify_canary_error(status, text, st, now):
+    """What a FAILED canary request means. Three verdicts, and only one of them is Google's.
+
+      - `timeout` — the sample was killed before it answered. Recorded as `canary_timeout_at`,
+        because a killed request's `per_ip_concurrent` slot is not given back: the next run can be
+        refused locally because of it.
+      - `slot_leak` — the proxy refused us locally with "direct IP slot full" within
+        SLOT_LEAK_WINDOW_S of that timeout. The limit is 2, so this refusal is our own dead
+        request, NOT a slow model and not Google.
+      - `other` — everything else stays inconclusive, exactly as before (GUL-1339).
+    """
+    blob = text if isinstance(text, str) else ("" if text is None else repr(text))
+    code = int_or_none(status) or 0
+    if isinstance(text, TimeoutError) or TIMED_OUT.search(blob):
+        st["canary_timeout_at"] = int(now)
+        return "timeout"
+    if code in (0, 429, 502) and SLOT_REFUSED.search(blob):
+        last = int_or_none(st.get("canary_timeout_at"))
+        if last is not None and 0 <= int(now) - last <= SLOT_LEAK_WINDOW_S:
+            return "slot_leak"
+    return "other"
+
+
 def clear_inconclusive(st):
-    """A real verdict ends the no-verdict streak; the next inconclusive sample must speak again."""
+    """A real verdict ends the no-verdict streak; the next inconclusive sample must speak again.
+
+    GUL-2167: it also ends the slot-leak bookkeeping. A sample that reached a verdict proves no
+    leaked slot is still holding the lane, so `slot_leak_until` and `canary_timeout_at` go with
+    the streak — otherwise a recovered account stays backed off for an hour and a later local
+    refusal is judged against a stale window.
+    """
     for k in ("inconclusive_samples", "inconclusive_since",
               "canary_inconclusive", "canary_inconclusive_at",
-              "canary_inconclusive_escalation", "canary_inconclusive_escalation_at"):
+              "canary_inconclusive_escalation", "canary_inconclusive_escalation_at",
+              "slot_leak", "slot_leak_at", "slot_leak_until", "canary_timeout_at"):
         st.pop(k, None)
 
 
@@ -898,6 +988,15 @@ def main():
     # and has just been refilled — a fresh account has its own quota and we need to know NOW
     # whether the import actually restored the paid tier (GUL-1313).
     now = int(time.time())
+    # GUL-2167: a canary killed mid-flight leaves its per_ip_concurrent slot behind (the proxy's
+    # limit is 2), so the next run is refused locally and that self-inflicted 429 used to be read
+    # as a slow model. After a leak, send nothing until the proxy frees the slot by itself: a probe
+    # before that only re-reads the same refusal and spends the request budget.
+    leak_until = int_or_none(st.get("slot_leak_until"))
+    if leak_until is not None and now < leak_until:
+        write_state(st)
+        print("\n".join(m for m in msgs if m))
+        return
     if st.get("entitlement") == "degraded":
         st.setdefault("degraded_since", now)
     just_refilled = do_import and why == "pool-empty"
@@ -942,11 +1041,28 @@ def main():
                                 headers={"Authorization": "Bearer " + key,
                                          "Content-Type": "application/json"})
     try:
-        urllib.request.urlopen(req, timeout=120).read()
+        urllib.request.urlopen(req, timeout=canary_timeout_s()).read()
     except Exception as e:
+        status, detail = canary_error_status_text(e)
+        if classify_canary_error(status, detail, st, now) == "slot_leak":
+            # The refusal is local and self-inflicted: the killed canary's slot is still held and
+            # the account's paid tier has said nothing about itself. The last real verdict stands,
+            # no inconclusive sample is recorded — but do not spend another request on the same
+            # refusal for an hour.
+            st["slot_leak_until"] = now + SLOT_LEAK_BACKOFF_S
+            st["checked_at"] = now
+            speak(msgs, st, "slot_leak", "leaked",
+                  "⚠️ gemini-web2api canary: SLOT LEAK — the previous canary was killed before it "
+                  "answered and its per_ip_concurrent slot was never released, so this sample was "
+                  "refused locally: %s. That is not Google and not a slow model, so the paid-tier "
+                  "verdict is left alone and no canary runs for the next %d min."
+                  % (str(detail)[:160], SLOT_LEAK_BACKOFF_S // 60))
+            write_state(st)
+            print("\n".join(m for m in msgs if m))
+            return
         note_inconclusive(msgs, st, int(time.time()),
-                          "canary request failed: %r" % e,
-                          "the canary request failed (%r)." % e)
+                          "canary request failed: %s" % detail,
+                          "the canary request failed (%s)." % (str(detail)[:200],))
         write_state(st)
         print("\n".join(m for m in msgs if m))
         return
