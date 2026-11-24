@@ -72,9 +72,9 @@ N_COMBOS=$(( ${#SERVICES[@]} * ${#SLIS[@]} * ${#WINDOWS[@]} ))
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# Per-AC verdict. Index 1..9 so the arrays read like the AC ids; 0 is unused.
-AC_FAIL=(0 0 0 0 0 0 0 0 0 0)
-AC_WHY=("" "" "" "" "" "" "" "" "" "")
+# Per-AC verdict. Index 1..14 so the arrays read like the AC ids; 0 is unused.
+AC_FAIL=(0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+AC_WHY=("" "" "" "" "" "" "" "" "" "" "" "" "" "" "")
 
 ok() { printf '  ok    %s\n' "$1" >&2; }
 
@@ -1085,13 +1085,457 @@ PY
   fi
 fi
 
+# --- AC-10..AC-14: SLO validity (GUL-2165) --------------------------------
+#
+# Five defects that make the SLO numbers describe something other than the
+# user's experience:
+#
+#   AC-10/11  the Open WebUI SLI is the Tempo span metrics for
+#             service=open-webui, and since GUL-1962 the kubelet probes arrive
+#             as SERVER spans on /health and /health/db (~4 100 samples/day,
+#             0.048 req/s). They are almost always fast and almost always 200,
+#             so they both dilute the error ratio and set the latency
+#             denominator: 100 consecutive user-visible 500s moved availability
+#             by 0.03 % instead of breaching the 99.5 % target. Every
+#             open-webui recording rule therefore has to drop those spans from
+#             BOTH sides of the ratio - numerator and denominator - because
+#             removing them from one side only turns the ratio into nonsense.
+#   AC-12     a 30-day SLI is not the average of 30 daily ratios: averaging
+#             ratios weights a quiet day like a busy one, so a burst of errors
+#             on a busy day disappears. Pooled SLO arithmetic sums the errors
+#             and the totals over the window and divides once.
+#   AC-13     the coverage alert counted all 42 recorded series, so a short
+#             window that is simply idle (no span in the last 5m) never dropped
+#             the count - but a missing service/SLI pair does. Counting the six
+#             pairs on the 1d and 3d windows is the shape that tells those two
+#             apart.
+#   AC-14     the README is the runbook: whoever reads a 99.5 % figure has to be
+#             able to see what the denominator is, and that probes are not in
+#             it.
+#
+# The judgement is a python3 -I program for the same reason AC-4/AC-9 are: no
+# PyYAML on the Air or in CI, and PromQL selectors need real parsing rather
+# than a grep (a `span_name!~"/health.*"` and a `span_name=~"/chat.*"` both
+# have to count as "probes excluded", and a mangled regex must fail loudly).
+printf '\n== AC-10..AC-14: probe-free Open WebUI SLI, pooled budgets, coverage over 6 pairs, README\n' >&2
+
+AC1014_TSV="$WORK/ac10-14.tsv"
+: > "$AC1014_TSV"
+
+cat > "$WORK/gul2165.py" <<'PY'
+import json
+import re
+import sys
+
+RULES = "infrastructure/observability/slo/slo-prometheus-rules.yaml"
+DASH = "infrastructure/observability/dashboards/slo-dashboard-configmap.yaml"
+README = "infrastructure/observability/slo/README.md"
+OUT = sys.argv[1]
+
+AC_IDS = (10, 11, 12, 13, 14)
+WINDOWS = ("5m", "30m", "1h", "2h", "6h", "1d", "3d")
+SERIES = tuple("slo:sli_error:ratio_rate" + w for w in WINDOWS)
+PROBES = ("/health", "/health/db")
+USER_PATH = "/api/chat/completions"     # real user traffic, must stay in the SLI
+
+fails = {}
+verified = set()
+
+
+def ok(n, msg):
+    sys.stderr.write("  ok    AC-%s  %s\n" % (n, msg))
+
+
+def bad(n, msg):
+    fails.setdefault(n, msg)
+    sys.stderr.write("  FAIL  AC-%s  %s\n" % (n, msg))
+
+
+def prom_match(pattern, value):
+    """Prometheus label regexes are fully anchored; an unparseable one is
+    treated as matching so a broken matcher can never pass as an exclusion."""
+    try:
+        return re.fullmatch(pattern, value) is not None
+    except re.error:
+        return True
+
+
+MATCHER_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\s*(=~|!~|!=|=)\s*"((?:[^"\\\\]|\\\\.)*)"')
+SELECTOR_RE = re.compile(
+    r"(traces_spanmetrics_calls_total|traces_spanmetrics_latency_bucket)\s*\{([^{}]*)\}")
+
+
+# --- rule-file parsing -----------------------------------------------------
+
+def strip_comments(text):
+    return re.sub(r"#[^\n]*", "", text)
+
+
+def flat(body):
+    return re.sub(r"\s+", " ", strip_comments(body)).strip()
+
+
+def first_label(body, key):
+    m = re.search(r"^[ \t]*%s:[ \t]*(\S+)[ \t]*$" % key, body, re.M)
+    return m.group(1).strip("\"'") if m else ""
+
+
+def record_blocks(text):
+    """One entry per `- record:` block, with the labels that belong to it."""
+    blocks = []
+    current = None
+    for line in text.splitlines():
+        if re.match(r"^\s*-\s*record:\s*", line):
+            name = re.sub(r"^\s*-\s*record:\s*", "", line).strip(" \t\"'")
+            current = {"name": name, "lines": []}
+            blocks.append(current)
+            continue
+        if re.match(r"^\s*-\s*alert:\s*", line):
+            current = None
+            continue
+        if current is not None:
+            current["lines"].append(line)
+    for block in blocks:
+        body = "\n".join(block["lines"])
+        block["body"] = body
+        block["flat"] = flat(body)
+        block["service"] = first_label(body, "service")
+        block["slo"] = first_label(body, "slo")
+    return blocks
+
+
+def selector_matchers(body):
+    """Every span-metric selector in an expression, as its raw matcher text.
+    A selector written without braces selects everything and yields ''."""
+    found = []
+    for name in ("traces_spanmetrics_calls_total", "traces_spanmetrics_latency_bucket"):
+        for m in SELECTOR_RE.finditer(body):
+            if m.group(1) == name:
+                found.append((name, m.group(2)))
+        # A selector with no braces (e.g. `rate(metric[5m])`) has no matchers at
+        # all, so nothing excludes a probe span - it is reported as `""`.
+        for _ in re.finditer(re.escape(name) + r"(?!\s*\{)", body):
+            found.append((name, ""))
+    return found
+
+
+def selects(matchers, path):
+    """True when `path` passes every span_name matcher in the selector.
+    No span_name matcher selects everything, so probes are not excluded."""
+    ms = [m for m in MATCHER_RE.finditer(matchers) if m.group(1) == "span_name"]
+    for m in ms:
+        op, value = m.group(2), m.group(3)
+        if op == "=":
+            if path != value:
+                return False
+        elif op == "!=":
+            if path == value:
+                return False
+        elif op == "=~":
+            if not prom_match(value, path):
+                return False
+        elif op == "!~":
+            if prom_match(value, path):
+                return False
+    return True
+
+
+def check_sli(n, sli, metric):
+    text = open(RULES, encoding="utf-8").read()
+    blocks = [b for b in record_blocks(text)
+              if b["service"] == "open-webui" and b["slo"] == sli]
+    if not blocks:
+        bad(n, "no open-webui %s recording rule in %s" % (sli, RULES))
+        return
+    n_sel = 0
+    for block in blocks:
+        sels = [matchers for name, matchers in selector_matchers(block["flat"])
+                if name == metric]
+        if len(sels) < 2:
+            bad(n, "%s selects %s %d time(s); an SLI needs two sides - the %s and the total"
+                % (block["name"], metric, len(sels), sli))
+            continue
+        for matchers in sels:
+            n_sel += 1
+            for path in PROBES:
+                if selects(matchers, path):
+                    bad(n, "%s: the selector {%s} still admits the probe span %s - probes are not user traffic"
+                        % (block["name"], matchers.strip(), path))
+            if not selects(matchers, USER_PATH):
+                bad(n, "%s: the selector {%s} also drops a real user request (%s) - the exclusion has to be narrow"
+                    % (block["name"], matchers.strip(), USER_PATH))
+    if n not in fails:
+        ok(n, "%d %s selectors over %d open-webui %s rules exclude /health and /health/db and keep %s"
+           % (n_sel, metric, len(blocks), sli, USER_PATH))
+    verified.add(n)
+
+
+# --- AC-12: the dashboard ------------------------------------------------
+
+def dashboard_panels():
+    configmap = json.load(open(DASH, encoding="utf-8"))
+    data = configmap.get("data") if isinstance(configmap, dict) else None
+    if not isinstance(data, dict) or not data:
+        raise ValueError("%s has no ConfigMap data" % DASH)
+    dash = None
+    for value in data.values():
+        dash = value if isinstance(value, dict) else json.loads(value)
+        break
+    if not isinstance(dash, dict):
+        raise ValueError("%s carries no parsed dashboard" % DASH)
+    panels = []
+
+    def walk(items):
+        for panel in items or []:
+            if isinstance(panel, dict):
+                panels.append(panel)
+                walk(panel.get("panels"))
+
+    walk(dash.get("panels"))
+    return panels
+
+
+def expressions(panel):
+    return [t.get("expr") or "" for t in panel.get("targets") or []
+            if isinstance(t, dict)]
+
+
+def ac12():
+    panels = dashboard_panels()
+    if not panels:
+        bad(12, "the SLO dashboard has no panels")
+        return
+    n_expr = 0
+    for panel in panels:
+        for expr in expressions(panel):
+            n_expr += 1
+            if "avg_over_time" in expr:
+                bad(12, "panel %r averages a recorded ratio (avg_over_time) - a 30d SLI is pooled, not averaged"
+                    % (panel.get("title"),))
+    budget = []
+    for panel in panels:
+        title = panel.get("title") or ""
+        text = " ".join([title] + expressions(panel))
+        # A budget-LEFT panel, not a burn-rate panel (whose title also says
+        # "error budget" - "... burn rate - how fast the error budget is going").
+        is_budget = re.search(r"budget", text, re.I) and (
+            re.search(r"budget[^a-z]*(left|remaining)", title, re.I)
+            or re.search(r"(left|remaining)[^a-z]*budget", title, re.I))
+        if is_budget:
+            budget.append((panel, text))
+    if not budget:
+        # A green stage that renamed the panels still has to be judged, so fall
+        # back to every panel whose title mentions the budget at all.
+        for panel in panels:
+            title = panel.get("title") or ""
+            text = " ".join([title] + expressions(panel))
+            if re.search(r"budget", text, re.I):
+                budget.append((panel, text))
+    if not budget:
+        bad(12, "no error-budget-left panel on the SLO dashboard")
+        return
+    for panel, text in budget:
+        title = panel.get("title")
+        before = len(fails)
+        if "[30d]" not in text:
+            bad(12, "budget panel %r does not pool a 30d window (no [30d] range)" % (title,))
+        pooled = re.findall(r"sum\s*(?:by\s*\([^)]*\)\s*)?\(\s*increase\s*\(", text)
+        if len(pooled) < 2:
+            bad(12, "budget panel %r pools %d summed increase(s); it needs summed errors over summed total"
+                % (title, len(pooled)))
+        if not re.search(r"\)\s*/\s*", text):
+            bad(12, "budget panel %r is no ratio - the pooled errors have to be divided by the pooled total"
+                % (title,))
+        if len(fails) == before:
+            ok(12, "  budget panel %r pools [30d] as summed increase of errors over summed increase of total"
+               % (title,))
+    if 12 not in fails:
+        ok(12, "%d panel expressions, none averaging a ratio; %d budget panels pool the 30d window"
+           % (n_expr, len(budget)))
+    verified.add(12)
+
+
+# --- AC-13: the coverage alert -------------------------------------------
+
+def alert_block(text, name):
+    body = []
+    inside = False
+    for line in text.splitlines():
+        if re.match(r"^\s*-\s*alert:\s*", line):
+            got = re.sub(r"^\s*-\s*alert:\s*", "", line).strip(" \t\"'")
+            inside = got == name
+            if inside:
+                body = []
+            continue
+        if re.match(r"^\s*-\s*record:\s*", line):
+            inside = False
+            continue
+        if inside:
+            body.append(line)
+    return "\n".join(body) if body else None
+
+
+def selected_names(expr):
+    """Union of the recording-series names the alert's selectors actually read."""
+    selected = set()
+    for m in re.finditer(r"slo:sli_error:ratio_rate(5m|30m|1h|2h|6h|1d|3d)", expr):
+        before = expr[:m.start()].rstrip()
+        if before.endswith("~") or before.endswith('"'):
+            continue                    # part of a regex, handled by __name__ below
+        selected.add(m.group(0))
+    for m in re.finditer(r'__name__\s*(=~|!~|!=|=)\s*"([^"]*)"', expr):
+        op, value = m.group(1), m.group(2)
+        for name in SERIES:
+            if op == "=" and name == value:
+                selected.add(name)
+            elif op == "!=" and name != value:
+                selected.add(name)
+            elif op == "=~" and prom_match(value, name):
+                selected.add(name)
+            elif op == "!~" and not prom_match(value, name):
+                selected.add(name)
+    return selected
+
+
+def ac13():
+    text = open(RULES, encoding="utf-8").read()
+    body = alert_block(text, "SLORecordingSeriesMissing")
+    if body is None:
+        bad(13, "no SLORecordingSeriesMissing alert in %s" % RULES)
+        return
+    expr = flat(body)
+    if not re.search(r"\bcount\s*(?:by\s*\([^)]*\)\s*)?\(", expr):
+        bad(13, "SLORecordingSeriesMissing does not count the pairs (no count(...))")
+    names = selected_names(expr)
+    wanted = {"slo:sli_error:ratio_rate1d", "slo:sli_error:ratio_rate3d"}
+    if names != wanted:
+        bad(13, "the coverage alert reads %s; it has to count the six pairs over the 1d and 3d windows only, so an idle 5m window cannot fire it"
+            % (sorted(names) or "no slo:sli_error:ratio_rate series",))
+    if not re.search(r"<\s*6(?![0-9.])", expr):
+        bad(13, "SLORecordingSeriesMissing does not compare against a threshold of 6 (the six service/SLI pairs)")
+    if re.search(r"[<>]\s*=?\s*42(?![0-9.])", expr):
+        bad(13, "SLORecordingSeriesMissing still compares against 42 series - the coverage is six pairs, not 42 windows")
+    if not re.search(r"or\s+vector\(0\)", expr):
+        bad(13, "SLORecordingSeriesMissing has no 'or vector(0)' - losing every pair would make the expression empty and silent")
+    if 13 not in fails:
+        ok(13, "counts the six service/SLI pairs on the 1d and 3d windows against < 6, with or vector(0)")
+    verified.add(13)
+
+
+# --- AC-14: the README --------------------------------------------------
+
+SERVICES = (("open-webui", re.compile(r"open[-_ ]?webui", re.I), True),
+            ("hindsight-api", re.compile(r"hindsight[-_ ]?api", re.I), True),
+            ("grafana", re.compile(r"grafana", re.I), False))
+
+
+def ac14():
+    text = open(README, encoding="utf-8").read()
+    # One entry per service: a bullet or a paragraph, not a hard-wrapped line -
+    # an 80-column wrap must not decide whether the runbook documents the
+    # denominator. Blocks are separated by a blank line; a block starting a new
+    # service is where its numerator/denominator sentence lives.
+    blocks = []
+    current = []
+    first = 1
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.strip():
+            if not current:
+                first = number
+            current.append(line.strip())
+        elif current:
+            blocks.append((first, " ".join(current)))
+            current = []
+    if current:
+        blocks.append((first, " ".join(current)))
+
+    for label, pattern, span_metric in SERVICES:
+        hits = [(number, block) for number, block in blocks
+                if pattern.search(block)
+                and re.search(r"denominator", block, re.I)
+                and re.search(r"availability", block, re.I)
+                and re.search(r"latency", block, re.I)]
+        if not hits:
+            bad(14, "%s states no denominator of the availability and latency SLIs of %s - one entry per service, naming both denominators"
+                % (README, label))
+            continue
+        number, block = hits[0]
+        if not span_metric:
+            ok(14, "  line %d states the %s denominators" % (number, label))
+            continue
+        if label == "open-webui":
+            required = PROBES
+        else:
+            required = tuple(re.findall(r"/health[\w/.-]*", block))[:1]
+        if not required:
+            bad(14, "the %s denominator entry (line %d) names no probe path - the span-metric SLI excludes one"
+                % (label, number))
+            continue
+        for path in required:
+            if path not in block:
+                bad(14, "the %s denominator entry (line %d) does not name the excluded probe path %s"
+                    % (label, number, path))
+                break
+        else:
+            ok(14, "  line %d states the %s denominators and names %s"
+               % (number, label, ", ".join(required)))
+    if 14 not in fails:
+        ok(14, "%s states one denominator entry per service, naming the excluded probe paths" % README)
+    verified.add(14)
+
+
+for n, fn in ((10, lambda: check_sli(10, "availability", "traces_spanmetrics_calls_total")),
+              (11, lambda: check_sli(11, "latency", "traces_spanmetrics_latency_bucket")),
+              (12, ac12),
+              (13, ac13),
+              (14, ac14)):
+    try:
+        fn()
+    except Exception as exc:            # a broken read is a FAIL, never a silent pass
+        bad(n, "setup error: %s: %s" % (type(exc).__name__, exc))
+
+with open(OUT, "w", encoding="utf-8") as handle:
+    for n in AC_IDS:
+        if n in fails:
+            reason = fails[n].replace("\t", " ").replace("\n", " ")
+            handle.write("%d\tFAIL\t%s\n" % (n, reason))
+        elif n in verified:
+            handle.write("%d\tPASS\t\n" % n)
+        else:
+            handle.write("%d\tFAIL\tthe AC-10..AC-14 check did not run - setup error\n" % n)
+PY
+
+if python3 -I "$WORK/gul2165.py" "$AC1014_TSV"; then
+  :
+else
+  printf '  note  the AC-10..AC-14 program exited non-zero; its FAIL lines above say why\n' >&2
+fi
+
+if [ -s "$AC1014_TSV" ]; then
+  while IFS="$(printf '\t')" read -r ac_n ac_state ac_why; do
+    [ -n "$ac_n" ] || continue
+    if [ "$ac_state" = "FAIL" ]; then
+      if [ -z "${AC_WHY[$ac_n]}" ]; then AC_WHY[$ac_n]="$ac_why"; fi
+      AC_FAIL[$ac_n]=1
+    fi
+  done < "$AC1014_TSV"
+else
+  for n in 10 11 12 13 14; do
+    AC_FAIL[$n]=1
+    AC_WHY[$n]="the AC-10..AC-14 program produced no verdict - setup error"
+  done
+fi
+
 # --- verdict ---------------------------------------------------------------
 #
 # Only the ACs this work order's spec assigns to this command: a line for any
-# other id is a setup error (CONTRACT.md point 2), so AC-1..AC-5 stay on stderr.
+# other id is a setup error (CONTRACT.md point 2). GUL-2165 assigns the failing
+# checks AC-10..AC-14 to this one command, so AC-1..AC-9 - this script's own
+# earlier deliveries - keep running as per-assertion detail on stderr where they
+# still catch a regression, and print nothing on stdout.
 printf '\n' >&2
 rc=0
-for n in 6 7 8 9; do
+for n in 10 11 12 13 14; do
   if [ "${AC_FAIL[$n]}" -eq 1 ]; then
     printf 'AC-%s: FAIL %s\n' "$n" "${AC_WHY[$n]}"
     rc=1
