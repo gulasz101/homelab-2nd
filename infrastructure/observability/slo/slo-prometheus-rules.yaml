@@ -46,6 +46,15 @@
 # are recorded as ERROR ratios (the SLO's complement), because that is the number
 # the burn rate multiplies: error_ratio / error_budget.
 #
+# Open WebUI's serve nothing but /health and /health/db (the kubelet probes
+# GUL-1962 added) and are almost always fast and 200, so they dilute both SLIs.
+# Every open-webui selector therefore carries `span_name!~"/health(/db)?"` on
+# BOTH sides of the ratio - numerator and denominator - because dropping them
+# from one side only turns the ratio into nonsense. Hindsight API's probes are
+# already kept out of Tempo by the app's own OTEL excluded URLs and Grafana's
+# histogram is the dashboard's own request counts, so neither needs a matcher
+# here (GUL-2165).
+#
 # Selector: the Prometheus CR has spec.ruleSelector = {matchLabels: {release:
 # prometheus-stack}} - a PrometheusRule without that label is loaded by the
 # operator and then ignored by Prometheus, silently.
@@ -68,35 +77,44 @@ metadata:
     release: prometheus-stack
 spec:
   groups:
-    # --- coverage: the recording series themselves --------------------------
+    # --- coverage: the recording rules themselves ---------------------------
     #
-    # The 42 recorded series ARE the SLO. Rename a service label, drop a window
-    # or move a rule group and one of them stops being recorded - and no burn
-    # rate can fire on a series that does not exist, so the SLO is gone and the
-    # silence looks exactly like health. This is the only alert here that reads
-    # the recording rules instead of their output (GUL-1962).
+    # The six service/SLI pairs ARE the SLO. Rename a `service` or `slo` label,
+    # drop a rule group and a pair stops being recorded - and no burn rate can
+    # fire on a series that does not exist, so the SLO is gone and the silence
+    # looks exactly like health. This is the only alert here that reads the
+    # recording rules instead of their output (GUL-1962, GUL-2165).
     - name: slo-recording-coverage
       interval: 30s
       rules:
         - alert: SLORecordingSeriesMissing
-          # count() over every recorded series name, `or vector(0)` so the count
-          # is a VALUE when nothing is recorded instead of an absent expression
-          # (which would evaluate to empty and stay silent in exactly the case
-          # this alert exists for), compared with the 42 the rules define.
+          # Coverage is SIX PAIRS, not 42 windows: one `service`/`slo` pair is the
+          # thing an SLI is. Counting all 42 recorded series never noticed an
+          # idle short window (no span in the last 5m drops no series name), so
+          # it was both noisy and blind; a pair that stops recording - a renamed
+          # `service` or `slo` label - leaves one group and is a real loss. The
+          # inner aggregation runs over the 1d and 3d windows only (the widest
+          # two, so a quiet minute cannot empty them) and collapses them into
+          # one series per pair; the outer count() is then 6 on a healthy board.
+          # `or vector(0)` makes zero a VALUE: without it, losing every pair
+          # leaves an empty expression that never fires - exactly the case this
+          # alert exists for (GUL-2165).
           expr: |
             (
-              count({__name__=~"slo:sli_error:ratio_rate.+"})
+              count(
+                count by (service, slo) ({__name__=~"slo:sli_error:ratio_rate1d|slo:sli_error:ratio_rate3d"})
+              )
               or
               vector(0)
-            ) < 42
+            ) < 6
           for: 15m
           labels:
             severity: warning
             alertgroup: slo
             namespace: observability
           annotations:
-            summary: "Only {{ $value }} of the 42 SLO recording series exist"
-            description: "{{ $value }} of the 42 recording series (3 services x 2 SLIs x 7 windows) are being recorded. The series behind the two error budgets - 0.005 of the 99.5 % target for Open WebUI and Hindsight API, 0.05 of the 95 % target for Grafana - are the whole SLO: a window that stopped recording records nothing for its burn rate, so no alert fires while the SLO is unobserved. Check first that the PrometheusRule is loaded (kubectl -n observability get prometheusrule slo-recording-and-burn-rate -o yaml, and the Prometheus CR's ruleSelector still matches release=prometheus-stack), then the rule file infrastructure/observability/slo/slo-prometheus-rules.yaml: a renamed `service` or `slo` label on a recording rule is the usual cause. The label pair to compare against is service in (open-webui, hindsight-api, grafana) and slo in (availability, latency): query count by (service, slo) ({__name__=~\"slo:sli_error:ratio_rate.+\"}). Runbook: infrastructure/observability/slo/README.md."
+            summary: "Only {{ $value }} of the 6 service/SLI pairs are recorded"
+            description: "{{ $value }} of the 6 service/SLI pairs (open-webui, hindsight-api and grafana x availability and latency) still record their 1d and 3d error ratios. One pair is one SLI: a pair that stopped recording records nothing for its burn rates, so no alert fires while that SLO is unobserved - an idle window is not a loss, which is why the count is per pair over the two widest windows and not per series. Check first that the PrometheusRule is loaded (kubectl -n observability get prometheusrule slo-recording-and-burn-rate -o yaml, and the Prometheus CR's ruleSelector still matches release=prometheus-stack), then the rule file infrastructure/observability/slo/slo-prometheus-rules.yaml: a renamed `service` or `slo` label on a recording rule is the usual cause. The label pair to compare against is service in (open-webui, hindsight-api, grafana) and slo in (availability, latency): query count by (service, slo) ({__name__=~\"slo:sli_error:ratio_rate.+\"}). Runbook: infrastructure/observability/slo/README.md."
 
     # The four workbook burn rates, one alert per service and rate. A single
     # alert covers both SLIs of a service: the recording series are reduced
@@ -374,77 +392,77 @@ spec:
         - record: slo:sli_error:ratio_rate5m
           expr: |
             (
-              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[5m]))
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", status_code="STATUS_CODE_ERROR"}[5m]))
               or vector(0)
             )
             /
-            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[5m]))
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?"}[5m]))
           labels:
             service: open-webui
             slo: availability
         - record: slo:sli_error:ratio_rate30m
           expr: |
             (
-              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[30m]))
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", status_code="STATUS_CODE_ERROR"}[30m]))
               or vector(0)
             )
             /
-            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[30m]))
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?"}[30m]))
           labels:
             service: open-webui
             slo: availability
         - record: slo:sli_error:ratio_rate1h
           expr: |
             (
-              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[1h]))
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", status_code="STATUS_CODE_ERROR"}[1h]))
               or vector(0)
             )
             /
-            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[1h]))
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?"}[1h]))
           labels:
             service: open-webui
             slo: availability
         - record: slo:sli_error:ratio_rate2h
           expr: |
             (
-              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[2h]))
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", status_code="STATUS_CODE_ERROR"}[2h]))
               or vector(0)
             )
             /
-            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[2h]))
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?"}[2h]))
           labels:
             service: open-webui
             slo: availability
         - record: slo:sli_error:ratio_rate6h
           expr: |
             (
-              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[6h]))
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", status_code="STATUS_CODE_ERROR"}[6h]))
               or vector(0)
             )
             /
-            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[6h]))
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?"}[6h]))
           labels:
             service: open-webui
             slo: availability
         - record: slo:sli_error:ratio_rate1d
           expr: |
             (
-              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[1d]))
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", status_code="STATUS_CODE_ERROR"}[1d]))
               or vector(0)
             )
             /
-            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[1d]))
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?"}[1d]))
           labels:
             service: open-webui
             slo: availability
         - record: slo:sli_error:ratio_rate3d
           expr: |
             (
-              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[3d]))
+              sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", status_code="STATUS_CODE_ERROR"}[3d]))
               or vector(0)
             )
             /
-            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER"}[3d]))
+            sum(rate(traces_spanmetrics_calls_total{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?"}[3d]))
           labels:
             service: open-webui
             slo: availability
@@ -452,9 +470,9 @@ spec:
         - record: slo:sli_error:ratio_rate5m
           expr: |
             1 - (
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[5m]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="1.024"}[5m]))
               /
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[5m]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="+Inf"}[5m]))
             )
           labels:
             service: open-webui
@@ -462,9 +480,9 @@ spec:
         - record: slo:sli_error:ratio_rate30m
           expr: |
             1 - (
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[30m]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="1.024"}[30m]))
               /
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[30m]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="+Inf"}[30m]))
             )
           labels:
             service: open-webui
@@ -472,9 +490,9 @@ spec:
         - record: slo:sli_error:ratio_rate1h
           expr: |
             1 - (
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[1h]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="1.024"}[1h]))
               /
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[1h]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="+Inf"}[1h]))
             )
           labels:
             service: open-webui
@@ -482,9 +500,9 @@ spec:
         - record: slo:sli_error:ratio_rate2h
           expr: |
             1 - (
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[2h]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="1.024"}[2h]))
               /
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[2h]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="+Inf"}[2h]))
             )
           labels:
             service: open-webui
@@ -492,9 +510,9 @@ spec:
         - record: slo:sli_error:ratio_rate6h
           expr: |
             1 - (
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[6h]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="1.024"}[6h]))
               /
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[6h]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="+Inf"}[6h]))
             )
           labels:
             service: open-webui
@@ -502,9 +520,9 @@ spec:
         - record: slo:sli_error:ratio_rate1d
           expr: |
             1 - (
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[1d]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="1.024"}[1d]))
               /
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[1d]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="+Inf"}[1d]))
             )
           labels:
             service: open-webui
@@ -512,9 +530,9 @@ spec:
         - record: slo:sli_error:ratio_rate3d
           expr: |
             1 - (
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="1.024"}[3d]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="1.024"}[3d]))
               /
-              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", le="+Inf"}[3d]))
+              sum(rate(traces_spanmetrics_latency_bucket{service="open-webui", span_kind="SPAN_KIND_SERVER", span_name!~"/health(/db)?", le="+Inf"}[3d]))
             )
           labels:
             service: open-webui

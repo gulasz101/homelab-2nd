@@ -101,6 +101,76 @@ SLO_SERVICES = (
 SLO_SLIS = ("availability", "latency")
 SLO_BURN_WINDOWS = ("1h", "6h")
 
+# The 30-day SLI and the budget-left figures pool the raw counters over the whole
+# window instead of averaging the recorded per-day ratios: an average weights a
+# quiet day like a busy one, so a burst of errors on a busy day disappears from
+# the number that is supposed to show it (GUL-2165, pooled SLO arithmetic).
+SLO_WINDOW = "30d"
+# Open WebUI's kubelet probes arrive as SERVER spans and are not user traffic; the
+# recording rules drop them on both sides of the ratio, so the 30-day panels have
+# to drop them with the same matcher or the dashboard and the alerts disagree.
+SLO_PROBE_EXCLUSION = 'span_name!~"/health(/db)?"'
+# The latency threshold of each service, as the metric spells it: span-metric
+# buckets are in seconds and named 1.024 / 2.048, Grafana's are 1.0.
+SLO_LATENCY_BUCKET = {"open-webui": "1.024", "hindsight-api": "2.048", "grafana": "1.0"}
+
+def slo_sum_increase(metric, selector, window=SLO_WINDOW):
+    """`sum(increase(<metric>{<selector>}[<window>]))`, braces only when needed."""
+    if selector:
+        return "sum(increase(%s{%s}[%s]))" % (metric, selector, window)
+    return "sum(increase(%s[%s]))" % (metric, window)
+
+
+def slo_zero_guard(expr):
+    """`(<expr> or vector(0))` - the `or vector(0)` the recording rules use.
+
+    A 30-day window in which nothing failed matches no series, so the summed
+    errors are an EMPTY vector and the whole ratio is empty: the SLI and the
+    budget-left panel would read "No data" precisely when nothing is wrong,
+    which reads like a broken panel, not like a healthy 100 %. `or vector(0)`
+    makes zero a value (the same guard the availability recording rules carry).
+    The denominator needs no guard: no requests at all is genuinely no ratio.
+    """
+    return "(%s or vector(0))" % expr
+
+
+def slo_pooled_counts(service, sli, window=SLO_WINDOW):
+    """(errors, total) for one service/SLI over `window`, from the counters.
+
+    Pooling means summing the errors and the requests and dividing once, which
+    is only possible over the counters the recording rules read - a recorded
+    ratio has already lost its denominator. The metric, the labels and the
+    latency bucket are the ones `slo-prometheus-rules.yaml` uses, probe
+    exclusion included, so the two cannot drift.
+    """
+    bucket = SLO_LATENCY_BUCKET[service]
+    if service == "grafana":
+        if sli == "availability":
+            return (slo_zero_guard(
+                        slo_sum_increase("grafana_http_request_duration_seconds_count", 'status_code=~"5.."', window)),
+                    slo_sum_increase("grafana_http_request_duration_seconds_count", "", window))
+        total = slo_sum_increase("grafana_http_request_duration_seconds_bucket", 'le="+Inf"', window)
+        good = slo_sum_increase("grafana_http_request_duration_seconds_bucket", 'le="%s"' % bucket, window)
+        return ("%s - %s" % (total, good), total)
+    base = 'service="%s", span_kind="SPAN_KIND_SERVER"' % service
+    if service == "open-webui":
+        base += ", " + SLO_PROBE_EXCLUSION
+    if sli == "availability":
+        return (slo_zero_guard(
+                    slo_sum_increase("traces_spanmetrics_calls_total",
+                                     base + ', status_code="STATUS_CODE_ERROR"', window)),
+                slo_sum_increase("traces_spanmetrics_calls_total", base, window))
+    total = slo_sum_increase("traces_spanmetrics_latency_bucket", base + ', le="+Inf"', window)
+    good = slo_sum_increase("traces_spanmetrics_latency_bucket", base + ', le="%s"' % bucket, window)
+    return ("%s - %s" % (total, good), total)
+
+
+def slo_pooled_ratio(service, sli, window=SLO_WINDOW):
+    """The pooled error ratio of one service/SLI: summed errors over summed total."""
+    errors, total = slo_pooled_counts(service, sli, window)
+    return "(%s) / (%s)" % (errors, total)
+
+
 LOG_OPTIONS = {
     "dedupStrategy": "none",
     "enableLogDetails": True,
@@ -663,14 +733,18 @@ class Dashboard:
     def slo_golden_signals(self):
         """Golden signals row of an SLO dashboard: the SLI, the budget, the burn.
 
-        Every query is over the recording rules in
-        `infrastructure/observability/slo/slo-prometheus-rules.yaml`; none reads
-        a raw span metric, so a change to an SLI definition lands in one file.
+        Every query is over the same counters the recording rules in
+        `infrastructure/observability/slo/slo-prometheus-rules.yaml` read, with
+        the same labels and the same probe exclusion, so the SLI definition
+        lives in two places that are generated from one each rather than in a
+        dashboard that quietly disagrees with the alerts.
         The 30-day SLI is not one of the seven recorded windows (the alerts need
-        seven, not eight), so it is the mean of the 1d error ratios over [30d]:
-        the 30-day error ratio when traffic is steady, and the same series the
-        burn rates are computed from. `[30d]` is in the query rather than in a
-        hidden recording rule.
+        seven, not eight), so it is POOLED, not averaged: the errors and the
+        requests are summed over the whole 30 days and divided once. Averaging
+        the recorded 1d error ratios would weight a quiet day as heavily as a
+        busy one and hide a burst of errors that landed on the busy one
+        (GUL-2165). `[30d]` is in the query rather than in a hidden recording
+        rule.
 
         Four stats per service, one pair per SLI: the 30-day SLI and that SLI's
         own error budget. One "budget left" figure per service hides which of
@@ -687,18 +761,22 @@ class Dashboard:
             budget = slo["budget"]
             target = slo["target"]
             for index, sli in enumerate(SLO_SLIS):
+                ratio = slo_pooled_ratio(service, sli)
                 self.stat(
                     "%s %s — 30d" % (label, sli),
                     "Share of %s requests in the last 30 days that met the %s SLO "
-                    "(target %s %%). The SLI is the error ratio recorded by the "
-                    "slo:sli_error rules, inverted; it is the number the error "
-                    "budget and the burn rates are built from."
-                    % (label, sli, ("%.1f" % target).rstrip("0").rstrip(".")),
+                    "(target %s %%). Pooled over the whole window: the failed "
+                    "requests and the total are summed and divided once, so a "
+                    "busy day counts for more than a quiet one. It is the "
+                    "inverse of the number the error budget and the burn rates "
+                    "are built from.%s"
+                    % (label, sli, ("%.1f" % target).rstrip("0").rstrip("."),
+                       " Kubelet probe traffic (/health, /health/db) is excluded."
+                       if service == "open-webui" else ""),
                     "percent",
                     [
                         {
-                            "expr": '100 * (1 - avg_over_time(slo:sli_error:ratio_rate1d'
-                                    '{service="%s",slo="%s"}[30d]))' % (service, sli),
+                            "expr": "100 * (1 - %s)" % ratio,
                             "instant": True,
                             "legendFormat": sli,
                             "refId": "A",
@@ -715,23 +793,27 @@ class Dashboard:
             # without swapping a legend entry. 25 % / 50 % are the page and
             # ticket boundaries the burn-rate alerts use.
             for index, sli in enumerate(SLO_SLIS):
+                ratio = slo_pooled_ratio(service, sli)
                 self.stat(
                     "%s %s error budget left — 30d" % (label, sli),
                     "How much of %s's 30-day %s error budget is unspent, in "
                     "percent. 100 %% means nothing spent, 0 %% means the %s %% "
-                    "target has been missed; the budget is %s (1 - target). One "
+                    "target has been missed; the budget is %s (1 - target). "
+                    "Pooled, not averaged: summed errors over summed requests "
+                    "over the 30 days, so a burst on a busy day is not diluted "
+                    "by the quiet days around it. One "
                     "budget per SLI: an availability burn is errors, a latency "
                     "burn is saturation, so the two are checked differently once "
                     "one of them runs out. Under 25 %% the service pages at the "
                     "fast burn rate within hours, under 50 %% the ticket alerts "
-                    "start."
-                    % (label, sli, ("%.1f" % target).rstrip("0").rstrip("."), budget),
+                    "start.%s"
+                    % (label, sli, ("%.1f" % target).rstrip("0").rstrip("."), budget,
+                       " Kubelet probe traffic (/health, /health/db) is excluded."
+                       if service == "open-webui" else ""),
                     "percent",
                     [
                         {
-                            "expr": '100 * (1 - (avg_over_time(slo:sli_error:ratio_rate1d'
-                                    '{service="%s",slo="%s"}[30d]) / %s))'
-                                    % (service, sli, budget),
+                            "expr": "100 * (1 - (%s) / %s)" % (ratio, budget),
                             "instant": True,
                             "legendFormat": sli,
                             "refId": "A",
