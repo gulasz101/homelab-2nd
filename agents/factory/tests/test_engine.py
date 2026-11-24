@@ -86,6 +86,7 @@ class Fake:
         self.docs = []              # docs-mcp listLibraries rows
         self.runs = {}              # issue id -> heartbeat runs
         self.agents[FALLBACK] = {"id": FALLBACK, "status": "idle"}
+        self.interactions = {}      # issue id -> interaction cards
 
     def add_work_order(self, number, title, spec_body=SPEC_BODY):
         wid = str(uuid.uuid4())
@@ -222,6 +223,8 @@ def paperclip(method, parts, query, body):
             return 200, [{"body": b, "createdAt": now()} for i, b in FAKE.comments if i == iid]
         if n == 3 and parts[2] == "runs":
             return 200, FAKE.runs.get(iid, [])
+        if n == 3 and parts[2] == "interactions" and method == "GET":
+            return 200, FAKE.interactions.get(iid, [])
         if n == 4 and parts[2] == "documents":
             key = (iid, parts[3])
             if method == "GET":
@@ -237,7 +240,12 @@ def paperclip(method, parts, query, body):
     if parts[0] == "companies" and n == 3 and parts[2] == "issues":
         if method == "GET":
             parent = (query.get("parentId") or [None])[0]
-            return 200, [i for i in FAKE.issues.values() if parent is None or i.get("parentId") == parent]
+            project = (query.get("projectId") or [None])[0]
+            status = (query.get("status") or [None])[0]
+            return 200, [i for i in FAKE.issues.values()
+                         if (parent is None or i.get("parentId") == parent)
+                         and (project is None or i.get("projectId") == project)
+                         and (status is None or i.get("status") in status.split(","))]
         if method == "POST":
             FAKE.counter += 1
             iid = str(uuid.uuid4())
@@ -1477,6 +1485,72 @@ class FailLines(unittest.TestCase):
         self.assertEqual(eng.fail_block([]), [])
         many = "\n".join("FAIL t%d" % n for n in range(eng.MAX_FAIL_LINES + 50))
         self.assertEqual(len(eng.fail_lines(many)), eng.MAX_FAIL_LINES)
+
+class Pickup(EngineCase):
+    """Phase 5 intake: a human-accepted spec-gate card starts the order with no PM run."""
+
+    def card(self, wid, rev, outcome="accepted", user="user-1", agent=None, key="spec-gate:x"):
+        FAKE.interactions.setdefault(wid, []).append({
+            "id": str(uuid.uuid4()), "kind": "request_confirmation", "idempotencyKey": key,
+            "status": "resolved", "result": {"version": 1, "outcome": outcome},
+            "resolvedByUserId": user, "resolvedByAgentId": agent,
+            "payload": {"target": {"type": "issue_document", "key": "spec", "revisionId": rev}}})
+
+    def in_review(self, number, title="Pick me up", spec_body=SPEC_BODY):
+        wid = FAKE.add_work_order(number, title, spec_body)
+        FAKE.issues[wid]["status"] = "in_review"
+        return wid
+
+    def test_27_accepted_spec_gate_starts_the_order(self):
+        self.write_config(autoPickup=True, companyId=COMPANY,
+                          repos={REPO: {"clone": self.clone, "worktrees": self.worktrees,
+                                        "projectId": PROJECT}})
+        good = self.in_review(301)
+        self.card(good, "rev-spec-1")
+        agent_ok = self.in_review(302)                       # an agent accepted: never counts
+        self.card(agent_ok, "rev-spec-1", user=None, agent="a-1")
+        stale = self.in_review(303)                          # accepted, but for an older revision
+        self.card(stale, "rev-spec-0")
+        rejected = self.in_review(304)
+        self.card(rejected, "rev-spec-1", outcome="rejected")
+        other = self.in_review(305)                          # not a spec-gate card
+        self.card(other, "rev-spec-1", key="confirmation:plan")
+        todo = FAKE.add_work_order(306, "Still todo")        # not in_review
+        self.card(todo, "rev-spec-1")
+        bad = self.in_review(307, spec_body="no fence here\n")
+        self.card(bad, "rev-spec-1")
+
+        rc, out = self.tick(apply=False)
+        self.assertEqual(rc, 0, out)
+        would = [l["workOrder"] for l in out["orders"] if l.get("outcome") == "would-start"]
+        self.assertEqual(sorted(would), ["GUL-301", "GUL-307"])
+        self.assertEqual(FAKE.mutating(), [], "a dry tick writes nothing")
+        self.assertFalse(os.path.exists(os.path.join(self.state, "GUL-301.json")))
+
+        rc, out = self.tick()
+        self.assertEqual(self.load("GUL-301")["specRevisionId"], "rev-spec-1")
+        self.assertEqual(FAKE.issues[good]["status"], "todo")
+        for n in (302, 303, 304, 305, 306, 307):
+            self.assertFalse(os.path.exists(os.path.join(self.state, "GUL-%d.json" % n)), n)
+        refused = [l for l in out["orders"] if l.get("outcome") == "refused"]
+        self.assertEqual([l["workOrder"] for l in refused], ["GUL-307"])
+        bad_comments = [c for c in FAKE.comments if c[0] == bad]
+        self.assertEqual(len(bad_comments), 1)
+        self.assertIn("cannot start", bad_comments[0][1])
+
+        self.tick()
+        self.assertEqual(len([c for c in FAKE.comments if c[0] == bad]), 1,
+                         "a refused revision is commented once, not on every tick")
+        self.assertEqual(len([c for c in FAKE.comments if c[0] == good
+                              and "approved the spec" in c[1]]), 1, "started once")
+
+    def test_28_pickup_off_reads_no_issue_list(self):
+        wid = self.in_review(311)
+        self.card(wid, "rev-spec-1")
+        self.tick()
+        self.assertFalse(os.path.exists(os.path.join(self.state, "GUL-311.json")))
+        self.assertFalse([r for r in FAKE.requests if "status=in_review" in r[1]])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

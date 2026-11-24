@@ -24,7 +24,8 @@
   "repos": {
     "gulasz101/homelab-2nd": {
       "clone": "/Users/paperclip/factory/homelab-2nd",
-      "worktrees": "/Users/paperclip/factory/worktrees/homelab-2nd"
+      "worktrees": "/Users/paperclip/factory/worktrees/homelab-2nd",
+      "projectId": "d7dfb3ef-c245-4897-8936-88848f50db8c"
     }
   },
   "recallBanks": ["coding-agent::{repoName}", "hermes-andrzej"],
@@ -32,7 +33,8 @@
   "hindsightUrl": "http://192.168.1.179:30239",
   "docsUrl": "http://192.168.1.179:6280",
   "lodgeUrl": "http://192.168.1.179:30260",
-  "autoPickup": false,
+  "autoPickup": true,
+  "companyId": "0e2eb054-4cb6-4ea1-a2e7-2b1894285d8c",
   "autoMerge": true,
   "githubApp": {"appId": 5893473},
   "postMergeCheck": true,

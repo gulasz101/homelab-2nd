@@ -64,9 +64,12 @@ Rules:
   "hindsightUrl": "http://192.168.1.179:30239",
   "docsUrl": "http://192.168.1.179:6280",
   "lodgeUrl": "http://192.168.1.179:30260",
-  "autoPickup": false
+  "autoPickup": true,
+  "companyId": "<company id>"
 }
 ```
+
+Each repo may carry `"projectId"`: the Paperclip project whose work orders `autoPickup` reads.
 
 `{repoName}` is the part after the slash (`homelab-2nd`). Env overrides for tests and the
 self-test: `FACTORY_ENGINE_CONFIG` (path of the config), `FACTORY_ENGINE_STATE` (state dir),
@@ -131,6 +134,28 @@ recorded. A later edit of the Paperclip `spec` does not change a running order (
 `factory-run.sh` passes `engine ...` through: `factory engine tick --apply` runs
 `python3 -I $TOOLING/agents/factory/engine.py tick --apply`, from the tooling copy of `main`, like
 every other subcommand.
+
+## Intake (`autoPickup`)
+
+The owner touches a direction twice: he answers one question card, and he approves the spec.
+Everything after the spec approval runs with no PM run in between.
+
+1. The owner files a direction. The PM (Claude Code) researches it and opens one `ask_user_questions`
+   card (max 6 questions, each with a recommended answer; "auto" takes the recommendations).
+2. The PM writes the work order in the repo's project, with its `spec` document (it must pass
+   `factory.py lint-spec`), and opens a `request_confirmation` card on it:
+   - `idempotencyKey`: `spec-gate:<issue id>:<spec revision id>` (the prefix is what the engine looks for);
+   - `payload.target`: `{"type": "issue_document", "key": "spec", "revisionId": <latest revision>}`;
+   - `resolverPolicy: "human_only"`, `continuationPolicy: "none"` (accepting wakes nobody);
+   - the work order goes `in_review`, unassigned or assigned to the PM.
+3. Every tick, before the orders, `pickup()` lists the `in_review` issues of each repo's `projectId`.
+   It starts (`start_order`, the same code as `engine.py start`) every top-level issue with no state
+   file whose card is **accepted by a user** (not an agent) **for the spec's current revision**.
+4. A spec that does not lint, or names a repo not in `engine.json`, is refused: one comment on the
+   work order, remembered per revision in `<state>/pickup-refused.json`. A new spec revision with a new
+   accepted card is tried again.
+
+A dry tick only reports `would-start`. `autoPickup: false` reads no issue list at all.
 
 ## The tick
 
