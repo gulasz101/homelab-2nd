@@ -79,6 +79,7 @@ const SCAN_ROOTS = [
   "/private",
   "/opt",
   "/Library",
+  "/home", // Linux homes (CI runners): same role as /Users on macOS
 ];
 
 /** Rule 5: bash writer commands that create/modify/remove files (besides `>`). */
