@@ -42,6 +42,7 @@ SUPERVISOR = "a0000000-0000-4000-8000-00000000000s"
 STALL_OWNER = "a0000000-0000-4000-8000-0000000000pm"
 INVESTIGATOR = "a0000000-0000-4000-8000-0000000000iv"
 STRONG = "a0000000-0000-4000-8000-0000000000st"
+FALLBACK = "a0000000-0000-4000-8000-0000000000fb"
 AGENTS = {stage: "a0000000-0000-4000-8000-0000000000%02d" % i
           for i, stage in enumerate(("librarian", "red", "green", "review", "verify"), 1)}
 LODGE = {"librarian": "librarian", "red": "tester", "green": "builder",
@@ -83,6 +84,8 @@ class Fake:
         self.recall_results = [{"text": "Worktrees need\n  their own branch."}]
         self.retain_status = 200
         self.docs = []              # docs-mcp listLibraries rows
+        self.runs = {}              # issue id -> heartbeat runs
+        self.agents[FALLBACK] = {"id": FALLBACK, "status": "idle"}
 
     def add_work_order(self, number, title, spec_body=SPEC_BODY):
         wid = str(uuid.uuid4())
@@ -218,7 +221,7 @@ def paperclip(method, parts, query, body):
                 return 201, {"id": str(uuid.uuid4()), "body": body["body"]}
             return 200, [{"body": b, "createdAt": now()} for i, b in FAKE.comments if i == iid]
         if n == 3 and parts[2] == "runs":
-            return 200, []
+            return 200, FAKE.runs.get(iid, [])
         if n == 4 and parts[2] == "documents":
             key = (iid, parts[3])
             if method == "GET":
@@ -618,6 +621,99 @@ class TickFlow(EngineCase):
         self.assertEqual(len([p for p in FAKE.stage_issue_posts() if p[2]["title"].startswith("[red")]), 1,
                          "a stalled order creates no attempt")
         self.assert_no_blocked_stage_issue()
+
+    def test_06d_usage_limit_moves_the_stage_to_its_fallback(self):
+        # GUL-2037 phase 4: the Reviewer on Sonnet shares the Claude subscription limit. A run
+        # that hits it is not the agent's failure: the stage moves to its fallback agent.
+        self.write_config(fallbackAgents={"red": FALLBACK}, fallbackNames={"red": "glm"})
+        self.start(306, "Limit fallback")
+        self.tick()
+        st = self.load("GUL-306")
+        row = st["stages"][0]
+        self.assertEqual(self.issue_of(row)["assigneeAgentId"], AGENTS["red"])
+        self.issue_of(row)["status"] = "in_progress"
+        # a live run: Paperclip may still retry by itself, so the engine waits
+        FAKE.runs[row["issueId"]] = [
+            {"status": "failed", "error": "ACP agent reported a terminal limit failure.\n"
+                                          "You've hit your 5-hour limit"},
+            {"status": "running"}]
+        self.tick()
+        self.assertEqual(self.load("GUL-306")["stages"][0]["result"], "pending")
+        FAKE.runs[row["issueId"]][1]["status"] = "failed"
+        rc, out = self.tick()
+        st = self.load("GUL-306")
+        first, second = st["stages"][0], st["stages"][1]
+        self.assertEqual(first["result"], "limit", self.last_err)
+        self.assertEqual(st["fallbackStages"], ["red"])
+        old = self.issue_of(first)
+        self.assertEqual(old["status"], "cancelled")
+        self.assertIsNone(old.get("assigneeAgentId"), "the limited agent is not woken again")
+        self.assertEqual(self.issue_of(second)["assigneeAgentId"], FALLBACK)
+        self.assertEqual(second["result"], "pending")
+        self.assertIn("fallback-red", self.order_line(out, "GUL-306")["flags"])
+        # a failure that is not a limit never moves anything
+        self.issue_of(second)["status"] = "in_progress"
+        FAKE.runs[second["issueId"]] = [{"status": "failed", "error": "process exited 1"}]
+        self.tick()
+        st = self.load("GUL-306")
+        self.assertEqual(len(st["stages"]), 2)
+        self.assertEqual(st["stages"][1]["result"], "pending")
+        # a limit run of a stage with no fallback agent waits for the idle timeout as before
+        self.write_config()
+        FAKE.runs[second["issueId"]] = [{"status": "failed", "error": "You've hit your weekly limit"}]
+        self.tick()
+        self.assertEqual(len(self.load("GUL-306")["stages"]), 2)
+        self.assert_no_blocked_stage_issue()
+
+    def test_06e_claude_guard_is_written_into_the_worktree(self):
+        # The Reviewer on Sonnet runs on Paperclip's ACP engine, which ignores extra CLI
+        # flags but loads the worktree's .claude/settings.local.json.
+        guard = os.path.join(self.tmp, "guard.json")
+        with open(guard, "w") as fh:
+            json.dump({"permissions": {"deny": ["Edit", "Write"]},
+                       "hooks": {"PreToolUse": [{"matcher": "*", "hooks": [
+                           {"type": "command", "command": "node hook.ts readonly"}]}]}}, fh)
+        self.write_config(claudeGuards={AGENTS["red"]: guard})
+        self.start(307, "Guarded agent")
+        self.tick()
+        st = self.load("GUL-307")
+        self.assertEqual(st["phase"], "red", self.last_err)
+        self.assertEqual(len(st["stages"]), 1)
+        target = os.path.join(st["worktree"], ".claude", "settings.local.json")
+        with open(target) as fh:
+            written = json.load(fh)
+        self.assertEqual(written["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "node hook.ts readonly")
+        self.assertEqual(written["permissions"]["deny"], ["Edit", "Write"])
+        self.assertEqual(oct(os.stat(target).st_mode & 0o777), "0o600")
+        status = subprocess.run(["git", "-C", st["worktree"], "status", "--porcelain"],
+                                stdout=subprocess.PIPE, text=True, check=True).stdout
+        self.assertEqual(status, "", "the guard file never shows up in git")
+        # Paperclip merges its own keys into the file; the engine keeps them
+        written["permissions"]["allow"] = ["Bash(curl:*)"]
+        written["permissions"]["deny"] = ["Bash(rm:*)"]
+        with open(target, "w") as fh:
+            json.dump(written, fh)
+        self.issue_of(st["stages"][0])["status"] = "cancelled"
+        self.tick()
+        with open(target) as fh:
+            again = json.load(fh)
+        self.assertEqual(again["permissions"]["allow"], ["Bash(curl:*)"])
+        self.assertEqual(again["permissions"]["deny"], ["Bash(rm:*)", "Edit", "Write"])
+
+    def test_06f_broken_claude_guard_stalls_without_an_attempt(self):
+        guard = os.path.join(self.tmp, "guard.json")
+        with open(guard, "w") as fh:
+            json.dump({"permissions": {"deny": ["Edit"]}}, fh)
+        self.write_config(claudeGuards={AGENTS["red"]: guard})
+        self.start(308, "Broken guard")
+        rc, out = self.tick()
+        st = self.load("GUL-308")
+        self.assertEqual(st["phase"], "stalled", self.last_err)
+        self.assertIn("no PreToolUse hook", st["stallReason"])
+        self.assertIn("guard-missing", self.order_line(out, "GUL-308")["flags"])
+        self.assertEqual(st["stages"], [])
+        self.assertFalse([p for p in FAKE.stage_issue_posts() if p[2]["title"].startswith("[red")],
+                         "the agent never runs without its guard")
 
     def test_07_08_09_failed_attempts_stall_recall_retain(self):
         FAKE.recall_status["hermes-andrzej"] = 500

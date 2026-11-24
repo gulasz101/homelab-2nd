@@ -48,6 +48,10 @@ TERMINAL_PHASES = ("done", "closed", "stalled")
 LIVE_RUN_STATUSES = {"queued", "running", "starting"}
 PENDING_CHECK_STATES = {"PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED", "WAITING", "REQUESTED"}
 FAILED = ("fail", "timeout")
+# A run that failed on the provider's usage limit (the Claude subscription's 5-hour or weekly
+# cap). Not the agent's fault, so it uses no attempt: the stage moves to its fallback agent.
+LIMIT_RE = re.compile(r"hit your [^\n]*limit|usage limit|rate limit|terminal limit failure|"
+                      r"quota exceeded|429 too many requests", re.I)
 TAIL_LINES = 60
 INVENTORY_MAX_ROWS = 25
 RETAIN_MAX_TRIES = 3
@@ -947,6 +951,10 @@ class Engine:
             strong = (self.cfg.get("strongAgents") or {}).get(stage)
             if strong:
                 return strong
+        if stage in (st.get("fallbackStages") or []):
+            fallback = (self.cfg.get("fallbackAgents") or {}).get(stage)
+            if fallback:
+                return fallback
         conf = (self.cfg.get("stages") or {}).get(stage)
         if not conf or not conf.get("agentId"):
             raise SetupError("engine.json has no agent for the %s stage" % stage)
@@ -973,6 +981,11 @@ class Engine:
         if agent.get("status") in ("paused", "terminated"):
             self.flag("agent-paused")
             self.note("agent-paused", stage)
+            return None
+        problem = self.prepare_claude_guard(st, agent_id)
+        if problem:
+            self.flag("guard-missing")
+            self.stall(st, problem + " The agent does not run without its guard; no attempt was used.")
             return None
         rows = self.rows(st, stage, st["round"])
         attempt = len(rows) + 1
@@ -1008,6 +1021,57 @@ class Engine:
         lodge_event(self.cfg, stage, self.detail(st, row, "started"), "started")
         self.note("created", stage, row)
         return row
+
+    def prepare_claude_guard(self, st: dict, agent_id: str):
+        """None, or an ENV sentence. A Claude Code agent (the Reviewer on Sonnet) runs on
+        Paperclip's ACP engine, which ignores extra CLI flags. ACP does load the worktree's
+        `.claude/settings.local.json`, and Paperclip merges its own keys into that file and
+        keeps the rest. So the engine writes the agent's guard there (the factory-guard
+        PreToolUse hook and permissions.deny) before every attempt, and keeps `.claude/` out
+        of git through the repo's info/exclude."""
+        source = (self.cfg.get("claudeGuards") or {}).get(agent_id)
+        if not source:
+            return None
+        wt = st.get("worktree") or ""
+        try:
+            with open(source, encoding="utf-8") as fh:
+                guard = json.load(fh)
+            if not (guard.get("hooks") or {}).get("PreToolUse"):
+                return "ENV: the guard file %s has no PreToolUse hook." % source
+            target = os.path.join(wt, ".claude", "settings.local.json")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            current = {}
+            if os.path.exists(target):
+                try:
+                    with open(target, encoding="utf-8") as fh:
+                        current = json.load(fh)
+                except ValueError:
+                    current = {}
+            if not isinstance(current, dict):
+                current = {}
+            perms = dict(current.get("permissions") or {})
+            perms["deny"] = sorted(set(perms.get("deny") or [])
+                                   | set((guard.get("permissions") or {}).get("deny") or []))
+            current["permissions"] = perms
+            current["hooks"] = guard["hooks"]
+            tmp = target + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(current, fh, indent=2)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, target)
+            common = git(wt, "rev-parse", "--git-common-dir", check=False).strip()
+            if common:
+                if not os.path.isabs(common):
+                    common = os.path.join(wt, common)
+                exclude = os.path.join(common, "info", "exclude")
+                os.makedirs(os.path.dirname(exclude), exist_ok=True)
+                lines = open(exclude, encoding="utf-8").read().splitlines() if os.path.exists(exclude) else []
+                if ".claude/" not in lines:
+                    with open(exclude, "a", encoding="utf-8") as fh:
+                        fh.write("\n.claude/\n")
+        except (OSError, ValueError) as exc:
+            return "ENV: could not write the Claude guard into %s (%s)." % (wt or "(no worktree)", exc)
+        return None
 
     def find_open_child(self, st: dict, title: str):
         known = {r["issueId"] for r in st.get("stages") or []}
@@ -1119,7 +1183,54 @@ class Engine:
             self.fail_attempt(st, row, "fail", [self.last_comment(row["issueId"])
                                                 or "the agent set the stage issue blocked"])
         else:
+            limit = self.limit_error(st, row, stage)
+            if limit:
+                self.limit_fallback(st, row, stage, limit)
+                return
             self.check_timeout(st, row, stage, issue)
+
+    def limit_error(self, st: dict, row: dict, stage: str) -> str:
+        """The error of a run that hit the provider's usage limit, or "". Only for a stage
+        with a fallback agent that the order does not use yet, and only when no run of the
+        attempt is still live (Paperclip may retry by itself)."""
+        if stage in (st.get("fallbackStages") or []):
+            return ""
+        if not (self.cfg.get("fallbackAgents") or {}).get(stage):
+            return ""
+        runs = self.api.runs(row["issueId"])
+        if not runs:
+            return ""
+        runs = [r for r in runs if isinstance(r, dict)]
+        if any(r.get("status") in LIVE_RUN_STATUSES for r in runs):
+            return ""
+        for run in runs:
+            text = "%s %s" % (run.get("error") or "", run.get("errorCode") or "")
+            if run.get("status") == "failed" and LIMIT_RE.search(text):
+                return one_line(run.get("error") or text, 200)
+        return ""
+
+    def limit_fallback(self, st: dict, row: dict, stage: str, error: str) -> None:
+        """Move the stage to its fallback agent for the rest of the order. The attempt that
+        hit the limit is stopped and recorded as `limit`, which uses no attempt."""
+        self.would("move %s to the fallback agent (%s)" % (row["identifier"], error))
+        self.api.patch_issue(row["issueId"], {
+            "assigneeAgentId": None, "status": "cancelled",
+            "comment": "engine: this run hit the provider's usage limit (%s). The %s stage moves "
+                       "to its fallback agent; this does not count as a failed attempt." % (error, stage)})
+        row.update({"result": "limit", "reasons": ["usage limit: %s" % error], "commented": True,
+                    "finishedAt": iso()})
+        st["fallbackStages"] = sorted(set(st.get("fallbackStages") or []) | {stage})
+        self.save(st)
+        self.flag("fallback-" + stage)
+        lodge_event(self.cfg, stage, self.detail(st, row, "limit"), "limit")
+        self.note("limit", stage, row)
+        self.create_stage_issue(st, stage)
+
+    def fallback_note(self, st: dict) -> str:
+        names = (self.cfg.get("fallbackNames") or {})
+        return "; ".join("%s fallback: %s (the main agent hit its usage limit)"
+                         % (stage, names.get(stage, "fallback agent"))
+                         for stage in st.get("fallbackStages") or [])
 
     @staticmethod
     def who(issue: dict) -> str:
@@ -1361,6 +1472,8 @@ class Engine:
             comment = "PR %s passed the gate: merge it on GitHub. Not merged by the factory: %s" % (link, why)
         if note:
             comment = note + "\n\n" + comment
+        if self.fallback_note(st):
+            comment = comment + "\n\n" + self.fallback_note(st) + "."
         self.api.patch_issue(st["workOrderId"], {"status": "in_review", "comment": comment})
         st["phase"] = "awaiting_merge"
         self.save(st)
@@ -1378,6 +1491,8 @@ class Engine:
         lines.append("- review findings: %d, blocking confirmed by verify: %d"
                      % (len(st.get("findings") or []), len(st.get("blockingConfirmed") or [])))
         lines.append("- gate: CI `check` SUCCESS, no never path touched")
+        if self.fallback_note(st):
+            lines.append("- " + self.fallback_note(st))
         if note:
             lines.append("- %s" % note)
         return "\n".join(lines)
