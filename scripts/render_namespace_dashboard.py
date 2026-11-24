@@ -27,6 +27,7 @@ Standard library only: the Air and CI have no PyYAML.
 import argparse
 import json
 import os
+import re
 import sys
 
 # One schema version for every dashboard in the set (GUL-1598). Bumping this is
@@ -34,6 +35,14 @@ import sys
 SCHEMA_VERSION = 41
 
 MANIFEST_DEFAULT = "scripts/dashboards/manifest.json"
+
+# Flux reconciles `apps/kustomization.yaml` (clusters/*/apps.yaml points at that
+# directory), so a manifest output that the root kustomization never reaches is
+# an output nothing applies - the WO-4B defect this generator now refuses to
+# render past (GUL-2166). The walk below is the same one the dashboard checks
+# do; here it guards the render instead of the checked-in file.
+APPS_ROOT_KUSTOMIZATION = "apps/kustomization.yaml"
+APP_OUTPUT_PREFIX = "apps/"
 
 # Panels never name a datasource uid. Both uids Grafana mints are pinned in the
 # provisioning file and reachable through these variables, so a re-provisioned
@@ -250,19 +259,29 @@ def stat_options():
 # ---------------------------------------------------------------------------
 # PromQL / LogQL
 # ---------------------------------------------------------------------------
-def pod_selector(namespace, prefix, exclude=()):
+def pod_selector(namespace, prefix, exclude=(), container=None, exclude_containers=()):
     """A pod-name prefix as a selector, optionally minus sibling workloads.
 
     `exclude` exists because a prefix is a substring match: `nextcloud-` also
     matches `nextcloud-db` and `nextcloud-redis-master`, and summing those into
     the app panel double-counts them. RE2 has no lookahead, so the exclusions
     are a second `pod!~` matcher.
+
+    `container` / `exclude_containers` exist for a sidecar that has no pod of
+    its own: openchamber's syncthing runs inside the web pod, so it is selected
+    by container (GUL-2166) and the web panels exclude the same container.
     """
     selector = 'namespace="%s",pod=~"%s.*"' % (namespace, prefix)
     if exclude:
         if isinstance(exclude, str):
             exclude = [exclude]
         selector += ',pod!~"%s"' % "|".join("%s.*" % item for item in exclude)
+    if container:
+        selector += ',container="%s"' % container
+    if exclude_containers:
+        if isinstance(exclude_containers, str):
+            exclude_containers = [exclude_containers]
+        selector += ',container!~"%s"' % "|".join(exclude_containers)
     return selector
 
 
@@ -513,11 +532,28 @@ class Dashboard:
             pvc = service.get("pvc")
             pod_ns = self.service_namespace(service)
             excluded = service.get("exclude") or ()
-            selector = pod_selector(pod_ns, pod, excluded)
+            container = service.get("container")
+            excluded_containers = service.get("excludeContainers") or ()
+            selector = pod_selector(pod_ns, pod, excluded, container,
+                                    excluded_containers)
+            if container:
+                workload = "the %s container in %s pods" % (container, label)
+                cpu_description = ("CPU used by %s next to its request and limit, in "
+                                   "cores." % workload)
+                memory_description = ("Working-set memory of %s next to its request and "
+                                      "limit, in bytes." % workload)
+            else:
+                cpu_description = ("CPU used by %s pods next to their request and "
+                                   "limit, in cores." % label)
+                memory_description = ("Working-set memory of %s pods next to their "
+                                      "request and limit, in bytes." % label)
+            note = service.get("cpuNote")
+            if note:
+                cpu_description += " " + note
 
             self.stat(
                 "%s CPU" % label,
-                "CPU used by %s pods next to their request and limit, in cores." % label,
+                cpu_description,
                 "cores",
                 [
                     {
@@ -546,7 +582,7 @@ class Dashboard:
             )
             self.stat(
                 "%s memory" % label,
-                "Working-set memory of %s pods next to their request and limit, in bytes." % label,
+                memory_description,
                 "bytes",
                 [
                     {
@@ -1109,6 +1145,80 @@ def build_configmap(entry):
     }
 
 
+def kustomization_resources(path):
+    """The local `resources:` entries of one kustomization.yaml (block or flow style)."""
+    items = []
+    in_resources = False
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+    for raw in lines:
+        line = raw.split("#", 1)[0].rstrip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0 and re.match(r"^[A-Za-z]", stripped):
+            in_resources = stripped.startswith("resources:")
+            if in_resources:
+                rest = stripped[len("resources:"):].strip()
+                if rest.startswith("["):
+                    for token in rest.strip("[]").split(","):
+                        token = token.strip().strip("\"'")
+                        if token:
+                            items.append(token)
+            continue
+        if not in_resources or not stripped.startswith("- "):
+            continue
+        token = stripped[2:].strip().strip("\"'")
+        if token and "://" not in token and not token.startswith("git@"):
+            items.append(token)
+    return items
+
+
+def root_reached_files(root=APPS_ROOT_KUSTOMIZATION):
+    """Every file the root kustomization reaches, following nested kustomizations."""
+    seen = set()
+    reached = set()
+    queue = [normalise(root)]
+    while queue:
+        current = queue.pop(0)
+        if current in seen or not os.path.isfile(current):
+            continue
+        seen.add(current)
+        base = os.path.dirname(current)
+        for item in kustomization_resources(current):
+            target = normalise(os.path.join(base, item))
+            if os.path.isdir(target):
+                nested = normalise(os.path.join(target, "kustomization.yaml"))
+                if os.path.isfile(nested):
+                    queue.append(nested)
+                    continue
+                for dirpath, _dirnames, filenames in os.walk(target):
+                    for name in filenames:
+                        reached.add(normalise(os.path.join(dirpath, name)))
+            elif os.path.basename(target) == "kustomization.yaml":
+                queue.append(target)
+            else:
+                reached.add(target)
+    return reached
+
+
+def orphaned_app_outputs(entries):
+    """App dashboard outputs of the manifest that the root kustomization misses.
+
+    Only `apps/` outputs are judged: the platform dashboards under
+    `infrastructure/` are reconciled by their own Kustomization, not by
+    `apps/kustomization.yaml`. Without a root kustomization (a fixture, a
+    temporary manifest) there is nothing to walk, so nothing is reported.
+    """
+    if not os.path.isfile(APPS_ROOT_KUSTOMIZATION):
+        return []
+    reached = root_reached_files()
+    outputs = [normalise(entry_output(entry)) for entry in entries]
+    return sorted({path for path in outputs
+                   if path.startswith(APP_OUTPUT_PREFIX) and path not in reached})
+
+
 def render_all(manifest_path, output_dir):
     entries = load_manifest(manifest_path)
     written = []
@@ -1136,8 +1246,18 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     try:
+        entries = load_manifest(args.manifest)
+        if normalise(args.manifest) == MANIFEST_DEFAULT:
+            orphans = orphaned_app_outputs(entries)
+            if orphans:
+                raise ValueError(
+                    "unreachable from %s: %s (%d dashboard ConfigMap(s) the root "
+                    "kustomization never reaches, so Flux never applies them - list "
+                    "the app directory in the root kustomization or in its nested "
+                    "kustomization, then re-render)"
+                    % (APPS_ROOT_KUSTOMIZATION, ", ".join(orphans), len(orphans)))
         if args.list:
-            for entry in load_manifest(args.manifest):
+            for entry in entries:
                 print(normalise(entry_output(entry)))
             return 0
         written = render_all(args.manifest, args.output_dir)
