@@ -53,6 +53,28 @@ FAILED = ("fail", "timeout")
 LIMIT_RE = re.compile(r"hit your [^\n]*limit|usage limit|rate limit|terminal limit failure|"
                       r"quota exceeded|429 too many requests", re.I)
 TAIL_LINES = 60
+MAX_FAIL_LINES = 200  # every FAIL line of a check is kept, not only the tail (GUL-2037)
+
+
+def fail_lines(combined) -> list:
+    """Every line of a check's output that starts with FAIL (scripts/check.sh prints
+    `FAIL <test> (<s>)`), in order, de-duplicated, capped. The tail alone lost the name
+    of the failed test on GUL-2132/2133 (2026-11-24)."""
+    out = []
+    for ln in (combined or "").splitlines():
+        ln = ln.strip()
+        if re.match(r"FAIL(ED)?\b", ln) and ln[:300] not in out:
+            out.append(ln[:300])
+            if len(out) >= MAX_FAIL_LINES:
+                break
+    return out
+
+
+def fail_block(lines) -> list:
+    """Markdown lines for a row's FAIL lines, empty when there are none."""
+    if not lines:
+        return []
+    return ["Every FAIL line of the check (%d):" % len(lines), "```"] + list(lines) + ["```"]
 INVENTORY_MAX_ROWS = 25
 RETAIN_MAX_TRIES = 3
 # The stall ladder (phase 3): what the Investigator may say, and what each verdict does.
@@ -279,6 +301,7 @@ class CheckResult:
             [] if self.ok else ["%s exited %d" % (self.name, code)])
         self.line = json.dumps(self.parsed, ensure_ascii=False) if self.parsed else "(no json)"
         self.tail = [ln for ln in (combined or "").splitlines() if ln.strip()][-TAIL_LINES:]
+        self.fails = fail_lines(combined)
 
     def require_json(self):
         if self.parsed is None:
@@ -1123,6 +1146,7 @@ class Engine:
             lines.append("")
             lines.extend(tail[-TAIL_LINES:])
         lines.append("```")
+        lines.extend(fail_block(prev.get("failLines")))
         return "\n".join(lines)
 
     def template_values(self, st: dict, stage: str, spec: dict) -> dict:
@@ -1273,7 +1297,7 @@ class Engine:
         self.fail_attempt(st, row, "timeout", [reason])
 
     def fail_attempt(self, st: dict, row: dict, result: str, reasons: list,
-                     check_line: str = "", tail=None) -> None:
+                     check_line: str = "", tail=None, fails=None) -> None:
         self.would("record %s of %s" % (result, row["identifier"]))
         if row["stage"] == "librarian":
             self.librarian_fallback(st, row, result, reasons)
@@ -1282,7 +1306,8 @@ class Engine:
                     "checkLine": check_line or json.dumps(
                         {"ok": False, "check": "engine-" + row["stage"], "reasons": reasons},
                         ensure_ascii=False),
-                    "outputTail": list(tail or [])[-TAIL_LINES:], "finishedAt": iso()})
+                    "outputTail": list(tail or [])[-TAIL_LINES:],
+                    "failLines": list(fails or [])[:MAX_FAIL_LINES], "finishedAt": iso()})
         self.save(st)
         lodge_event(self.cfg, row["stage"], self.detail(st, row, result), result)
         self.note(result, row["stage"], row)
@@ -1337,12 +1362,12 @@ class Engine:
         res = run_factory(["check-red", "--repo", st["worktree"], "--base", st["baseSha"],
                            "--spec", st["specFile"]]).require_json()
         if not res.ok:
-            self.fail_attempt(st, row, "fail", res.reasons, res.line, res.tail)
+            self.fail_attempt(st, row, "fail", res.reasons, res.line, res.tail, res.fails)
             return
         com = run_factory(["commit", "--repo", st["worktree"], "--stage", "red",
                            "--issue", st["workOrder"]]).require_json()
         if not com.ok:
-            self.fail_attempt(st, row, "fail", com.reasons, com.line, com.tail)
+            self.fail_attempt(st, row, "fail", com.reasons, com.line, com.tail, com.fails)
             return
         st["redSha"] = com.parsed["sha"]
         self.passed(st, row, st["redSha"])
@@ -1353,12 +1378,12 @@ class Engine:
         res = run_factory(["check-green", "--repo", st["worktree"], "--red", st["redSha"],
                            "--spec", st["specFile"]]).require_json()
         if not res.ok:
-            self.fail_attempt(st, row, "fail", res.reasons, res.line, res.tail)
+            self.fail_attempt(st, row, "fail", res.reasons, res.line, res.tail, res.fails)
             return
         com = run_factory(["commit", "--repo", st["worktree"], "--stage", "green",
                            "--issue", st["workOrder"]]).require_json()
         if not com.ok:
-            self.fail_attempt(st, row, "fail", com.reasons, com.line, com.tail)
+            self.fail_attempt(st, row, "fail", com.reasons, com.line, com.tail, com.fails)
             return
         sha = com.parsed["sha"]
         pr = st.get("pr") or {}
@@ -1399,7 +1424,7 @@ class Engine:
         res = run_factory(["check-findings", "--repo", st["worktree"], "--base", st["baseSha"],
                            "--findings", path]).require_json()
         if not res.ok:
-            self.fail_attempt(st, row, "fail", res.reasons, res.line, res.tail)
+            self.fail_attempt(st, row, "fail", res.reasons, res.line, res.tail, res.fails)
             return
         value, _ = factory.extract_json_block(body, "findings")
         st["findings"] = value or []
@@ -1418,7 +1443,7 @@ class Engine:
         res = run_factory(["check-verdicts", "--findings", findings_path,
                            "--verdicts", path]).require_json()
         if not res.ok:
-            self.fail_attempt(st, row, "fail", res.reasons, res.line, res.tail)
+            self.fail_attempt(st, row, "fail", res.reasons, res.line, res.tail, res.fails)
             return
         st["blockingConfirmed"] = list(res.parsed.get("blockingConfirmed") or [])
         st["blockingFindings"] = list(res.parsed.get("blockingFindings") or [])
@@ -1975,6 +2000,7 @@ class Engine:
                 if r.get("outputTail"):
                     lines += [""] + list(r["outputTail"][-TAIL_LINES:])
                 lines.append("```")
+                lines += fail_block(r.get("failLines"))
             if inv.get("fromVerify"):
                 lines += ["", "### Blocking findings that verify confirmed",
                           "```json", json.dumps([f for f in st.get("findings") or []

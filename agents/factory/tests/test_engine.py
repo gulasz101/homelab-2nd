@@ -1442,5 +1442,41 @@ class Inventory(EngineCase):
         self.assert_no_blocked_stage_issue()
 
 
+
+class FailLines(unittest.TestCase):
+    """Every FAIL line of a check is kept and shown, not only the 60-line tail
+    (GUL-2132/2133: the failed test's name was above the tail, 2026-11-24)."""
+
+    def load_engine(self):
+        import importlib.util
+        sys.path.insert(0, os.path.dirname(ENGINE))
+        try:
+            spec = importlib.util.spec_from_file_location("engine_under_test", ENGINE)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        finally:
+            sys.path.pop(0)
+        return mod
+
+    def test_26_fail_lines_survive_a_long_tail(self):
+        eng = self.load_engine()
+        out = "\n".join(["PASS render (2s)", "FAIL agents/factory-guard/tests/claude-hook-check.sh (1s)",
+                          "PASS sops (2s)", "FAIL agents/x/tests/y-check.sh (3s)",
+                          "FAIL agents/x/tests/y-check.sh (3s)"]
+                         + ["noise %d" % n for n in range(200)]
+                         + ['{"ok": false, "check": "check-green", "reasons": ["1 failed"]}'])
+        res = eng.CheckResult(["check-green"], 1, {"ok": False, "reasons": ["1 failed"]}, out)
+        self.assertNotIn("claude-hook-check.sh", "\n".join(res.tail), "test needs the name above the tail")
+        self.assertEqual(res.fails, ["FAIL agents/factory-guard/tests/claude-hook-check.sh (1s)",
+                                     "FAIL agents/x/tests/y-check.sh (3s)"])
+        row = {"attempt": 1, "identifier": "GUL-1", "result": "fail", "checkLine": res.line,
+               "outputTail": res.tail, "failLines": res.fails}
+        section = eng.Engine.last_failed_section([row])
+        self.assertIn("Every FAIL line of the check (2):", section)
+        self.assertIn("FAIL agents/factory-guard/tests/claude-hook-check.sh (1s)", section)
+        self.assertEqual(eng.fail_block([]), [])
+        many = "\n".join("FAIL t%d" % n for n in range(eng.MAX_FAIL_LINES + 50))
+        self.assertEqual(len(eng.fail_lines(many)), eng.MAX_FAIL_LINES)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
