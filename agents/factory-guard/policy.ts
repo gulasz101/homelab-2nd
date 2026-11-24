@@ -538,10 +538,32 @@ function unwrapCommands(argv: string[]): string[] {
 
 // ---------- bash rules ----------
 
-function isRootPath(word: string, home: string): boolean {
+/** Collapse `.`, `..` and repeated slashes in an absolute path, without touching the disk. */
+function normalizeAbs(p: string): string {
+  const out: string[] = [];
+  for (const seg of p.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return "/" + out.join("/");
+}
+
+/**
+ * A scan root is `/`, $HOME or a SCAN_ROOTS folder, or anything below one. One exception
+ * (GUL-2037): a path inside the agent's own git checkout is not a root, so a search of its
+ * own worktree is allowed even when that worktree lives under /Users or $HOME. The checkout
+ * itself must not be $HOME or a scan root, or the exception would reopen the whole disk.
+ */
+function isRootPath(word: string, home: string, workspaceRoot: string | null = null): boolean {
   const p = expandHome(word, home);
   if (!p.startsWith("/")) return false;
-  const norm = p.length > 1 ? p.replace(/\/+$/, "") : p;
+  const norm = normalizeAbs(p);
+  if (workspaceRoot) {
+    const ws = normalizeAbs(workspaceRoot);
+    const wsIsRoot = ws === "/" || ws === normalizeAbs(home) || SCAN_ROOTS.some((r) => normalizeAbs(r) === ws);
+    if (!wsIsRoot && withinRoot(norm, ws)) return false;
+  }
   if (norm === home) return true; // $HOME / ~ are roots in their own right
   if (norm.startsWith(home + "/")) return true;
   for (const root of SCAN_ROOTS) {
@@ -824,27 +846,27 @@ function decideBash(command: string, role: RoleProfile, state: GuardState, home:
     // Rule 4: disk-wide scans
     if (c0 === "find" || c0 === "fd") {
       const paths = args.filter((a) => !a.startsWith("-"));
-      const hit = paths.find((p) => isRootPath(p, home));
+      const hit = paths.find((p) => isRootPath(p, home, state.workspaceRoot));
       if (hit) return block("disk-scan", `${c0} over ${expandHome(hit, home)}`);
     }
     if (c0 === "grep") {
       const recursive = args.some((a) => /^-[a-zA-Z]{1,3}$/.test(a) && /[rR]/.test(a)) || args.includes("--recursive");
       if (recursive) {
         const paths = args.filter((a) => !a.startsWith("-"));
-        const hit = paths.find((p) => isRootPath(p, home));
+        const hit = paths.find((p) => isRootPath(p, home, state.workspaceRoot));
         if (hit) return block("disk-scan", `grep -r over ${expandHome(hit, home)}`);
       }
     }
     if (c0 === "rg" || c0 === "du") {
       const paths = args.filter((a) => !a.startsWith("-"));
-      const hit = paths.find((p) => isRootPath(p, home));
+      const hit = paths.find((p) => isRootPath(p, home, state.workspaceRoot));
       if (hit) return block("disk-scan", `${c0} over ${expandHome(hit, home)}`);
     }
     if (c0 === "ls") {
       const recurse = args.some((a) => /^-[a-zA-Z]{1,3}$/.test(a) && /[Rr]/.test(a));
       if (recurse) {
         const paths = args.filter((a) => !a.startsWith("-"));
-        const hit = paths.find((p) => isRootPath(p, home));
+        const hit = paths.find((p) => isRootPath(p, home, state.workspaceRoot));
         if (hit) return block("disk-scan", `ls -R over ${expandHome(hit, home)}`);
       }
     }
@@ -920,7 +942,7 @@ export function decideToolCall(
     for (const v of Object.values(input as Record<string, unknown>)) {
       if (typeof v !== "string") continue;
       if (isSecretPath(v, home)) return block("secrets-path", `read access to ${v}`);
-      if (SEARCH_TOOLS.has(toolName) && isRootPath(v, home)) {
+      if (SEARCH_TOOLS.has(toolName) && isRootPath(v, home, state.workspaceRoot)) {
         return block("disk-scan", `${toolName} over root path ${v}`);
       }
     }
