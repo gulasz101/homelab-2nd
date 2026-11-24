@@ -34,9 +34,10 @@ resources:
   - karakeep-tunnel-ingress-configmap.yaml
   # Prometheus scraping
   - service-monitor.yaml
-  # Custom summary prompt in git + the one-shot Job that converges Karakeep onto it
-  - karakeep-prompt-configmap.yaml
-  - karakeep-prompt-job.yaml
+  # Custom summary prompt in git + the one-shot Job that converges Karakeep onto it.
+  # Both stay enumerated in apps/kustomization.yaml instead of here: AC-6 of
+  # apps/karakeep/tests/prompt-job-check.sh pins `karakeep/<file>` entries to the
+  # root, and listing a file in both kustomizations is a duplicate resource id.
   # Daily Karakeep SQLite backup to MinIO
   - karakeep-backup-cronjob.yaml
   # Alerts: backup freshness + Karakeep inference health, routed to Mattermost

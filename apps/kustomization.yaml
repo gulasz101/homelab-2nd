@@ -154,35 +154,18 @@ resources:
   - gpu-embedding/gpu-embedding-prometheus-rules.yaml
   - gpu-embedding/gpu-embedding-loki-rule.yaml
   - gpu-embedding/gpu-embedding-dashboard-configmap.yaml
-  # Karakeep namespace
-  - karakeep/namespace.yaml
-  # SOPS-encrypted secrets
-  - karakeep/karakeep-app-secrets.sops.yaml
-  - karakeep/karakeep-oidc-client.sops.yaml
-  - karakeep/karakeep-minio-assets.sops.yaml
-  - karakeep/karakeep-tunnel-token.sops.yaml
-  - karakeep/karakeep-litellm-key.sops.yaml
-  - karakeep/karakeep-minio-backup-creds.sops.yaml
-  - karakeep/karakeep-mattermost-webhook-url.sops.yaml
-  # OMV NFS PV + pre-provisioned StatefulSet data PVC for Karakeep working data
-  - karakeep/karakeep-data-pv.yaml
-  - karakeep/data-karakeep-0-pvc.yaml
-  # HelmForge repository + Karakeep HelmRelease
-  - karakeep/karakeep-helm-repository.yaml
-  - karakeep/karakeep-helm-release.yaml
-  # Cloudflare Tunnel for keep.voitech.dev
-  - karakeep/cloudflared-karakeep-deployment.yaml
-  - karakeep/karakeep-tunnel-ingress-configmap.yaml
-  # Prometheus scraping
-  - karakeep/service-monitor.yaml
-  # Custom summary prompt in git + the one-shot Job that converges Karakeep onto it
+  # Karakeep namespace: the whole directory is a nested kustomization, the same
+  # shape as apps/host-watch, apps/riffradar and apps/openchamber (GUL-2166).
+  # Enumerated file-by-file, the root kustomization silently missed
+  # karakeep-dashboard-configmap.yaml: the dashboard rendered in isolation and
+  # reached no cluster.
+  - karakeep
+  # The prompt ConfigMap and its one-shot Job keep their own root entries and
+  # are deliberately NOT in apps/karakeep/kustomization.yaml: AC-6 of
+  # apps/karakeep/tests/prompt-job-check.sh pins both here, and a file listed in
+  # both the root and the nested kustomization is a duplicate resource id.
   - karakeep/karakeep-prompt-configmap.yaml
   - karakeep/karakeep-prompt-job.yaml
-  # Daily Karakeep SQLite backup to MinIO
-  - karakeep/karakeep-backup-cronjob.yaml
-  # Alerts: backup freshness + Karakeep inference health, routed to Mattermost
-  - karakeep/karakeep-prometheus-rules.yaml
-  - karakeep/karakeep-alertmanager-config.yaml
   # Nextcloud namespace
   - nextcloud/namespace.yaml
   # SOPS-encrypted secrets
