@@ -1201,16 +1201,21 @@ class Engine:
         self.note("pending", stage, row)
         if status in ("done", "in_review"):
             getattr(self, "judge_" + stage)(st, row)
-        elif status == "cancelled":
+            return
+        if status != "cancelled":
+            # GUL-2147: after its retry budget Paperclip sets a limit-hit run's issue
+            # `blocked`, often before the engine's next tick. That is still the provider's
+            # limit, not the agent's failure, so it must reach the fallback, not burn an attempt.
+            limit = self.limit_error(st, row, stage)
+            if limit:
+                self.limit_fallback(st, row, stage, limit)
+                return
+        if status == "cancelled":
             self.fail_attempt(st, row, "fail", ["stage issue cancelled by %s" % self.who(issue)])
         elif status == "blocked":
             self.fail_attempt(st, row, "fail", [self.last_comment(row["issueId"])
                                                 or "the agent set the stage issue blocked"])
         else:
-            limit = self.limit_error(st, row, stage)
-            if limit:
-                self.limit_fallback(st, row, stage, limit)
-                return
             self.check_timeout(st, row, stage, issue)
 
     def limit_error(self, st: dict, row: dict, stage: str) -> str:
@@ -1228,8 +1233,12 @@ class Engine:
         if any(r.get("status") in LIVE_RUN_STATUSES for r in runs):
             return ""
         for run in runs:
+            if run.get("status") != "failed":
+                continue
+            if not run.get("error") and run.get("runId") and hasattr(self.api, "run"):
+                run = dict(run, error=(self.api.run(run["runId"]) or {}).get("error"))
             text = "%s %s" % (run.get("error") or "", run.get("errorCode") or "")
-            if run.get("status") == "failed" and LIMIT_RE.search(text):
+            if LIMIT_RE.search(text):
                 return one_line(run.get("error") or text, 200)
         return ""
 

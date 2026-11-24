@@ -85,6 +85,7 @@ class Fake:
         self.retain_status = 200
         self.docs = []              # docs-mcp listLibraries rows
         self.runs = {}              # issue id -> heartbeat runs
+        self.run_details = {}       # run id -> full heartbeat run (with `error`)
         self.agents[FALLBACK] = {"id": FALLBACK, "status": "idle"}
         self.interactions = {}      # issue id -> interaction cards
 
@@ -192,6 +193,10 @@ def route(method, raw_path, body):
 
 def paperclip(method, parts, query, body):
     n = len(parts)
+    if parts[0] == "heartbeat-runs" and n == 2 and method == "GET":
+        # the real server: the per-issue run list leaves `error` null, the detail has it
+        run = FAKE.run_details.get(parts[1])
+        return (200, run) if run else (404, {"error": "no run"})
     if parts[0] == "agents" and n == 2 and method == "GET":
         agent = FAKE.agents.get(parts[1])
         return (200, agent) if agent else (404, {"error": "no agent"})
@@ -672,6 +677,36 @@ class TickFlow(EngineCase):
         self.tick()
         self.assertEqual(len(self.load("GUL-306")["stages"]), 2)
         self.assert_no_blocked_stage_issue()
+
+    def test_06d2_limit_on_a_blocked_attempt_with_a_bare_run_list(self):
+        # GUL-2147 live: Paperclip spent its retry budget and set the attempt `blocked`
+        # before the engine's tick, and its run list has `error: null`. The limit text is
+        # only in /heartbeat-runs/<id>. That is still a limit: fallback, no attempt used.
+        self.write_config(fallbackAgents={"red": FALLBACK}, fallbackNames={"red": "glm"})
+        self.start(307, "Limit on blocked")
+        self.tick()
+        row = self.load("GUL-307")["stages"][0]
+        self.issue_of(row)["status"] = "blocked"
+        FAKE.comments.append((row["issueId"], "Paperclip retried this issue's run after it ended "
+                              "without finishing, but the bounded retry budget is spent"))
+        FAKE.runs[row["issueId"]] = [{"runId": "r-307", "status": "failed", "error": None,
+                                      "errorCode": "acpx_turn_failed"}]
+        FAKE.run_details["r-307"] = {"runId": "r-307", "status": "failed",
+                                     "error": "ACP agent reported a terminal limit failure.\n"
+                                              "You've hit your 5-hour limit",
+                                     "errorCode": "acpx_turn_failed"}
+        self.tick()
+        st = self.load("GUL-307")
+        first, second = st["stages"][0], st["stages"][1]
+        self.assertEqual(first["result"], "limit", self.last_err)
+        self.assertEqual(st["fallbackStages"], ["red"])
+        self.assertEqual(self.issue_of(second)["assigneeAgentId"], FALLBACK)
+        # a blocked attempt whose run failed for another reason still uses an attempt
+        self.issue_of(second)["status"] = "blocked"
+        FAKE.runs[second["issueId"]] = [{"runId": "r-307b", "status": "failed", "error": None}]
+        FAKE.run_details["r-307b"] = {"runId": "r-307b", "status": "failed", "error": "process exited 1"}
+        self.tick()
+        self.assertEqual(self.load("GUL-307")["stages"][1]["result"], "fail")
 
     def test_06e_claude_guard_is_written_into_the_worktree(self):
         # The Reviewer on Sonnet runs on Paperclip's ACP engine, which ignores extra CLI
