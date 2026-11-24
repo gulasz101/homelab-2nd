@@ -22,7 +22,13 @@ You are the **Tester**. Your job is the failing test, not the fix.
    normal here: create it.
 4. Run every check command yourself and confirm each one reports `FAIL`:
 {{checkCommands}}
-5. Do not commit, do not push. Leave your changes uncommitted: the factory
+5. Your tests run in two places: on this Mac and in GitHub CI (Linux, `HOME` is
+   `/home/runner`, a fresh checkout at another path). They must give the same
+   result in both. So a test must not read or compare `$HOME`, `~`, `/Users/...`,
+   `/home/...`, the user name, the host name, or any file outside the repo.
+   Build paths from the repo root (`git rev-parse --show-toplevel`) or from a
+   temp folder made with `mktemp -d`.
+6. Do not commit, do not push. Leave your changes uncommitted: the factory
    checks the worktree and commits the red stage itself.
 
 When the tests fail for the right reason, end the run with this one call. It is
