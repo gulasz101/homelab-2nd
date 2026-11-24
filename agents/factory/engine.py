@@ -2240,23 +2240,30 @@ def cmd_start(args) -> int:
     issue = api.by_identifier(None, wo)
     if not issue:
         raise SetupError("work order %s not found" % wo)
-    doc = api.document(issue["id"], "spec")
+    ok, reasons, extra, summary = start_order(cfg, api, issue, dry_run=args.dry_run)
+    emit(ok, "start", reasons, extra, summary)
+    return 0 if ok else 1
+
+
+def start_order(cfg: dict, api, issue: dict, dry_run: bool = False, doc=None, how: str = "") -> tuple:
+    """Freeze the spec and queue the order. Returns (ok, reasons, extra, summary); writes nothing
+    when it fails. `doc` is the spec document when the caller already read it (pickup)."""
+    wo = issue["identifier"].upper()
+    if doc is None:
+        doc = api.document(issue["id"], "spec")
     body = doc.get("body") if isinstance(doc, dict) else None
     if not isinstance(body, str) or not body.strip():
-        emit(False, "start", ["%s has no spec document" % wo], {"workOrder": wo})
-        return 1
+        return False, ["%s has no spec document" % wo], {"workOrder": wo}, ""
     with tempfile.TemporaryDirectory() as tmp:
         lint_path = os.path.join(tmp, "spec.md")
         with open(lint_path, "w", encoding="utf-8") as fh:
             fh.write(body)
         lint = run_factory(["lint-spec", "--spec", lint_path])
         if not lint.ok:
-            emit(False, "start", ["spec: " + r for r in lint.reasons], {"workOrder": wo})
-            return 1
+            return False, ["spec: " + r for r in lint.reasons], {"workOrder": wo}, ""
         spec = factory.load_spec(lint_path)
     if spec["repo"] not in (cfg.get("repos") or {}):
-        emit(False, "start", ["repo %s is not in engine.json" % spec["repo"]], {"workOrder": wo})
-        return 1
+        return False, ["repo %s is not in engine.json" % spec["repo"]], {"workOrder": wo}, ""
     number = wo.split("-", 1)[1]
     st = {"version": 1, "workOrder": wo, "workOrderId": issue["id"], "title": issue.get("title", ""),
           "projectId": issue.get("projectId"), "companyId": issue.get("companyId"),
@@ -2270,17 +2277,16 @@ def cmd_start(args) -> int:
           "retained": False, "createdAt": iso(), "updatedAt": iso()}
     if not st["projectId"] or not st["companyId"]:
         raise SetupError("work order %s has no projectId or companyId" % wo)
-    if args.dry_run:
-        emit(True, "start", [], {"workOrder": wo, "dryRun": True,
-                                 "plan": {"branch": st["branch"], "repo": st["repo"], "base": st["base"]}},
-             "engine-start: %s would be queued on %s" % (wo, st["branch"]))
-        return 0
+    if dry_run:
+        return (True, [], {"workOrder": wo, "dryRun": True,
+                           "plan": {"branch": st["branch"], "repo": st["repo"], "base": st["base"]}},
+                "engine-start: %s would be queued on %s" % (wo, st["branch"]))
     # No assignee: Paperclip refuses (409) to assign a paused agent, an active one would wake a model,
     # and `in_progress` requires an assignee (422). So the work order stays `todo`, unassigned; its
     # real phase is the `engine-state` document.
     api.patch_issue(issue["id"], {"status": "todo",
-                                  "comment": "The factory engine took this work order. Branch `%s`; "
-                                  "the next tick starts it when a slot is free." % st["branch"]})
+                                  "comment": "The factory engine took this work order%s. Branch `%s`; "
+                                  "the next tick starts it when a slot is free." % (how, st["branch"])})
     write_text_atomic(st["specFile"], body)
     write_json_atomic(state_path(wo), st)
     try:
@@ -2289,9 +2295,98 @@ def cmd_start(args) -> int:
                            title="engine-state")
     except Exception as exc:  # noqa: BLE001 - the mirror is for people only
         warn("%s: engine-state mirror not written: %s" % (wo, exc))
-    emit(True, "start", [], {"workOrder": wo, "phase": "queued", "branch": st["branch"]},
-         "engine-start: %s queued on %s" % (wo, st["branch"]))
-    return 0
+    return (True, [], {"workOrder": wo, "phase": "queued", "branch": st["branch"]},
+            "engine-start: %s queued on %s" % (wo, st["branch"]))
+
+
+SPEC_GATE_PREFIX = "spec-gate:"
+
+
+def spec_gate_accepted(interactions: list, revision_id: str):
+    """The accepted spec-gate card for this exact spec revision, or None.
+
+    Intake (phase 5): the PM writes the `spec` document and opens a `request_confirmation` card
+    bound to its revision, with an idempotency key that starts `spec-gate:`. Only a human's accept
+    counts: an agent may never approve the spec it, or another agent, wrote. A card for an older
+    revision does not count either (Paperclip marks it `stale_target`, but we check too)."""
+    for it in interactions or []:
+        if it.get("kind") != "request_confirmation":
+            continue
+        if not str(it.get("idempotencyKey") or "").startswith(SPEC_GATE_PREFIX):
+            continue
+        result = it.get("result") or {}
+        if result.get("outcome") != "accepted" or not it.get("resolvedByUserId") or it.get("resolvedByAgentId"):
+            continue
+        target = (it.get("payload") or {}).get("target") or {}
+        if target.get("type") != "issue_document" or target.get("key") != "spec":
+            continue
+        if not revision_id or target.get("revisionId") != revision_id:
+            continue
+        return it
+    return None
+
+
+def pickup(cfg: dict, api, apply: bool) -> list:
+    """Queue every work order whose spec a human approved (`autoPickup`). One line per order.
+
+    Candidates are `in_review` issues of each repo's `projectId`. A refused spec (lint, wrong repo)
+    gets one comment per spec revision, remembered in `<state>/pickup-refused.json`, so a tick never
+    repeats it; a new revision with a new accepted card is tried again."""
+    if not cfg.get("autoPickup"):
+        return []
+    company = cfg.get("companyId")
+    projects = [rc.get("projectId") for rc in (cfg.get("repos") or {}).values() if rc.get("projectId")]
+    if not company or not projects:
+        warn("autoPickup: no companyId or repo projectId in engine.json, nothing picked up")
+        return []
+    refused_path = os.path.join(state_dir(), "pickup-refused.json")
+    try:
+        with open(refused_path, "r", encoding="utf-8") as fh:
+            refused = json.load(fh)
+    except (OSError, ValueError):
+        refused = {}
+    lines = []
+    for project in projects:
+        payload = api.get("/companies/%s/issues?projectId=%s&status=in_review&limit=200" % (company, project))
+        if isinstance(payload, dict):
+            payload = payload.get("issues") or payload.get("items") or []
+        for issue in payload if isinstance(payload, list) else []:
+            wo = str(issue.get("identifier") or "").upper()
+            if (not re.match(r"^GUL-[0-9]+$", wo) or issue.get("status") != "in_review"
+                    or issue.get("projectId") != project or issue.get("parentId")
+                    or os.path.exists(state_path(wo))):
+                continue
+            line = {"workOrder": wo, "flags": ["pickup"], "phase": "intake", "stage": "intake", "round": 0}
+            try:
+                doc = api.document(issue["id"], "spec")
+                rev = (doc or {}).get("latestRevisionId")
+                if not rev or refused.get(wo) == rev:
+                    continue
+                card = spec_gate_accepted(api.interactions(issue["id"]), rev)
+                if not card:
+                    continue
+                if not apply:
+                    line.update(outcome="would-start", would="start %s (spec %s approved)" % (wo, rev))
+                    lines.append(line)
+                    continue
+                full = api.by_identifier(None, wo) or issue
+                ok, reasons, extra, _ = start_order(cfg, api, full, doc=doc,
+                                                    how=" after the owner approved the spec")
+                if ok:
+                    line.update(outcome="started", phase="queued", stage="queued")
+                else:
+                    refused[wo] = rev
+                    write_json_atomic(refused_path, refused)
+                    api.comment(issue["id"], "The factory engine cannot start this approved spec:\n\n"
+                                + "\n".join("- " + r for r in reasons)
+                                + "\n\nFix the `spec` document and open a new spec-gate card.")
+                    line.update(outcome="refused", flags=["pickup", "refused"], error="; ".join(reasons))
+            except Exception as exc:  # noqa: BLE001 - one bad issue never stops the tick
+                line.update(outcome="error", flags=["pickup", "error"],
+                            error=one_line("%s: %s" % (type(exc).__name__, exc), 400))
+                warn("%s: pickup: %s" % (wo, line["error"]))
+            lines.append(line)
+    return lines
 
 
 def cmd_tick(args) -> int:
@@ -2315,13 +2410,16 @@ def cmd_tick(args) -> int:
             return 0
     try:
         cfg = load_config()
+        picked = pickup(cfg, paperclip_api(), bool(args.apply)) if cfg.get("autoPickup") else []
         states = list_states()
-        if not states:
+        if not states and not picked:
             emit(True, "tick", [], {"apply": bool(args.apply), "orders": []}, "engine-tick: no orders")
             return 0
-        engine = Engine(cfg, paperclip_api(), bool(args.apply))
-        engine.states = states
-        lines = [engine.run_order(st) for st in states]
+        lines = list(picked)
+        if states:
+            engine = Engine(cfg, paperclip_api(), bool(args.apply))
+            engine.states = states
+            lines += [engine.run_order(st) for st in states]
         if args.apply:
             record_tick(lines)
     finally:
