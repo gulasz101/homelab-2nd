@@ -44,6 +44,22 @@ run 2 readonly Grep      '{"pattern":"x","path":"/"}'
 # fail-closed: no role, unknown role, bad input
 run 2 ""       Bash      '{"command":"ls"}'
 run 2 nosuch   Write     "{\"file_path\":\"$WS/new.txt\"}"
+# GUL-2037: a checkout under $HOME (the factory worktrees live in /Users/paperclip/factory/...).
+# Searching inside it is allowed; $HOME itself and an escape with .. stay blocked. A checkout
+# under $HOME makes this the same on every host, whatever TMPDIR is.
+WS_TMP="$WS"
+WS="$(mktemp -d "$HOME/.claude-hook-check-XXXXXX")" \
+  || { echo "ENV: mktemp -d under HOME failed" >&2; exit 2; }
+trap 'rm -rf "$WS_TMP" "$WS"' EXIT
+git -C "$WS" init -q
+WS="$(git -C "$WS" rev-parse --show-toplevel)"
+run 0 readonly Grep      "{\"pattern\":\"x\",\"path\":\"$WS\"}"
+run 0 readonly Glob      "{\"pattern\":\"*.md\",\"path\":\"$WS/sub\"}"
+run 0 readonly Bash      "{\"command\":\"grep -rn x $WS\"}"
+run 2 readonly Grep      "{\"pattern\":\"x\",\"path\":\"$HOME\"}"
+run 2 readonly Grep      "{\"pattern\":\"x\",\"path\":\"$WS/..\"}"
+run 2 readonly Bash      "{\"command\":\"grep -rn x $WS/../..\"}"
+WS="$WS_TMP"
 printf 'not json' | node "$HOOK" readonly >/dev/null 2>&1
 if [ $? = 2 ]; then echo "ok   bad json -> 2"; else echo "FAIL bad json not blocked"; fail=1; fi
 rm -f "$WS.err"
