@@ -112,6 +112,19 @@ def slo_sum_increase(metric, selector, window=SLO_WINDOW):
     return "sum(increase(%s[%s]))" % (metric, window)
 
 
+def slo_zero_guard(expr):
+    """`(<expr> or vector(0))` - the `or vector(0)` the recording rules use.
+
+    A 30-day window in which nothing failed matches no series, so the summed
+    errors are an EMPTY vector and the whole ratio is empty: the SLI and the
+    budget-left panel would read "No data" precisely when nothing is wrong,
+    which reads like a broken panel, not like a healthy 100 %. `or vector(0)`
+    makes zero a value (the same guard the availability recording rules carry).
+    The denominator needs no guard: no requests at all is genuinely no ratio.
+    """
+    return "(%s or vector(0))" % expr
+
+
 def slo_pooled_counts(service, sli, window=SLO_WINDOW):
     """(errors, total) for one service/SLI over `window`, from the counters.
 
@@ -124,7 +137,8 @@ def slo_pooled_counts(service, sli, window=SLO_WINDOW):
     bucket = SLO_LATENCY_BUCKET[service]
     if service == "grafana":
         if sli == "availability":
-            return (slo_sum_increase("grafana_http_request_duration_seconds_count", 'status_code=~"5.."', window),
+            return (slo_zero_guard(
+                        slo_sum_increase("grafana_http_request_duration_seconds_count", 'status_code=~"5.."', window)),
                     slo_sum_increase("grafana_http_request_duration_seconds_count", "", window))
         total = slo_sum_increase("grafana_http_request_duration_seconds_bucket", 'le="+Inf"', window)
         good = slo_sum_increase("grafana_http_request_duration_seconds_bucket", 'le="%s"' % bucket, window)
@@ -133,8 +147,9 @@ def slo_pooled_counts(service, sli, window=SLO_WINDOW):
     if service == "open-webui":
         base += ", " + SLO_PROBE_EXCLUSION
     if sli == "availability":
-        return (slo_sum_increase("traces_spanmetrics_calls_total",
-                                 base + ', status_code="STATUS_CODE_ERROR"', window),
+        return (slo_zero_guard(
+                    slo_sum_increase("traces_spanmetrics_calls_total",
+                                     base + ', status_code="STATUS_CODE_ERROR"', window)),
                 slo_sum_increase("traces_spanmetrics_calls_total", base, window))
     total = slo_sum_increase("traces_spanmetrics_latency_bucket", base + ', le="+Inf"', window)
     good = slo_sum_increase("traces_spanmetrics_latency_bucket", base + ', le="%s"' % bucket, window)
