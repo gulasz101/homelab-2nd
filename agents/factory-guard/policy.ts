@@ -34,6 +34,11 @@ export interface GuardState {
   workspaceRoot: string | null;
   /** Turns counted so far (turn_end events). */
   turns: number;
+  /**
+   * GUL-2204: absolute paths of the test files the Builder may change in this work order
+   * (the spec's builderTestPaths). Empty or missing: the Builder writes no test path.
+   */
+  builderTestPaths?: string[];
 }
 
 export interface BlockDecision {
@@ -130,6 +135,8 @@ export function isProtectedPath(raw: string, home: string): boolean {
   const base = baseName(p);
   if (PROTECTED_MD_NAMES.has(base)) return true;
   if (base === ".sops.yaml" || base === ".sops.yml") return true;
+  // GUL-2204: the engine's list of test files the Builder may change; no agent writes it
+  if (base === "factory-builder-test-paths.json") return true;
   const segs = pathSegments(p);
   // .github/workflows/**
   for (let i = 0; i + 1 < segs.length; i++) {
@@ -202,7 +209,9 @@ function decideWritePath(
       return undefined;
     case "no-tests":
       if (!inRepo) return block("role-write-scope", `outside workspace repo: ${p}`);
-      if (looksLikeTestPath(resolved)) return block("role-write-scope", `test path denied for builder: ${p}`);
+      if (looksLikeTestPath(resolved) && !(state.builderTestPaths ?? []).includes(resolved)) {
+        return block("role-write-scope", `test path denied for builder: ${p}`);
+      }
       return undefined;
     case "all":
       if (!inRepo && !role.writesOutsideWorkspace) {
@@ -1022,4 +1031,24 @@ export function committedDiffBase(
 /** Turn cap reason, verbatim from the plan. */
 export function turnCapReason(cap: number): string {
   return `factory-guard: turn cap ${cap} reached. Post a short comment with what is done and what is left, end it with "RESULT: stalled", and stop.`;
+}
+
+/**
+ * GUL-2204: read the engine's builderTestPaths file (JSON `{"paths": [...]}`, repo-relative)
+ * and resolve each entry against the workspace root. Anything odd (absolute, `..`, not a
+ * string, unreadable or broken JSON) is dropped, so a bad file can only take rights away.
+ */
+export function parseBuilderTestPaths(text: string | null, workspaceRoot: string | null): string[] {
+  if (!text || !workspaceRoot) return [];
+  let v: unknown;
+  try { v = JSON.parse(text); } catch { return []; }
+  const list = (v as { paths?: unknown })?.paths;
+  if (!Array.isArray(list)) return [];
+  const root = workspaceRoot.replace(/\/+$/, "");
+  const out: string[] = [];
+  for (const p of list) {
+    if (typeof p !== "string" || !p || p.startsWith("/") || p.split(/[\\/]/).includes("..")) continue;
+    out.push(root + "/" + p);
+  }
+  return out;
 }

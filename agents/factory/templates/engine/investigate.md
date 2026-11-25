@@ -32,6 +32,11 @@ How to find it:
 5. Compare: does each test check exactly what its AC says, called the way the AC
    says? If one test asks for more, less or something else than its AC, that is
    `TEST-WRONG`, even when the code attempts were also poor.
+6. Find the file the fix must go into. Test paths (a `test` or `tests` folder, or a name
+   like `*.test.*`, `*_test.*`, `test_*.py`) are frozen after red, except the ones listed
+   here: {{builderTestPaths}}. If the only correct fix is in a frozen test path, no
+   green attempt can ever pass: that is `SPEC-WRONG`, not `CODE-WRONG`, even when the
+   attempts also look poor. Your `amend` adds that file to `builderTestPaths` (GUL-2204).
 
 Write the `investigation` document on this issue: markdown for people plus exactly
 one fenced `json` block holding one object:

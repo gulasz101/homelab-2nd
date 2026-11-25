@@ -1005,7 +1005,7 @@ class Engine:
             self.flag("agent-paused")
             self.note("agent-paused", stage)
             return None
-        problem = self.prepare_claude_guard(st, agent_id)
+        problem = self.prepare_claude_guard(st, agent_id) or self.prepare_builder_test_paths(st)
         if problem:
             self.flag("guard-missing")
             self.stall(st, problem + " The agent does not run without its guard; no attempt was used.")
@@ -1044,6 +1044,30 @@ class Engine:
         lodge_event(self.cfg, stage, self.detail(st, row, "started"), "started")
         self.note("created", stage, row)
         return row
+
+    def prepare_builder_test_paths(self, st: dict):
+        """None, or an ENV sentence. GUL-2204: the Pi factory-guard lets the Builder write
+        the spec's builderTestPaths. It reads them from `factory-builder-test-paths.json` in
+        the worktree's own git dir, which is outside the worktree and never committed. The
+        engine rewrites it before every attempt, `[]` when the spec has none, so a list
+        never leaks from one order into another."""
+        wt = st.get("worktree") or ""
+        try:
+            with open(st["specFile"], encoding="utf-8") as fh:
+                text = fh.read()
+            spec, _ = factory.extract_json_block(text, "spec")
+            paths = factory.builder_test_paths(spec or {})
+            gitdir = git(wt, "rev-parse", "--absolute-git-dir", check=False).strip()
+            if not gitdir:
+                return "ENV: no git dir for the worktree %s." % (wt or "(no worktree)")
+            target = os.path.join(gitdir, "factory-builder-test-paths.json")
+            tmp = target + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"paths": paths}, fh)
+            os.replace(tmp, target)
+        except (OSError, ValueError, KeyError) as exc:
+            return "ENV: could not write builderTestPaths for %s (%s)." % (wt or "(no worktree)", exc)
+        return None
 
     def prepare_claude_guard(self, st: dict, agent_id: str):
         """None, or an ENV sentence. A Claude Code agent (the Reviewer on Sonnet) runs on
@@ -1155,6 +1179,8 @@ class Engine:
             "repo": st["repo"], "worktree": st.get("worktree", ""), "branch": st["branch"],
             "base": st["base"], "baseSha": st.get("baseSha", ""), "kind": spec.get("kind", ""),
             "allowedPaths": ", ".join("`%s`" % p for p in spec.get("allowedPaths", [])),
+            "builderTestPaths": (", ".join("`%s`" % p for p in spec.get("builderTestPaths") or [])
+                                 or "none"),
             "acs": "\n".join("   - %s: %s" % (a["id"], a["text"]) for a in spec.get("acs", [])),
             "checkCommands": "\n".join("   - `%s`" % a["check"] for a in spec.get("acs", [])),
             "maxDiffLines": spec.get("maxDiffLines", 400),
@@ -1374,7 +1400,7 @@ class Engine:
             self.fail_attempt(st, row, "fail", res.reasons, res.line, res.tail, res.fails)
             return
         com = run_factory(["commit", "--repo", st["worktree"], "--stage", "red",
-                           "--issue", st["workOrder"]]).require_json()
+                           "--issue", st["workOrder"], "--spec", st["specFile"]]).require_json()
         if not com.ok:
             self.fail_attempt(st, row, "fail", com.reasons, com.line, com.tail, com.fails)
             return
@@ -1390,7 +1416,7 @@ class Engine:
             self.fail_attempt(st, row, "fail", res.reasons, res.line, res.tail, res.fails)
             return
         com = run_factory(["commit", "--repo", st["worktree"], "--stage", "green",
-                           "--issue", st["workOrder"]]).require_json()
+                           "--issue", st["workOrder"], "--spec", st["specFile"]]).require_json()
         if not com.ok:
             self.fail_attempt(st, row, "fail", com.reasons, com.line, com.tail, com.fails)
             return
