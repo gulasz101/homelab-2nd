@@ -910,6 +910,13 @@ class Engine:
         if st.get("worktree") != worktree:
             st["worktree"] = worktree
             self.save(st)
+        problem = self.baseline_problem(st)
+        if problem:
+            # No stage ever ran: there is no stage to investigate, so no [stall] wake issue
+            # is filed. The blocked work order, with its unblock note owned by the stall
+            # owner, is the whole message.
+            self.stall(st, problem, wake=False)
+            return
         self.ensure_workspace(st)
         inv = inventory(worktree, self.spec(st), self.cfg.get("docsUrl", ""))
         st["inventory"] = inv["rows"]
@@ -920,6 +927,25 @@ class Engine:
             self.enter(st, "red")
         else:
             self.enter(st, "librarian")
+
+    def baseline_problem(self, st: dict) -> str:
+        """GUL-2228: an AC whose check already reports PASS on the base tree proves nothing.
+        The engine runs the same check the red stage will, on the tree it just cut at
+        `baseSha`, and stalls the order as SPEC-WRONG before any stage issue exists.
+        A check that cannot run yet (no script, a setup error) is not a PASS, and a
+        check-baseline that could not be trusted (exit 2) is no proof of a bad spec:
+        both start the order as it always started."""
+        res = run_factory(["check-baseline", "--repo", st["worktree"], "--spec", st["specFile"]])
+        if res.ok:
+            return ""
+        if res.code != 1 or not res.reasons:
+            warn("%s: check-baseline did not run: %s" % (st["workOrder"], one_line(res.combined)))
+            return ""
+        return ("SPEC-WRONG: an acceptance check already passes on the base tree at %s: %s. "
+                "A check that passes before the change can never go red, so no stage can prove "
+                "anything. Amend the spec's AC checks so they fail on the base (a person decides: "
+                "the frozen spec is never changed by a model)."
+                % (st["baseSha"][:12], "; ".join(res.reasons)))
 
     def ensure_worktree(self, clone: str, path: str, branch: str, base_sha: str) -> None:
         if os.path.isdir(path):
@@ -2127,7 +2153,7 @@ class Engine:
         st["wake"] = {"sent": True, "issue": issue.get("identifier") or issue.get("id")}
 
     # -- terminal phases ---------------------------------------------------------
-    def stall(self, st: dict, sentence: str) -> None:
+    def stall(self, st: dict, sentence: str, wake: bool = True) -> None:
         self.would("stall: %s" % sentence)
         st["phase"] = "stalled"
         st["stallReason"] = sentence
@@ -2138,7 +2164,7 @@ class Engine:
         owner = self.cfg.get("stallOwnerAgentId")
         if not owner:
             raise SetupError("engine.json has no stallOwnerAgentId")
-        if not st.get("wake"):
+        if wake and not st.get("wake"):
             self.wake_owner(st, sentence)
         st["notice"] = {"status": "blocked", "executionPolicy": None, "comment": sentence,
                         "unblockDescriptor": {"owner": {"agentId": owner}, "action": (

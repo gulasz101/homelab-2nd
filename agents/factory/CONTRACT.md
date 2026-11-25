@@ -137,6 +137,12 @@ AC-<n>: FAIL <reason>
   A setup error makes the calling subcommand exit 2.
 - `PASS`/`FAIL` parsing is case-sensitive; anything else on stdout is ignored.
   Stderr of a check passes through to the subcommand's stderr for debugging.
+- **An AC that already passes on the base tree proves nothing (GUL-2228).** Before
+  the red stage opens, the engine runs every check on the tree it cut at `baseSha`
+  (`check-baseline`). An AC that reports `PASS` there can never go red: the order
+  stalls as `SPEC-WRONG` naming the AC, and no stage issue is filed. A check that
+  cannot run yet — no script, exit outside 0/1 — is not a `PASS`, and a
+  `check-baseline` that could not run (exit 2) does not stall the order.
 
 ## 3. Findings (Reviewer output, document `findings`)
 
@@ -204,6 +210,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 |---|---|
 | `lint-spec --spec FILE` | the spec follows point 1 (block found & parseable; a broken/unparseable JSON block is a lint **failure**, exit 1; an unreadable FILE is exit 2), including the reporting rule for every `check` |
 | `check-red --repo DIR --base SHA --spec FILE` | the diff SHA→worktree touches only test paths, all inside `allowedPaths`; every AC's check runs and reports `AC-n: FAIL`; no setup errors |
+| `check-baseline --repo DIR --spec FILE` | no AC's check reports `AC-n: PASS` in the tree at DIR (the base tree a red stage would start from). A check that cannot run yet — no script, exit outside 0/1 — is not a `PASS`; a shared check may report `FAIL` for one AC and `PASS` for another, and only the passing AC is blamed. Reasons name each passing AC. Used by the engine before it opens the red stage (GUL-2228) |
 | `check-green --repo DIR --red SHA --spec FILE` | every test path is byte-identical to the red commit (worktree contents; a new untracked test path is a violation); every changed path is inside `allowedPaths`; every AC reports `PASS`; if the repo has `scripts/check.sh`, it runs (`bash scripts/check.sh`, repo root) and must exit 0. **Main's own work is not stage work (GUL-1801):** for each touched path, when the stage's diff red→worktree for that path is identical to `git diff <red> origin/main -- <path>` (same status, same content), it came from `main` and is dropped before the `allowedPaths` check and before the test-path byte comparison; the JSON lists those paths under `fromMain`. A path the stage really changed still fails, and a test path main touched while the stage also changed it fails too |
 | `check-findings --repo DIR --base SHA --findings FILE` | findings follow point 3; every `file` is in the diff SHA→worktree; every `line` exists in the new version (file readable, ≥ `line` lines) |
 | `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed`, and `"blockingFindings"`: the same findings in order, each as `{id, file, line, claim, evidence}` (evidence = the verifier's own words). The ids are for logic; the detail is for the fix-round brief, so the next round does not have to go and find it (GUL-1929) |

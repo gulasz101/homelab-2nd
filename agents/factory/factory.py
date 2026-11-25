@@ -1014,6 +1014,37 @@ def cmd_check_green(args) -> int:
     return 0 if not reasons else 1
 
 
+def cmd_check_baseline(args) -> int:
+    """GUL-2228: an AC that already reports PASS on the base tree proves nothing.
+
+    The red stage runs the same checks on the same tree (the worktree the engine cut at
+    `baseSha`); if one of them already PASSes there, red can never fail it and the stage
+    proves nothing. So this refuses only the ACs that report PASS, and a check that cannot
+    run yet — no script (127), a setup error (2), any exit outside 0/1 — is not a PASS.
+    A FAIL line counts even when the command exits 1 (several ACs may share one check)."""
+    spec = load_spec(args.spec)
+    if not os.path.isdir(args.repo):
+        raise SetupError("repo %s is not a directory" % args.repo)
+    reasons: list = []
+    for cmd, ac_ids in group_acs(spec).items():
+        proc = subprocess.run(["bash", "-c", cmd], cwd=args.repo,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        sys.stderr.write(proc.stderr)
+        if proc.returncode not in (0, 1):
+            continue  # cannot run yet: not written, or a setup error. Not a PASS.
+        passing = set()
+        for line in proc.stdout.splitlines():
+            m = _AC_LINE.match(line.strip())
+            if m and m.group(1) in ac_ids and m.group(2) == "PASS":
+                passing.add(m.group(1))
+        reasons.extend(
+            "%s reports PASS on the tree this spec starts from, so the red stage can never "
+            "fail it (GUL-2228)" % aid
+            for aid in ac_ids if aid in passing)
+    emit(len(reasons) == 0, "check-baseline", reasons)
+    return 0 if not reasons else 1
+
+
 def validate_findings(value):
     if not isinstance(value, list):
         return None, ["findings: top level must be a JSON list (empty list = no findings)"]
@@ -3833,6 +3864,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--red", required=True)
     s.add_argument("--spec", required=True)
     s.set_defaults(fn=cmd_check_green)
+
+    s = sub.add_parser("check-baseline")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--spec", required=True)
+    s.set_defaults(fn=cmd_check_baseline)
 
     s = sub.add_parser("check-findings")
     s.add_argument("--repo", required=True)

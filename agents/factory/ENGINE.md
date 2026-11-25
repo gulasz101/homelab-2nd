@@ -180,13 +180,20 @@ A dry tick only reports `would-start`. `autoPickup: false` reads no issue list a
    `gul-<N>-<slug>` (slug as `factory.slugify`). If the worktree path already exists and is that
    branch, reuse it (re-run after a crash). Never touch the clone's own working tree: the old
    factory checkout may be dirty and on another branch.
-3. Create a Paperclip project workspace in the work order's project:
+3. Run `factory.py check-baseline --repo <worktree> --spec <specFile>` on that tree (GUL-2228).
+   An AC that already reports `PASS` there can never go red, so the order stalls as
+   `SPEC-WRONG` naming the AC, before any stage issue exists. No `[stall]` wake issue is filed:
+   there is no stage to investigate, and the blocked work order carries the reason and the
+   unblock note. A check that cannot run yet (no script, exit outside 0/1) is not a `PASS`, and
+   a `check-baseline` that could not run (exit 2) is no proof of a bad spec: both start the
+   order as before.
+4. Create a Paperclip project workspace in the work order's project:
    `POST /projects/<projectId>/workspaces {"name": "wo GUL-N", "sourceType": "local_path",
    "cwd": <worktree>, "isPrimary": false}`. Every stage issue carries its id as
    `projectWorkspaceId`. That is what makes the agent's run start in the worktree
    (`PAPERCLIP_WORKSPACE_CWD`), and the factory-guard only lets an agent write inside the repo it
    starts in. Measured on GUL-2046 (cwd probe).
-4. Run `inventory`. Every row `ok` (or no rows) → the engine writes `docsReady` itself, posts the
+5. Run `inventory`. Every row `ok` (or no rows) → the engine writes `docsReady` itself, posts the
    `docs-ready` document on the work order, and goes straight to **red**. No model run.
    Otherwise create the librarian stage issue.
 
