@@ -34,7 +34,7 @@ spec:
         kubernetes.io/hostname: loki
       containers:
         - name: cloudflared
-          image: cloudflare/cloudflared:2026.11.1
+          image: cloudflare/cloudflared:2026.11.2
           args:
             - tunnel
             - --no-autoupdate
