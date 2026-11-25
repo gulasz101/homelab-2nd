@@ -24,6 +24,9 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 NEVER_PATHS_FILE = os.path.join(HERE, "never-paths.json")
+# The list inside a repository, for a repo that brings its own (GUL-2238). Read at
+# the PR's base commit, never at its head: a branch may not widen its own safety net.
+NEVER_PATHS_REL = "agents/factory/never-paths.json"
 # The checkout this script runs from: agents/factory/../../ = the repo root.
 # check-gate needs it for the one check that reads git objects and the cluster
 # (scripts/helmrelease-pin-vs-cluster.sh). FACTORY_GATE_REPO overrides it so the
@@ -515,16 +518,46 @@ def run_ac_checks(repo: str, spec: dict, expect: str):
 # never paths (CONTRACT.md point 5)
 # --------------------------------------------------------------------------
 
-def load_never_paths() -> dict:
+def validate_never_paths(cfg, source: str) -> dict:
+    if not isinstance(cfg, dict):
+        raise SetupError("%s is not a JSON object" % source)
+    for key in ("globs", "newFilesUnder", "contentRules"):
+        if key not in cfg:
+            raise SetupError("%s missing key %r" % (source, key))
+    return cfg
+
+
+def load_never_paths(path: str | None = None) -> dict:
+    path = path or NEVER_PATHS_FILE
     try:
-        with open(NEVER_PATHS_FILE, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         raise SetupError("never-paths.json unreadable: %s" % e)
-    for key in ("globs", "newFilesUnder", "contentRules"):
-        if key not in cfg:
-            raise SetupError("never-paths.json missing key %r" % key)
-    return cfg
+    return validate_never_paths(cfg, "never-paths.json")
+
+
+def load_never_paths_at(repo: str, rel: str, ref: str) -> dict:
+    """The never-path list as `rel` reads in `ref` (the PR's base commit).
+
+    GUL-2238: a repo that joins the factory ships its own list, and the gate has to
+    read it from the base commit. Reading it from the PR head would let a branch
+    delete the safety globs that condemn it. A list that is missing or unreadable
+    at the base ref is a setup error, not a pass, and not a FAIL the stages own.
+    """
+    proc = subprocess.run([gh_bin(), "api",
+                           "/repos/%s/contents/%s?ref=%s" % (repo, rel, ref)],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    shown = ref[:12] if ref else "?"
+    if proc.returncode != 0:
+        raise SetupError("never-paths %s is not readable at the base commit %s (exit %d): %s"
+                         % (rel, shown, proc.returncode, proc.stderr.strip()[:200]))
+    try:
+        payload = json.loads(proc.stdout)
+        cfg = json.loads(base64.b64decode(payload["content"]).decode("utf-8"))
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+        raise SetupError("never-paths %s at %s is not readable JSON: %r" % (rel, shown, e))
+    return validate_never_paths(cfg, "never-paths.json at %s" % shown)
 
 
 def _kind_lines_hit(text: str, kinds: list) -> bool:
@@ -1312,7 +1345,18 @@ def cmd_check_gate(args) -> int:
                        % (total, cap))
     elif total > cap:
         size_note = "size note: %d lines > maxDiffLines %d" % (total, cap)
-    cfg = load_never_paths()
+    # GUL-2238: --never-paths-ref reads the list from the PR's base commit (a repo
+    # that brings its own list); --never-paths names that file inside the repo.
+    # Without the flag the shipped list still governs, exactly as before (point 5).
+    never_ref = getattr(args, "never_paths_ref", None)
+    never_rel = getattr(args, "never_paths", None) or NEVER_PATHS_REL
+    gate_repo = os.environ.get("FACTORY_GATE_REPO") or REPO_ROOT
+    if never_ref:
+        cfg = load_never_paths_at(repo, never_rel, never_ref)
+    elif getattr(args, "never_paths", None):
+        cfg = load_never_paths(os.path.join(gate_repo, never_rel))
+    else:
+        cfg = load_never_paths()
     # GUL-2037 phase 4: with --split-safety a never path is not a gate failure but
     # a SAFETY flag. The gate passes, and the engine leaves the merge to the owner
     # instead of merging it itself. Without the flag (the old factory) it still fails.
@@ -1357,7 +1401,6 @@ def cmd_check_gate(args) -> int:
         (safety if split else reasons).extend(hits)
     # ADR-097: a pin is a floor too. Any PR that touches a HelmRelease has to
     # pass the cluster comparison before the gate can pass (GUL-552).
-    gate_repo = os.environ.get("FACTORY_GATE_REPO") or REPO_ROOT
     if touches_helmrelease(files, head_oid, pr_content_text, cfg["globs"]):
         reasons.extend(pin_reasons(gate_repo, num, base_oid, head_oid))
     # GUL-1801: a passing gate is the end of the draft. `open-pr` opened it as a
@@ -3886,6 +3929,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--spec", required=True)
     s.add_argument("--split-safety", action="store_true",
                    help="report never paths under `safety` instead of failing the gate")
+    s.add_argument("--never-paths",
+                   help="the never-path list inside the repo (default %s)" % NEVER_PATHS_REL)
+    s.add_argument("--never-paths-ref",
+                   help="read the never-path list from this commit (the PR's base)")
     s.set_defaults(fn=cmd_check_gate)
 
     s = sub.add_parser("commit")

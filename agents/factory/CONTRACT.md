@@ -185,6 +185,16 @@ touched by a factory work order; no gate waives it. Shapes:
   the base commit. The tunnel manifests are covered by
   `**/cloudflared-*.yaml` and `**/*tunnel*` (tokens, configmaps, namespaces).
 
+**Which list (GUL-2238).** Without arguments `check-gate` reads the list shipped
+next to `factory.py`, exactly as before. `--never-paths-ref REF` reads it at
+`REF` instead — the engine passes the PR's base commit, so a branch cannot
+delete the globs that condemn it — and `--never-paths PATH` names the file
+inside the repo (default `agents/factory/never-paths.json`). A list that is
+missing or unreadable at `REF` is a **setup error** (exit 2), never a pass: a
+gate with no list proves nothing. Repos declare their own in `engine.json`;
+without one a repo gets the shipped list, and the engine will not merge on its
+own (ENGINE.md).
+
 ## 6. Diff and path classification
 
 "The diff from SHA to the working tree" always means the union of:
@@ -214,7 +224,7 @@ Every subcommand prints the one JSON line + stderr summary, exits 0/1/2.
 | `check-green --repo DIR --red SHA --spec FILE` | every test path is byte-identical to the red commit (worktree contents; a new untracked test path is a violation); every changed path is inside `allowedPaths`; every AC reports `PASS`; if the repo has `scripts/check.sh`, it runs (`bash scripts/check.sh`, repo root) and must exit 0. **Main's own work is not stage work (GUL-1801):** for each touched path, when the stage's diff red→worktree for that path is identical to `git diff <red> origin/main -- <path>` (same status, same content), it came from `main` and is dropped before the `allowedPaths` check and before the test-path byte comparison; the JSON lists those paths under `fromMain`. A path the stage really changed still fails, and a test path main touched while the stage also changed it fails too |
 | `check-findings --repo DIR --base SHA --findings FILE` | findings follow point 3; every `file` is in the diff SHA→worktree; every `line` exists in the new version (file readable, ≥ `line` lines) |
 | `check-verdicts --findings FILE --verdicts FILE` | points 3 + 4; every finding has exactly one verdict, no extra ids. JSON adds `"blockingConfirmed": ["F-…"]` = blocking findings with verdict `confirmed`, and `"blockingFindings"`: the same findings in order, each as `{id, file, line, claim, evidence}` (evidence = the verifier's own words). The ids are for logic; the detail is for the fix-round brief, so the next round does not have to go and find it (GUL-1929) |
-| `check-gate --pr OWNER/REPO#N --spec FILE` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head); `additions + deletions ≤ 3 × maxDiffLines` (between 1× and 3× the gate still passes and the JSON carries `"sizeNote": "size note: N lines > maxDiffLines M"`; only above 3× is it a failure, GUL-1730); every HelmRelease the PR changes pins a chart version at or above the one the cluster runs (ADR-097, below). On a pass it takes the PR out of draft (`gh pr ready`), so a passing gate is what makes a PR mergeable (GUL-1801) |
+| `check-gate --pr OWNER/REPO#N --spec FILE [--split-safety] [--never-paths PATH] [--never-paths-ref REF]` | the check run named `check` on the PR head commit has state SUCCESS; no changed path is a never path (globs, newFilesUnder, content rules on each changed YAML's new-version text at head; the list from `--never-paths-ref` when given, else the shipped one — point 5); `additions + deletions ≤ 3 × maxDiffLines` (between 1× and 3× the gate still passes and the JSON carries `"sizeNote": "size note: N lines > maxDiffLines M"`; only above 3× is it a failure, GUL-1730); every HelmRelease the PR changes pins a chart version at or above the one the cluster runs (ADR-097, below). On a pass it takes the PR out of draft (`gh pr ready`), so a passing gate is what makes a PR mergeable (GUL-1801) |
 | `commit --repo DIR --stage red\|green --issue GUL-N` | stages all changes and commits `factory(GUL-N): <stage>` + trailer `Co-Authored-By: Paperclip <noreply@paperclip.ing>`; refuses (exit 1) **before staging** when the change set breaks the stage scope: `red` = every touched path is a test path, `green` = no touched path is a test path. JSON adds `"sha": "<new commit sha>"`. The change set = point-6 diff vs HEAD (unborn HEAD: untracked files only). A second run on a clean tree whose HEAD is already `factory(GUL-N): <stage>` is not an error: it passes and returns that HEAD sha, so a `decide` that died after its commit can be re-run (GUL-497) |
 | `push --repo DIR --issue GUL-N` | pushes the checkout's branch to origin (`git push -u origin <branch>`, never `--force`); refuses (exit 1) on `main`/`master`. JSON adds `"branch"` and `"sha"`. Used by `decide` when the PR already exists, so a later round's commit reaches the PR head (GUL-1267 F-1) |
 | `open-pr --repo DIR --issue GUL-N --title T [--ready]` | current branch is not `main`/`master` (refuse, exit 1); `git push -u origin <branch>` (never `--force`); `gh pr create` with body linking the work order: `Work order: [GUL-N](https://paperclip.voitech.dev/GUL/issues/GUL-N)`. Creates the PR **as a draft** — the draft is the guard that stops a merge landing a round the factory has not passed, because the merge card is only raised after the gate and the gate marks it ready (GUL-1801). `--ready` creates a normal PR for a caller that already knows the round is over. JSON adds `"url": "<PR url>"` and `"draft": true|false`. Repo comes from `git remote get-url origin` |
@@ -237,6 +247,8 @@ cost a morning; a PR nobody could review in one sitting is still a hard stop.
 2. `gh pr checks <N> --repo OWNER/REPO --json name,state`
 3. for every changed path ending `.yaml`/`.yml`:
    `gh api "/repos/OWNER/REPO/contents/<path>?ref=<headRefOid>"` (JSON, base64 `content`)
+4. with `--never-paths-ref REF`:
+   `gh api "/repos/OWNER/REPO/contents/<never-paths path>?ref=REF"` (JSON, base64 `content`)
 
 A missing `check` run, a non-SUCCESS state, or a gh call that errors/returns
 unparseable output → not a pass (gh errors are setup errors, exit 2).

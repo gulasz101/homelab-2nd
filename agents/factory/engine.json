@@ -25,7 +25,10 @@
     "gulasz101/homelab-2nd": {
       "clone": "/Users/paperclip/factory/homelab-2nd",
       "worktrees": "/Users/paperclip/factory/worktrees/homelab-2nd",
-      "projectId": "d7dfb3ef-c245-4897-8936-88848f50db8c"
+      "projectId": "d7dfb3ef-c245-4897-8936-88848f50db8c",
+      "neverPaths": "agents/factory/never-paths.json",
+      "autoMerge": true,
+      "postMergeCheck": true
     }
   },
   "recallBanks": ["coding-agent::{repoName}", "hermes-andrzej"],
