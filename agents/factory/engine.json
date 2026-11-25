@@ -29,6 +29,14 @@
       "neverPaths": "agents/factory/never-paths.json",
       "autoMerge": true,
       "postMergeCheck": true
+    },
+    "gulasz101/osiris": {
+      "clone": "/Users/paperclip/factory/osiris",
+      "worktrees": "/Users/paperclip/factory/worktrees/osiris",
+      "projectId": "dc93064d-a5d9-4610-9740-81df96638014",
+      "neverPaths": ".github/never-paths.json",
+      "autoMerge": true,
+      "postMergeCheck": false
     }
   },
   "recallBanks": ["coding-agent::{repoName}", "hermes-andrzej"],
