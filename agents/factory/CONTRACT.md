@@ -77,6 +77,7 @@ failure so a typo cannot silently widen or narrow a gate):
 | `acs` | list, ≥1 entry, each exactly `{id, text, check}` |
 | `maxDiffLines` | integer > 0 |
 | `liveChecks` | optional; list, each exactly `{id, check}`: `id` is `LIVE-<n>` (unique), `check` one single-line command. The engine runs them from the repo root at the merge commit after Flux reports Ready (ENGINE.md, deploy_check); exit 0 = pass |
+| `builderTestPaths` | optional (GUL-2204); list of >=1 exact repo-relative files (no glob, no `..`). Each must be a test path inside `allowedPaths`, and no AC `check` may name it. Green (and the Builder's guard) may change these files; red may not; every other test path stays frozen after red. Use it when the fix lives in a check script under `tests/`. `lint-spec` also refuses a spec whose `allowedPaths` are all test paths and that has no `builderTestPaths`: green could never change anything |
 
 AC rules:
 

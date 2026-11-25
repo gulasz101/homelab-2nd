@@ -311,6 +311,17 @@ class Api:
             return payload.get("runs") or payload.get("items")
         return None
 
+    def run(self, run_id):
+        """One heartbeat run with its full `error` text. The per-issue run list leaves
+        `error` null (seen on GUL-2152, 2026-11-24), so the limit check needs this."""
+        try:
+            payload = self.get(f"/heartbeat-runs/{run_id}")
+        except ApiError as exc:
+            if exc.status in (403, 404):
+                return None
+            raise
+        return payload if isinstance(payload, dict) else None
+
     def agent(self, agent_id):
         return self.get(f"/agents/{agent_id}")
 

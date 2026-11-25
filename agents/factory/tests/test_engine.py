@@ -55,7 +55,7 @@ People read this part.
 
 ```json
 {"repo": "gulasz101/homelab-2nd", "base": "main", "kind": "tests",
- "allowedPaths": ["tests/**"],
+ "allowedPaths": ["src/**", "tests/**"],
  "acs": [{"id": "AC-1", "text": "the new behaviour is tested", "check": "bash tests/ac.sh"}],
  "maxDiffLines": 100}
 ```
@@ -85,6 +85,7 @@ class Fake:
         self.retain_status = 200
         self.docs = []              # docs-mcp listLibraries rows
         self.runs = {}              # issue id -> heartbeat runs
+        self.run_details = {}       # run id -> full heartbeat run (with `error`)
         self.agents[FALLBACK] = {"id": FALLBACK, "status": "idle"}
         self.interactions = {}      # issue id -> interaction cards
 
@@ -192,6 +193,10 @@ def route(method, raw_path, body):
 
 def paperclip(method, parts, query, body):
     n = len(parts)
+    if parts[0] == "heartbeat-runs" and n == 2 and method == "GET":
+        # the real server: the per-issue run list leaves `error` null, the detail has it
+        run = FAKE.run_details.get(parts[1])
+        return (200, run) if run else (404, {"error": "no run"})
     if parts[0] == "agents" and n == 2 and method == "GET":
         agent = FAKE.agents.get(parts[1])
         return (200, agent) if agent else (404, {"error": "no agent"})
@@ -673,6 +678,36 @@ class TickFlow(EngineCase):
         self.assertEqual(len(self.load("GUL-306")["stages"]), 2)
         self.assert_no_blocked_stage_issue()
 
+    def test_06d2_limit_on_a_blocked_attempt_with_a_bare_run_list(self):
+        # GUL-2147 live: Paperclip spent its retry budget and set the attempt `blocked`
+        # before the engine's tick, and its run list has `error: null`. The limit text is
+        # only in /heartbeat-runs/<id>. That is still a limit: fallback, no attempt used.
+        self.write_config(fallbackAgents={"red": FALLBACK}, fallbackNames={"red": "glm"})
+        self.start(307, "Limit on blocked")
+        self.tick()
+        row = self.load("GUL-307")["stages"][0]
+        self.issue_of(row)["status"] = "blocked"
+        FAKE.comments.append((row["issueId"], "Paperclip retried this issue's run after it ended "
+                              "without finishing, but the bounded retry budget is spent"))
+        FAKE.runs[row["issueId"]] = [{"runId": "r-307", "status": "failed", "error": None,
+                                      "errorCode": "acpx_turn_failed"}]
+        FAKE.run_details["r-307"] = {"runId": "r-307", "status": "failed",
+                                     "error": "ACP agent reported a terminal limit failure.\n"
+                                              "You've hit your 5-hour limit",
+                                     "errorCode": "acpx_turn_failed"}
+        self.tick()
+        st = self.load("GUL-307")
+        first, second = st["stages"][0], st["stages"][1]
+        self.assertEqual(first["result"], "limit", self.last_err)
+        self.assertEqual(st["fallbackStages"], ["red"])
+        self.assertEqual(self.issue_of(second)["assigneeAgentId"], FALLBACK)
+        # a blocked attempt whose run failed for another reason still uses an attempt
+        self.issue_of(second)["status"] = "blocked"
+        FAKE.runs[second["issueId"]] = [{"runId": "r-307b", "status": "failed", "error": None}]
+        FAKE.run_details["r-307b"] = {"runId": "r-307b", "status": "failed", "error": "process exited 1"}
+        self.tick()
+        self.assertEqual(self.load("GUL-307")["stages"][1]["result"], "fail")
+
     def test_06e_claude_guard_is_written_into_the_worktree(self):
         # The Reviewer on Sonnet runs on Paperclip's ACP engine, which ignores extra CLI
         # flags but loads the worktree's .claude/settings.local.json.
@@ -741,7 +776,7 @@ class TickFlow(EngineCase):
         recall = [r for r in FAKE.requests if r[1].endswith("/memories/recall")][0]
         self.assertEqual(recall[2]["max_tokens"], 1000)
         self.assertEqual(recall[2]["budget"], "mid")
-        self.assertEqual(recall[2]["query"], "Failing order. Stage red. Paths: tests/**")
+        self.assertEqual(recall[2]["query"], "Failing order. Stage red. Paths: src/**, tests/**")
         self.assertEqual(recall[3].get("Authorization"), "Bearer hs-test-token")
 
         # 7. attempt 1 "done" with no tests written: check-red fails
@@ -1383,7 +1418,7 @@ class Inventory(EngineCase):
             json.dump({"dependencies": {"lodash": "4.17.21"}}, fh)
         spec = os.path.join(self.tmp, "inv-spec.md")
         with open(spec, "w") as fh:
-            fh.write(SPEC_BODY.replace('["tests/**"]', '["apps/demo/**"]'))
+            fh.write(SPEC_BODY.replace('["src/**", "tests/**"]', '["apps/demo/**"]'))
         return repo, spec
 
     def test_10_inventory_rows_and_status(self):
