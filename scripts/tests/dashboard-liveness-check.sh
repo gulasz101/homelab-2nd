@@ -27,9 +27,11 @@
 #         `kube_pod_container_resource_requests` with resource="cpu".
 #   AC-3: no expr reads `nvidia_smi_`, the manifest has no "withGpu": true, the
 #         GPU board has no nvidia panel and still has a node power/thermal expr.
+#         That node power/thermal reading is judged on the GPU board itself: the
+#         other dashboards cannot stand in for it (GUL-2205 F-2).
 #   AC-4: no expr matches host="homelab-2nd", no node_* expr carries a host=
-#         matcher, and node-level exprs select job="node-exporter" or
-#         instance=".*:9100".
+#         matcher, and node-level exprs select job="node-exporter",
+#         job="omv-node" or instance=".*:9100".
 #   AC-5: Loki and Prometheus stay apart: no `|=~`, no LogQL on a Prometheus
 #         datasource, every logs panel declares ${loki}, and no logs panel
 #         filters telemetry-ish words out of its own log stream.
@@ -193,7 +195,9 @@ NODE_THERMAL = re.compile(r'node_rapl_|node_hwmon_|node_thermal_')
 HOST_LITERAL = re.compile(r'host\s*=\s*"homelab-2nd"')
 HOST_ANY = re.compile(r'\bhost\s*(=|!=|=~|!~)')
 NODE_METRIC = re.compile(r'\bnode_[a-z0-9_]+')
-NODE_SELECTOR = re.compile(r'job\s*=\s*"node-exporter"|instance\s*=~?\s*".*:9100"')
+# docs/dashboards.md: node-exporter is scraped behind job="node-exporter" and
+# the static targets behind job="omv-node"; both are live series.
+NODE_SELECTOR = re.compile(r'job\s*=\s*"(?:node-exporter|omv-node)"|instance\s*=~?\s*".*:9100"')
 PIPE_FILTER = re.compile(r'\|[=~]~?\s*"([^"]*)"')
 TELEMETRY = re.compile(r'(?i)telemetry|otel')
 NS_MATCHER = re.compile(r'namespace\s*=\s*"([^"]*)"')
@@ -417,8 +421,12 @@ def ac3(reasons):
     gpu_nvidia = [(path, title) for path, title, _panel, exprs in panels()
                   if path == GPU_BOARD and (NVIDIA.search(title) or
                                             any(NVIDIA.search(expr) for expr in exprs))]
+    # AC-3 is about the GPU board: it is the board whose panels read the host's
+    # own power/thermal sensors. A thermal expr on another dashboard is not a
+    # stand-in, so judge this board alone (GUL-2205 F-2).
     thermal = [(path, title) for path, title, _panel, exprs in panels()
-               if any(NODE_THERMAL.search(expr) for expr in exprs)]
+               if path == GPU_BOARD
+               and any(NODE_THERMAL.search(expr) for expr in exprs)]
     if nvidia:
         path, title, expr = nvidia[0]
         reasons.append("%d exprs read nvidia_smi_ (want 0), e.g. %s: %s"
@@ -467,7 +475,7 @@ def ac4(reasons):
     if node_unselected:
         path, title, expr = node_unselected[0]
         reasons.append('%d of %d node_* exprs select neither job="node-exporter" nor '
-                       'instance=".*:9100", e.g. %s: %s'
+                       'job="omv-node" nor instance=".*:9100", e.g. %s: %s'
                        % (len(node_unselected), node_exprs, where(path, title), short(expr)))
     if not node_exprs:
         reasons.append("no node_* expr found - the check found nothing to verify")
