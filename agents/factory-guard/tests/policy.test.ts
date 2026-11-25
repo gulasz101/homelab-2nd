@@ -16,6 +16,7 @@ import {
   decideToolCall,
   decideToolCallSafe,
   looksLikeTestPath,
+  parseBuilderTestPaths,
   scanBashLine,
   turnCapReason,
   withDefaultBashTimeout,
@@ -447,4 +448,32 @@ test("bash calls get a default timeout, explicit ones are respected", () => {
 
   withDefaultBashTimeout("bash", null);
   withDefaultBashTimeout("bash", "just a string");
+});
+
+// ---------- GUL-2204: builderTestPaths ----------
+
+test("builder may write a listed test file, and only that one", () => {
+  const listed: GuardState = { ...state, builderTestPaths: ["/repo/scripts/tests/thing-check.sh"] };
+  assert.equal(decideToolCall(builder, "write", { path: "scripts/tests/thing-check.sh" }, listed, HOME), undefined);
+  assert.equal(decideToolCall(builder, "edit", { path: "/repo/scripts/tests/thing-check.sh" }, listed, HOME), undefined);
+  assert.equal(decideToolCall(builder, "bash", { command: "echo x > scripts/tests/thing-check.sh" }, listed, HOME), undefined);
+  assert.equal(decideToolCall(builder, "write", { path: "scripts/tests/thing-selftest.sh" }, listed, HOME)?.ruleId, "role-write-scope");
+  assert.equal(decideToolCall(builder, "write", { path: "scripts/tests/thing-check.sh" }, state, HOME)?.ruleId, "role-write-scope");
+  // the list gives the tester and readonly roles nothing
+  assert.equal(decideToolCall(ro, "write", { path: "scripts/tests/thing-check.sh" }, listed, HOME)?.ruleId, "role-write-forbidden");
+});
+
+test("no role may write the engine's builderTestPaths file", () => {
+  for (const r of [exec, tester, builder]) {
+    assert.equal(decideToolCall(r, "write", { path: "/repo/.git/factory-builder-test-paths.json" }, state, HOME)?.ruleId, "protected-file");
+  }
+});
+
+test("parseBuilderTestPaths resolves entries and drops anything odd", () => {
+  assert.deepEqual(parseBuilderTestPaths('{"paths": ["scripts/tests/a.sh", "/etc/x", "../b.sh", "c/../../d", 3]}', "/repo/"),
+    ["/repo/scripts/tests/a.sh"]);
+  assert.deepEqual(parseBuilderTestPaths("not json", "/repo"), []);
+  assert.deepEqual(parseBuilderTestPaths('{"paths": "x"}', "/repo"), []);
+  assert.deepEqual(parseBuilderTestPaths(null, "/repo"), []);
+  assert.deepEqual(parseBuilderTestPaths('{"paths": ["a/tests/b.sh"]}', null), []);
 });

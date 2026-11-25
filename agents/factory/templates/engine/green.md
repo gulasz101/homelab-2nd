@@ -11,6 +11,8 @@ green.
 
 1. The red tests are committed at `{{redSha}}`. Do not change a single test file:
    the green check compares every test path to that commit byte for byte.
+   Only exception: the test files this spec lets you change, because the fix lives in
+   them: {{builderTestPaths}}. Change those like code; every other test file stays frozen.
 2. Allowed paths (everything else fails the check): {{allowedPaths}}.
    Kind: {{kind}}. Keep the diff under {{maxDiffLines}} lines.
 3. Acceptance criteria and their check commands:

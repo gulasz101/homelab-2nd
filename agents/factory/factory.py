@@ -318,7 +318,8 @@ def validate_spec(value, is_lint: bool) -> list:
         return ["spec: top level must be a JSON object"]
     expected = {"repo", "base", "kind", "allowedPaths", "acs", "maxDiffLines"}
     # optional (GUL-2037 phase 4, decision 8): checks the engine runs on `main` after the merge
-    optional = {"liveChecks"}
+    # optional (GUL-2204): test files the Builder may change (a check script that is product code)
+    optional = {"liveChecks", "builderTestPaths"}
     extra = sorted(set(value) - expected - optional)
     missing = sorted(expected - set(value))
     if extra:
@@ -366,6 +367,56 @@ def validate_spec(value, is_lint: bool) -> list:
               and not (_check_reports(chk, aid) or _SCRIPT_CHECK.match(chk.strip()))):
             reasons.append(_silent_check_reason(aid, chk))
     reasons.extend(_live_check_reasons(value.get("liveChecks")))
+    reasons.extend(_builder_test_path_reasons(value))
+    if is_lint and isinstance(ap, list) and all(isinstance(g, str) and g for g in ap):
+        if not value.get("builderTestPaths") and all(looks_like_test_path(g) for g in ap):
+            reasons.append(
+                "spec: the Builder can write none of allowedPaths %s: every glob is a test "
+                "path, which is frozen after red, so green can never change anything. Add the "
+                "non-test path the fix lives in, or name the test files green may change in "
+                "builderTestPaths (GUL-2204)" % ap)
+    return reasons
+
+
+def builder_test_paths(spec: dict) -> list:
+    """GUL-2204: the spec's builderTestPaths, or [] (older specs have none)."""
+    v = spec.get("builderTestPaths") if isinstance(spec, dict) else None
+    return [p for p in v if isinstance(p, str)] if isinstance(v, list) else []
+
+
+def _builder_test_path_reasons(value: dict) -> list:
+    """`builderTestPaths`: optional list of exact repo-relative test files green may change.
+    Each must be a test path inside allowedPaths, and no AC check may name it: the files
+    that prove the fix stay frozen after red (GUL-2204)."""
+    if "builderTestPaths" not in value:
+        return []
+    btp = value["builderTestPaths"]
+    if not (isinstance(btp, list) and len(btp) >= 1 and all(isinstance(p, str) and p for p in btp)):
+        return ["spec: builderTestPaths must be a list of >=1 non-empty paths"]
+    reasons: list = []
+    ap = value.get("allowedPaths") if isinstance(value.get("allowedPaths"), list) else []
+    checks = [a.get("check") for a in value.get("acs") or [] if isinstance(a, dict)]
+    checks = [c for c in checks if isinstance(c, str)]
+    seen = set()
+    for p in btp:
+        if p in seen:
+            reasons.append("spec: builderTestPaths lists %s twice" % p)
+            continue
+        seen.add(p)
+        if (p.startswith("/") or re.search(r"[*?\[\]]", p)
+                or ".." in re.split(r"[\\/]", p) or p != p.strip()):
+            reasons.append("spec: builderTestPaths entry %r must be an exact repo-relative "
+                           "file path (no glob, no leading /, no ..)" % p)
+            continue
+        if not looks_like_test_path(p):
+            reasons.append("spec: builderTestPaths entry %s is not a test path; the Builder "
+                           "may write it already, list it in allowedPaths only" % p)
+        if not glob_match(ap, p):
+            reasons.append("spec: builderTestPaths entry %s is outside allowedPaths" % p)
+        for c in checks:
+            if p in c:
+                reasons.append("spec: builderTestPaths entry %s is named in the AC check %r: "
+                               "a file that proves the fix must stay frozen after red" % (p, c))
     return reasons
 
 
@@ -904,9 +955,12 @@ def cmd_check_red(args) -> int:
     spec = load_spec(args.spec)
     touched = diff_touched(args.repo, args.base)
     reasons: list = []
+    btp = set(builder_test_paths(spec))
     for path, status in sorted(touched.items()):
         if not looks_like_test_path(path):
             reasons.append("red stage touched a non-test path: %s" % path)
+        elif path in btp:
+            reasons.append("red stage touched a builderTestPaths file (green changes it): %s" % path)
         elif not glob_match(spec["allowedPaths"], path):
             reasons.append("test path outside allowedPaths: %s" % path)
     if not touched:
@@ -937,8 +991,9 @@ def cmd_check_green(args) -> int:
     stage_touched = stage_changes(args.repo, args.red, touched, base)
     dropped = sorted(set(touched) - set(stage_touched))
     reasons: list = []
+    btp = set(builder_test_paths(spec))
     for path, status in sorted(stage_touched.items()):
-        if looks_like_test_path(path):
+        if looks_like_test_path(path) and path not in btp:
             reasons.append("test path differs from the red commit: %s (%s)" % (path, status))
         if not glob_match(spec["allowedPaths"], path):
             reasons.append("changed path outside allowedPaths: %s" % path)
@@ -1303,11 +1358,14 @@ def cmd_commit(args) -> int:
         touched = {p: "A" for p in
                    [q for q in git(args.repo, "ls-files", "--others", "--exclude-standard", "-z").split("\0") if q]}
     reasons: list = []
+    btp = set(builder_test_paths(load_spec(args.spec))) if getattr(args, "spec", None) else set()
     for path in sorted(touched):
         is_test = looks_like_test_path(path)
         if args.stage == "red" and not is_test:
             reasons.append("red commit touches a non-test path: %s" % path)
-        if args.stage == "green" and is_test:
+        if args.stage == "red" and path in btp:
+            reasons.append("red commit touches a builderTestPaths file: %s" % path)
+        if args.stage == "green" and is_test and path not in btp:
             reasons.append("green commit touches a test path: %s" % path)
     if not touched:
         # A decide that died after its commit (Paperclip error, crash, cancelled
@@ -3798,6 +3856,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--repo", required=True)
     s.add_argument("--stage", required=True, choices=["red", "green"])
     s.add_argument("--issue", required=True)
+    s.add_argument("--spec", help="spec file; its builderTestPaths may change in green (GUL-2204)")
     s.set_defaults(fn=cmd_commit)
 
     s = sub.add_parser("push")

@@ -55,7 +55,7 @@ People read this part.
 
 ```json
 {"repo": "gulasz101/homelab-2nd", "base": "main", "kind": "tests",
- "allowedPaths": ["tests/**"],
+ "allowedPaths": ["src/**", "tests/**"],
  "acs": [{"id": "AC-1", "text": "the new behaviour is tested", "check": "bash tests/ac.sh"}],
  "maxDiffLines": 100}
 ```
@@ -776,7 +776,7 @@ class TickFlow(EngineCase):
         recall = [r for r in FAKE.requests if r[1].endswith("/memories/recall")][0]
         self.assertEqual(recall[2]["max_tokens"], 1000)
         self.assertEqual(recall[2]["budget"], "mid")
-        self.assertEqual(recall[2]["query"], "Failing order. Stage red. Paths: tests/**")
+        self.assertEqual(recall[2]["query"], "Failing order. Stage red. Paths: src/**, tests/**")
         self.assertEqual(recall[3].get("Authorization"), "Bearer hs-test-token")
 
         # 7. attempt 1 "done" with no tests written: check-red fails
@@ -1418,7 +1418,7 @@ class Inventory(EngineCase):
             json.dump({"dependencies": {"lodash": "4.17.21"}}, fh)
         spec = os.path.join(self.tmp, "inv-spec.md")
         with open(spec, "w") as fh:
-            fh.write(SPEC_BODY.replace('["tests/**"]', '["apps/demo/**"]'))
+            fh.write(SPEC_BODY.replace('["src/**", "tests/**"]', '["apps/demo/**"]'))
         return repo, spec
 
     def test_10_inventory_rows_and_status(self):

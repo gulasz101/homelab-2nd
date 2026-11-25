@@ -42,7 +42,7 @@ SPEC_BODY = """# Spec
 
 ```json
 {"repo": "gulasz101/homelab-2nd", "base": "main", "kind": "tests",
- "allowedPaths": ["tests/**"],
+ "allowedPaths": ["src/**", "tests/**"],
  "acs": [{"id": "AC-1", "text": "the test command reports the new behaviour",
           "check": "bash tests/ac.sh"}],
  "maxDiffLines": 100}

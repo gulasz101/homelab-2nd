@@ -17,6 +17,7 @@ import {
   committedDiffBase,
   decideToolCallSafe,
   isProtectedPath,
+  parseBuilderTestPaths,
   type GuardState,
   type RoleProfile,
   type RolesConfig,
@@ -96,6 +97,8 @@ export default function (pi: ExtensionAPI): void {
     turns: 0,
     workspaceRoot: null as string | null,
     workspaceRootCwd: "",
+    /** GUL-2204: test files the Builder may change, read with the workspace root. */
+    builderTestPaths: [] as string[],
     lastFailedCommand: "",
     failedCount: 0,
     continuationAsked: false,
@@ -130,8 +133,17 @@ export default function (pi: ExtensionAPI): void {
       state.workspaceRootCwd = cwd;
       const r = git(cwd, ["rev-parse", "--show-toplevel"]);
       state.workspaceRoot = r.ok ? r.stdout.trim() : null;
+      state.builderTestPaths = [];
+      if (state.workspaceRoot) {
+        const g = git(state.workspaceRoot, ["rev-parse", "--absolute-git-dir"]);
+        if (g.ok) {
+          let text: string | null = null;
+          try { text = fs.readFileSync(path.join(g.stdout.trim(), "factory-builder-test-paths.json"), "utf8"); } catch { text = null; }
+          state.builderTestPaths = parseBuilderTestPaths(text, state.workspaceRoot);
+        }
+      }
     }
-    return { cwd, workspaceRoot: state.workspaceRoot, turns: state.turns };
+    return { cwd, workspaceRoot: state.workspaceRoot, turns: state.turns, builderTestPaths: state.builderTestPaths };
   }
 
   function scratchDir(): string {
