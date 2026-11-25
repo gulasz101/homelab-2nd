@@ -363,6 +363,10 @@ spec:
           model: openai/minimax-m3
           api_base: "https://ollama.com/v1"
           api_key: "os.environ/OLLAMA_API_KEY"
+      # GUL-2017: absent from the Ollama Cloud catalogue since 2026-11-22 but the
+      # upstream still answers 200 (probed), so it stays until it retires. The
+      # weekly sync proposes it for removal every run; see the factory work order
+      # for REMOVAL_EXEMPT before deleting it by hand.
       - model_name: deepseek-v4-pro-ollama
         litellm_params:
           model: openai/deepseek-v4-pro
