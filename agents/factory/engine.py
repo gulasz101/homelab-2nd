@@ -834,6 +834,30 @@ class Engine:
             raise SetupError("repo %s is not in engine.json" % st["repo"])
         return rc
 
+    def repo_setting(self, st: dict, key: str):
+        """A per-repo key from `repos.<repo>.` when it is set, else the global one.
+
+        GUL-2238: repos joining the factory differ in how much rope they give it
+        (`autoMerge`, `postMergeCheck`, `neverPaths`); the global key stays the
+        default so every existing repo entry keeps today's behaviour.
+        """
+        rc = self.repo_cfg(st)
+        if key in rc:
+            return rc[key]
+        return self.cfg.get(key)
+
+    def never_paths_list(self, st: dict) -> str:
+        """The never-path list governing this order, or "" when nothing proves one.
+
+        The repo's own `neverPaths`, else the list the gate recorded it judged by
+        (the shipped one, for an order written before GUL-2238). Empty means the
+        engine cannot say what is off-limits, so only the owner merges.
+        """
+        own = str(self.repo_cfg(st).get("neverPaths") or "")
+        if own:
+            return own
+        return str((st.get("gate") or {}).get("neverPaths") or "")
+
     def spec(self, st: dict) -> dict:
         return factory.load_spec(st["specFile"])
 
@@ -1540,11 +1564,21 @@ class Engine:
                 self.note("waiting", "gate")
                 return
         self.would("run factory.py check-gate on PR #%s" % pr["number"])
-        res = run_factory(["check-gate", "--pr", "%s#%s" % (st["repo"], pr["number"]),
-                           "--spec", st["specFile"], "--split-safety"]).require_json()
+        never_paths = str(self.repo_cfg(st).get("neverPaths") or "")
+        gate_args = ["check-gate", "--pr", "%s#%s" % (st["repo"], pr["number"]),
+                     "--spec", st["specFile"], "--split-safety"]
+        if never_paths:
+            # GUL-2238: the repo's own list, read at the commit the PR is based on:
+            # a branch must not be able to widen the safety net that judges it.
+            base = str(st.get("baseSha") or pr.get("base") or "")
+            gate_args += ["--never-paths", never_paths]
+            if base:
+                gate_args += ["--never-paths-ref", base]
+        res = run_factory(gate_args).require_json()
         safety = list((res.parsed or {}).get("safety") or [])
         st["gate"] = {"result": "pass" if res.ok else "fail", "reasons": res.reasons,
-                      "safety": safety, "at": iso()}
+                      "safety": safety, "at": iso(),
+                      "neverPaths": never_paths or factory.NEVER_PATHS_REL}
         if not res.ok:
             self.stall(st, "The gate failed on PR #%s: %s." % (pr["number"], "; ".join(res.reasons[:3])))
             return
@@ -1600,7 +1634,14 @@ class Engine:
         never a stall: the order already passed every check.
         """
         pr = st["pr"]
-        if not self.cfg.get("autoMerge"):
+        # GUL-2238: name the key that blocked the merge, so the owner's comment says
+        # which of the three it was (the repo's autoMerge, the missing list, the global).
+        if self.repo_cfg(st).get("autoMerge") is False:
+            return False, "auto-merge is off for %s in engine.json." % st["repo"]
+        if not self.never_paths_list(st):
+            return False, ("no never-path list for %s in engine.json. Only the owner merges this."
+                           % st["repo"])
+        if not self.repo_setting(st, "autoMerge"):
             return False, "auto-merge is off in engine.json."
         if safety:
             return False, "SAFETY: %s. Only the owner merges this." % "; ".join(safety[:3])
@@ -1636,7 +1677,8 @@ class Engine:
         the merge to the owner, with a comment. It never stalls.
         """
         gate = st.get("gate") or {}
-        if (gate.get("autoMerge") or {}).get("merged") or gate.get("safety") or not self.cfg.get("autoMerge"):
+        if (gate.get("autoMerge") or {}).get("merged") or gate.get("safety") \
+                or not self.repo_setting(st, "autoMerge"):
             return
         pr = st.get("pr") or {}
         cu = st.setdefault("catchUp", {"count": 0})
@@ -1794,7 +1836,7 @@ class Engine:
         if not landed:
             self.stall(st, factory.unlanded_reason(number, head, merge_sha))
             return
-        if self.cfg.get("postMergeCheck"):
+        if self.repo_setting(st, "postMergeCheck"):
             st["phase"] = "deploy_check"
             st["deploy"] = {"sha": merge_sha, "since": iso(), "reconcileRequested": False}
             self.save(st)

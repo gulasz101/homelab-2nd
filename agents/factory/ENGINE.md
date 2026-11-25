@@ -56,7 +56,11 @@ Rules:
   "repos": {
     "gulasz101/homelab-2nd": {
       "clone": "/Users/paperclip/factory/homelab-2nd",
-      "worktrees": "/Users/paperclip/factory/worktrees/homelab-2nd"
+      "worktrees": "/Users/paperclip/factory/worktrees/homelab-2nd",
+      "projectId": "<project id>",
+      "neverPaths": "agents/factory/never-paths.json",
+      "autoMerge": true,
+      "postMergeCheck": true
     }
   },
   "recallBanks": ["coding-agent::{repoName}", "hermes-andrzej"],
@@ -70,6 +74,21 @@ Rules:
 ```
 
 Each repo may carry `"projectId"`: the Paperclip project whose work orders `autoPickup` reads.
+
+Each repo also carries its own safety settings (GUL-2238), so a second repo can join without
+inheriting homelab-2nd's assumptions. Every key is optional; an absent key falls back to the
+global one, so an entry written before this feature keeps today's behaviour.
+
+- `neverPaths`: the repo's own never-path list, a path inside that repo. The gate reads it at the
+  PR's **base commit** (`--never-paths <path> --never-paths-ref <baseSha>`), never at the head: a
+  branch must not be able to delete the safety globs that judge it. A list missing at the base ref
+  is a setup error, so the gate cannot silently pass with no list. A repo with no `neverPaths` gets
+  the factory's shipped list, and the engine never auto-merges on a list it cannot name: with
+  neither a repo `neverPaths` nor a gate run on record, the owner merges.
+- `autoMerge`: `false` keeps the merge with the owner for this repo even when the global `autoMerge`
+  is true. The global key is the default (`true` today).
+- `postMergeCheck`: `false` sends a merged PR straight to `done` for this repo, skipping the
+  `deploy_check` phase (a repo with nothing deployed to watch). The global key is the default.
 
 `{repoName}` is the part after the slash (`homelab-2nd`). Env overrides for tests and the
 self-test: `FACTORY_ENGINE_CONFIG` (path of the config), `FACTORY_ENGINE_STATE` (state dir),
@@ -290,7 +309,9 @@ order holds no slot. Once per stall the engine wakes the stall owner: one issue
 
 **Auto-merge** (phase 4, decisions 1 and 7), right after a passing gate. The factory merges only when
 all of these hold, else the owner merges and the comment names the first that failed:
-`autoMerge` is true in `engine.json`; `safety` is empty; `pr.head` is recorded; the tick runs with
+`autoMerge` is true for this repo (per-repo key over global, GUL-2238); the engine can name the
+never-path list governing the order (`neverPaths` on the repo, or the list the gate ran with);
+`safety` is empty; `pr.head` is recorded; the tick runs with
 `--apply`; the App token works. Then, as the App: `gh pr comment` with the self-approvals (every
 passed stage row, every investigation verdict, the finding counts, the gate, the size note), then
 `gh pr merge <n> --squash --match-head-commit <pr.head>`, so GitHub merges exactly the commit the stages
@@ -300,7 +321,8 @@ checked or nothing. The ruleset on `main` stays the second line: the App is not 
 **awaiting_merge** — each tick `gh pr view <n> --repo <repo> --json state,mergedAt,mergeCommit,headRefOid`:
 - `OPEN` → nothing.
 - `MERGED` and `factory.merge_contains(<clone>, <head>, <merge sha>)` → `merge` record. With
-  `postMergeCheck` true in `engine.json`: phase `deploy_check` (below). Without it: phase `done`,
+  `postMergeCheck` true for this repo (per-repo key over global, GUL-2238): phase `deploy_check`
+  (below). Without it: phase `done`,
   retain, clean up, work order `done` with comment `PR #N is merged in <sha>`.
 - `MERGED` but not landed → stalled with the CONTRACT.md "unlanded" sentence.
 - `CLOSED` → phase `closed`, retain, clean up, work order `cancelled`: `PR #N was closed without a
