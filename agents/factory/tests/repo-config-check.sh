@@ -16,6 +16,10 @@ set -u
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
   GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX GIT_CONFIG GIT_CONFIG_GLOBAL
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+# GUL-2247: the GitHub runner sets no TMPDIR at all, so an unset TMPDIR means
+# "use the default", not "the environment is broken". A TMPDIR that is set but
+# dead still exits 2 below.
+export TMPDIR="${TMPDIR:-/tmp}"
 # GUL-2091: a dead TMPDIR is a setup error, not a test result.
 if [ -z "${TMPDIR:-}" ] || [ ! -d "${TMPDIR:-}" ] || [ ! -w "${TMPDIR:-}" ]; then
   echo "ENV: TMPDIR '${TMPDIR:-}' does not exist or is not writable" >&2
