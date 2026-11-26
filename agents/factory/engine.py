@@ -847,16 +847,15 @@ class Engine:
         return self.cfg.get(key)
 
     def never_paths_list(self, st: dict) -> str:
-        """The never-path list governing this order, or "" when nothing proves one.
+        """The never-path list the repo itself names, or "" when it names none.
 
-        The repo's own `neverPaths`, else the list the gate recorded it judged by
-        (the shipped one, for an order written before GUL-2238). Empty means the
-        engine cannot say what is off-limits, so only the owner merges.
+        GUL-2254 (F-1 of GUL-2238): only the repo's own `neverPaths` counts. A
+        gate run records the list it judged the PR by, but for a repo that names
+        no list that is the factory's shipped list, a homelab-2nd path. The
+        engine cannot name a list it does not know is off-limits in THIS repo,
+        so it leaves the merge with the owner.
         """
-        own = str(self.repo_cfg(st).get("neverPaths") or "")
-        if own:
-            return own
-        return str((st.get("gate") or {}).get("neverPaths") or "")
+        return str(self.repo_cfg(st).get("neverPaths") or "")
 
     def spec(self, st: dict) -> dict:
         return factory.load_spec(st["specFile"])
@@ -1576,9 +1575,14 @@ class Engine:
                 gate_args += ["--never-paths-ref", base]
         res = run_factory(gate_args).require_json()
         safety = list((res.parsed or {}).get("safety") or [])
+        # GUL-2254 (F-1 of GUL-2238): record which list judged the PR, and be
+        # honest about where it came from. For a repo with no `neverPaths` this
+        # is the factory's shipped list; `ownNeverPaths` false says so, and
+        # `never_paths_list` never treats that list as this repo's own.
         st["gate"] = {"result": "pass" if res.ok else "fail", "reasons": res.reasons,
                       "safety": safety, "at": iso(),
-                      "neverPaths": never_paths or factory.NEVER_PATHS_REL}
+                      "neverPaths": never_paths or factory.NEVER_PATHS_REL,
+                      "ownNeverPaths": bool(never_paths)}
         if not res.ok:
             self.stall(st, "The gate failed on PR #%s: %s." % (pr["number"], "; ".join(res.reasons[:3])))
             return
