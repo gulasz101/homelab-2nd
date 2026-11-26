@@ -37,6 +37,14 @@
       "neverPaths": ".github/never-paths.json",
       "autoMerge": true,
       "postMergeCheck": false
+    },
+    "gulasz101/star-office-ui-fork": {
+      "clone": "/Users/paperclip/factory/star-office-ui-fork",
+      "worktrees": "/Users/paperclip/factory/worktrees/star-office-ui-fork",
+      "projectId": "8660341a-cf5f-4aa0-a659-10e9df10c902",
+      "neverPaths": ".github/never-paths.json",
+      "autoMerge": true,
+      "postMergeCheck": false
     }
   },
   "recallBanks": ["coding-agent::{repoName}", "hermes-andrzej"],
