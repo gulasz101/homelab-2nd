@@ -35,6 +35,10 @@ for _var in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE = os.path.abspath(os.path.join(HERE, "..", "engine.py"))
+# GUL-2254: the never-path list the engine's fixtures name. A repo that names no
+# list is never auto-merged, so every fixture that expects a merge names this one.
+NEVER_PATHS_JSON = os.path.abspath(os.path.join(HERE, "..", "never-paths.json"))
+NEVER_PATHS_REL = "agents/factory/never-paths.json"
 
 COMPANY = "c0000000-0000-4000-8000-0000000000e1"
 PROJECT = "p0000000-0000-4000-8000-0000000000e1"
@@ -351,7 +355,10 @@ class EngineCase(unittest.TestCase):
                "idleMinutes": 15, "gateCiWaitMinutes": 60, "supervisorAgentId": SUPERVISOR,
                "stallOwnerAgentId": STALL_OWNER,
                "stages": {s: {"agentId": AGENTS[s], "lodge": LODGE[s]} for s in AGENTS},
-               "repos": {REPO: {"clone": self.clone, "worktrees": self.worktrees}},
+               # GUL-2254 (F-1 of GUL-2238): the engine never auto-merges a repo
+               # that names no `neverPaths`, so the fixture repo names one.
+               "repos": {REPO: {"clone": self.clone, "worktrees": self.worktrees,
+                                "neverPaths": NEVER_PATHS_REL}},
                "recallBanks": ["coding-agent::{repoName}", "hermes-andrzej"],
                "retainBank": "coding-agent::{repoName}",
                # the real hosts: the env overrides below must win over these
@@ -912,6 +919,11 @@ if a[:1] == ["api"] and a[1:3] == ["-X", "PUT"]:
     else:
         print(json.dumps({"message": "Updating pull request branch."}))
     sys.exit(rc)
+if a[:1] == ["api"] and "/contents/" in a[1]:
+    # GUL-2254: the gate reads the repo's neverPaths at the PR's base commit.
+    import base64
+    with open(%(never)r, "rb") as fh:
+        print(json.dumps({"content": base64.b64encode(fh.read()).decode()})); sys.exit(0)
 if a[:1] == ["api"] and "/commits/" in a[1]:
     parents = json.loads(os.environ.get("FAKE_GH_PARENTS", "[]"))
     print(json.dumps({"parents": [{"sha": x} for x in parents]})); sys.exit(0)
@@ -948,7 +960,8 @@ sys.stderr.write("fake gh: no route %%r\n" %% (a,)); sys.exit(1)
         with open(os.path.join(self.state, "GUL-%d.json" % number), "w") as fh:
             json.dump(st, fh)
         with open(self.gh, "w") as fh:
-            fh.write(self.FAKE_GH % {"py": sys.executable, "log": self.gh_log})
+            fh.write(self.FAKE_GH % {"py": sys.executable, "log": self.gh_log,
+                                     "never": NEVER_PATHS_JSON})
         os.chmod(self.gh, 0o755)
         self.app_key = os.path.join(self.tmp, "app.pem")
         subprocess.run(["openssl", "genrsa", "-out", self.app_key, "2048"], check=True,

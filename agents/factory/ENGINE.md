@@ -82,9 +82,10 @@ global one, so an entry written before this feature keeps today's behaviour.
 - `neverPaths`: the repo's own never-path list, a path inside that repo. The gate reads it at the
   PR's **base commit** (`--never-paths <path> --never-paths-ref <baseSha>`), never at the head: a
   branch must not be able to delete the safety globs that judge it. A list missing at the base ref
-  is a setup error, so the gate cannot silently pass with no list. A repo with no `neverPaths` gets
-  the factory's shipped list, and the engine never auto-merges on a list it cannot name: with
-  neither a repo `neverPaths` nor a gate run on record, the owner merges.
+  is a setup error, so the gate cannot silently pass with no list. A repo with no `neverPaths` is
+  still judged by the factory's shipped list, but that is a homelab-2nd path: the engine records it
+  with `ownNeverPaths: false` and never treats it as this repo's list, so a repo with no `neverPaths`
+  is **never** auto-merged and the owner merges (GUL-2254).
 - `autoMerge`: `false` keeps the merge with the owner for this repo even when the global `autoMerge`
   is true. The global key is the default (`true` today).
 - `postMergeCheck`: `false` sends a merged PR straight to `done` for this repo, skipping the
@@ -309,8 +310,9 @@ order holds no slot. Once per stall the engine wakes the stall owner: one issue
 
 **Auto-merge** (phase 4, decisions 1 and 7), right after a passing gate. The factory merges only when
 all of these hold, else the owner merges and the comment names the first that failed:
-`autoMerge` is true for this repo (per-repo key over global, GUL-2238); the engine can name the
-never-path list governing the order (`neverPaths` on the repo, or the list the gate ran with);
+`autoMerge` is true for this repo (per-repo key over global, GUL-2238); the repo itself names a
+never-path list (`neverPaths` in its `engine.json` entry — a gate run on the shipped list does not
+count, GUL-2254, so a repo with no `neverPaths` is never auto-merged);
 `safety` is empty; `pr.head` is recorded; the tick runs with
 `--apply`; the App token works. Then, as the App: `gh pr comment` with the self-approvals (every
 passed stage row, every investigation verdict, the finding counts, the gate, the size note), then
